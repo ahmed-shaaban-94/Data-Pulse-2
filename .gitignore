@@ -47,3 +47,12 @@ htmlcov/
 
 # Notebooks
 .ipynb_checkpoints/
+
+# Node / pnpm / TypeScript (added in T008)
+node_modules/
+.pnpm-store/
+.turbo/
+.cache/
+coverage/
+*.tsbuildinfo
+.eslintcache

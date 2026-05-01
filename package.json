@@ -1,0 +1,23 @@
+{
+  "name": "data-pulse-2",
+  "version": "0.1.0-foundation",
+  "private": true,
+  "description": "Data-Pulse-2 — multi-tenant SaaS rebuild. Backend + workers monorepo. Dashboard UI is a separate feature.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm -r --if-present run test",
+    "lint": "pnpm -r --if-present run lint",
+    "format": "pnpm -r --if-present run format",
+    "migrate": "pnpm -r --if-present run migrate",
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "db:up": "docker compose -f docker-compose.dev.yml up -d",
+    "db:down": "docker compose -f docker-compose.dev.yml down",
+    "db:logs": "docker compose -f docker-compose.dev.yml logs -f"
+  }
+}

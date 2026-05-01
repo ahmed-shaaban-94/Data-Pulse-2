@@ -1,0 +1,45 @@
+# Developer-only stack for local Postgres + Redis. NOT for production.
+# Per spec/plan: PostgreSQL is the system of record; Redis backs BullMQ,
+# session cache, rate limits, idempotency keys, and distributed locks.
+#
+# Bring up:   docker compose -f docker-compose.dev.yml up -d
+# Tear down:  docker compose -f docker-compose.dev.yml down
+# Logs:       docker compose -f docker-compose.dev.yml logs -f
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dp2-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: data_pulse_2
+      POSTGRES_USER: dp2
+      POSTGRES_PASSWORD: dp2_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - dp2_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dp2 -d data_pulse_2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: dp2-redis-dev
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - dp2_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  dp2_pg_data:
+  dp2_redis_data:
