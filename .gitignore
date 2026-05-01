@@ -1,0 +1,49 @@
+# Reference-only repos — pulled in for guidance, never built from
+# Per Constitution Principle I: old Data-Pulse repo is reference, not source of truth
+/reference/
+/reference/Data-Pulse/
+**/Data-Pulse-old/
+**/old-data-pulse/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.python-version
+
+# dbt
+target/
+dbt_packages/
+logs/
+.user.yml
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / env
+.env
+.env.*
+!.env.example
+profiles.yml
+
+# Build / dist
+dist/
+build/
+*.egg
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Notebooks
+.ipynb_checkpoints/
