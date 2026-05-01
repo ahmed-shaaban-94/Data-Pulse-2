@@ -1,0 +1,6 @@
+{
+  "name": "@data-pulse-2/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "NestJS backend API. Skeleton only — Nest bootstrap, modules, guards, controllers land in later branches."
+}

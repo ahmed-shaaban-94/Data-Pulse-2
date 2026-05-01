@@ -1,0 +1,6 @@
+{
+  "name": "@data-pulse-2/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Drizzle schema, explicit SQL migrations, tenant-scoped query helpers, DB session middleware. Skeleton only — schema/migrations land in a later branch."
+}
