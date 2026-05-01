@@ -1,0 +1,138 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Active Context API
+  version: "1.0.0-draft"
+  description: >
+    Server-side resolution and switching of active tenant + active store
+    for an authenticated session. Per spec §6.6 and Q3 default A.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/context/me:
+    get:
+      summary: Return the current user, available memberships, and active context.
+      operationId: getActiveContext
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextResponse"
+        "401":
+          description: Unauthenticated.
+  /api/v1/context/tenant:
+    post:
+      summary: Switch the active tenant for the current session.
+      operationId: switchActiveTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_id]
+              properties:
+                tenant_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Active tenant switched. Active store is cleared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextResponse"
+        "404":
+          description: Tenant does not exist OR user has no membership in it. Same response for both (FR-ISO-4).
+  /api/v1/context/store:
+    post:
+      summary: Switch the active store within the active tenant.
+      operationId: switchActiveStore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [store_id]
+              properties:
+                store_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Active store switched.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextResponse"
+        "404":
+          description: Store does not belong to the active tenant OR user lacks access. Same response for both.
+        "409":
+          description: No active tenant set. Caller must switch tenant first.
+    delete:
+      summary: Clear the active store (tenant remains).
+      operationId: clearActiveStore
+      responses:
+        "200":
+          description: Active store cleared.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextResponse"
+components:
+  schemas:
+    ContextResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/UserSummary"
+        active_tenant:
+          $ref: "#/components/schemas/TenantSummary"
+          nullable: true
+        active_store:
+          $ref: "#/components/schemas/StoreSummary"
+          nullable: true
+        active_role_code:
+          type: string
+          nullable: true
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/MembershipSummary"
+    UserSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        display_name: { type: string, nullable: true }
+        is_platform_admin: { type: boolean }
+    TenantSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+    StoreSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+    MembershipSummary:
+      type: object
+      properties:
+        tenant_id: { type: string, format: uuid }
+        tenant_name: { type: string }
+        role_code: { type: string }
+        store_access_kind:
+          type: string
+          enum: [all, specific]
+        accessible_store_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+security:
+  - cookieAuth: []

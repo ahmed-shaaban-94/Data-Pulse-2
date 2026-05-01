@@ -1,0 +1,205 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Auth API
+  version: "1.0.0-draft"
+  description: >
+    Authentication endpoints for human users. Cookie-based dashboard sessions.
+    See ../README.md for cross-cutting conventions.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/auth/signin:
+    post:
+      summary: Sign in with email and password.
+      operationId: signIn
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignInRequest"
+      responses:
+        "200":
+          description: Authenticated. Sets HttpOnly session cookie.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: HttpOnly; Secure; SameSite=Lax session cookie.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignInResponse"
+        "401":
+          description: Invalid credentials. Generic — does not leak whether email exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate-limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/auth/signout:
+    post:
+      summary: Sign out the current session.
+      operationId: signOut
+      responses:
+        "204":
+          description: Session revoked; cookie cleared.
+  /api/v1/auth/refresh:
+    post:
+      summary: Extend the sliding session window (within absolute cap).
+      operationId: refreshSession
+      responses:
+        "204":
+          description: Session refreshed.
+        "401":
+          description: Session expired; sign in required.
+  /api/v1/auth/password-reset/request:
+    post:
+      summary: Request a password reset email. Always returns 202 to avoid leaking account existence.
+      operationId: requestPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "202":
+          description: Accepted; email may or may not be sent depending on whether the address is registered.
+  /api/v1/auth/password-reset/confirm:
+    post:
+      summary: Confirm a password reset using the token from the email.
+      operationId: confirmPasswordReset
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 12
+      responses:
+        "204":
+          description: Password updated. All existing sessions for the user are revoked.
+        "400":
+          description: Invalid or expired token.
+  /api/v1/auth/email/verify/request:
+    post:
+      summary: Request a verification email for the signed-in user.
+      operationId: requestEmailVerification
+      responses:
+        "202":
+          description: Email queued.
+  /api/v1/auth/email/verify/confirm:
+    post:
+      summary: Confirm email verification using the token from the email.
+      operationId: confirmEmailVerification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        "204":
+          description: Email verified.
+        "400":
+          description: Invalid or expired token.
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    SignInRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    SignInResponse:
+      type: object
+      properties:
+        user:
+          $ref: "#/components/schemas/UserSummary"
+        memberships:
+          type: array
+          description: >
+            Memberships available to this user. The dashboard uses this list
+            to drive the active-tenant chooser when the user has more than one.
+          items:
+            $ref: "#/components/schemas/MembershipSummary"
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        display_name:
+          type: string
+          nullable: true
+        is_platform_admin:
+          type: boolean
+    MembershipSummary:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_name:
+          type: string
+        role_code:
+          type: string
+        store_access_kind:
+          type: string
+          enum: [all, specific]
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+              format: uuid
+security:
+  - cookieAuth: []

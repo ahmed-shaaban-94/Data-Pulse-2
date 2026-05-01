@@ -1,0 +1,77 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Audit API
+  version: "1.0.0-draft"
+  description: >
+    Read-only access to audit events for the active tenant.
+    Tenant-admin or platform-admin scope. Per spec FR-AUDIT-1/2/3.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/audit/events:
+    get:
+      summary: Query audit events for the active tenant.
+      operationId: listAuditEvents
+      parameters:
+        - in: query
+          name: action
+          schema:
+            type: string
+          description: Filter by action code (prefix match supported, e.g., "auth.").
+        - in: query
+          name: actor_user_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: store_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
+                  next_cursor:
+                    type: string
+                    nullable: true
+        "401":
+          description: No active tenant.
+        "403":
+          description: Insufficient role.
+components:
+  schemas:
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        occurred_at: { type: string, format: date-time }
+        actor_user_id: { type: string, format: uuid, nullable: true }
+        actor_label: { type: string, nullable: true }
+        tenant_id: { type: string, format: uuid }
+        store_id: { type: string, format: uuid, nullable: true }
+        action: { type: string }
+        target_type: { type: string, nullable: true }
+        target_id: { type: string, format: uuid, nullable: true }
+        request_id: { type: string, format: uuid, nullable: true }
+        metadata:
+          type: object
+          additionalProperties: true
+security:
+  - cookieAuth: []
