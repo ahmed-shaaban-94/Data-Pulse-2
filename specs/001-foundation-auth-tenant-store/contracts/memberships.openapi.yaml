@@ -1,0 +1,151 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Memberships & Invitations API
+  version: "1.0.0-draft"
+  description: >
+    Invite users into the active tenant; manage their role and store-access
+    policy. Acceptance flow lives at /invitations/accept.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/memberships/invite:
+    post:
+      summary: Invite an email address to the active tenant.
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationCreate"
+      responses:
+        "201":
+          description: Invitation created; email queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invitation"
+        "401":
+          description: No active tenant.
+        "403":
+          description: Insufficient role.
+        "409":
+          description: A pending invitation already exists for that email in this tenant.
+  /api/v1/memberships/{membership_id}:
+    parameters:
+      - in: path
+        name: membership_id
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      summary: Change a member's role and/or store-access policy.
+      operationId: updateMembership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipUpdate"
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Membership"
+        "404":
+          description: Not found / no access.
+    delete:
+      summary: Revoke a membership. Membership row is soft-deleted; audit logged.
+      operationId: revokeMembership
+      responses:
+        "204":
+          description: Revoked.
+        "404":
+          description: Not found / no access.
+  /api/v1/invitations/accept:
+    post:
+      summary: Accept a pending invitation. Public — accept token authenticates the request.
+      operationId: acceptInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Single-use token sent to the invitee by email.
+                password:
+                  type: string
+                  minLength: 12
+                  description: Required if the invitee is not yet a registered user.
+                display_name:
+                  type: string
+      responses:
+        "200":
+          description: Membership created and a session is established for the user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Membership"
+        "400":
+          description: Invalid or expired token.
+components:
+  schemas:
+    InvitationCreate:
+      type: object
+      required: [email, role_code, store_access_kind]
+      properties:
+        email:
+          type: string
+          format: email
+        role_code:
+          type: string
+        store_access_kind:
+          type: string
+          enum: [all, specific]
+        store_ids:
+          type: array
+          description: Required when store_access_kind = 'specific'.
+          items:
+            type: string
+            format: uuid
+    Invitation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        email: { type: string }
+        role_code: { type: string }
+        store_access_kind: { type: string, enum: [all, specific] }
+        invited_store_ids:
+          type: array
+          items: { type: string, format: uuid }
+        status: { type: string, enum: [pending, accepted, expired, revoked] }
+        expires_at: { type: string, format: date-time }
+    MembershipUpdate:
+      type: object
+      properties:
+        role_code: { type: string }
+        store_access_kind: { type: string, enum: [all, specific] }
+        store_ids:
+          type: array
+          items: { type: string, format: uuid }
+    Membership:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        role_code: { type: string }
+        store_access_kind: { type: string, enum: [all, specific] }
+        accessible_store_ids:
+          type: array
+          items: { type: string, format: uuid }
+        revoked_at: { type: string, format: date-time, nullable: true }
+security:
+  - cookieAuth: []

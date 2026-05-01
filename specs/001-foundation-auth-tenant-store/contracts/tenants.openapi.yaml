@@ -1,0 +1,154 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Tenants API
+  version: "1.0.0-draft"
+  description: >
+    Tenant administration. Q1 default A: tenant *creation* is restricted to
+    platform admins. Tenant-admins can read their own tenant and manage
+    members within it.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/tenants:
+    get:
+      summary: List tenants the current user has access to (or all, if platform admin).
+      operationId: listTenants
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TenantSummary"
+    post:
+      summary: Create a new tenant. Platform-admin only (Q1 default A).
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantCreate"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "403":
+          description: Caller is not a platform admin.
+        "409":
+          description: Slug conflict.
+  /api/v1/tenants/{tenant_id}:
+    parameters:
+      - in: path
+        name: tenant_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Read a tenant the caller has access to.
+      operationId: readTenant
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Not found OR caller has no access. Same response (FR-ISO-4).
+    patch:
+      summary: Update tenant fields (name, status). Tenant-admin or platform-admin.
+      operationId: updateTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TenantUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Not found / no access.
+    delete:
+      summary: Soft-delete the tenant. Platform-admin only.
+      operationId: softDeleteTenant
+      responses:
+        "204":
+          description: Soft-deleted; restorable within retention window (default 30 days).
+        "403":
+          description: Caller is not a platform admin.
+  /api/v1/tenants/{tenant_id}/members:
+    parameters:
+      - in: path
+        name: tenant_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List memberships in a tenant.
+      operationId: listMembers
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MembershipDetail"
+        "404":
+          description: No access.
+components:
+  schemas:
+    TenantSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+    Tenant:
+      allOf:
+        - $ref: "#/components/schemas/TenantSummary"
+        - type: object
+          properties:
+            status: { type: string, enum: [active, suspended, pending] }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+            deleted_at: { type: string, format: date-time, nullable: true }
+    TenantCreate:
+      type: object
+      required: [slug, name]
+      properties:
+        slug: { type: string, pattern: "^[a-z0-9][a-z0-9_-]{1,62}[a-z0-9]$" }
+        name: { type: string, minLength: 1 }
+    TenantUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        status: { type: string, enum: [active, suspended] }
+    MembershipDetail:
+      type: object
+      properties:
+        membership_id: { type: string, format: uuid }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string }
+            display_name: { type: string, nullable: true }
+        role_code: { type: string }
+        store_access_kind: { type: string, enum: [all, specific] }
+        accessible_store_ids:
+          type: array
+          items: { type: string, format: uuid }
+        revoked_at: { type: string, format: date-time, nullable: true }
+security:
+  - cookieAuth: []
