@@ -11,7 +11,8 @@
     "./zod/base": "./src/zod/base.ts",
     "./errors/envelope": "./src/errors/envelope.ts",
     "./logger/pino": "./src/logger/pino.ts",
-    "./observability/otel": "./src/observability/otel.ts"
+    "./observability/otel": "./src/observability/otel.ts",
+    "./ids/uuid": "./src/ids/uuid.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -26,11 +27,13 @@
     "@opentelemetry/instrumentation-redis": "0.64.0",
     "@opentelemetry/sdk-node": "0.216.0",
     "pino": "9.5.0",
+    "uuid": "10.0.0",
     "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/jest": "29.5.14",
     "@types/node": "20.17.6",
+    "@types/uuid": "10.0.0",
     "jest": "29.7.0",
     "ts-jest": "29.2.5",
     "typescript": "5.6.3"
