@@ -2,5 +2,23 @@
   "name": "@data-pulse-2/db",
   "version": "0.0.0",
   "private": true,
-  "description": "Drizzle schema, explicit SQL migrations, tenant-scoped query helpers, DB session middleware. Skeleton only — schema/migrations land in a later branch."
+  "description": "Drizzle schema and explicit SQL migrations. Migration runner CLI, tenant-scoped helpers, and DB session middleware land in later branches.",
+  "type": "commonjs",
+  "main": "src/schema/index.ts",
+  "types": "src/schema/index.ts",
+  "exports": {
+    ".": "./src/schema/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "echo \"db: lint runs at the repo root\""
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "typescript": "5.6.3"
+  }
 }
