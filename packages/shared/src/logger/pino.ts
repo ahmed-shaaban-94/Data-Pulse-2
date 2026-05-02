@@ -1,5 +1,10 @@
 import { pino, type Logger, type LoggerOptions } from "pino";
 
+// Re-export so consumers (e.g. apps/api) can type their handles to a Logger
+// without taking a direct dependency on pino. The shared package is the
+// canonical facade for logging.
+export type { Logger } from "pino";
+
 export const LOG_SCHEMA_VERSION = "1";
 
 export const DEFAULT_REDACT_PATHS: readonly string[] = [

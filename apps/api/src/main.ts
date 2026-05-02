@@ -1,0 +1,71 @@
+import "reflect-metadata";
+
+import { NestFactory } from "@nestjs/core";
+import { createLogger, type Logger } from "@data-pulse-2/shared";
+import cookieParser from "cookie-parser";
+import helmet from "helmet";
+
+import { AppModule } from "./app.module";
+import { GlobalExceptionFilter } from "./common/exception.filter";
+import { LoggingInterceptor, ROOT_LOGGER } from "./common/logging.interceptor";
+import { RequestIdInterceptor } from "./common/request-id.interceptor";
+import { ZodValidationPipe } from "./common/zod-validation.pipe";
+import { loadOpenApiContracts } from "./openapi/loader";
+
+async function bootstrap(): Promise<void> {
+  const rootLogger: Logger = createLogger({
+    service: "api",
+    level: process.env["LOG_LEVEL"] ?? "info",
+  });
+
+  // Fail-fast on malformed contracts. Constitution IV — contracts are the
+  // source of truth; we'd rather refuse to start than serve traffic against
+  // a corrupted spec.
+  const contracts = loadOpenApiContracts();
+  rootLogger.info(
+    { count: contracts.length, ids: contracts.map((c) => c.id) },
+    "openapi contracts loaded",
+  );
+
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  // Express middleware
+  app.use(cookieParser());
+  app.use(helmet());
+
+  // Global interceptors — RequestIdInterceptor must run first so the others
+  // can read request.requestId.
+  app.useGlobalInterceptors(
+    new RequestIdInterceptor(),
+    new LoggingInterceptor(rootLogger),
+  );
+
+  // Global exception filter — every uncaught error formatted into the
+  // shared envelope shape.
+  app.useGlobalFilters(new GlobalExceptionFilter());
+
+  // Global Zod validation pipe — no-op when no schema is attached. Per-
+  // route bodies attach their own schema via `@Body(new ZodValidationPipe(SignInSchema))`.
+  app.useGlobalPipes(new ZodValidationPipe());
+
+  // DI registration so providers that need the logger can `@Inject(ROOT_LOGGER)`.
+  // (Used by LoggingInterceptor instances created via DI in future test
+  // bootstraps; the global instance above is constructed manually.)
+  void ROOT_LOGGER;
+
+  app.enableShutdownHooks();
+
+  const port = Number(process.env["PORT"] ?? 3000);
+  await app.listen(port);
+  rootLogger.info({ port }, "api listening");
+}
+
+if (require.main === module) {
+  bootstrap().catch((err: unknown) => {
+    // eslint-disable-next-line no-console
+    console.error("api: bootstrap failed", err);
+    process.exit(1);
+  });
+}
+
+export { bootstrap };

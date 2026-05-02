@@ -1,0 +1,117 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Stores API
+  version: "1.0.0-draft"
+  description: >
+    Store administration within the active tenant. Active tenant must be
+    set on the session/token; otherwise endpoints return 401.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/v1/stores:
+    get:
+      summary: List stores in the active tenant.
+      operationId: listStores
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Store"
+        "401":
+          description: No active tenant.
+    post:
+      summary: Create a store in the active tenant. Tenant-admin or owner only.
+      operationId: createStore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreCreate"
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "401":
+          description: No active tenant.
+        "403":
+          description: Insufficient role.
+        "409":
+          description: Code conflict within tenant.
+  /api/v1/stores/{store_id}:
+    parameters:
+      - in: path
+        name: store_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Read a store. Caller must have access (per membership policy).
+      operationId: readStore
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "404":
+          description: Not found / no access.
+    patch:
+      summary: Update store fields. Tenant-admin or owner only.
+      operationId: updateStore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreUpdate"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Store"
+        "404":
+          description: Not found / no access.
+    delete:
+      summary: Soft-delete the store.
+      operationId: softDeleteStore
+      responses:
+        "204":
+          description: Soft-deleted.
+        "404":
+          description: Not found / no access.
+components:
+  schemas:
+    Store:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+    StoreCreate:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 64 }
+        name: { type: string, minLength: 1 }
+    StoreUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        is_active: { type: boolean }
+security:
+  - cookieAuth: []
