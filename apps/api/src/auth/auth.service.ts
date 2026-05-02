@@ -1,29 +1,47 @@
 /**
- * AuthService — sign-in only (slice 3a).
+ * AuthService — covers slice 3a (sign-in) plus the slice-3c surface
+ * needed by AuthController (sign-out, refresh, password reset, email
+ * verification). The controller is intentionally thin and delegates
+ * every domain decision here.
  *
- * Refresh, sign-out, password reset, and email verification land in slice
- * 3c (controller + remaining service methods). Rate limiting / account
- * lockout lands in slice 3b — this service accepts a `RateLimiter`
- * interface for the eventual integration but defaults to a no-op so 3a
- * is testable in isolation.
- *
- * FR-ISO-4 / credential-stuffing safety: every failure path throws the
- * SAME `UnauthorizedException`. The exception filter renders it as a 401
- * envelope. We never leak whether an email exists, whether the password
- * was wrong, or whether the user is SSO-only / soft-deleted.
+ * Cross-cutting rules:
+ *   - FR-ISO-4: every sign-in failure path throws the SAME
+ *     UnauthorizedException; we never leak whether an email exists,
+ *     whether the password was wrong, or whether the user is SSO-only /
+ *     soft-deleted. The global exception filter renders a 401 envelope.
+ *   - Password-reset request always reports success to the controller
+ *     (controller returns 202 unconditionally). Whether or not a token
+ *     was actually issued is internal.
+ *   - Token store: password-reset and email-verify reuse the existing
+ *     `auth_tokens` table by adding two new `scope` values
+ *     (`password_reset`, `email_verify`). No schema change.
+ *   - Real email delivery is out of scope. The service calls an injected
+ *     `EmailJobEnqueuer`; the default is `NoOpEmailJobEnqueuer`. T113
+ *     swaps in the real BullMQ producer.
  */
 import {
+  BadRequestException,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
 import { newId } from "@data-pulse-2/shared";
-import { verifyPassword } from "@data-pulse-2/auth";
-import { users } from "@data-pulse-2/db/schema";
+import {
+  generateRawToken,
+  hashPassword,
+  verifyPassword,
+} from "@data-pulse-2/auth";
+import { sessions, users } from "@data-pulse-2/db/schema";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, isNull } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { Pool } from "pg";
 import type { SignInInput, SignInResult } from "./dto";
 import { SessionRepository } from "./session.repository";
+import { AuthTokenRepository } from "./auth-token.repository";
+import {
+  type EmailJobEnqueuer,
+  NoOpEmailJobEnqueuer,
+} from "./email-job.enqueuer";
 
 /**
  * Pre-computed argon2id PHC string used for the constant-time path when
@@ -35,12 +53,24 @@ import { SessionRepository } from "./session.repository";
 const DUMMY_PHC =
   "$argon2id$v=19$m=19456,t=2,p=1$YWJjZGVmZ2hpamtsbW5vcA$YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU";
 
-const ABSOLUTE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24h, per data-model §9.
+const SESSION_ABSOLUTE_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24h, per data-model §9.
+const PASSWORD_RESET_TTL_MS = 15 * 60 * 1000; // 15 min — research.md §PQ-4.
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000; // 24h.
 
 /**
- * Future hook for slice 3b's per-account / per-IP rate limit. The
- * interface is exposed here so dependents can be wired now; the no-op
- * default keeps this slice self-contained.
+ * Auth-token scope strings used by slice 3c. The `auth_tokens.scope`
+ * column is plain text (no schema migration), and pre-existing slice-3a
+ * scopes (`dashboard_api`, `pos`) coexist with these.
+ */
+export const AUTH_TOKEN_SCOPES = {
+  passwordReset: "password_reset",
+  emailVerify: "email_verify",
+} as const;
+
+/**
+ * Slice 3b's RateLimiter is enforced by the controller (per-account /
+ * per-IP), not by this service — the interface here remains so future
+ * call sites can opt in for service-internal limits if ever needed.
  */
 export interface RateLimiter {
   checkAndConsume(key: string): Promise<{ allowed: boolean }>;
@@ -56,31 +86,64 @@ export interface AuthServiceOptions {
   rateLimiter?: RateLimiter;
 }
 
+export interface SignOutResult {
+  /** True on the first revoke call; false if already revoked. */
+  revoked: boolean;
+}
+
+export interface RefreshResult {
+  sessionId: string;
+  userId: string;
+  /** Absolute expiry watermark — unchanged by refresh. */
+  absoluteExpiresAt: Date;
+}
+
 @Injectable()
 export class AuthService {
   private readonly db: NodePgDatabase;
   private readonly rateLimiter: RateLimiter;
+  private readonly emailJobs: EmailJobEnqueuer;
 
   constructor(
     private readonly pool: Pool,
     private readonly sessions: SessionRepository,
+    /**
+     * Required for password-reset and email-verify flows; optional only
+     * so the slice-3a `auth.service.spec.ts` (sign-in only) can construct
+     * the service with two args. Methods that need it throw clearly when
+     * it isn't wired.
+     */
+    private readonly authTokens?: AuthTokenRepository,
+    emailJobs?: EmailJobEnqueuer,
     opts: AuthServiceOptions = {},
   ) {
     this.db = drizzle(pool);
     this.rateLimiter = opts.rateLimiter ?? new NoOpRateLimiter();
+    this.emailJobs = emailJobs ?? new NoOpEmailJobEnqueuer();
   }
+
+  private requireAuthTokens(): AuthTokenRepository {
+    if (!this.authTokens) {
+      throw new Error(
+        "AuthService: AuthTokenRepository not configured (slice-3c methods require it)",
+      );
+    }
+    return this.authTokens;
+  }
+
+  // ---------------------------------------------------------------------
+  // Sign-in (slice 3a)
+  // ---------------------------------------------------------------------
 
   /**
    * Verify credentials and create a dashboard session. Returns the cookie
-   * value (`sessionId`) plus metadata; the controller (slice 3c)
-   * serializes it with the appropriate `HttpOnly; Secure; SameSite=Lax`
-   * attributes.
+   * value (`sessionId`) plus metadata; the controller serializes it
+   * with the appropriate `HttpOnly; Secure; SameSite=Lax` attributes.
    *
    * Throws a uniform UnauthorizedException for ALL failure modes.
    */
   async signIn(input: SignInInput): Promise<SignInResult> {
-    // Slice 3b will check the rate limiter here. The no-op always allows.
-    void this.rateLimiter;
+    void this.rateLimiter; // controller-level limits today
 
     const { email, password } = input;
     const userRow = await this.findActiveUserByEmail(email);
@@ -90,14 +153,12 @@ export class AuthService {
     const phc = userRow?.passwordHash ?? DUMMY_PHC;
     const passwordOk = await verifyPassword(phc, password);
 
-    // Refuse if any of: user missing, soft-deleted, no password (SSO-only),
-    // or wrong password. All paths produce the same exception.
     if (!userRow || userRow.passwordHash === null || !passwordOk) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
     const sessionId = newId();
-    const absoluteExpiresAt = new Date(Date.now() + ABSOLUTE_EXPIRY_MS);
+    const absoluteExpiresAt = new Date(Date.now() + SESSION_ABSOLUTE_EXPIRY_MS);
     await this.sessions.create({
       id: sessionId,
       userId: userRow.id,
@@ -108,8 +169,174 @@ export class AuthService {
       sessionId,
       userId: userRow.id,
       absoluteExpiresAt,
+      user: {
+        id: userRow.id,
+        email: userRow.email,
+        display_name: userRow.displayName,
+        is_platform_admin: userRow.isPlatformAdmin,
+      },
     };
   }
+
+  // ---------------------------------------------------------------------
+  // Sign-out
+  // ---------------------------------------------------------------------
+
+  /**
+   * Idempotent revocation of an existing session. The controller has
+   * already verified — via AuthGuard — that the caller owns the cookie
+   * being revoked, so no additional ownership check is needed.
+   */
+  async signOut(sessionId: string): Promise<SignOutResult> {
+    const revoked = await this.sessions.revoke(sessionId);
+    return { revoked };
+  }
+
+  // ---------------------------------------------------------------------
+  // Refresh
+  // ---------------------------------------------------------------------
+
+  /**
+   * Sliding-window refresh: bumps `last_seen_at` to now without extending
+   * `absolute_expires_at`. The session's hard cap doesn't move, so a
+   * freshly refreshed cookie still expires by the original absolute
+   * watermark. Returns null if the session is no longer active (revoked
+   * mid-flight, or aged past the absolute cap) — the controller renders
+   * that as 401.
+   */
+  async refresh(sessionId: string): Promise<RefreshResult | null> {
+    const session = await this.sessions.findActiveById(sessionId);
+    if (!session) return null;
+    await this.sessions.touchLastSeen(sessionId);
+    return {
+      sessionId: session.id,
+      userId: session.userId,
+      absoluteExpiresAt: session.absoluteExpiresAt,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Password reset
+  // ---------------------------------------------------------------------
+
+  /**
+   * Always succeeds from the caller's perspective. If the email maps to
+   * an active user, issue a one-shot reset token and enqueue the email
+   * job; otherwise do nothing. The controller returns 202 either way.
+   */
+  async requestPasswordReset(input: { email: string }): Promise<void> {
+    const userRow = await this.findActiveUserByEmail(input.email);
+    if (!userRow) return; // silent success — no leak
+
+    const rawToken = generateRawToken();
+    await this.requireAuthTokens().issue(rawToken, {
+      id: newId(),
+      tenantId: null, // platform-scoped: anyone with the link can act
+      userId: userRow.id,
+      deviceId: null,
+      storeId: null,
+      scope: AUTH_TOKEN_SCOPES.passwordReset,
+      expiresAt: new Date(Date.now() + PASSWORD_RESET_TTL_MS),
+    });
+
+    await this.emailJobs.enqueuePasswordReset({
+      email: userRow.email,
+      rawToken,
+      userId: userRow.id,
+    });
+  }
+
+  /**
+   * Confirm a password reset using a token from the email. Throws
+   * BadRequestException for invalid / expired / wrong-scope tokens — the
+   * exception filter renders that as a 400 envelope.
+   *
+   * On success: hash the new password (argon2id), update the user,
+   * revoke the reset token, and revoke ALL of the user's active sessions
+   * so a stolen cookie can't outlive the credential change.
+   */
+  async confirmPasswordReset(input: {
+    rawToken: string;
+    newPassword: string;
+  }): Promise<void> {
+    const repo = this.requireAuthTokens();
+    const tokenRow = await repo.findActiveByRawToken(input.rawToken);
+    if (!tokenRow || tokenRow.scope !== AUTH_TOKEN_SCOPES.passwordReset) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+    if (tokenRow.userId === null) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+    const userId = tokenRow.userId;
+
+    const newHash = await hashPassword(input.newPassword);
+    await this.db
+      .update(users)
+      .set({ passwordHash: newHash, updatedAt: sql`now()` })
+      .where(and(eq(users.id, userId), isNull(users.deletedAt)));
+
+    await repo.revoke(tokenRow.id);
+    await this.revokeAllSessionsForUser(userId);
+  }
+
+  // ---------------------------------------------------------------------
+  // Email verification
+  // ---------------------------------------------------------------------
+
+  /**
+   * Issue a verification token for the signed-in user and enqueue the
+   * email job. The controller has already authenticated the caller via
+   * AuthGuard; we look the user up to read their canonical email.
+   */
+  async requestEmailVerification(input: { userId: string }): Promise<void> {
+    const userRow = await this.findActiveUserById(input.userId);
+    if (!userRow) return; // session referenced a user that vanished
+
+    const rawToken = generateRawToken();
+    await this.requireAuthTokens().issue(rawToken, {
+      id: newId(),
+      tenantId: null,
+      userId: userRow.id,
+      deviceId: null,
+      storeId: null,
+      scope: AUTH_TOKEN_SCOPES.emailVerify,
+      expiresAt: new Date(Date.now() + EMAIL_VERIFY_TTL_MS),
+    });
+
+    await this.emailJobs.enqueueEmailVerification({
+      email: userRow.email,
+      rawToken,
+      userId: userRow.id,
+    });
+  }
+
+  /**
+   * Confirm email verification. Stamps `users.email_verified_at` to now
+   * and revokes the token. Wrong scope / expired / unknown all map to
+   * the same 400 — no information leak.
+   */
+  async confirmEmailVerification(input: { rawToken: string }): Promise<void> {
+    const repo = this.requireAuthTokens();
+    const tokenRow = await repo.findActiveByRawToken(input.rawToken);
+    if (!tokenRow || tokenRow.scope !== AUTH_TOKEN_SCOPES.emailVerify) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+    if (tokenRow.userId === null) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+    const userId = tokenRow.userId;
+
+    await this.db
+      .update(users)
+      .set({ emailVerifiedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(and(eq(users.id, userId), isNull(users.deletedAt)));
+
+    await repo.revoke(tokenRow.id);
+  }
+
+  // ---------------------------------------------------------------------
+  // Internals
+  // ---------------------------------------------------------------------
 
   private async findActiveUserByEmail(email: string) {
     const rows = await this.db
@@ -118,5 +345,27 @@ export class AuthService {
       .where(and(eq(users.email, email), isNull(users.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  private async findActiveUserById(id: string) {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, id), isNull(users.deletedAt)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Revoke every active session belonging to a user. Inlined here so the
+   * slice doesn't extend `SessionRepository` (out of scope per the slice
+   * approval). Uses Drizzle on the same admin pool the rest of the
+   * service shares.
+   */
+  private async revokeAllSessionsForUser(userId: string): Promise<void> {
+    await this.db
+      .update(sessions)
+      .set({ revokedAt: sql`now()` })
+      .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
   }
 }
