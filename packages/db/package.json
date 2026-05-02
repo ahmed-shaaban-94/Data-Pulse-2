@@ -2,7 +2,7 @@
   "name": "@data-pulse-2/db",
   "version": "0.0.0",
   "private": true,
-  "description": "Drizzle schema and explicit SQL migrations. Migration runner CLI, tenant-scoped helpers, and DB session middleware land in later branches.",
+  "description": "Drizzle schema, explicit SQL migrations, and migration runner CLI. Tenant-scoped helpers and DB session middleware land in later branches.",
   "type": "commonjs",
   "main": "src/schema/index.ts",
   "types": "src/schema/index.ts",
@@ -10,15 +10,28 @@
     ".": "./src/schema/index.ts",
     "./schema": "./src/schema/index.ts"
   },
+  "bin": {
+    "data-pulse-migrate": "./dist/cli/migrate.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "jest --passWithNoTests",
+    "migrate:up": "node dist/cli/migrate.js up",
+    "migrate:down": "node dist/cli/migrate.js down",
+    "migrate:status": "node dist/cli/migrate.js status",
     "lint": "echo \"db: lint runs at the repo root\""
   },
   "dependencies": {
-    "drizzle-orm": "0.45.2"
+    "drizzle-orm": "0.45.2",
+    "pg": "8.20.0"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "11.14.0",
+    "@types/jest": "29.5.14",
     "@types/node": "20.17.6",
+    "@types/pg": "8.20.0",
+    "jest": "29.7.0",
+    "ts-jest": "29.2.5",
     "typescript": "5.6.3"
   }
 }
