@@ -15,21 +15,27 @@
  *     └─ RateLimiter
  *          └─ RedisLike      (REDIS_CLIENT — see notes below)
  *
- * Two seams that aren't real yet:
+ * Production wiring per slice (current state):
  *
- *   - REDIS_CLIENT defaults to `AlwaysAllowRedis`, an in-process stub
- *     whose `incr` always returns 1 — i.e. rate limits NEVER trigger
+ *   - REDIS_CLIENT — still defaults to `AlwaysAllowRedis`, an in-process
+ *     stub whose `incr` always returns 1; rate limits NEVER trigger
  *     until a later slice provides an ioredis-backed implementation.
  *     The class name is deliberately blunt so anyone reading the wiring
  *     graph in code review will catch that production needs an override.
  *
- *   - EMAIL_JOB_ENQUEUER defaults to `NoOpEmailJobEnqueuer`. T112/T113
- *     replaces it with a BullMQ producer.
+ *   - EMAIL_JOB_ENQUEUER — slice 4 (T112/T113) wires the BullMQ-backed
+ *     `EmailQueueProducer` when `REDIS_URL` is set. In production with
+ *     `REDIS_URL` missing the factory throws (silently swallowing
+ *     password-reset / email-verify jobs is a safety hazard); in dev /
+ *     test it falls back to `NoOpEmailJobEnqueuer` so machines without
+ *     Redis still boot. The matching email worker / processor lives in
+ *     `apps/worker` and lands in T114/T115.
  *
- * Tests substitute working fakes for both via
+ * Tests substitute working fakes for both seams via
  * `Test.createTestingModule(...).overrideProvider(...)`.
  */
 import { Module } from "@nestjs/common";
+import { Queue } from "bullmq";
 import { Pool } from "pg";
 
 import { AuthController } from "./auth.controller";
@@ -41,8 +47,12 @@ import {
   type EmailJobEnqueuer,
   NoOpEmailJobEnqueuer,
 } from "./email-job.enqueuer";
+import { EmailQueueProducer } from "./email-queue.producer";
 import { RateLimiter, type RedisLike } from "./rate-limit";
 import { SessionRepository } from "./session.repository";
+
+/** Name of the BullMQ queue both the producer and the (future) worker bind to. */
+export const EMAIL_QUEUE_NAME = "email";
 
 export const PG_POOL = "PG_POOL";
 export const REDIS_CLIENT = "REDIS_CLIENT";
@@ -85,7 +95,25 @@ class AlwaysAllowRedis implements RedisLike {
     },
     {
       provide: EMAIL_JOB_ENQUEUER,
-      useClass: NoOpEmailJobEnqueuer,
+      useFactory: (): EmailJobEnqueuer => {
+        const url = process.env["REDIS_URL"];
+        if (!url) {
+          // Fail loud in production: silently dropping password-reset
+          // and email-verify jobs is a safety hazard. Outside production
+          // we fall back to NoOp so devs / CI without Redis still boot.
+          if (process.env["NODE_ENV"] === "production") {
+            throw new Error(
+              "AuthModule: REDIS_URL is required in production " +
+                "(EmailQueueProducer cannot be wired without it).",
+            );
+          }
+          return new NoOpEmailJobEnqueuer();
+        }
+        const queue = new Queue(EMAIL_QUEUE_NAME, {
+          connection: { url },
+        });
+        return new EmailQueueProducer(queue);
+      },
     },
     {
       provide: SessionRepository,
