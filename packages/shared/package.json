@@ -12,7 +12,8 @@
     "./errors/envelope": "./src/errors/envelope.ts",
     "./logger/pino": "./src/logger/pino.ts",
     "./observability/otel": "./src/observability/otel.ts",
-    "./ids/uuid": "./src/ids/uuid.ts"
+    "./ids/uuid": "./src/ids/uuid.ts",
+    "./queues/queue-config": "./src/queues/queue.config.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

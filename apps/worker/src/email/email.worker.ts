@@ -1,20 +1,20 @@
 /**
- * EmailWorker — slice 6 (T090).
+ * EmailWorker — slice 6 (T090) + T301-partial wiring.
  *
  * Thin BullMQ glue. Knows two things and only two things:
  *   1. The queue name (`"email"`, mirroring `apps/api/src/auth/auth.module.ts`).
  *   2. How to delegate `(job.name, job.data)` to the injected
  *      `EmailProcessor` from PR #15.
  *
- * Everything else — retry/backoff/DLQ policy (T092 / T301), provider
- * SDK selection (PQ-1), and metrics — lives in other slices. Keeping
- * this glue layer thin means the BullMQ runtime is contained to one
- * file and unit-tested by injecting a `WorkerFactory` interface.
+ * Everything else — provider SDK selection (PQ-1), per-queue metrics —
+ * lives in other slices. Retry/backoff/DLQ defaults are read from
+ * `@data-pulse-2/shared/queues/queue-config` (single source of truth)
+ * and forwarded to the underlying BullMQ worker via `WorkerFactory`.
  *
  * Why a `WorkerFactory` instead of constructing `new Worker(...)` here?
  * --------------------------------------------------------------------
  *   - Tests can inject a `FakeWorkerFactory` and capture the registered
- *     handler without booting Redis or BullMQ.
+ *     handler + options without booting Redis or BullMQ.
  *   - Production wiring (`worker.module.ts`) injects a
  *     `BullMqWorkerFactory` that builds the real BullMQ `Worker`.
  *   - Same `*Like`-interface pattern PR #14 (`QueueLike`) and PR #15
@@ -22,9 +22,9 @@
  *
  * Lifecycle
  * ---------
- *   - `start()` constructs the underlying worker via the factory and
- *     subscribes to its `"error"` event for diagnostic logging only
- *     (T092 / T301 will configure retry/backoff/DLQ).
+ *   - `start()` constructs the underlying worker via the factory,
+ *     passing `DEFAULT_WORKER_OPTIONS` from shared, and subscribes to
+ *     its `"error"` event for diagnostic logging only.
  *   - `close()` shuts the worker down cleanly (drains in-flight jobs).
  *     Called by Nest's `onModuleDestroy` hook, which `main.ts` triggers
  *     on SIGTERM / SIGINT.
@@ -37,6 +37,10 @@ import {
   Injectable,
   type OnModuleDestroy,
 } from "@nestjs/common";
+import {
+  DEFAULT_WORKER_OPTIONS,
+  type DefaultWorkerOptionsShape,
+} from "@data-pulse-2/shared/queues/queue-config";
 import { EmailProcessor } from "./email.processor";
 
 /**
@@ -72,13 +76,24 @@ export interface WorkerLike {
 }
 
 /**
- * Builds the underlying `WorkerLike` for a given (queueName, handler).
- * Production: `BullMqWorkerFactory` (in `worker.module.ts`) constructs
- * a real `bullmq.Worker`. Dev / test without Redis: `NoOpWorkerFactory`
- * returns a `NoOpWorker` whose `close()` is a no-op.
+ * Worker-side options forwarded to the underlying BullMQ Worker.
+ * Structurally compatible with `DefaultWorkerOptionsShape` from shared.
+ */
+export type WorkerStartOptions = DefaultWorkerOptionsShape;
+
+/**
+ * Builds the underlying `WorkerLike` for a given (queueName, handler,
+ * options). `options` are spread into `new Worker(name, handler,
+ * { connection, ...options })`. Production: `BullMqWorkerFactory`
+ * (`worker.module.ts`) constructs a real `bullmq.Worker`. Dev / test
+ * without Redis: `NoOpWorkerFactory` returns a no-op worker.
  */
 export interface WorkerFactory {
-  create(queueName: string, handler: EmailJobHandler): WorkerLike;
+  create(
+    queueName: string,
+    handler: EmailJobHandler,
+    options: WorkerStartOptions,
+  ): WorkerLike;
 }
 
 export const WORKER_FACTORY = "WORKER_FACTORY";
@@ -95,16 +110,19 @@ export class EmailWorker implements OnModuleDestroy {
 
   /**
    * Constructs the BullMQ worker and starts consuming. Idempotent:
-   * a second `start()` is a no-op.
+   * a second `start()` is a no-op. The `DEFAULT_WORKER_OPTIONS` from
+   * `@data-pulse-2/shared` (concurrency, lockDuration, stalledInterval,
+   * maxStalledCount) are forwarded to the underlying worker.
    */
   start(): void {
     if (this.worker !== null) return;
     this.worker = this.workerFactory.create(
       EMAIL_QUEUE_NAME,
       (job) => this.processor.process(job.name, job.data),
+      DEFAULT_WORKER_OPTIONS,
     );
     this.worker.on("error", (err) => {
-      // Diagnostic only. Retry/DLQ policy belongs to T092 / T301.
+      // Diagnostic only. The defaults read from shared own retry/DLQ.
       // Stderr is structured-ish JSON without PII.
       const line = JSON.stringify({
         level: "error",

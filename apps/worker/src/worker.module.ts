@@ -37,7 +37,7 @@
  *   - Real provider SDK — PQ-1.
  */
 import { Module } from "@nestjs/common";
-import { Worker as BullMqWorker } from "bullmq";
+import { Worker as BullMqWorker, type WorkerOptions } from "bullmq";
 
 import {
   EMAIL_ADAPTER,
@@ -50,6 +50,7 @@ import {
   EmailWorker,
   type WorkerFactory,
   type WorkerLike,
+  type WorkerStartOptions,
   WORKER_FACTORY,
 } from "./email/email.worker";
 
@@ -60,15 +61,27 @@ import {
  * Connection: `{ url: REDIS_URL }`. We do NOT eagerly construct an
  * `ioredis` client here — BullMQ owns its own connection lifecycle and
  * the URL form is the simplest production-safe wiring.
+ *
+ * `options` are spread into the `new Worker(...)` call so the shared
+ * `DEFAULT_WORKER_OPTIONS` (concurrency, lockDuration, stalled-job
+ * tuning) flow through unchanged.
  */
 export class BullMqWorkerFactory implements WorkerFactory {
   constructor(private readonly redisUrl: string) {}
 
-  create(queueName: string, handler: EmailJobHandler): WorkerLike {
+  create(
+    queueName: string,
+    handler: EmailJobHandler,
+    options: WorkerStartOptions,
+  ): WorkerLike {
+    const workerOpts: WorkerOptions = {
+      connection: { url: this.redisUrl },
+      ...options,
+    };
     return new BullMqWorker(
       queueName,
       async (job) => handler({ name: job.name, data: job.data }),
-      { connection: { url: this.redisUrl } },
+      workerOpts,
     );
   }
 }
@@ -77,9 +90,16 @@ export class BullMqWorkerFactory implements WorkerFactory {
  * Dev / test fallback. `start()` and `close()` are no-ops; no jobs are
  * ever consumed. The class name is loud so a deployment that ships
  * with this active is obvious in the dependency graph.
+ *
+ * Accepts the same options arg as `BullMqWorkerFactory` for interface
+ * parity, then ignores it.
  */
 export class NoOpWorkerFactory implements WorkerFactory {
-  create(_queueName: string, _handler: EmailJobHandler): WorkerLike {
+  create(
+    _queueName: string,
+    _handler: EmailJobHandler,
+    _options: WorkerStartOptions,
+  ): WorkerLike {
     return {
       on: () => undefined,
       close: async () => {

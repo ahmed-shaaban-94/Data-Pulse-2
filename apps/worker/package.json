@@ -12,6 +12,7 @@
     "lint": "echo \"worker: lint runs at the repo root\""
   },
   "dependencies": {
+    "@data-pulse-2/shared": "workspace:*",
     "@nestjs/common": "11.1.19",
     "@nestjs/core": "11.1.19",
     "bullmq": "5.76.5",
