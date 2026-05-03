@@ -1,33 +1,33 @@
 # @data-pulse-2/db
 
-PostgreSQL schema, migrations, and tenant-scoped query helpers for the
-Data-Pulse-2 backend. Postgres is the system of record (Constitution III).
+PostgreSQL schema, migrations, tenant context middleware, and tenant-scoped
+query helpers for Data-Pulse-2.
 
-## Planned contents (not yet implemented)
+## Current Surface
 
-Per [data-model.md](../../specs/001-foundation-auth-tenant-store/data-model.md)
-and [tasks T050–T073](../../specs/001-foundation-auth-tenant-store/tasks.md):
+- Drizzle schema files under `src/schema`.
+- Explicit SQL migrations under `drizzle`, including `0000_initial.sql` and
+  `0000_initial.down.sql`.
+- Migration runner CLI under `src/cli/migrate.ts`.
+- Tenant-scoped query helper in `src/helpers/with-tenant.ts`.
+- Database tenant context middleware in `src/middleware/tenant-context.ts`.
 
-- **Drizzle schema files** under `src/schema/` — `users`, `tenants`, `stores`,
-  `memberships`, `store_access`, `roles`, `permissions`, `role_permissions`,
-  `sessions`, `auth_tokens`, `invitations`, `audit_events`, `idempotency_keys`.
-- **Explicit SQL migrations** under `drizzle/` — `0000_initial.sql` (+ `.down.sql`)
-  creating all tables, FKs, partial uniques, CHECK constraints, RLS policies,
-  and `updated_at` triggers per `data-model.md`. Tool-agnostic.
-- **`withTenant(tx, tenantId)` helper** — query proxy that injects
-  `WHERE tenant_id = :tenantId` automatically for tenant-scoped queries.
-- **DB session middleware** — issues `SET LOCAL app.current_tenant` and
-  `SET LOCAL app.is_platform_admin` per transaction so RLS policies apply.
-- **Migration runner CLI** — `pnpm migrate` walks the `drizzle/` folder.
+## Commands
 
-## Status
+```bash
+pnpm --filter @data-pulse-2/db build
+pnpm --filter @data-pulse-2/db test
+pnpm --filter @data-pulse-2/db migrate:up
+pnpm --filter @data-pulse-2/db migrate:down
+pnpm --filter @data-pulse-2/db migrate:status
+```
 
-Skeleton only. The `migrate` script is currently a no-op so the root
-`pnpm -r --if-present run migrate` command exits cleanly. No `src/`,
-no `drizzle/`, no dependencies yet. Implementation lands in a later branch.
+Migration commands run against `DATABASE_URL` after the package is built.
 
-## Constitution alignment
+## Design Principles
 
-When implemented, this package enforces Constitution Principle II
-(multi-tenant scoping at the DB layer) and Principle III (data integrity via
-foreign keys, CHECK constraints, partial unique indexes, and RLS policies).
+- PostgreSQL is the source of truth.
+- Tenant-owned access must be scoped at the database and API layers.
+- Migrations are reviewable release artifacts, not incidental generated output.
+- Redis-backed helpers may support runtime behavior, but durable state belongs
+  in PostgreSQL.
