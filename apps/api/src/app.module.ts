@@ -1,19 +1,22 @@
 import { Module } from "@nestjs/common";
 
 import { AuthModule } from "./auth/auth.module";
+import { ContextModule } from "./context/context.module";
 
 /**
  * Root module.
  *
- * Slice 3c lights up `AuthModule` (the first domain module to expose
- * routes). The remaining domain modules — TenantsModule, StoresModule,
- * MembershipsModule, ContextModule, AuditModule — land in later
- * Phase-3 slices. Cross-cutting interceptors, the global filter, and
- * the global Zod pipe are still registered in `main.ts`, so this module
- * just imports its children.
+ * Domain modules wired so far:
+ *   - `AuthModule`     — sign-in, sign-out, refresh, password-reset (slice 3c)
+ *   - `ContextModule`  — active tenant/store switching (US3, this slice)
+ *
+ * The remaining domain modules — TenantsModule, StoresModule,
+ * MembershipsModule, AuditModule — land in later Phase-3 slices.
+ * Cross-cutting interceptors, the global filter, and the global Zod
+ * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, ContextModule],
   controllers: [],
   providers: [],
 })

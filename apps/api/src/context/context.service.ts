@@ -1,0 +1,330 @@
+/**
+ * ContextService — slice 11 (T153).
+ *
+ * Orchestrates active tenant / store switching for an authenticated
+ * session, plus the read-side `GET /context/me` payload. Conforms to
+ * `specs/001-foundation-auth-tenant-store/contracts/context.openapi.yaml`.
+ *
+ * Cross-cutting policies (FR-CTX, FR-ISO-4)
+ * ----------------------------------------
+ *   - **Cross-tenant / cross-store rejections are 404, never 403.**
+ *     `NotFoundException` makes "wrong tenant" indistinguishable from
+ *     "doesn't exist" — defeats tenant-enumeration side channels
+ *     (FR-ISO-4).
+ *   - **No active tenant when switching store → 409**
+ *     (`ConflictException`). The OpenAPI contract dedicates this
+ *     status to the "must switch tenant first" UX.
+ *   - **Tenant switch auto-clears active store.**
+ *     [contracts/context.openapi.yaml line 41]: "Active tenant
+ *     switched. Active store is cleared."
+ *   - **Token principals cannot switch context.** Tokens carry their
+ *     tenant binding from issuance (PR #19 design); changing it
+ *     server-side would silently void the issuer's contract.
+ *     `BadRequestException` with a clear diagnostic.
+ *
+ * Design seams
+ * ------------
+ *   - Reads/writes session active-context via `SessionRepository`.
+ *     `updateActiveContext` returns `null` on revoked/missing
+ *     sessions; we map to `UnauthorizedException` (TOCTOU).
+ *   - Validates membership / store-access via `MembershipRepository`.
+ *     Reuses `findActiveMembership` and `canAccessStore` from PR #19;
+ *     `listForUser`, `findTenantSummary`, `findStoreSummary`,
+ *     `findUserSummary` are this slice's additions.
+ *   - Platform-admin sessions bypass the per-tenant membership check
+ *     (FR-TEN-6). `active_role_code` is `null` for platform admins
+ *     unless they happen to have a normal membership too.
+ *
+ * What this service does NOT do
+ * -----------------------------
+ *   - Audit context switches. The interceptor / emitter for that
+ *     lands with US6 (T230+). The header here documents the seam.
+ *   - Auto-set active tenant on first sign-in for users with exactly
+ *     one membership. Spec §6.6 mentions this but it's an
+ *     `AuthService`-layer decision, deferred.
+ *   - Run inside `runRequestScopedTenantContext`. The context
+ *     endpoints are intentionally NOT tenant-guarded (you must be
+ *     able to switch FROM no-context); they read auxiliary tables
+ *     directly via `MembershipRepository`'s plain-Pool surface.
+ */
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import type { Principal } from "../auth/auth.guard";
+import { SessionRepository } from "../auth/session.repository";
+import {
+  MembershipRepository,
+  type MembershipSummary,
+  type StoreSummary,
+  type TenantSummary,
+} from "./membership.repository";
+
+/**
+ * Shape returned by every endpoint of this controller. Mirrors
+ * `ContextResponse` from `context.openapi.yaml`. Snake-case keys
+ * because that's the wire shape; the controller hands this back
+ * verbatim.
+ */
+export interface ContextResponseBody {
+  readonly user: {
+    readonly id: string;
+    readonly email: string;
+    readonly display_name: string | null;
+    readonly is_platform_admin: boolean;
+  };
+  readonly active_tenant: TenantSummary | null;
+  readonly active_store: StoreSummary | null;
+  readonly active_role_code: string | null;
+  readonly memberships: ReadonlyArray<{
+    readonly tenant_id: string;
+    readonly tenant_name: string;
+    readonly role_code: string;
+    readonly store_access_kind: MembershipSummary["storeAccessKind"];
+    readonly accessible_store_ids: readonly string[];
+  }>;
+}
+
+@Injectable()
+export class ContextService {
+  constructor(
+    private readonly sessions: SessionRepository,
+    private readonly memberships: MembershipRepository,
+  ) {}
+
+  // ----- READ -------------------------------------------------------
+
+  async getActiveContext(principal: Principal): Promise<ContextResponseBody> {
+    if (principal.kind === "session") {
+      return this.getActiveContextForSession(principal);
+    }
+    return this.getActiveContextForToken(principal);
+  }
+
+  // ----- SWITCH TENANT ---------------------------------------------
+
+  async switchTenant(
+    principal: Principal,
+    tenantId: string,
+  ): Promise<ContextResponseBody> {
+    if (principal.kind !== "session") {
+      throw tokenCannotSwitch();
+    }
+
+    // Validate the user has an active membership in the requested
+    // tenant — UNLESS they're a platform admin (FR-TEN-6).
+    const isPlatformAdmin = await this.memberships.isPlatformAdmin(
+      principal.userId,
+    );
+    if (!isPlatformAdmin) {
+      const membership = await this.memberships.findActiveMembership(
+        principal.userId,
+        tenantId,
+      );
+      if (!membership) throw notFound();
+    } else {
+      // Platform admin: still must verify the tenant exists. Otherwise
+      // a typo'd UUID would silently set the active tenant to a
+      // non-existent one and downstream queries would mysteriously
+      // return zero rows.
+      const tenantSummary = await this.memberships.findTenantSummary(
+        tenantId,
+      );
+      if (!tenantSummary) throw notFound();
+    }
+
+    const updated = await this.sessions.updateActiveContext(
+      principal.sessionId,
+      { activeTenantId: tenantId, activeStoreId: null },
+    );
+    if (!updated) throw unauthorized();
+
+    return this.buildResponse(principal.userId, tenantId, null);
+  }
+
+  // ----- SWITCH STORE ----------------------------------------------
+
+  async switchStore(
+    principal: Principal,
+    storeId: string,
+  ): Promise<ContextResponseBody> {
+    if (principal.kind !== "session") {
+      throw tokenCannotSwitch();
+    }
+
+    const session = await this.sessions.findActiveById(principal.sessionId);
+    if (!session) throw unauthorized();
+    if (!session.activeTenantId) {
+      throw new ConflictException(
+        "No active tenant set. Switch tenant before switching store.",
+      );
+    }
+    const tenantId = session.activeTenantId;
+
+    const isPlatformAdmin = await this.memberships.isPlatformAdmin(
+      principal.userId,
+    );
+
+    if (!isPlatformAdmin) {
+      const membership = await this.memberships.findActiveMembership(
+        principal.userId,
+        tenantId,
+      );
+      if (!membership) throw notFound();
+      const allowed = await this.memberships.canAccessStore(
+        membership.membershipId,
+        tenantId,
+        storeId,
+        membership.storeAccessKind,
+      );
+      if (!allowed) throw notFound();
+    } else {
+      // Platform admin: only the store-belongs-to-tenant check
+      // applies. The 'all' branch of canAccessStore does exactly
+      // that; the synthetic membershipId is unused for kind='all'.
+      const allowed = await this.memberships.canAccessStore(
+        "00000000-0000-0000-0000-000000000000",
+        tenantId,
+        storeId,
+        "all",
+      );
+      if (!allowed) throw notFound();
+    }
+
+    const updated = await this.sessions.updateActiveContext(
+      principal.sessionId,
+      { activeTenantId: tenantId, activeStoreId: storeId },
+    );
+    if (!updated) throw unauthorized();
+
+    return this.buildResponse(principal.userId, tenantId, storeId);
+  }
+
+  // ----- CLEAR STORE ------------------------------------------------
+
+  async clearStore(principal: Principal): Promise<ContextResponseBody> {
+    if (principal.kind !== "session") {
+      throw tokenCannotSwitch();
+    }
+    const session = await this.sessions.findActiveById(principal.sessionId);
+    if (!session) throw unauthorized();
+
+    // Idempotent: if already null, the UPDATE is still issued so the
+    // response reflects the current state. The DB write is cheap.
+    const updated = await this.sessions.updateActiveContext(
+      principal.sessionId,
+      {
+        activeTenantId: session.activeTenantId,
+        activeStoreId: null,
+      },
+    );
+    if (!updated) throw unauthorized();
+
+    return this.buildResponse(principal.userId, session.activeTenantId, null);
+  }
+
+  // ----- INTERNALS --------------------------------------------------
+
+  private async getActiveContextForSession(
+    principal: Extract<Principal, { kind: "session" }>,
+  ): Promise<ContextResponseBody> {
+    const session = await this.sessions.findActiveById(principal.sessionId);
+    if (!session) throw unauthorized();
+    return this.buildResponse(
+      principal.userId,
+      session.activeTenantId,
+      session.activeStoreId,
+    );
+  }
+
+  private async getActiveContextForToken(
+    principal: Extract<Principal, { kind: "token" }>,
+  ): Promise<ContextResponseBody> {
+    // Tokens carry a fixed tenantId (or null for platform-scoped).
+    // No session row exists; we render whatever the token claims.
+    const userId = principal.userId;
+    if (!userId) {
+      // Platform-scoped tokens with no user (rare) — surface a stub
+      // payload that's still contract-shaped. The user object's
+      // fields are placeholders; downstream callers shouldn't lean
+      // on `/me` for token-only flows.
+      return {
+        user: {
+          id: "",
+          email: "",
+          display_name: null,
+          is_platform_admin: true,
+        },
+        active_tenant: principal.tenantId
+          ? await this.memberships.findTenantSummary(principal.tenantId)
+          : null,
+        active_store: null,
+        active_role_code: null,
+        memberships: [],
+      };
+    }
+    return this.buildResponse(userId, principal.tenantId, null);
+  }
+
+  private async buildResponse(
+    userId: string,
+    activeTenantId: string | null,
+    activeStoreId: string | null,
+  ): Promise<ContextResponseBody> {
+    const [user, summaries] = await Promise.all([
+      this.memberships.findUserSummary(userId),
+      this.memberships.listForUser(userId),
+    ]);
+    if (!user) throw unauthorized();
+
+    const activeTenant = activeTenantId
+      ? await this.memberships.findTenantSummary(activeTenantId)
+      : null;
+    const activeStore = activeStoreId
+      ? await this.memberships.findStoreSummary(activeStoreId)
+      : null;
+
+    const activeMembership = activeTenantId
+      ? summaries.find((m) => m.tenantId === activeTenantId)
+      : undefined;
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        display_name: user.displayName,
+        is_platform_admin: user.isPlatformAdmin,
+      },
+      active_tenant: activeTenant,
+      active_store: activeStore,
+      active_role_code: activeMembership?.roleCode ?? null,
+      memberships: summaries.map((m) => ({
+        tenant_id: m.tenantId,
+        tenant_name: m.tenantName,
+        role_code: m.roleCode,
+        store_access_kind: m.storeAccessKind,
+        accessible_store_ids: m.accessibleStoreIds,
+      })),
+    };
+  }
+}
+
+function notFound(): NotFoundException {
+  // 404 (not 403) per FR-ISO-4 — error responses must NOT distinguish
+  // "resource exists in another tenant" from "resource does not exist".
+  return new NotFoundException("Not Found");
+}
+
+function unauthorized(): UnauthorizedException {
+  return new UnauthorizedException("Unauthorized");
+}
+
+function tokenCannotSwitch(): BadRequestException {
+  return new BadRequestException(
+    "Tokens cannot switch context. Token tenant/store binding is fixed " +
+      "at issuance — issue a new token instead.",
+  );
+}
