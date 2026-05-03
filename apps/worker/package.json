@@ -2,16 +2,22 @@
   "name": "@data-pulse-2/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "NestJS standalone + BullMQ workers (email, audit-fanout, session-revoke). Email processor + provider-agnostic adapter; queue/Redis bootstrap and provider wiring deferred (T090, T301, PQ-1).",
+  "description": "NestJS standalone + BullMQ workers (email, audit-fanout, session-revoke). Email processor + provider-agnostic adapter; bootstrap consumes the BullMQ 'email' queue. Retry/backoff/DLQ policy deferred (T092, T301); real provider deferred (PQ-1).",
   "type": "commonjs",
+  "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
     "test": "jest --passWithNoTests",
     "lint": "echo \"worker: lint runs at the repo root\""
   },
   "dependencies": {
     "@nestjs/common": "11.1.19",
+    "@nestjs/core": "11.1.19",
+    "bullmq": "5.76.5",
+    "ioredis": "5.10.1",
     "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
     "zod": "3.23.8"
   },
   "devDependencies": {
