@@ -113,6 +113,49 @@ export class SessionRepository {
   }
 
   /**
+   * Update the session's `active_tenant_id` and `active_store_id`
+   * atomically. Used by the ContextController's switch / clear
+   * endpoints (T153).
+   *
+   * Behaviour:
+   *   - Both fields are written in a single UPDATE — tenant-switch
+   *     passes `activeStoreId: null` to auto-clear the store
+   *     (FR-CTX implicit; see context.openapi.yaml line 41).
+   *   - Returns the updated row (post-UPDATE state) via `RETURNING`
+   *     so callers can render the new context without a follow-up
+   *     `findActiveById`.
+   *   - `revoked_at IS NULL` guards against switching context on a
+   *     revoked session — returns `null` in that case (caller maps
+   *     to 401).
+   *   - The Redis read-through cache is invalidated so the next
+   *     AuthGuard / TenantContextGuard read in another request sees
+   *     fresh data.
+   *
+   * No CHECK is performed at this layer that the store belongs to the
+   * tenant — the DB CHECK constraint on the `sessions` table enforces
+   * Invariant I-4. The controller validates upstream so this method
+   * is never asked to write an invalid combination.
+   */
+  async updateActiveContext(
+    id: string,
+    next: {
+      activeTenantId: string | null;
+      activeStoreId: string | null;
+    },
+  ): Promise<SessionRow | null> {
+    const rows = await this.db
+      .update(sessions)
+      .set({
+        activeTenantId: next.activeTenantId,
+        activeStoreId: next.activeStoreId,
+      })
+      .where(and(eq(sessions.id, id), isNull(sessions.revokedAt)))
+      .returning();
+    await this.cache.invalidate(id);
+    return rows[0] ?? null;
+  }
+
+  /**
    * Server-initiated revocation (sign-out, admin revoke). Idempotent — a
    * second revoke on the same row is a no-op for the application but
    * fast-paths via `revoked_at IS NULL` so we don't overwrite a prior

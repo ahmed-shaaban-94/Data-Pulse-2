@@ -162,6 +162,15 @@ class AlwaysAllowRedis implements RedisLike {
       inject: [PG_POOL, SessionRepository, AuthTokenRepository, EMAIL_JOB_ENQUEUER],
     },
   ],
-  exports: [AuthService, AuthGuard, SessionRepository, AuthTokenRepository],
+  exports: [
+    AuthService,
+    AuthGuard,
+    SessionRepository,
+    AuthTokenRepository,
+    // PG_POOL is exported so downstream modules (ContextModule, future
+    // tenant/store modules) can share the single connection pool
+    // rather than provisioning their own.
+    PG_POOL,
+  ],
 })
 export class AuthModule {}

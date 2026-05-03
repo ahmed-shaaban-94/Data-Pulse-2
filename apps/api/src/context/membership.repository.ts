@@ -40,8 +40,10 @@
 import { Injectable } from "@nestjs/common";
 import {
   memberships,
+  roles,
   storeAccess,
   stores,
+  tenants,
   users,
   type StoreAccessKind,
 } from "@data-pulse-2/db/schema";
@@ -58,6 +60,39 @@ import type { Pool } from "pg";
 export interface ActiveMembership {
   readonly membershipId: string;
   readonly storeAccessKind: StoreAccessKind;
+}
+
+/**
+ * Membership row decorated for the `ContextResponse.memberships[]`
+ * payload. Joins `memberships` → `tenants` and `roles`, plus an
+ * inline aggregation of `store_access` rows for `kind='specific'`.
+ */
+export interface MembershipSummary {
+  readonly tenantId: string;
+  readonly tenantName: string;
+  readonly roleCode: string;
+  readonly storeAccessKind: StoreAccessKind;
+  /**
+   * For `kind='all'` this is `[]` — semantically "every store in the
+   * tenant"; the dashboard treats `kind='all'` as a wildcard rather
+   * than enumerating. For `kind='specific'`, the explicit list of
+   * granted store IDs.
+   */
+  readonly accessibleStoreIds: readonly string[];
+}
+
+/** Tenant decoration for the active-tenant slot of `ContextResponse`. */
+export interface TenantSummary {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+}
+
+/** Store decoration for the active-store slot of `ContextResponse`. */
+export interface StoreSummary {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
 }
 
 @Injectable()
@@ -167,5 +202,130 @@ export class MembershipRepository {
       )
       .limit(1);
     return grantRows.length > 0;
+  }
+
+  /**
+   * List every active membership the user has, decorated with the
+   * tenant name, role code, and accessible-store IDs (for
+   * `kind='specific'`).
+   *
+   * Used by `GET /api/v1/context/me` to populate the `memberships[]`
+   * array. We issue one query per membership for `accessible_store_ids`
+   * — at typical scale (a user belongs to ≤ 5 tenants, ≤ tens of
+   * stores per membership) this is bounded and cache-friendly. A
+   * future Redis cache (FR-AUTH-6) will fold this into a single
+   * lookup.
+   */
+  async listForUser(userId: string): Promise<readonly MembershipSummary[]> {
+    const baseRows = await this.db
+      .select({
+        membershipId: memberships.id,
+        tenantId: memberships.tenantId,
+        tenantName: tenants.name,
+        roleCode: roles.code,
+        storeAccessKind: memberships.storeAccessKind,
+      })
+      .from(memberships)
+      .innerJoin(tenants, eq(tenants.id, memberships.tenantId))
+      .innerJoin(roles, eq(roles.id, memberships.roleId))
+      .where(
+        and(
+          eq(memberships.userId, userId),
+          isNull(memberships.revokedAt),
+          isNull(memberships.deletedAt),
+          isNull(tenants.deletedAt),
+        ),
+      );
+
+    const summaries: MembershipSummary[] = [];
+    for (const row of baseRows) {
+      const kind = row.storeAccessKind as StoreAccessKind;
+      let accessible: readonly string[] = [];
+      if (kind === "specific") {
+        const grantRows = await this.db
+          .select({ storeId: storeAccess.storeId })
+          .from(storeAccess)
+          .innerJoin(stores, eq(stores.id, storeAccess.storeId))
+          .where(
+            and(
+              eq(storeAccess.membershipId, row.membershipId),
+              isNull(stores.deletedAt),
+            ),
+          );
+        accessible = grantRows.map((r) => r.storeId);
+      }
+      summaries.push({
+        tenantId: row.tenantId,
+        tenantName: row.tenantName,
+        roleCode: row.roleCode,
+        storeAccessKind: kind,
+        accessibleStoreIds: accessible,
+      });
+    }
+    return summaries;
+  }
+
+  /**
+   * Tenant decoration for the active-tenant slot of `ContextResponse`.
+   * Returns `null` when the tenant doesn't exist or is soft-deleted —
+   * caller treats that as "no active context" (a session whose
+   * `active_tenant_id` points at a now-deleted tenant should
+   * gracefully resolve to `null` rather than fail).
+   */
+  async findTenantSummary(tenantId: string): Promise<TenantSummary | null> {
+    const rows = await this.db
+      .select({
+        id: tenants.id,
+        slug: tenants.slug,
+        name: tenants.name,
+      })
+      .from(tenants)
+      .where(and(eq(tenants.id, tenantId), isNull(tenants.deletedAt)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Store decoration for the active-store slot of `ContextResponse`.
+   * Returns `null` for missing or soft-deleted stores. Same rationale
+   * as `findTenantSummary` — the controller already validated access
+   * before writing the active store, but a stale ID can survive a
+   * soft-delete; rendering null is the graceful path.
+   */
+  async findStoreSummary(storeId: string): Promise<StoreSummary | null> {
+    const rows = await this.db
+      .select({
+        id: stores.id,
+        code: stores.code,
+        name: stores.name,
+      })
+      .from(stores)
+      .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Public-facing user summary for the `ContextResponse.user` slot.
+   * Returns `null` for missing or soft-deleted users — defensive,
+   * since the AuthGuard already validated the principal.
+   */
+  async findUserSummary(userId: string): Promise<{
+    readonly id: string;
+    readonly email: string;
+    readonly displayName: string | null;
+    readonly isPlatformAdmin: boolean;
+  } | null> {
+    const rows = await this.db
+      .select({
+        id: users.id,
+        email: users.email,
+        displayName: users.displayName,
+        isPlatformAdmin: users.isPlatformAdmin,
+      })
+      .from(users)
+      .where(and(eq(users.id, userId), isNull(users.deletedAt)))
+      .limit(1);
+    return rows[0] ?? null;
   }
 }
