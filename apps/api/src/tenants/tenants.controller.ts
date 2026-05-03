@@ -1,0 +1,155 @@
+/**
+ * TenantsController — slice 12 (T131).
+ *
+ * Implements the five tenant-CRUD endpoints in
+ * `specs/001-foundation-auth-tenant-store/contracts/tenants.openapi.yaml`
+ * (excluding `/members`, deferred to a separate slice):
+ *
+ *     GET    /api/v1/tenants              listTenants
+ *     POST   /api/v1/tenants              createTenant      [platform-admin]
+ *     GET    /api/v1/tenants/:id          readTenant
+ *     PATCH  /api/v1/tenants/:id          updateTenant
+ *     DELETE /api/v1/tenants/:id          softDeleteTenant  [platform-admin]
+ *
+ * Why this controller is NOT guarded by `TenantContextGuard`
+ * ---------------------------------------------------------
+ * Tenant ID for `:id`-routes comes from the URL **path**, NOT from
+ * `request.context.tenantId`. The TenantContextGuard / ALS pipeline
+ * (PRs #19/#20) is for store-scoped and active-tenant-scoped
+ * operations; tenant-admin work on a specific tenant ID is
+ * fundamentally different — the path IS the context. The service
+ * therefore calls `runWithTenantContext` directly with the path
+ * tenant id, NOT `runRequestScopedTenantContext`.
+ *
+ * Cross-cutting policies (consistent with prior controllers)
+ * ---------------------------------------------------------
+ *   - Bodies validated by `ZodValidationPipe`. Bad bodies bubble as
+ *     `ZodError` and the global filter renders them as 400
+ *     `validation_error` envelopes.
+ *   - All thrown exceptions (`UnauthorizedException`,
+ *     `NotFoundException`, `ForbiddenException`, `ConflictException`)
+ *     pass through `GlobalExceptionFilter` to the canonical envelope.
+ *   - 403 vs 404 split documented in TenantsService header.
+ */
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
+import { AuthGuard, type AuthedRequest } from "../auth/auth.guard";
+import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import {
+  TenantCreateSchema,
+  TenantUpdateSchema,
+  type TenantCreateInput,
+  type TenantUpdateInput,
+} from "./dto";
+import { TenantsService } from "./tenants.service";
+import type { TenantRecord } from "./tenants.repository";
+
+/**
+ * Wire-shape (snake_case) for the tenant summary response. Matches
+ * `TenantSummary` from the OpenAPI contract.
+ */
+interface TenantSummaryBody {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+/**
+ * Wire-shape for the full tenant response. Matches `Tenant` from the
+ * OpenAPI contract.
+ */
+interface TenantBody extends TenantSummaryBody {
+  status: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+function toSummaryBody(record: TenantRecord): TenantSummaryBody {
+  return { id: record.id, slug: record.slug, name: record.name };
+}
+
+function toFullBody(record: TenantRecord): TenantBody {
+  return {
+    id: record.id,
+    slug: record.slug,
+    name: record.name,
+    status: record.status,
+    created_at: record.createdAt.toISOString(),
+    updated_at: record.updatedAt.toISOString(),
+    deleted_at: record.deletedAt ? record.deletedAt.toISOString() : null,
+  };
+}
+
+@Controller("api/v1/tenants")
+@UseGuards(AuthGuard)
+export class TenantsController {
+  constructor(private readonly tenantsService: TenantsService) {}
+
+  @Get()
+  async list(@Req() request: AuthedRequest): Promise<TenantSummaryBody[]> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    const records = await this.tenantsService.list(principal);
+    return records.map(toSummaryBody);
+  }
+
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  async create(
+    @Req() request: AuthedRequest,
+    @Body(new ZodValidationPipe(TenantCreateSchema)) body: TenantCreateInput,
+  ): Promise<TenantBody> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    const record = await this.tenantsService.create(principal, body);
+    return toFullBody(record);
+  }
+
+  @Get(":id")
+  async read(
+    @Req() request: AuthedRequest,
+    @Param("id", new ParseUUIDPipe()) tenantId: string,
+  ): Promise<TenantBody> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    const record = await this.tenantsService.read(principal, tenantId);
+    return toFullBody(record);
+  }
+
+  @Patch(":id")
+  async update(
+    @Req() request: AuthedRequest,
+    @Param("id", new ParseUUIDPipe()) tenantId: string,
+    @Body(new ZodValidationPipe(TenantUpdateSchema)) body: TenantUpdateInput,
+  ): Promise<TenantBody> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    const record = await this.tenantsService.update(principal, tenantId, body);
+    return toFullBody(record);
+  }
+
+  @Delete(":id")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async softDelete(
+    @Req() request: AuthedRequest,
+    @Param("id", new ParseUUIDPipe()) tenantId: string,
+  ): Promise<void> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    await this.tenantsService.softDelete(principal, tenantId);
+  }
+}

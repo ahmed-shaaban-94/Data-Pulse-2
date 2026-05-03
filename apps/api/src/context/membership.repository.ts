@@ -306,6 +306,36 @@ export class MembershipRepository {
   }
 
   /**
+   * Look up the role code (e.g., `'tenant_admin'`, `'owner'`) for a
+   * user's active membership in a given tenant. Returns `null` if no
+   * active membership exists.
+   *
+   * Used by `TenantsService` to authorize `PATCH /tenants/:id` —
+   * inline pending the `RolesGuard` / `@Roles()` refactor in
+   * T200/T201, which will collapse this lookup into decorator
+   * metadata.
+   */
+  async findRoleCodeForUserInTenant(
+    userId: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const rows = await this.db
+      .select({ code: roles.code })
+      .from(memberships)
+      .innerJoin(roles, eq(roles.id, memberships.roleId))
+      .where(
+        and(
+          eq(memberships.userId, userId),
+          eq(memberships.tenantId, tenantId),
+          isNull(memberships.revokedAt),
+          isNull(memberships.deletedAt),
+        ),
+      )
+      .limit(1);
+    return rows[0]?.code ?? null;
+  }
+
+  /**
    * Public-facing user summary for the `ContextResponse.user` slot.
    * Returns `null` for missing or soft-deleted users — defensive,
    * since the AuthGuard already validated the principal.
