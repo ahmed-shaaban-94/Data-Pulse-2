@@ -1,32 +1,42 @@
 # @data-pulse-2/api
 
-NestJS backend API for Data-Pulse-2.
+NestJS HTTP API for the Data-Pulse-2 backend foundation.
 
-## Planned contents (not yet implemented)
+## Current Surface
 
-Per [plan §3](../../specs/001-foundation-auth-tenant-store/plan.md) and
-[tasks T080–T235](../../specs/001-foundation-auth-tenant-store/tasks.md):
+- `AuthModule` for sign-in, sign-out, refresh, password reset, session
+  persistence, auth token lookup, and email job enqueueing.
+- `ContextModule` for active tenant and store context selection.
+- Global request ID, logging, context, exception envelope, and Zod validation
+  infrastructure.
+- OpenAPI contract loading from `packages/contracts/openapi`.
+- Helmet and cookie parsing middleware.
 
-- Nest bootstrap (`src/main.ts`, `src/app.module.ts`, `nest-cli.json`).
-- Cross-cutting interceptors: `RequestIdInterceptor`, `LoggingInterceptor`,
-  `AuditEmitter`.
-- Global `ZodValidationPipe` and uniform `ExceptionFilter` (error envelope).
-- Modules: `AuthModule`, `ContextModule`, `TenantsModule`, `StoresModule`,
-  `MembershipsModule`, `InvitationsModule`, `AuditModule`.
-- Guards: `AuthGuard`, `TenantContextGuard` (with `AsyncLocalStorage`),
-  `RolesGuard`.
-- DB session middleware (sets `app.current_tenant` / `app.is_platform_admin`
-  per request).
-- Repositories that use `@data-pulse-2/db`'s `withTenant` helper exclusively
-  for tenant-scoped reads/writes.
+The remaining domain modules for tenants, stores, memberships, invitations,
+and audit are staged through the active foundation specification.
 
-## Status
+## Runtime Configuration
 
-Skeleton only. No `src/`, no `nest-cli.json`, no dependencies. Implementation
-lands in subsequent branches following the task order in `tasks.md`.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | Creates the PostgreSQL pool used by auth and context repositories. |
+| `REDIS_URL` | Production email jobs | Wires the BullMQ email producer. Non-production falls back to a no-op enqueuer when missing. |
+| `PORT` | No | HTTP port, default `3000`. |
+| `LOG_LEVEL` | No | pino log level, default `info`. |
+
+## Commands
+
+```bash
+pnpm --filter @data-pulse-2/api build
+pnpm --filter @data-pulse-2/api test
+pnpm --filter @data-pulse-2/api start
+```
 
 ## Boundaries
 
-- This app **depends on** `@data-pulse-2/{shared,db,auth,contracts}`.
-- This app **does not** import from `apps/worker` and vice versa.
-- The dashboard UI is **not in this app** — it is a separate, deferred feature.
+- Depends on `@data-pulse-2/auth`, `@data-pulse-2/db`,
+  `@data-pulse-2/shared`, and `@data-pulse-2/contracts`.
+- Does not import from `apps/worker`.
+- Does not own the dashboard UI. Dashboard work is a separate feature.
+- Must keep backend authorization authoritative; frontend visibility is never a
+  permission model.

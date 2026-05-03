@@ -1,33 +1,41 @@
 # @data-pulse-2/worker
 
-Background-job runner for Data-Pulse-2. NestJS standalone process consuming
-BullMQ queues backed by Redis.
+NestJS standalone worker runtime for asynchronous Data-Pulse-2 backend jobs.
+The current implemented queue is `email`, transported through BullMQ and
+Redis.
 
-## Planned contents (not yet implemented)
+## Current Surface
 
-Per [plan §3 / §6 / Constitution V](../../specs/001-foundation-auth-tenant-store/plan.md)
-and [tasks T090–T115, T232–T233, T302, T311–T312](../../specs/001-foundation-auth-tenant-store/tasks.md):
+- Standalone Nest application context in `src/main.ts`.
+- `WorkerModule` with worker factory wiring.
+- BullMQ-backed production worker factory when `REDIS_URL` is present.
+- No-op worker factory for local and test runs without Redis.
+- Email processor, email worker, templates, and provider-adapter seam.
+- Graceful shutdown handling for `SIGTERM` and `SIGINT`.
 
-- Nest standalone bootstrap (`src/main.ts`, `src/worker.module.ts`).
-- BullMQ default queue config (retry/backoff/DLQ).
-- Processors:
-  - **EmailProcessor** — verification + password-reset + invite emails.
-    Provider-agnostic adapter (PQ-1 deferred).
-  - **AuditFanoutProcessor** — bulk-inserts `audit_events` rows from queued payloads.
-  - **SessionRevokeProcessor** — propagates admin-initiated session revocations
-    (FR-AUTH-6 ≤5 min bound).
-  - **SoftDeleteSweepProcessor** — scheduled cleanup of past-retention soft deletes.
-  - **AuditRetentionProcessor** — scheduled audit-row retention enforcement.
-- OpenTelemetry context propagation from API into job payloads.
+Additional processors for audit fanout, session revocation, soft-delete
+sweeps, and retention are staged through the active foundation specification.
 
-## Status
+## Runtime Configuration
 
-Skeleton only. No `src/`, no dependencies. Implementation lands in subsequent
-branches following the task order in `tasks.md`.
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `REDIS_URL` | Production | Subscribes BullMQ workers to Redis-backed queues. |
 
-## What this package is not
+Production startup fails when `REDIS_URL` is missing so the worker cannot
+silently run without consuming jobs.
 
-Not a webhook delivery target for external POS devices — POS endpoints live
-in (future) `apps/api` and the POS app is a separate repository entirely.
-This worker app is purely server-side asynchronous processing for the SaaS
-backend.
+## Commands
+
+```bash
+pnpm --filter @data-pulse-2/worker build
+pnpm --filter @data-pulse-2/worker test
+pnpm --filter @data-pulse-2/worker start
+```
+
+## Boundaries
+
+- Depends on `@data-pulse-2/shared`.
+- Does not import from `apps/api`.
+- Does not expose HTTP endpoints.
+- Does not own durable domain truth; PostgreSQL remains authoritative.
