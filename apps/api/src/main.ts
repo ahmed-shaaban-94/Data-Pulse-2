@@ -10,6 +10,7 @@ import { GlobalExceptionFilter } from "./common/exception.filter";
 import { LoggingInterceptor, ROOT_LOGGER } from "./common/logging.interceptor";
 import { RequestIdInterceptor } from "./common/request-id.interceptor";
 import { ZodValidationPipe } from "./common/zod-validation.pipe";
+import { ContextInterceptor } from "./context/context.interceptor";
 import { loadOpenApiContracts } from "./openapi/loader";
 
 async function bootstrap(): Promise<void> {
@@ -34,10 +35,13 @@ async function bootstrap(): Promise<void> {
   app.use(helmet());
 
   // Global interceptors — RequestIdInterceptor must run first so the others
-  // can read request.requestId.
+  // can read request.requestId. ContextInterceptor bridges
+  // request.context (set by TenantContextGuard, when present) into the
+  // AsyncLocalStorage scope; it no-ops on routes that aren't guarded.
   app.useGlobalInterceptors(
     new RequestIdInterceptor(),
     new LoggingInterceptor(rootLogger),
+    new ContextInterceptor(),
   );
 
   // Global exception filter — every uncaught error formatted into the
