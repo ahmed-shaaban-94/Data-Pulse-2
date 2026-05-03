@@ -29,8 +29,10 @@ import {
   type JobLike,
   type WorkerFactory,
   type WorkerLike,
+  type WorkerStartOptions,
 } from "../../src/email/email.worker";
 import { EmailProcessor } from "../../src/email/email.processor";
+import { DEFAULT_WORKER_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 class FakeWorker implements WorkerLike {
   errorListeners: Array<(err: Error) => void> = [];
@@ -48,10 +50,18 @@ class FakeWorker implements WorkerLike {
 }
 
 class FakeWorkerFactory implements WorkerFactory {
-  calls: Array<{ queueName: string; handler: EmailJobHandler }> = [];
+  calls: Array<{
+    queueName: string;
+    handler: EmailJobHandler;
+    options: WorkerStartOptions;
+  }> = [];
   workers: FakeWorker[] = [];
-  create(queueName: string, handler: EmailJobHandler): WorkerLike {
-    this.calls.push({ queueName, handler });
+  create(
+    queueName: string,
+    handler: EmailJobHandler,
+    options: WorkerStartOptions,
+  ): WorkerLike {
+    this.calls.push({ queueName, handler, options });
     const w = new FakeWorker();
     this.workers.push(w);
     return w;
@@ -95,6 +105,20 @@ describe("EmailWorker.start", () => {
     expect(factory.calls).toHaveLength(1);
     expect(factory.calls[0]!.queueName).toBe("email");
     expect(factory.calls[0]!.queueName).toBe(EMAIL_QUEUE_NAME);
+  });
+
+  it("forwards DEFAULT_WORKER_OPTIONS from @data-pulse-2/shared to the factory", () => {
+    worker.start();
+    expect(factory.calls[0]!.options).toBe(DEFAULT_WORKER_OPTIONS);
+  });
+
+  it("forwards exactly the shared concurrency / lock / stalled defaults", () => {
+    worker.start();
+    const opts = factory.calls[0]!.options;
+    expect(opts.concurrency).toBe(DEFAULT_WORKER_OPTIONS.concurrency);
+    expect(opts.lockDuration).toBe(DEFAULT_WORKER_OPTIONS.lockDuration);
+    expect(opts.stalledInterval).toBe(DEFAULT_WORKER_OPTIONS.stalledInterval);
+    expect(opts.maxStalledCount).toBe(DEFAULT_WORKER_OPTIONS.maxStalledCount);
   });
 
   it("registers a handler that delegates (job.name, job.data) to EmailProcessor.process", async () => {

@@ -20,6 +20,7 @@ import {
   WorkerModule,
 } from "../src/worker.module";
 import { EmailWorker } from "../src/email/email.worker";
+import { DEFAULT_WORKER_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 const ORIGINAL_NODE_ENV = process.env["NODE_ENV"];
 const ORIGINAL_REDIS_URL = process.env["REDIS_URL"];
@@ -73,11 +74,35 @@ describe("workerFactoryProviderFactory — REDIS_URL branch behaviour", () => {
 describe("NoOpWorkerFactory.create", () => {
   it("returns a worker whose close() resolves and on() is a no-op", async () => {
     const f = new NoOpWorkerFactory();
-    const w = f.create("email", async () => {
-      // never invoked — NoOpWorker doesn't dispatch jobs
-    });
+    const w = f.create(
+      "email",
+      async () => {
+        // never invoked — NoOpWorker doesn't dispatch jobs
+      },
+      DEFAULT_WORKER_OPTIONS,
+    );
     expect(() => w.on("error", () => undefined)).not.toThrow();
     await expect(w.close()).resolves.toBeUndefined();
+  });
+
+  it("accepts the WorkerStartOptions argument and ignores it (interface parity)", () => {
+    const f = new NoOpWorkerFactory();
+    expect(() =>
+      f.create("email", async () => undefined, DEFAULT_WORKER_OPTIONS),
+    ).not.toThrow();
+  });
+});
+
+describe("BullMqWorkerFactory — interface shape", () => {
+  // We deliberately do NOT instantiate the underlying bullmq.Worker here
+  // (it would require Redis). We only verify the factory's `create`
+  // method signature accepts the options argument; the actual spread
+  // into `new Worker(...)` is type-checked by `tsc -p tsconfig.build.json`
+  // and exercised end-to-end on a Redis-equipped environment.
+  it("create() takes (queueName, handler, options)", () => {
+    const f = new BullMqWorkerFactory("redis://localhost:6379");
+    expect(typeof f.create).toBe("function");
+    expect(f.create.length).toBe(3);
   });
 });
 

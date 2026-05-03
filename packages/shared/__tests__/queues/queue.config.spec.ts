@@ -1,5 +1,5 @@
 /**
- * T092 — queue.config spec.
+ * queue.config spec — shared single source of truth (T092 + T301-partial).
  *
  * Pure unit tests against the exported constants. No BullMQ runtime,
  * no Redis, no `ioredis-mock`, no Testcontainers.
@@ -9,12 +9,13 @@
  *      so a future PR that changes a default must deliberately update
  *      the spec and explain why.
  *   2. Invariants — relationships between values that, if violated,
- *      would defeat the policy (e.g., failed-set retention shorter
- *      than completed-set retention is nonsensical: failures are
- *      forensic, successes are routine).
- *   3. Immutability — `Object.freeze` makes accidental mutation
- *      throw at runtime in strict mode (TypeScript's `Readonly<>` is
- *      structural-only and would let a cast slip through).
+ *      would defeat the policy.
+ *   3. Immutability — `Object.freeze` makes accidental mutation throw
+ *      in strict mode (TypeScript's `Readonly<>` is structural only).
+ *
+ * This file replaces `apps/worker/test/queues/queue.config.spec.ts`
+ * (PR #17 / T092) — the values moved up one layer to the shared
+ * package; the assertions follow them.
  */
 import {
   deepFreeze,
@@ -51,26 +52,23 @@ describe("DEFAULT_JOB_OPTIONS — pinned values", () => {
 
 describe("DEFAULT_JOB_OPTIONS — invariants", () => {
   it("attempts is at least 2 (1 attempt = no retry, defeats the policy)", () => {
-    const attempts = DEFAULT_JOB_OPTIONS.attempts;
-    expect(typeof attempts).toBe("number");
-    expect(attempts as number).toBeGreaterThanOrEqual(2);
+    expect(DEFAULT_JOB_OPTIONS.attempts).toBeGreaterThanOrEqual(2);
   });
 
   it("failed-set retention age >= completed-set retention age (failures are forensic)", () => {
-    const completed = DEFAULT_JOB_OPTIONS.removeOnComplete as { age: number };
-    const failed = DEFAULT_JOB_OPTIONS.removeOnFail as { age: number };
-    expect(failed.age).toBeGreaterThanOrEqual(completed.age);
+    expect(DEFAULT_JOB_OPTIONS.removeOnFail.age).toBeGreaterThanOrEqual(
+      DEFAULT_JOB_OPTIONS.removeOnComplete.age,
+    );
   });
 
   it("failed-set retention count >= completed-set retention count", () => {
-    const completed = DEFAULT_JOB_OPTIONS.removeOnComplete as { count: number };
-    const failed = DEFAULT_JOB_OPTIONS.removeOnFail as { count: number };
-    expect(failed.count).toBeGreaterThanOrEqual(completed.count);
+    expect(DEFAULT_JOB_OPTIONS.removeOnFail.count).toBeGreaterThanOrEqual(
+      DEFAULT_JOB_OPTIONS.removeOnComplete.count,
+    );
   });
 
   it("backoff base delay is at least 100ms (sub-100ms thrashes Redis on recovery)", () => {
-    const backoff = DEFAULT_JOB_OPTIONS.backoff as { delay: number };
-    expect(backoff.delay).toBeGreaterThanOrEqual(100);
+    expect(DEFAULT_JOB_OPTIONS.backoff.delay).toBeGreaterThanOrEqual(100);
   });
 });
 
@@ -94,19 +92,19 @@ describe("DEFAULT_WORKER_OPTIONS — pinned values", () => {
 
 describe("DEFAULT_WORKER_OPTIONS — invariants", () => {
   it("concurrency is positive", () => {
-    expect(DEFAULT_WORKER_OPTIONS.concurrency as number).toBeGreaterThan(0);
+    expect(DEFAULT_WORKER_OPTIONS.concurrency).toBeGreaterThan(0);
   });
 
   it("lockDuration > 1s (sub-second locks would thrash)", () => {
-    expect(DEFAULT_WORKER_OPTIONS.lockDuration as number).toBeGreaterThan(1_000);
+    expect(DEFAULT_WORKER_OPTIONS.lockDuration).toBeGreaterThan(1_000);
   });
 
   it("stalledInterval > 0", () => {
-    expect(DEFAULT_WORKER_OPTIONS.stalledInterval as number).toBeGreaterThan(0);
+    expect(DEFAULT_WORKER_OPTIONS.stalledInterval).toBeGreaterThan(0);
   });
 
   it("maxStalledCount >= 1 (zero would fail any worker restart)", () => {
-    expect(DEFAULT_WORKER_OPTIONS.maxStalledCount as number).toBeGreaterThanOrEqual(1);
+    expect(DEFAULT_WORKER_OPTIONS.maxStalledCount).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -134,14 +132,14 @@ describe("Immutability", () => {
   it("mutating a frozen default throws in strict mode", () => {
     "use strict";
     expect(() => {
-      (DEFAULT_JOB_OPTIONS as { attempts: number }).attempts = 1;
+      (DEFAULT_JOB_OPTIONS as unknown as { attempts: number }).attempts = 1;
     }).toThrow();
   });
 
   it("mutating a nested frozen field throws in strict mode", () => {
     "use strict";
     expect(() => {
-      (DEFAULT_JOB_OPTIONS.backoff as { delay: number }).delay = 99;
+      (DEFAULT_JOB_OPTIONS.backoff as unknown as { delay: number }).delay = 99;
     }).toThrow();
   });
 });

@@ -35,8 +35,10 @@
  * `Test.createTestingModule(...).overrideProvider(...)`.
  */
 import { Module } from "@nestjs/common";
-import { Queue } from "bullmq";
+import { Queue, type JobsOptions } from "bullmq";
 import { Pool } from "pg";
+
+import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 import { AuthController } from "./auth.controller";
 import { AuthGuard } from "./auth.guard";
@@ -56,6 +58,41 @@ export const EMAIL_QUEUE_NAME = "email";
 
 export const PG_POOL = "PG_POOL";
 export const REDIS_CLIENT = "REDIS_CLIENT";
+
+/**
+ * Factory for the `EMAIL_JOB_ENQUEUER` provider. Extracted so a
+ * focused unit test can verify the BullMQ `Queue` is constructed with
+ * `defaultJobOptions: DEFAULT_JOB_OPTIONS` (T301-partial wiring),
+ * mirroring the symmetric extraction `workerFactoryProviderFactory`
+ * on the worker side.
+ *
+ * Production wiring policy:
+ *   - `NODE_ENV=production` + `REDIS_URL` missing → throw at boot.
+ *     Silently dropping password-reset / email-verify jobs is a
+ *     safety hazard.
+ *   - non-production + `REDIS_URL` missing → fall back to
+ *     `NoOpEmailJobEnqueuer` so dev / CI machines without Redis still
+ *     boot.
+ *   - `REDIS_URL` set → build a `Queue` with the shared default job
+ *     options (single source of truth in `@data-pulse-2/shared`).
+ */
+export function emailJobEnqueuerFactory(): EmailJobEnqueuer {
+  const url = process.env["REDIS_URL"];
+  if (!url) {
+    if (process.env["NODE_ENV"] === "production") {
+      throw new Error(
+        "AuthModule: REDIS_URL is required in production " +
+          "(EmailQueueProducer cannot be wired without it).",
+      );
+    }
+    return new NoOpEmailJobEnqueuer();
+  }
+  const queue = new Queue(EMAIL_QUEUE_NAME, {
+    connection: { url },
+    defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
+  });
+  return new EmailQueueProducer(queue);
+}
 
 /**
  * Stub Redis used until a real client is wired. Every `incr` returns 1
@@ -95,25 +132,7 @@ class AlwaysAllowRedis implements RedisLike {
     },
     {
       provide: EMAIL_JOB_ENQUEUER,
-      useFactory: (): EmailJobEnqueuer => {
-        const url = process.env["REDIS_URL"];
-        if (!url) {
-          // Fail loud in production: silently dropping password-reset
-          // and email-verify jobs is a safety hazard. Outside production
-          // we fall back to NoOp so devs / CI without Redis still boot.
-          if (process.env["NODE_ENV"] === "production") {
-            throw new Error(
-              "AuthModule: REDIS_URL is required in production " +
-                "(EmailQueueProducer cannot be wired without it).",
-            );
-          }
-          return new NoOpEmailJobEnqueuer();
-        }
-        const queue = new Queue(EMAIL_QUEUE_NAME, {
-          connection: { url },
-        });
-        return new EmailQueueProducer(queue);
-      },
+      useFactory: emailJobEnqueuerFactory,
     },
     {
       provide: SessionRepository,
