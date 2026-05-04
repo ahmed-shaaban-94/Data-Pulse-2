@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import { AuthModule } from "./auth/auth.module";
 import { ContextModule } from "./context/context.module";
+import { StoresModule } from "./stores/stores.module";
 import { TenantsModule } from "./tenants/tenants.module";
 
 /**
@@ -10,15 +11,15 @@ import { TenantsModule } from "./tenants/tenants.module";
  * Domain modules wired so far:
  *   - `AuthModule`     — sign-in, sign-out, refresh, password-reset (slice 3c)
  *   - `ContextModule`  — active tenant/store switching (US3)
- *   - `TenantsModule`  — tenant CRUD (US2, this slice)
+ *   - `TenantsModule`  — tenant CRUD (US2)
+ *   - `StoresModule`   — store CRUD within active tenant (US2, this slice)
  *
- * The remaining domain modules — StoresModule, MembershipsModule,
- * AuditModule — land in later Phase-3+ slices. Cross-cutting
- * interceptors, the global filter, and the global Zod pipe are
- * registered in `main.ts`.
+ * The remaining domain modules — MembershipsModule, AuditModule —
+ * land in later Phase-3+ slices. Cross-cutting interceptors, the
+ * global filter, and the global Zod pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuthModule, ContextModule, TenantsModule],
+  imports: [AuthModule, ContextModule, TenantsModule, StoresModule],
   controllers: [],
   providers: [],
 })

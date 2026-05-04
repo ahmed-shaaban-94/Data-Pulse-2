@@ -164,7 +164,7 @@ const buildGuard = (): {
 // --- Decorator metadata sanity ----------------------------------------
 
 describe("decorator metadata", () => {
-  it("@Roles attaches { any, tenantFrom: 'context', platformAdminOnly: false }", () => {
+  it("@Roles defaults denyAs to 404 (FR-ISO-4)", () => {
     class C {}
     const decorator = Roles("owner", "tenant_admin");
     decorator(C);
@@ -173,10 +173,24 @@ describe("decorator metadata", () => {
       any: ["owner", "tenant_admin"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     });
   });
 
-  it("@RolesFromParam embeds the param key in tenantFrom", () => {
+  it("@Roles accepts a trailing options object with denyAs: 403", () => {
+    class C {}
+    const decorator = Roles("owner", "tenant_admin", { denyAs: 403 });
+    decorator(C);
+    const meta = Reflect.getMetadata(ROLES_METADATA_KEY, C) as RolesMetadata;
+    expect(meta).toEqual({
+      any: ["owner", "tenant_admin"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 403,
+    });
+  });
+
+  it("@RolesFromParam hard-wires denyAs to 404 (path-as-context is FR-ISO-4 sensitive)", () => {
     class C {}
     const decorator = RolesFromParam("id", "owner");
     decorator(C);
@@ -184,15 +198,17 @@ describe("decorator metadata", () => {
     expect(meta.tenantFrom).toBe("param:id");
     expect(meta.any).toEqual(["owner"]);
     expect(meta.platformAdminOnly).toBe(false);
+    expect(meta.denyAs).toBe(404);
   });
 
-  it("@PlatformAdminOnly sets platformAdminOnly=true with empty roles", () => {
+  it("@PlatformAdminOnly sets platformAdminOnly=true with denyAs: 403", () => {
     class C {}
     const decorator = PlatformAdminOnly();
     decorator(C);
     const meta = Reflect.getMetadata(ROLES_METADATA_KEY, C) as RolesMetadata;
     expect(meta.platformAdminOnly).toBe(true);
     expect(meta.any).toEqual([]);
+    expect(meta.denyAs).toBe(403);
   });
 });
 
@@ -214,6 +230,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({});
     await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
@@ -227,6 +244,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({
       principal: sessionPrincipal(),
@@ -243,6 +261,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({
       principal: tokenPrincipal({ tenantId: null } as Partial<Principal>),
@@ -260,6 +279,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "param:id",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.platformAdmin = true;
     const req = buildRequest({
@@ -277,6 +297,7 @@ describe("RolesGuard", () => {
       any: ["owner", "tenant_admin"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "owner";
     const req = buildRequest({
@@ -295,6 +316,7 @@ describe("RolesGuard", () => {
       any: ["owner", "tenant_admin"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "tenant_admin";
     const req = buildRequest({
@@ -310,6 +332,7 @@ describe("RolesGuard", () => {
       any: ["owner", "tenant_admin"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "store_manager";
     const req = buildRequest({
@@ -327,6 +350,7 @@ describe("RolesGuard", () => {
       any: ["store_manager", "store_staff"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "store_staff";
     const req = buildRequest({
@@ -342,6 +366,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "store_staff";
     const req = buildRequest({
@@ -359,6 +384,7 @@ describe("RolesGuard", () => {
       any: ["owner", "tenant_admin"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = null;
     const req = buildRequest({
@@ -376,6 +402,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({ principal: sessionPrincipal() });
     await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
@@ -391,6 +418,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "param:id",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({
       principal: sessionPrincipal(),
@@ -408,6 +436,7 @@ describe("RolesGuard", () => {
       any: ["owner"],
       tenantFrom: "context",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     const req = buildRequest({
       principal: tokenPrincipal({ userId: null } as Partial<Principal>),
@@ -419,12 +448,85 @@ describe("RolesGuard", () => {
     expect(memberships.findRoleCalls).toEqual([]);
   });
 
+  // --- denyAs: 403 path -----------------------------------------------
+
+  it("denyAs: 403 — wrong role rejected with ForbiddenException (not NotFoundException)", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner", "tenant_admin"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 403,
+    };
+    memberships.roleCode = "store_staff";
+    const req = buildRequest({
+      principal: sessionPrincipal(),
+      context: resolved(),
+    });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it("denyAs: 403 — missing membership also yields 403 (not 404)", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner", "tenant_admin"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 403,
+    };
+    memberships.roleCode = null;
+    const req = buildRequest({
+      principal: sessionPrincipal(),
+      context: resolved(),
+    });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it("denyAs: 403 — userless tenant-bound token also yields 403 (not 404)", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 403,
+    };
+    const req = buildRequest({
+      principal: tokenPrincipal({ userId: null } as Partial<Principal>),
+      context: resolved(),
+    });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(memberships.findRoleCalls).toEqual([]);
+  });
+
+  it("denyAs: 403 — accepted role still allows", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner", "tenant_admin"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 403,
+    };
+    memberships.roleCode = "tenant_admin";
+    const req = buildRequest({
+      principal: sessionPrincipal(),
+      context: resolved(),
+    });
+    await expect(guard.canActivate(ctxFor(req))).resolves.toBe(true);
+  });
+
   it("param-mode happy path calls repo with the path tenant id (not the context one)", async () => {
     const { guard, reflector, memberships } = buildGuard();
     reflector.metadata = {
       any: ["owner"],
       tenantFrom: "param:id",
       platformAdminOnly: false,
+      denyAs: 404,
     };
     memberships.roleCode = "owner";
     const req = buildRequest({
@@ -448,6 +550,7 @@ describe("RolesGuard", () => {
       any: [],
       tenantFrom: "context",
       platformAdminOnly: true,
+      denyAs: 403,
     };
     const req = buildRequest({
       principal: sessionPrincipal(),
@@ -463,6 +566,7 @@ describe("RolesGuard", () => {
       any: [],
       tenantFrom: "context",
       platformAdminOnly: true,
+      denyAs: 403,
     };
     const req = buildRequest({
       principal: tokenPrincipal({ tenantId: null } as Partial<Principal>),
@@ -476,6 +580,7 @@ describe("RolesGuard", () => {
       any: [],
       tenantFrom: "context",
       platformAdminOnly: true,
+      denyAs: 403,
     };
     memberships.platformAdmin = true;
     const req = buildRequest({ principal: sessionPrincipal() });
@@ -489,6 +594,7 @@ describe("RolesGuard", () => {
       any: [],
       tenantFrom: "context",
       platformAdminOnly: true,
+      denyAs: 403,
     };
     memberships.platformAdmin = false;
     const req = buildRequest({

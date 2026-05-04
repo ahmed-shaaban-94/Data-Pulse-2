@@ -77,15 +77,17 @@
  *          tenant existence.
  *
  *   7. `MembershipRepository.findRoleCodeForUserInTenant(userId, tenantId)`:
- *        - `null`                          → 404 ("Not Found").
- *          No active membership in this tenant. Per FR-ISO-4 we MUST
- *          NOT distinguish cross-tenant from "doesn't exist".
- *        - role NOT in `metadata.any`      → 404.
- *          Wrong-role rejection rides the same 404 shape as
- *          cross-tenant. The actor's role doesn't reach the resource;
- *          telling them "you exist but lack permission" reveals more
- *          than telling them "not found". This matches the existing
- *          inline check in `TenantsService.update`.
+ *        - `null` or role NOT in `metadata.any`:
+ *            - `metadata.denyAs === 404` (default)  → `NotFoundException`
+ *               No active membership / wrong role rides the same shape
+ *               as cross-tenant per FR-ISO-4. Use this for path-as-
+ *               context routes where the tenant id IS a secret being
+ *               protected (e.g. `PATCH /tenants/:id`).
+ *            - `metadata.denyAs === 403`           → `ForbiddenException`
+ *               Use when the caller is acting within their already-
+ *               resolved active tenant and existence is not a secret
+ *               (e.g. `POST /api/v1/stores`). Returning 404 there would
+ *               be misleading.
  *        - role in `metadata.any`          → allow.
  *
  * No state, no caching, no ALS bridging. The guard is pure policy on
@@ -157,15 +159,15 @@ export class RolesGuard implements CanActivate {
 
     // (6) User id from principal.
     const userId = principal.userId;
-    if (!userId) throw notFound();
+    if (!userId) throw denied(metadata);
 
     // (7) Membership + role check.
     const role = await this.memberships.findRoleCodeForUserInTenant(
       userId,
       tenantId,
     );
-    if (!role) throw notFound();
-    if (!isAcceptedRole(role, metadata.any)) throw notFound();
+    if (!role) throw denied(metadata);
+    if (!isAcceptedRole(role, metadata.any)) throw denied(metadata);
     return true;
   }
 
@@ -223,4 +225,18 @@ function notFound(): NotFoundException {
   // existence of the resource at this access level must look identical
   // to "doesn't exist".
   return new NotFoundException("Not Found");
+}
+
+/**
+ * Translate a role-check failure to either 403 or 404 based on the
+ * decorator's `denyAs` field. See `RolesMetadata.denyAs` and the
+ * decision-matrix step 7 in the class docstring.
+ */
+function denied(
+  metadata: RolesMetadata,
+): ForbiddenException | NotFoundException {
+  if (metadata.denyAs === 403) {
+    return new ForbiddenException("Insufficient role.");
+  }
+  return notFound();
 }
