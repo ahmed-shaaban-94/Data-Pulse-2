@@ -118,6 +118,27 @@ export class InvitationsRepository {
   }
 
   /**
+   * Look up an invitation by its token hash.
+   *
+   * Called from the platform-admin tenant context (tenantId=null,
+   * isPlatformAdmin=true) so RLS is bypassed at the policy layer.
+   * The caller is responsible for all status/expiry validation.
+   * Returns null when no row matches.
+   */
+  async findByTokenHash(
+    client: PoolClient,
+    tokenHash: Buffer,
+  ): Promise<InvitationRow | null> {
+    const db = drizzle(client);
+    const rows = await db
+      .select()
+      .from(invitations)
+      .where(eq(invitations.tokenHash, tokenHash))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
    * Returns the subset of storeIds that do NOT belong to tenantId or are
    * soft-deleted. Empty return means all IDs are valid.
    */
