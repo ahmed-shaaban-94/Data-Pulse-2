@@ -1,36 +1,43 @@
 /**
  * T130 — TenantsService unit spec.
  *
- * Pure-unit coverage for the orchestration logic — no Postgres, no
- * Testcontainers. The DB-shaped behaviors (RLS, cross-tenant
- * isolation, slug uniqueness, soft-delete visibility transitions)
- * are exercised by the companion `tenants.controller.spec.ts`
- * Testcontainers integration spec; this file pins the role-check
- * branches and error-mapping logic that don't need a database.
+ * Pure-unit coverage for the **data-path / orchestration** logic — no
+ * Postgres, no Testcontainers. Authorization (platform-admin gating,
+ * tenant role-set checks) was moved to `RolesGuard` and is covered by
+ * `test/auth/roles.guard.spec.ts`. The end-to-end behavior (status
+ * codes, body shapes, soft-delete visibility transitions) is covered
+ * by the Testcontainers integration spec `tenants.controller.spec.ts`
+ * — that spec is the behavior-preservation oracle for this refactor
+ * and is intentionally untouched.
  *
- * Coverage:
- *   - list as platform admin → listAll
- *   - list as regular user with userId → listForUser
- *   - list as platform-scoped token → listAll
- *   - list as user-less token → []
- *   - create as non-admin → 403
- *   - read as admin → admin path; missing → 404
- *   - read as regular user with no role → 404
- *   - read as regular user with membership → tenant-scoped path
- *   - update as admin → admin path
- *   - update as non-admin without membership → 404
- *   - update as non-admin with insufficient role → 404
- *   - update as non-admin with tenant_admin/owner role → success
- *   - softDelete as non-admin → 403
- *   - softDelete as admin → repo softDelete called
+ * Coverage retained here:
+ *   - list as platform admin             → listAll
+ *   - list as regular user with userId   → listForUser
+ *   - list as platform-scoped token      → listAll
+ *   - list as user-less token            → []
+ *   - create: admin path seeds 4 roles atomically
+ *   - create: 23505 on slug index → 409
+ *   - create: non-conflict errors re-raised verbatim
+ *   - read as admin                      → admin path; missing → 404
+ *   - read as regular user with no role  → 404
+ *   - read as user-less token            → 404
+ *   - update: admin path returns the row
+ *   - update: 404 if UPDATE returns null (race with concurrent delete)
+ *   - update: non-admin caller succeeds when reached
+ *     (single test — guard is responsible for filtering ineligible
+ *      callers; service path no longer branches on role)
+ *   - softDelete: invokes repo softDelete and returns void
+ *
+ * Tests removed in the RolesGuard refactor:
+ *   - create > 403 for non-platform-admin sessions / tokens
+ *   - update > 404 when no role / insufficient role / store_manager
+ *   - softDelete > 403 for non-platform-admin
+ *   These now belong to `roles.guard.spec.ts`.
  *
  * Style: hand-written `*Like` fakes for the repository + membership
  * repository, mirroring the prior context specs.
  */
-import {
-  ForbiddenException,
-  NotFoundException,
-} from "@nestjs/common";
+import { NotFoundException } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 import type { TenantContext } from "@data-pulse-2/db";
 import type { Principal } from "../../src/auth/auth.guard";
@@ -253,23 +260,11 @@ describe("TenantsService.list", () => {
 // --- create -----------------------------------------------------------
 
 describe("TenantsService.create", () => {
-  it("throws 403 for non-platform-admin sessions", async () => {
-    memberships.isPlatformAdminResult = false;
-    await expect(
-      service.create(SESSION_PRINCIPAL, { slug: "acme", name: "Acme" }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(repo.createCalls).toHaveLength(0);
-  });
+  // Authz (platform-admin gating, tenant-bound token rejection) is
+  // owned by RolesGuard and covered in roles.guard.spec.ts. The tests
+  // below pin only the data-path / orchestration logic.
 
-  it("throws 403 for tenant-bound tokens", async () => {
-    memberships.isPlatformAdminResult = false;
-    await expect(
-      service.create(TENANT_TOKEN, { slug: "acme", name: "Acme" }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it("admin path: creates the tenant and seeds default roles atomically", async () => {
-    memberships.isPlatformAdminResult = true;
+  it("creates the tenant and seeds default roles atomically", async () => {
     repo.createResult = tenant({ slug: "acme", name: "Acme" });
     const out = await service.create(SESSION_PRINCIPAL, {
       slug: "acme",
@@ -286,13 +281,12 @@ describe("TenantsService.create", () => {
     );
   });
 
-  it("admin path: maps a unique-violation on tenants_slug_active_uidx to ConflictException (409)", async () => {
-    memberships.isPlatformAdminResult = true;
+  it("maps a unique-violation on tenants_slug_active_uidx to ConflictException (409)", async () => {
     // Trigger the conflict path: have create throw a 23505 with the
     // expected constraint name.
     repo.createResult = tenant();
     const original = repo.create.bind(repo);
-    repo.create = async (_client, input) => {
+    repo.create = async (_client, _input) => {
       void original; // silence unused-var lint
       const err = new Error(
         'duplicate key value violates unique constraint "tenants_slug_active_uidx"',
@@ -309,8 +303,7 @@ describe("TenantsService.create", () => {
     ).rejects.toThrow(/Slug already in use/);
   });
 
-  it("admin path: re-raises non-conflict errors verbatim", async () => {
-    memberships.isPlatformAdminResult = true;
+  it("re-raises non-conflict errors verbatim", async () => {
     repo.create = async () => {
       throw new Error("transport blew up");
     };
@@ -368,6 +361,11 @@ describe("TenantsService.read", () => {
 // --- update -----------------------------------------------------------
 
 describe("TenantsService.update", () => {
+  // Authz (no-membership / wrong-role rejection) is owned by RolesGuard
+  // and covered in roles.guard.spec.ts. The tests below pin only the
+  // data-path / orchestration logic — picking the RLS context based on
+  // platform-admin status, the UPDATE→null race, and the row passthrough.
+
   it("admin path: updates and returns the row", async () => {
     memberships.isPlatformAdminResult = true;
     repo.updateResult = tenant({ name: "New Name" });
@@ -378,7 +376,7 @@ describe("TenantsService.update", () => {
     expect(repo.updateCalls).toHaveLength(1);
   });
 
-  it("admin path: 404 if update returns null (already deleted)", async () => {
+  it("admin path: 404 if update returns null (concurrent delete race)", async () => {
     memberships.isPlatformAdminResult = true;
     repo.updateResult = null;
     await expect(
@@ -386,49 +384,18 @@ describe("TenantsService.update", () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("non-admin: 404 when no role in tenant", async () => {
+  it("non-admin path: succeeds when reached (guard already authorized)", async () => {
+    // RolesGuard would have rejected the call before it reached the
+    // service for any caller without owner/tenant_admin. The service
+    // therefore no longer branches on role — it just commits via
+    // `runWithTenantContext` with `isPlatformAdmin: false` so RLS
+    // scopes the UPDATE to the active tenant.
     memberships.isPlatformAdminResult = false;
-    memberships.roleByTenant.set(TENANT_ID, null);
-    await expect(
-      service.update(SESSION_PRINCIPAL, TENANT_ID, { name: "X" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(repo.updateCalls).toHaveLength(0);
-  });
-
-  it("non-admin: 404 when role is insufficient (e.g., store_staff)", async () => {
-    memberships.isPlatformAdminResult = false;
-    memberships.roleByTenant.set(TENANT_ID, "store_staff");
-    await expect(
-      service.update(SESSION_PRINCIPAL, TENANT_ID, { name: "X" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(repo.updateCalls).toHaveLength(0);
-  });
-
-  it("non-admin: 404 when role is store_manager (still insufficient)", async () => {
-    memberships.isPlatformAdminResult = false;
-    memberships.roleByTenant.set(TENANT_ID, "store_manager");
-    await expect(
-      service.update(SESSION_PRINCIPAL, TENANT_ID, { name: "X" }),
-    ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it("non-admin tenant_admin: succeeds", async () => {
-    memberships.isPlatformAdminResult = false;
-    memberships.roleByTenant.set(TENANT_ID, "tenant_admin");
-    repo.updateResult = tenant({ name: "Renamed" });
+    repo.updateResult = tenant({ status: "suspended" });
     const out = await service.update(SESSION_PRINCIPAL, TENANT_ID, {
-      name: "Renamed",
+      status: "suspended",
     });
-    expect(out.name).toBe("Renamed");
-  });
-
-  it("non-admin owner: succeeds", async () => {
-    memberships.isPlatformAdminResult = false;
-    memberships.roleByTenant.set(TENANT_ID, "owner");
-    repo.updateResult = tenant();
-    await expect(
-      service.update(SESSION_PRINCIPAL, TENANT_ID, { status: "suspended" }),
-    ).resolves.toBeDefined();
+    expect(out.status).toBe("suspended");
     expect(repo.updateCalls[0]?.next).toEqual({ status: "suspended" });
   });
 });
@@ -436,16 +403,10 @@ describe("TenantsService.update", () => {
 // --- softDelete -------------------------------------------------------
 
 describe("TenantsService.softDelete", () => {
-  it("throws 403 for non-platform-admin", async () => {
-    memberships.isPlatformAdminResult = false;
-    await expect(
-      service.softDelete(SESSION_PRINCIPAL, TENANT_ID),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(repo.softDeleteCalls).toHaveLength(0);
-  });
-
-  it("admin path: invokes softDelete and returns void", async () => {
-    memberships.isPlatformAdminResult = true;
+  // Authz (platform-admin gating) is owned by RolesGuard and covered
+  // in roles.guard.spec.ts. The service now trusts that only platform
+  // admins reach this method.
+  it("invokes repo softDelete and returns void", async () => {
     await expect(
       service.softDelete(SESSION_PRINCIPAL, TENANT_ID),
     ).resolves.toBeUndefined();

@@ -21,6 +21,23 @@
  * therefore calls `runWithTenantContext` directly with the path
  * tenant id, NOT `runRequestScopedTenantContext`.
  *
+ * Authorization
+ * -------------
+ * Class-level `@UseGuards(AuthGuard)` authenticates every request.
+ * Role-based authorization is per-method via `RolesGuard` + the
+ * `@Roles` / `@RolesFromParam` / `@PlatformAdminOnly` decorator
+ * family from `../auth/roles.decorator`:
+ *
+ *   POST   /tenants       → @PlatformAdminOnly()                (403 on deny)
+ *   PATCH  /tenants/:id   → @RolesFromParam("id", "owner",
+ *                                                 "tenant_admin")  (404 on deny — FR-ISO-4)
+ *   DELETE /tenants/:id   → @PlatformAdminOnly()                (403 on deny)
+ *
+ * GET routes intentionally have no role decorator — visibility is a
+ * data-policy decision (member vs platform-admin sees different rows)
+ * handled inside `TenantsService`, not an allow/deny gate. Mounting
+ * `RolesGuard` class-wide would default-deny those routes.
+ *
  * Cross-cutting policies (consistent with prior controllers)
  * ---------------------------------------------------------
  *   - Bodies validated by `ZodValidationPipe`. Bad bodies bubble as
@@ -47,6 +64,11 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { AuthGuard, type AuthedRequest } from "../auth/auth.guard";
+import {
+  PlatformAdminOnly,
+  RolesFromParam,
+} from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import {
   TenantCreateSchema,
@@ -109,6 +131,8 @@ export class TenantsController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RolesGuard)
+  @PlatformAdminOnly()
   async create(
     @Req() request: AuthedRequest,
     @Body(new ZodValidationPipe(TenantCreateSchema)) body: TenantCreateInput,
@@ -131,6 +155,8 @@ export class TenantsController {
   }
 
   @Patch(":id")
+  @UseGuards(RolesGuard)
+  @RolesFromParam("id", "owner", "tenant_admin")
   async update(
     @Req() request: AuthedRequest,
     @Param("id", new ParseUUIDPipe()) tenantId: string,
@@ -144,6 +170,8 @@ export class TenantsController {
 
   @Delete(":id")
   @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(RolesGuard)
+  @PlatformAdminOnly()
   async softDelete(
     @Req() request: AuthedRequest,
     @Param("id", new ParseUUIDPipe()) tenantId: string,
