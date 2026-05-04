@@ -36,6 +36,12 @@ function txCtx(ctx: ResolvedContext): TenantContext {
 const PLATFORM_ADMIN_CODE = "platform_admin";
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+/** Uniform error thrown for every invalid-token case — no enumeration detail. */
+const INVALID_INVITATION_ERROR = "Invalid or expired invitation token";
+
+/** Platform-admin context used for unauthenticated token lookups (RLS bypass). */
+const PLATFORM_ADMIN_CTX: TenantContext = { tenantId: null, isPlatformAdmin: true };
+
 @Injectable()
 export class InvitationsService {
   private readonly tx: TenantTxRunner;
@@ -131,6 +137,48 @@ export class InvitationsService {
       rawToken,
       tenantId,
     });
+
+    return row;
+  }
+
+  /**
+   * Accept-token lookup foundation.
+   *
+   * Hashes `rawToken`, looks up the invitation by token_hash using a
+   * platform-admin context (RLS bypassed at the policy layer — the invitee
+   * has no session and no known tenant yet), then validates status and expiry.
+   *
+   * Returns the validated `InvitationRow` to internal service callers only.
+   * NEVER exposed directly on an HTTP endpoint; the raw token and token_hash
+   * are not included in any return value.
+   *
+   * Throws `BadRequestException` with the same opaque message for every
+   * invalid case (not found, expired, revoked, accepted, or otherwise
+   * non-pending) — no enumeration detail leaks to callers.
+   *
+   * This method is read-only: no mutations, no membership/user/session creation,
+   * no accepted_at / accepted_by_user_id update.
+   */
+  async lookupAndValidateAcceptToken(rawToken: string): Promise<InvitationRow> {
+    const tokenHash = hashToken(rawToken);
+
+    const row = await this.tx(
+      this.pool,
+      PLATFORM_ADMIN_CTX,
+      async (client) => this.invitations.findByTokenHash(client, tokenHash),
+    );
+
+    if (!row) {
+      throw new BadRequestException(INVALID_INVITATION_ERROR);
+    }
+
+    if (row.status !== "pending") {
+      throw new BadRequestException(INVALID_INVITATION_ERROR);
+    }
+
+    if (row.expiresAt <= new Date()) {
+      throw new BadRequestException(INVALID_INVITATION_ERROR);
+    }
 
     return row;
   }
