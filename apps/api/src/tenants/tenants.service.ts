@@ -63,7 +63,10 @@ import {
 } from "@data-pulse-2/db";
 import type { Principal } from "../auth/auth.guard";
 import { PG_POOL } from "../auth/auth.module";
-import { MembershipRepository } from "../context/membership.repository";
+import {
+  MembershipRepository,
+  type MembershipDetail,
+} from "../context/membership.repository";
 import {
   TenantsRepository,
   type TenantRecord,
@@ -267,6 +270,39 @@ export class TenantsService {
       { tenantId, isPlatformAdmin: true },
       async (client) => {
         await this.tenants.softDelete(client, tenantId);
+      },
+    );
+  }
+
+  // ===== LIST MEMBERS ===============================================
+
+  /**
+   * `GET /api/v1/tenants/:id/members`. Returns all non-deleted,
+   * non-revoked memberships in `tenantId`.
+   *
+   * Authorization is handled by `RolesGuard` on the controller
+   * (`@RolesFromParam("id", "owner", "tenant_admin")`); callers that
+   * reach this method are already confirmed as tenant_admin/owner or
+   * platform admin.
+   *
+   * Runs inside `runWithTenantContext` so the RLS policy
+   * `memberships_tenant_isolation` is satisfied via the
+   * `app.current_tenant` GUC. Platform admins use
+   * `isPlatformAdmin: true` to also satisfy the
+   * `app.is_platform_admin` bypass clause.
+   */
+  async listMembers(
+    principal: Principal,
+    tenantId: string,
+  ): Promise<readonly MembershipDetail[]> {
+    const userId = await this.resolveActingUserId(principal);
+    const isAdmin = await this.isPlatformAdmin(principal, userId);
+
+    return this.tx(
+      this.pool,
+      { tenantId, isPlatformAdmin: isAdmin },
+      async (client) => {
+        return this.memberships.listForTenant(client, tenantId);
       },
     );
   }
