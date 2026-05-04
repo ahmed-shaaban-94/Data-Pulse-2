@@ -16,11 +16,23 @@
  *
  * Authorization model
  * -------------------
- * Inline role checks pending T200/T201 (`RolesGuard` + `@Roles()`),
- * which will collapse these into decorator metadata. Each branch is
- * documented with a TODO referencing the future cleanup.
+ * Role-based authorization moved to `RolesGuard` + decorators on
+ * `TenantsController` (PR following T200/T201). The guard owns:
  *
- * Error contract (FR-ISO-4 split):
+ *   - Platform-admin-only gating for `POST /tenants` and
+ *     `DELETE /tenants/:id` (`@PlatformAdminOnly()`, 403 on deny).
+ *   - Tenant role-set gating for `PATCH /tenants/:id`
+ *     (`@RolesFromParam("id", "owner", "tenant_admin")`, 404 on
+ *     deny per FR-ISO-4).
+ *
+ * Methods on this service are reached only after the guard has
+ * authorized the caller. The remaining principal-driven branches in
+ * `list` / `read` / `update` are NOT authz — they pick the **data
+ * path** (admin sees all, member sees own) and the **RLS context**
+ * for `runWithTenantContext` (`is_platform_admin` GUC).
+ *
+ * Error contract (FR-ISO-4 split — enforced by the guard for write
+ * routes, by this service for read/list visibility):
  *   - **403** for platform-admin-only operations (`POST`, `DELETE`).
  *     The caller can determine their own platform-admin status via
  *     `GET /context/me`, so a 403 leaks no side-channel info.
@@ -38,7 +50,6 @@
  */
 import {
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -57,12 +68,6 @@ import {
   TenantsRepository,
   type TenantRecord,
 } from "./tenants.repository";
-
-/**
- * Roles permitted to PATCH a tenant's name/status. Will be replaced
- * by `@Roles("tenant_admin", "owner")` once T200/T201 lands.
- */
-const TENANT_PATCH_ROLES = new Set(["owner", "tenant_admin"]);
 
 /**
  * The function the service calls to enter a tenant-scoped transaction.
@@ -117,10 +122,13 @@ export class TenantsService {
   // ===== CREATE =====================================================
 
   /**
-   * `POST /api/v1/tenants`. Platform-admin only (Q1 default A).
+   * `POST /api/v1/tenants`. Platform-admin only (Q1 default A) — gated
+   * by `@PlatformAdminOnly()` on the controller, so this service trusts
+   * the caller has already been authorized.
    *
    * Atomically:
-   *   1. Insert the tenants row (RLS bypassed via is_platform_admin GUC).
+   *   1. Insert the tenants row (RLS bypassed via is_platform_admin GUC,
+   *      which is sound because only platform admins reach this method).
    *   2. Seed default tenant-scoped roles (owner / tenant_admin /
    *      store_manager / store_staff). All 4 rows + tenant row commit
    *      in one transaction.
@@ -129,17 +137,15 @@ export class TenantsService {
    * `tenants_slug_active_uidx` on `lower(slug)` where
    * `deleted_at IS NULL`. A duplicate raises `23505` which we map to
    * `ConflictException` (409).
+   *
+   * Note: `principal` is accepted for symmetry with the other methods
+   * and for future audit-emit hooks; the current implementation does
+   * not branch on it.
    */
   async create(
-    principal: Principal,
+    _principal: Principal,
     input: { slug: string; name: string },
   ): Promise<TenantRecord> {
-    if (!(await this.requirePlatformAdmin(principal))) {
-      // 403 (NOT 404) per the contract: platform-admin status is
-      // user-knowable, no leak.
-      throw new ForbiddenException("Platform admin role required.");
-    }
-
     const tenantId = newId();
     try {
       return await this.tx(
@@ -208,11 +214,21 @@ export class TenantsService {
   // ===== UPDATE =====================================================
 
   /**
-   * `PATCH /api/v1/tenants/:id`. Allowed for:
-   *   - Platform admins (any tenant).
-   *   - Tenant members whose role is in TENANT_PATCH_ROLES.
+   * `PATCH /api/v1/tenants/:id`. Authorization is handled by
+   * `RolesGuard` on the controller (`@RolesFromParam("id", "owner",
+   * "tenant_admin")`); cross-tenant and insufficient-role attempts are
+   * rejected as 404 there per FR-ISO-4 before this service runs.
    *
-   * Cross-tenant or insufficient-role attempts return 404 (FR-ISO-4).
+   * The `isPlatformAdmin` lookup that remains is **not** authz — it
+   * selects the RLS context for `runWithTenantContext`. Platform
+   * admins commit with `app.is_platform_admin = 'true'` (RLS bypass);
+   * tenant members commit with the GUC unset (RLS scopes the UPDATE
+   * to their tenant). Removing this would leave the tenant-member path
+   * unable to satisfy the `tenants` UPDATE policy.
+   *
+   * The `if (!row) throw notFound()` after the UPDATE handles a
+   * narrow race: a concurrent soft-delete between the guard's
+   * membership check and this UPDATE.
    */
   async update(
     principal: Principal,
@@ -221,18 +237,6 @@ export class TenantsService {
   ): Promise<TenantRecord> {
     const userId = await this.resolveActingUserId(principal);
     const isAdmin = await this.isPlatformAdmin(principal, userId);
-
-    if (!isAdmin) {
-      if (!userId) throw notFound();
-      const role = await this.memberships.findRoleCodeForUserInTenant(
-        userId,
-        tenantId,
-      );
-      // No membership → 404 (cross-tenant). Insufficient role → 404
-      // also; from the actor's perspective the resource may as well
-      // not exist at this access level.
-      if (!role || !TENANT_PATCH_ROLES.has(role)) throw notFound();
-    }
 
     return this.tx(
       this.pool,
@@ -248,16 +252,16 @@ export class TenantsService {
   // ===== DELETE =====================================================
 
   /**
-   * `DELETE /api/v1/tenants/:id`. Platform-admin only — soft-delete.
-   * Returns void; controller maps to 204.
+   * `DELETE /api/v1/tenants/:id`. Platform-admin only — gated by
+   * `@PlatformAdminOnly()` on the controller. Returns void; controller
+   * maps to 204.
+   *
+   * `principal` is accepted for symmetry / future audit hooks.
    */
   async softDelete(
-    principal: Principal,
+    _principal: Principal,
     tenantId: string,
   ): Promise<void> {
-    if (!(await this.requirePlatformAdmin(principal))) {
-      throw new ForbiddenException("Platform admin role required.");
-    }
     await this.tx(
       this.pool,
       { tenantId, isPlatformAdmin: true },
@@ -297,10 +301,6 @@ export class TenantsService {
     return this.memberships.isPlatformAdmin(userId);
   }
 
-  private async requirePlatformAdmin(principal: Principal): Promise<boolean> {
-    const userId = await this.resolveActingUserId(principal);
-    return this.isPlatformAdmin(principal, userId);
-  }
 }
 
 function notFound(): NotFoundException {
