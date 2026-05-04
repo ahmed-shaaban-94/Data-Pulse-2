@@ -6,10 +6,19 @@ import { RolesGuard } from "../auth/roles.guard";
 import { MembershipsController } from "./memberships.controller";
 import { MembershipsRepository } from "./memberships.repository";
 import { MembershipsService } from "./memberships.service";
+import { InvitationsController } from "./invitations.controller";
+import { InvitationsRepository } from "./invitations.repository";
+import { InvitationsService } from "./invitations.service";
 
 @Module({
   imports: [AuthModule, ContextModule],
-  controllers: [MembershipsController],
-  providers: [MembershipsRepository, MembershipsService, RolesGuard],
+  controllers: [MembershipsController, InvitationsController],
+  providers: [
+    MembershipsRepository,
+    MembershipsService,
+    InvitationsRepository,
+    InvitationsService,
+    RolesGuard,
+  ],
 })
 export class MembershipsModule {}

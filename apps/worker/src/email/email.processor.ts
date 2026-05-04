@@ -46,6 +46,7 @@ import {
 } from "./email.adapter";
 import {
   renderEmailVerificationEmail,
+  renderInvitationEmail,
   renderPasswordResetEmail,
 } from "./templates";
 
@@ -57,14 +58,12 @@ import {
 export const EMAIL_JOB_NAMES = {
   passwordReset: "auth.password-reset",
   emailVerification: "auth.email-verify",
+  invitation: "memberships.invitation",
 } as const;
 
 /**
- * Payload schema. Identical for both job types. The producer guarantees
- * this shape, but the processor revalidates at the boundary because
- * a queue is, by definition, an external integration point — anything
- * could end up there (re-deserialisation, future producer drift,
- * manual queue surgery).
+ * Payload schema for auth jobs (password-reset, email-verify). The producer
+ * guarantees this shape, but the processor revalidates at the boundary.
  */
 const emailJobSchema = z.object({
   email: z.string().email().min(1),
@@ -73,6 +72,18 @@ const emailJobSchema = z.object({
 });
 
 export type EmailJobData = z.infer<typeof emailJobSchema>;
+
+/**
+ * Payload schema for invitation jobs. Differs from auth jobs: no userId
+ * (invitees may not yet be users), has tenantId for audit.
+ */
+const invitationJobSchema = z.object({
+  email: z.string().email().min(1),
+  rawToken: z.string().min(1),
+  tenantId: z.string().min(1),
+});
+
+export type InvitationJobData = z.infer<typeof invitationJobSchema>;
 
 export class MalformedEmailJobError extends Error {
   constructor(jobName: string, issue: string) {
@@ -97,22 +108,42 @@ export class EmailProcessor {
   ) {}
 
   async process(jobName: string, data: unknown): Promise<void> {
-    const parsed = parseJobData(jobName, data);
     switch (jobName) {
-      case EMAIL_JOB_NAMES.passwordReset:
+      case EMAIL_JOB_NAMES.passwordReset: {
+        const parsed = parseAuthJobData(jobName, data);
         await this.adapter.send(renderPasswordResetEmail(parsed));
         return;
-      case EMAIL_JOB_NAMES.emailVerification:
+      }
+      case EMAIL_JOB_NAMES.emailVerification: {
+        const parsed = parseAuthJobData(jobName, data);
         await this.adapter.send(renderEmailVerificationEmail(parsed));
         return;
+      }
+      case EMAIL_JOB_NAMES.invitation: {
+        const parsed = parseInvitationJobData(jobName, data);
+        await this.adapter.send(renderInvitationEmail(parsed));
+        return;
+      }
       default:
         throw new UnknownEmailJobError(jobName);
     }
   }
 }
 
-function parseJobData(jobName: string, data: unknown): EmailJobData {
+function parseAuthJobData(jobName: string, data: unknown): EmailJobData {
   const result = emailJobSchema.safeParse(data);
+  if (!result.success) {
+    const firstIssue = result.error.issues[0];
+    const issue = firstIssue
+      ? `${firstIssue.path.join(".") || "<root>"}: ${firstIssue.message}`
+      : "validation failed";
+    throw new MalformedEmailJobError(jobName, issue);
+  }
+  return result.data;
+}
+
+function parseInvitationJobData(jobName: string, data: unknown): InvitationJobData {
+  const result = invitationJobSchema.safeParse(data);
   if (!result.success) {
     const firstIssue = result.error.issues[0];
     const issue = firstIssue

@@ -31,9 +31,24 @@ export interface EmailVerificationEmailJob {
  * the request path on actual SMTP / API delivery — that work happens
  * in the worker (T114/T115).
  */
+export interface InvitationEmailJob {
+  /** Normalised (trimmed + lowercased) email address of the invitee. */
+  readonly email: string;
+  /** Raw token to embed in the invitation link — never persisted. */
+  readonly rawToken: string;
+  /** ID of the tenant that issued the invitation; for audit/dedupe. */
+  readonly tenantId: string;
+}
+
+/**
+ * The seam. Implementations enqueue a worker job; they MUST NOT block
+ * the request path on actual SMTP / API delivery — that work happens
+ * in the worker (T114/T115).
+ */
 export interface EmailJobEnqueuer {
   enqueuePasswordReset(job: PasswordResetEmailJob): Promise<void>;
   enqueueEmailVerification(job: EmailVerificationEmailJob): Promise<void>;
+  enqueueInvitation(job: InvitationEmailJob): Promise<void>;
 }
 
 /**
@@ -52,6 +67,9 @@ export class NoOpEmailJobEnqueuer implements EmailJobEnqueuer {
   async enqueueEmailVerification(
     _job: EmailVerificationEmailJob,
   ): Promise<void> {
+    // intentionally empty — no email is sent, no job is queued
+  }
+  async enqueueInvitation(_job: InvitationEmailJob): Promise<void> {
     // intentionally empty — no email is sent, no job is queued
   }
 }

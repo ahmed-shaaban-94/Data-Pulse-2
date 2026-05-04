@@ -33,6 +33,8 @@ import {
   type EmailMessage,
 } from "../../src/email/email.adapter";
 
+const TENANT_ID = "0b000000-0000-7000-8000-00000000bb01";
+
 const RAW_TOKEN = "raw-token-aaaaaaaaaaaaaaaaaa";
 const EMAIL = "alice@example.com";
 const USER_ID = "0a000000-0000-7000-8000-00000000aa01";
@@ -262,6 +264,75 @@ describe("EmailProcessor — PII discipline", () => {
   );
 });
 
+describe("EmailProcessor — memberships.invitation", () => {
+  it("dispatches the invitation job to adapter.send exactly once", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    expect(adapter.sent).toHaveLength(1);
+  });
+
+  it("sends to the address from the job payload", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    expect(adapter.sent[0]!.to).toBe(EMAIL);
+  });
+
+  it("renders a non-empty subject", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    expect(adapter.sent[0]!.subject.length).toBeGreaterThan(0);
+  });
+
+  it("includes the rawToken in the rendered body so the email is functional", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    const message = adapter.sent[0]!;
+    expect(message.textBody).toContain(RAW_TOKEN);
+    if (message.htmlBody) {
+      expect(message.htmlBody).toContain(RAW_TOKEN);
+    }
+  });
+
+  it("throws MalformedEmailJobError when tenantId is missing", async () => {
+    await expect(
+      processor.process(EMAIL_JOB_NAMES.invitation, {
+        email: EMAIL,
+        rawToken: RAW_TOKEN,
+        // tenantId missing
+      } as unknown),
+    ).rejects.toBeInstanceOf(MalformedEmailJobError);
+    expect(adapter.sent).toHaveLength(0);
+  });
+
+  it("tags are PII-free (no email, no rawToken, no tenantId in tag values)", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    const tags = adapter.sent[0]!.tags;
+    if (tags) {
+      for (const value of Object.values(tags)) {
+        expect(value).not.toContain("@");
+        expect(value).not.toContain(RAW_TOKEN);
+        expect(value).not.toContain(TENANT_ID);
+      }
+    }
+  });
+});
+
 describe("EmailProcessor — job name contract with EmailQueueProducer", () => {
   // The producer in `apps/api/src/auth/email-queue.producer.ts` writes
   // these exact string literals. If either side drifts, this test fails
@@ -271,5 +342,8 @@ describe("EmailProcessor — job name contract with EmailQueueProducer", () => {
   });
   it("uses 'auth.email-verify' for email verification jobs", () => {
     expect(EMAIL_JOB_NAMES.emailVerification).toBe("auth.email-verify");
+  });
+  it("uses 'memberships.invitation' for invitation jobs", () => {
+    expect(EMAIL_JOB_NAMES.invitation).toBe("memberships.invitation");
   });
 });

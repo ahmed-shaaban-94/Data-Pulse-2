@@ -34,6 +34,7 @@ import type { Queue } from "bullmq";
 import {
   type EmailJobEnqueuer,
   type EmailVerificationEmailJob,
+  type InvitationEmailJob,
   type PasswordResetEmailJob,
 } from "./email-job.enqueuer";
 
@@ -44,6 +45,7 @@ import {
 export const EMAIL_JOB_NAMES = {
   passwordReset: "auth.password-reset",
   emailVerification: "auth.email-verify",
+  invitation: "memberships.invitation",
 } as const;
 
 /**
@@ -53,6 +55,7 @@ export const EMAIL_JOB_NAMES = {
 const JOB_ID_SCOPES = {
   passwordReset: "pwreset",
   emailVerification: "verify",
+  invitation: "invite",
 } as const;
 
 /**
@@ -83,6 +86,11 @@ export class EmailQueueProducer implements EmailJobEnqueuer {
   ): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.emailVerification, job.rawToken);
     await this.queue.add(EMAIL_JOB_NAMES.emailVerification, job, { jobId });
+  }
+
+  async enqueueInvitation(job: InvitationEmailJob): Promise<void> {
+    const jobId = deriveJobId(JOB_ID_SCOPES.invitation, job.rawToken);
+    await this.queue.add(EMAIL_JOB_NAMES.invitation, job, { jobId });
   }
 }
 
