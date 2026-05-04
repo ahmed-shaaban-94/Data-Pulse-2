@@ -73,6 +73,42 @@ export interface RolesMetadata {
    * OR tenant role X" — stay representable in one object.
    */
   readonly platformAdminOnly: boolean;
+  /**
+   * HTTP status to use when the caller fails the role check
+   * (no membership OR role not in `any`).
+   *
+   *   - `404` (default) — FR-ISO-4 posture. Appropriate when the
+   *     resource id is part of the request (e.g., path-as-context
+   *     `/tenants/:id`): we must NOT distinguish "wrong tenant" from
+   *     "doesn't exist", or attackers can enumerate.
+   *
+   *   - `403` — appropriate when the caller is acting *within* their
+   *     active tenant and existence is not a secret. Example:
+   *     `POST /api/v1/stores` — the active tenant is already known to
+   *     the caller; the only question the response answers is "may
+   *     you create here?" Returning 404 would be misleading.
+   *
+   * Independent of `platformAdminOnly`, which is hard-wired 403 (the
+   * actor's platform-admin status is self-knowable via `/context/me`).
+   */
+  readonly denyAs: 403 | 404;
+}
+
+/**
+ * Optional trailing options object on `@Roles(...)`. Currently only
+ * carries `denyAs`; future fields go here without breaking existing
+ * call sites. Detected via the `denyAs` property at the type level.
+ */
+export interface RolesOptions {
+  readonly denyAs?: 403 | 404;
+}
+
+function isOptions(value: unknown): value is RolesOptions {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "denyAs" in (value as Record<string, unknown>)
+  );
 }
 
 /** Reflector key. Namespaced to avoid collision with future Nest libs. */
@@ -85,18 +121,41 @@ export const ROLES_METADATA_KEY = "dp2:roles";
  *
  * Platform-admin callers always pass — see `RolesGuard` for the bypass
  * order.
+ *
+ * Optional trailing options:
+ *   `@Roles("owner", "tenant_admin", { denyAs: 403 })`
+ * defaults to `{ denyAs: 404 }` (FR-ISO-4). Use `403` only when the
+ * caller is acting within their active tenant and existence is not a
+ * secret (see `RolesMetadata.denyAs` for the full rationale).
  */
-export const Roles = (...codes: RoleCode[]): CustomDecorator =>
-  SetMetadata(ROLES_METADATA_KEY, {
+export function Roles(...codes: RoleCode[]): CustomDecorator;
+export function Roles(
+  ...args: [...RoleCode[], RolesOptions]
+): CustomDecorator;
+export function Roles(
+  ...args: Array<RoleCode | RolesOptions>
+): CustomDecorator {
+  const last = args[args.length - 1];
+  const opts: RolesOptions = isOptions(last) ? last : {};
+  const codes = (
+    isOptions(last) ? args.slice(0, -1) : args
+  ) as RoleCode[];
+  return SetMetadata(ROLES_METADATA_KEY, {
     any: codes,
     tenantFrom: "context",
     platformAdminOnly: false,
+    denyAs: opts.denyAs ?? 404,
   } satisfies RolesMetadata);
+}
 
 /**
  * Same as `@Roles()` but reads tenant id from `request.params[paramKey]`
  * instead of `request.context`. For path-as-context routes that don't
  * mount `TenantContextGuard` (e.g. `/api/v1/tenants/:id`).
+ *
+ * Path-as-context routes are FR-ISO-4-sensitive by construction (the
+ * tenant id IS the secret being protected), so `denyAs` is hard-wired
+ * to `404`. There is intentionally no `denyAs` option here.
  */
 export const RolesFromParam = (
   paramKey: string,
@@ -106,6 +165,7 @@ export const RolesFromParam = (
     any: codes,
     tenantFrom: `param:${paramKey}` as const,
     platformAdminOnly: false,
+    denyAs: 404,
   } satisfies RolesMetadata);
 
 /**
@@ -121,4 +181,5 @@ export const PlatformAdminOnly = (): CustomDecorator =>
     any: [],
     tenantFrom: "context",
     platformAdminOnly: true,
+    denyAs: 403,
   } satisfies RolesMetadata);

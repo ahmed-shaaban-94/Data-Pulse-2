@@ -1,5 +1,5 @@
 /**
- * ContextModule — slice 11 (T153).
+ * ContextModule — slice 11 (T153) + Stores wiring (T134).
  *
  * Wires the active-context surface:
  *
@@ -9,13 +9,24 @@
  *          ├─ SessionRepository  (from AuthModule)
  *          └─ MembershipRepository (provided here)
  *
- * `MembershipRepository` is owned by this module — it lives in
- * `apps/api/src/context/` and exists primarily for `TenantContextGuard`
- * (PR #19) and now `ContextService`. Imports `AuthModule` for
- * `SessionRepository` (and `AuthGuard`, which the controller uses).
+ *   TenantContextGuard           (provided + exported here)
+ *     ├─ SessionRepository       (from AuthModule)
+ *     └─ MembershipRepository    (provided here)
  *
- * `TenantContextGuard` is deliberately NOT applied to this controller
- * — see the controller header for the chicken-and-egg explanation.
+ * `MembershipRepository` is owned by this module — it lives in
+ * `apps/api/src/context/` and is consumed by `TenantContextGuard`
+ * (PR #19), `ContextService`, and downstream modules (`TenantsModule`,
+ * `StoresModule`).
+ *
+ * `TenantContextGuard` is also owned and **exported** here so feature
+ * modules (e.g., `StoresModule` for active-tenant routes) can mount it
+ * via `@UseGuards(...)`. This module's own `ContextController` does NOT
+ * mount it — see the controller header for the chicken-and-egg
+ * rationale.
+ *
+ * Imports `AuthModule` for `SessionRepository` (used by both
+ * `ContextService` and `TenantContextGuard`) and the `AuthGuard` /
+ * `PG_POOL` tokens.
  */
 import { Module } from "@nestjs/common";
 import type { Pool } from "pg";
@@ -24,6 +35,7 @@ import { AuthModule, PG_POOL } from "../auth/auth.module";
 import { ContextController } from "./context.controller";
 import { ContextService } from "./context.service";
 import { MembershipRepository } from "./membership.repository";
+import { TenantContextGuard } from "./tenant-context.guard";
 
 @Module({
   imports: [AuthModule],
@@ -36,7 +48,8 @@ import { MembershipRepository } from "./membership.repository";
       inject: [PG_POOL],
     },
     ContextService,
+    TenantContextGuard,
   ],
-  exports: [MembershipRepository, ContextService],
+  exports: [MembershipRepository, ContextService, TenantContextGuard],
 })
 export class ContextModule {}
