@@ -1,10 +1,11 @@
 /**
- * MembershipsController — slice US4 (T174).
+ * MembershipsController — slice US4 (T173/T174).
  *
- * Implements the revoke endpoint from
+ * Implements the revoke and update endpoints from
  * `specs/001-foundation-auth-tenant-store/contracts/memberships.openapi.yaml`:
  *
  *     DELETE /api/v1/memberships/:membership_id   revokeMembership
+ *     PATCH  /api/v1/memberships/:membership_id   updateMembership
  *
  * Authorization model (active-tenant context, same as StoresController)
  * -----------------------------------------------------------------------
@@ -16,23 +17,16 @@
  * Method-level `@UseGuards(RolesGuard) @Roles("owner","tenant_admin",{denyAs:403})`:
  *   - Caller must be `owner` or `tenant_admin` within the active tenant.
  *   - `denyAs: 403` (not 404): the caller is already inside their
- *     active tenant, so denying existence would be misleading. 403
- *     leaks no side-channel compared to the 401 the guard just passed.
- *     This mirrors `POST /stores` which uses the same `denyAs: 403`.
- *
- * 404 semantics (service-level)
- * ------------------------------
- * The service throws 404 when the membership_id is not found, belongs
- * to a different tenant (RLS-filtered), is already revoked, or is
- * soft-deleted. This is indistinguishable from a bad id — correct per
- * FR-ISO-4.
+ *     active tenant, so denying existence would be misleading.
  */
 import {
+  Body,
   Controller,
   Delete,
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   ParseUUIDPipe,
   Req,
   UnauthorizedException,
@@ -44,6 +38,8 @@ import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import type { TenantContextRequest } from "../context/types";
 import { MembershipsService } from "./memberships.service";
+import { MembershipUpdateSchema, type MembershipUpdateDto } from "./dto";
+import { ZodValidationPipe } from "../common/zod-validation.pipe";
 
 @Controller("api/v1/memberships")
 @UseGuards(AuthGuard, TenantContextGuard)
@@ -61,5 +57,28 @@ export class MembershipsController {
     const ctx = request.context;
     if (!ctx) throw new UnauthorizedException("Unauthorized");
     await this.membershipsService.revoke(ctx, membershipId);
+  }
+
+  @Patch(":membership_id")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin", { denyAs: 403 })
+  async update(
+    @Req() request: TenantContextRequest,
+    @Param("membership_id", new ParseUUIDPipe()) membershipId: string,
+    @Body(new ZodValidationPipe(MembershipUpdateSchema)) dto: MembershipUpdateDto,
+  ): Promise<object> {
+    const ctx = request.context;
+    if (!ctx) throw new UnauthorizedException("Unauthorized");
+    const detail = await this.membershipsService.update(ctx, membershipId, dto);
+    return {
+      id: detail.membershipId,
+      tenant_id: ctx.tenantId,
+      user_id: detail.user.id,
+      role_code: detail.roleCode,
+      store_access_kind: detail.storeAccessKind,
+      accessible_store_ids: detail.accessibleStoreIds,
+      revoked_at: detail.revokedAt ?? null,
+    };
   }
 }
