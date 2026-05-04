@@ -3,11 +3,14 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 import { generateRawToken, hashToken } from "@data-pulse-2/auth";
 import { newId } from "@data-pulse-2/shared";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { and, eq } from "drizzle-orm";
 import { runWithTenantContext, type TenantContext } from "@data-pulse-2/db";
 
 import { PG_POOL } from "../auth/auth.module";
@@ -16,7 +19,8 @@ import {
   type EmailJobEnqueuer,
 } from "../auth/email-job.enqueuer";
 import type { ResolvedContext } from "../context/types";
-import type { InvitationRow } from "@data-pulse-2/db/schema";
+import { roles, type InvitationRow } from "@data-pulse-2/db/schema";
+import type { MembershipDetail } from "../context/membership.repository";
 import type { InvitationCreateDto } from "./invitation.dto";
 import { InvitationsRepository } from "./invitations.repository";
 
@@ -182,4 +186,149 @@ export class InvitationsService {
 
     return row;
   }
+
+  /**
+   * Accept an invitation for an existing user (existing-user path only).
+   *
+   * Sequence (deferred-user path — no session/cookie/new-user creation):
+   *   1. Validate the token (same logic as `lookupAndValidateAcceptToken`).
+   *   2. Look up the invitee by email BEFORE opening the mutation transaction,
+   *      so an unknown email leaves the invitation `status='pending'`.
+   *      Throws `NotFoundException` when no active user matches.
+   *   3. Single mutation transaction (platform-admin context, tenant_id=row.tenantId):
+   *      a. `markAccepted` — conditional UPDATE guards against concurrent races.
+   *         Returns `false` (race lost) → same opaque `BadRequestException`.
+   *      b. `createMembership` — INSERT; DB enforces
+   *         `memberships_tenant_user_active_uidx` partial unique index.
+   *         `23505` on that constraint → `ConflictException(409)`; the
+   *         invitation remains `accepted` (the accept was valid, the conflict
+   *         is a business-logic condition the caller must resolve).
+   *      c. `insertStoreAccessRows` — only when `storeAccessKind='specific'`
+   *         and `invitedStoreIds` is non-empty.
+   *   4. Build and return `MembershipDetail` (NOT `InvitationRow` — never
+   *      expose `tokenHash`).
+   *
+   * No session is created. No cookie is set. This is a pure mutation
+   * foundation for the deferred HTTP layer.
+   */
+  async acceptInvitationExistingUser(rawToken: string): Promise<MembershipDetail> {
+    // Step 1: validate token (read-only, outside tx)
+    const invitation = await this.lookupAndValidateAcceptToken(rawToken);
+
+    // Step 2: look up user by email BEFORE mutation tx
+    const user = await this.tx(
+      this.pool,
+      PLATFORM_ADMIN_CTX,
+      async (client) => this.invitations.findUserByEmail(client, invitation.email),
+    );
+    if (!user) {
+      throw new NotFoundException("No account found for this invitation email. Please register first.");
+    }
+
+    // Step 3: single mutation transaction under the invitation's tenant
+    const txContext: TenantContext = {
+      tenantId: invitation.tenantId,
+      isPlatformAdmin: true,
+    };
+
+    return this.tx(this.pool, txContext, async (client) => {
+      // 3a: mark invitation accepted (conditional — race-safe)
+      const accepted = await this.invitations.markAccepted(client, invitation.id, user.id);
+      if (!accepted) {
+        throw new BadRequestException(INVALID_INVITATION_ERROR);
+      }
+
+      // 3b: create membership
+      const membershipId = newId();
+      const storeAccessKind = invitation.storeAccessKind as "all" | "specific";
+      try {
+        await this.invitations.createMembership(client, {
+          id: membershipId,
+          tenantId: invitation.tenantId,
+          userId: user.id,
+          roleId: invitation.roleId,
+          storeAccessKind,
+        });
+      } catch (err: unknown) {
+        if (isUniqueViolation(err, "memberships_tenant_user_active_uidx")) {
+          throw new ConflictException(
+            "An active membership already exists for this user in this tenant",
+          );
+        }
+        throw err;
+      }
+
+      // 3c: insert store_access rows when kind is 'specific'
+      const storeIds: string[] = Array.isArray(invitation.invitedStoreIds)
+        ? invitation.invitedStoreIds
+        : [];
+      if (storeAccessKind === "specific" && storeIds.length > 0) {
+        await this.invitations.insertStoreAccessRows(
+          client,
+          membershipId,
+          invitation.tenantId,
+          storeIds,
+        );
+      }
+
+      // Step 4: build MembershipDetail response (no tokenHash)
+      const accessibleStoreIds: readonly string[] =
+        storeAccessKind === "specific" ? storeIds : [];
+
+      // Re-read role code from the invitation's roleId via a roles lookup
+      // (the invitation row stores roleId not roleCode)
+      const roleCode = await getRoleCode(client, invitation.roleId, invitation.tenantId);
+
+      return {
+        membershipId,
+        user: {
+          id: user.id,
+          email: user.email,
+          displayName: user.displayName ?? null,
+        },
+        roleCode,
+        storeAccessKind,
+        accessibleStoreIds,
+        revokedAt: null,
+      };
+    });
+  }
+}
+
+/**
+ * Fetch the `code` column for a role row by ID within a specific tenant.
+ *
+ * The `tenantId` constraint is defence-in-depth: roles are tenant-scoped
+ * and the mutation context already holds `invitation.tenantId`, so we
+ * constrain to the same tenant rather than relying on ID uniqueness alone.
+ *
+ * Throws if the role cannot be found (should never happen given FK
+ * integrity, but guards against a corrupt state).
+ */
+async function getRoleCode(
+  client: PoolClient,
+  roleId: string,
+  tenantId: string,
+): Promise<string> {
+  const db = drizzle(client);
+  const rows = await db
+    .select({ code: roles.code })
+    .from(roles)
+    .where(and(eq(roles.id, roleId), eq(roles.tenantId, tenantId)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) throw new Error(`getRoleCode: role ${roleId} not found`);
+  return row.code;
+}
+
+/**
+ * Detect a Postgres unique-constraint violation (`SQLSTATE 23505`) on
+ * a specific constraint name. Mirrors `StoresService.isUniqueViolation`.
+ */
+function isUniqueViolation(err: unknown, constraintName: string): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { code?: string; constraint?: string; message?: string };
+  if (e.code !== "23505") return false;
+  if (e.constraint === constraintName) return true;
+  return typeof e.message === "string" && e.message.includes(constraintName);
 }
