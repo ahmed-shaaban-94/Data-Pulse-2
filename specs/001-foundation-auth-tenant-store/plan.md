@@ -2,7 +2,7 @@
 
 **Feature ID**: 001
 **Spec**: [spec.md](./spec.md) (commit `4692537`)
-**Constitution**: v2.0.0 ([../../.specify/memory/constitution.md](../../.specify/memory/constitution.md))
+**Constitution**: v3.0.0 ([../../.specify/memory/constitution.md](../../.specify/memory/constitution.md))
 **Branch**: `claude/foundation-auth-tenant-store`
 **Status**: Draft (Phase 2 planning complete — no code generated)
 **Created**: 2026-05-01
@@ -96,7 +96,7 @@ Apps depend on packages; packages do not depend on apps. Single `tsconfig.base.j
 
 ## 2. Constitution Check (initial gate)
 
-Against constitution v2.0.0:
+Against constitution v3.0.0:
 
 | Principle | Plan-level alignment | Status |
 |---|---|---|
@@ -108,6 +108,12 @@ Against constitution v2.0.0:
 | VI. Test-First Quality | Plan defines red→green order; cross-tenant + cross-store isolation tests required per protected endpoint; ≥80% coverage. | ✅ |
 | VII. Observable Systems | pino structured logs with `tenant_id`/`request_id`, OTel traces, Prometheus metrics, no secrets/PII in logs by policy. | ✅ |
 | VIII. Reproducible & Versioned Releases | Drizzle SQL migrations + CHANGELOG.md + pinned deps (pnpm lockfile) + Docker images + API version `v1` from day one. | ✅ |
+| IX. Source-of-Truth Model | Not exercised — plan covers identity/tenancy/auth only. No catalog / sales / POS-event entities in data-model.md. SaaS-as-truth half (tenants/stores/memberships/integration credentials) is implemented; Global / Tenant / Store / SaleLine layers bind future features. | n/a (out of scope) |
+| X. Retail Temporal Semantics | Not exercised — no sale, order, or POS-event tables. `audit_events.occurred_at` is the only retail-style temporal field and is single-purpose. Per-entity timestamp catalogs bind future features. | n/a (out of scope) |
+| XI. Idempotency & External IDs | Plan acknowledges — `idempotency_keys` table reserved at the platform level (data-model.md §13); helper implementation is tasks T260–T261; POS-seam walkthrough is T264–T265. No real endpoint consumes it in this feature. | Acknowledged; impl pending T260–T265 |
+| XII. Authorization & Object Safety | Plan satisfies — Zod `.strict()` ValidationPipe, command DTOs per endpoint, server-resolved tenant/store context, RolesGuard with `denyAs: 404` default for cross-tenant non-disclosure, default-deny test (T206), no body-supplied tenant/store ids. | ✅ |
+| XIII. Auditability & Provenance | Plan acknowledges — `audit_events` table designed in data-model.md; `AuditEmitter` interceptor + `audit-fanout` worker are tasks T230–T238; insert-only posture and anonymous-actor pattern are explicit task acceptance criteria (T237/T238). | Acknowledged; impl pending T230–T238 |
+| XIV. PII & Data Lifecycle Discipline | Plan satisfies posture — pino redaction list (research.md PQ-4/PQ-5), no-PII-in-jobIds policy in producer specs, soft-delete retention worker (T312), invitation secret hashing (T172), audit-log retention (T311). Full classification taxonomy and right-to-erasure flows bind future specs. | ✅ (posture); taxonomy deferred |
 
 **Result**: No initial gate violations.
 
@@ -277,6 +283,12 @@ Re-checked after Phase 1 artifacts were drafted under the TypeScript stack:
 | VI — Test-first | Phase 2 task order is RED→GREEN; cross-tenant + cross-store + RLS tests are mandatory. ✅ |
 | VII — Observable | pino + OTel + Prometheus + audit table; no secrets/PII in logs by policy. ✅ |
 | VIII — Reproducible | Drizzle SQL migrations + pnpm lockfile + Docker images + CHANGELOG; API v1 from day one. ✅ |
+| IX — Source-of-truth model | Not exercised by this feature — no catalog / sales / POS-event entities in the post-design data model. SaaS-as-truth half (tenants/stores/memberships/integration credentials) is in scope and implemented. ⏭ out of scope |
+| X — Retail temporal semantics | Not exercised — no sale or POS-event entities post-design. `audit_events.occurred_at` is single-purpose. ⏭ out of scope |
+| XI — Idempotency & external IDs | `idempotency_keys` table present in data-model.md §13; helper + POS-seam walkthrough are tasks T260–T265. ⏳ acknowledged; impl pending |
+| XII — Authorization & object safety | Zod `.strict()` body validation across endpoints, command DTOs, RolesGuard `denyAs: 404` default, default-deny test (T206), server-resolved tenant/store context, no body-supplied tenant/store ids. ✅ |
+| XIII — Auditability & provenance | `audit_events` table designed insert-only with anonymous-actor support; emitter + worker pending T230–T238. ⏳ acknowledged; impl pending |
+| XIV — PII & data-lifecycle | pino redaction at the logger boundary; no-PII-in-jobIds policy; soft-delete + retention workers (T311, T312); invitation secret hashing (T172); classification taxonomy deferred to future spec. ✅ (posture) |
 
 **Result**: No post-design violations.
 

@@ -1,7 +1,7 @@
 # Phase 0 — Research
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md)
-**Constitution**: v2.0.0
+**Constitution**: v3.0.0
 **Status**: Draft (no code, no migrations)
 **Last revised**: 2026-05-01 (stack: Python → TypeScript)
 

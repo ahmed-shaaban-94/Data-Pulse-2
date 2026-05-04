@@ -2,7 +2,7 @@
 
 **Feature**: 001-foundation-auth-tenant-store
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md)
-**Constitution**: v2.0.0
+**Constitution**: v3.0.0
 **Status**: Generated tasks (Phase 2 of speckit). **No code produced yet.**
 **Created**: 2026-05-02
 
@@ -284,7 +284,7 @@
 - [ ] T305 [P] CI workflow: lint + test + build + migration dry-run on Postgres (Testcontainers in CI) at `.github/workflows/ci.yml`
 - [ ] T306 [P] Author repo `README.md` quickstart pointer linking to `specs/001-foundation-auth-tenant-store/quickstart.md`
 - [ ] T307 [P] Update `CHANGELOG.md` with v0.1.0 "foundation" entry
-- [ ] T308 [P] Constitution v2.0.0 sign-off: append a "Post-implementation Constitution Check" subsection to `plan.md` confirming all 8 principles still hold against the built code
+- [ ] T308 [P] Constitution v3.0.0 sign-off: append a "Post-implementation Constitution Check" subsection to `plan.md` confirming all 14 principles still hold against the built code
 - [ ] T309 [P] Verify Success Criteria SC-1..SC-9 against the running system; record results in `specs/001-foundation-auth-tenant-store/sc-verification.md`
 - [ ] T310 [P] Performance check for SC-5 (context resolution p95 ≤ 200ms) — measurement script + report in `apps/api/test/performance/context-resolution.spec.ts`
 - [ ] T311 [P] Audit log retention policy: BullMQ scheduled job to mark records past retention; tested in `apps/worker/test/audit/retention.spec.ts`
