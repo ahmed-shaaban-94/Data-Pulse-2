@@ -171,6 +171,9 @@ class AlwaysAllowRedis implements RedisLike {
     // tenant/store modules) can share the single connection pool
     // rather than provisioning their own.
     PG_POOL,
+    // EMAIL_JOB_ENQUEUER is exported so downstream modules (MembershipsModule)
+    // can inject the enqueuer for invitation jobs without re-wiring it.
+    EMAIL_JOB_ENQUEUER,
   ],
 })
 export class AuthModule {}
