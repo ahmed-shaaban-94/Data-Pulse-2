@@ -1,15 +1,15 @@
 /**
  * TenantsController — slice 12 (T131).
  *
- * Implements the five tenant-CRUD endpoints in
- * `specs/001-foundation-auth-tenant-store/contracts/tenants.openapi.yaml`
- * (excluding `/members`, deferred to a separate slice):
+ * Implements all six tenant endpoints in
+ * `specs/001-foundation-auth-tenant-store/contracts/tenants.openapi.yaml`:
  *
  *     GET    /api/v1/tenants              listTenants
  *     POST   /api/v1/tenants              createTenant      [platform-admin]
  *     GET    /api/v1/tenants/:id          readTenant
  *     PATCH  /api/v1/tenants/:id          updateTenant
  *     DELETE /api/v1/tenants/:id          softDeleteTenant  [platform-admin]
+ *     GET    /api/v1/tenants/:id/members  listMembers
  *
  * Why this controller is NOT guarded by `TenantContextGuard`
  * ---------------------------------------------------------
@@ -78,6 +78,24 @@ import {
 } from "./dto";
 import { TenantsService } from "./tenants.service";
 import type { TenantRecord } from "./tenants.repository";
+import type { MembershipDetail } from "../context/membership.repository";
+
+/**
+ * Wire-shape for a single membership. Matches `MembershipDetail` from
+ * the OpenAPI contract (snake_case over the wire).
+ */
+interface MembershipDetailBody {
+  membership_id: string;
+  user: {
+    id: string;
+    email: string;
+    display_name: string | null;
+  };
+  role_code: string;
+  store_access_kind: string;
+  accessible_store_ids: string[];
+  revoked_at: string | null;
+}
 
 /**
  * Wire-shape (snake_case) for the tenant summary response. Matches
@@ -98,6 +116,21 @@ interface TenantBody extends TenantSummaryBody {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+}
+
+function toMembershipDetailBody(d: MembershipDetail): MembershipDetailBody {
+  return {
+    membership_id: d.membershipId,
+    user: {
+      id: d.user.id,
+      email: d.user.email,
+      display_name: d.user.displayName,
+    },
+    role_code: d.roleCode,
+    store_access_kind: d.storeAccessKind,
+    accessible_store_ids: [...d.accessibleStoreIds],
+    revoked_at: d.revokedAt ? d.revokedAt.toISOString() : null,
+  };
 }
 
 function toSummaryBody(record: TenantRecord): TenantSummaryBody {
@@ -141,6 +174,19 @@ export class TenantsController {
     if (!principal) throw new UnauthorizedException("Unauthorized");
     const record = await this.tenantsService.create(principal, body);
     return toFullBody(record);
+  }
+
+  @Get(":id/members")
+  @UseGuards(RolesGuard)
+  @RolesFromParam("id", "owner", "tenant_admin")
+  async listMembers(
+    @Req() request: AuthedRequest,
+    @Param("id", new ParseUUIDPipe()) tenantId: string,
+  ): Promise<MembershipDetailBody[]> {
+    const principal = request.principal;
+    if (!principal) throw new UnauthorizedException("Unauthorized");
+    const details = await this.tenantsService.listMembers(principal, tenantId);
+    return details.map(toMembershipDetailBody);
   }
 
   @Get(":id")

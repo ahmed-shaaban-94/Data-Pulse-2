@@ -49,7 +49,7 @@ import {
 } from "@data-pulse-2/db/schema";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, isNull } from "drizzle-orm";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 /**
  * Active membership snapshot returned by `findActiveMembership`. We
@@ -79,6 +79,24 @@ export interface MembershipSummary {
    * granted store IDs.
    */
   readonly accessibleStoreIds: readonly string[];
+}
+
+/**
+ * Wire-shape for `GET /api/v1/tenants/:id/members`. Matches the
+ * `MembershipDetail` schema in `tenants.openapi.yaml`.
+ */
+export interface MembershipDetail {
+  readonly membershipId: string;
+  readonly user: {
+    readonly id: string;
+    readonly email: string;
+    readonly displayName: string | null;
+  };
+  readonly roleCode: string;
+  readonly storeAccessKind: StoreAccessKind;
+  /** Empty array when `storeAccessKind = 'all'`. */
+  readonly accessibleStoreIds: readonly string[];
+  readonly revokedAt: Date | null;
 }
 
 /** Tenant decoration for the active-tenant slot of `ContextResponse`. */
@@ -303,6 +321,81 @@ export class MembershipRepository {
       .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  /**
+   * List every non-deleted, non-revoked membership in `tenantId`,
+   * decorated with the user's profile, role code, and accessible-store
+   * IDs for `kind='specific'` memberships.
+   *
+   * `client` MUST come from `runWithTenantContext(pool, { tenantId, ... })`
+   * so that the `memberships_tenant_isolation` RLS policy is satisfied
+   * by the `app.current_tenant` GUC. Passing a plain `Pool` connection
+   * would cause the RLS predicate to fail and return an empty result.
+   *
+   * N+1 for store_access is bounded by the number of memberships in a
+   * tenant (typically small in v1). A future Redis-backed aggregation
+   * (FR-AUTH-6) will collapse this.
+   */
+  async listForTenant(
+    client: PoolClient,
+    tenantId: string,
+  ): Promise<readonly MembershipDetail[]> {
+    const db = drizzle(client);
+
+    const baseRows = await db
+      .select({
+        membershipId: memberships.id,
+        userId: memberships.userId,
+        userEmail: users.email,
+        userDisplayName: users.displayName,
+        roleCode: roles.code,
+        storeAccessKind: memberships.storeAccessKind,
+        revokedAt: memberships.revokedAt,
+      })
+      .from(memberships)
+      .innerJoin(users, eq(users.id, memberships.userId))
+      .innerJoin(roles, eq(roles.id, memberships.roleId))
+      .where(
+        and(
+          eq(memberships.tenantId, tenantId),
+          isNull(memberships.deletedAt),
+          isNull(memberships.revokedAt),
+          isNull(users.deletedAt),
+        ),
+      );
+
+    const details: MembershipDetail[] = [];
+    for (const row of baseRows) {
+      const kind = row.storeAccessKind as StoreAccessKind;
+      let accessible: readonly string[] = [];
+      if (kind === "specific") {
+        const grantRows = await db
+          .select({ storeId: storeAccess.storeId })
+          .from(storeAccess)
+          .innerJoin(stores, eq(stores.id, storeAccess.storeId))
+          .where(
+            and(
+              eq(storeAccess.membershipId, row.membershipId),
+              isNull(stores.deletedAt),
+            ),
+          );
+        accessible = grantRows.map((r) => r.storeId);
+      }
+      details.push({
+        membershipId: row.membershipId,
+        user: {
+          id: row.userId,
+          email: row.userEmail,
+          displayName: row.userDisplayName ?? null,
+        },
+        roleCode: row.roleCode,
+        storeAccessKind: kind,
+        accessibleStoreIds: accessible,
+        revokedAt: row.revokedAt ?? null,
+      });
+    }
+    return details;
   }
 
   /**
