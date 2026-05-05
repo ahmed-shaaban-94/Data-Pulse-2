@@ -50,6 +50,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
@@ -110,7 +111,7 @@ export class StoresService {
     private readonly stores: StoresRepository,
     private readonly memberships: MembershipRepository,
     /** Optional injected runner for tests. Production callers omit it. */
-    tx?: TenantTxRunner,
+    @Optional() tx?: TenantTxRunner,
   ) {
     this.tx = tx ?? runWithTenantContext;
   }
