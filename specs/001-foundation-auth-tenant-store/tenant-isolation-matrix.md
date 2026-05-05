@@ -186,7 +186,7 @@ and access to store S1. Behavior toward S2 (same tenant, different store).
 
 | ID | Scenario | Expected | Coverage |
 |---|---|---|---|
-| D-1 | U sets active store to S1 (allowed); request succeeds. | `2xx` | `planned (T152 open)` — `apps/api/test/context/context.controller.spec.ts` exists; specific switch-to-permitted-store assertion has not been content-verified, so the row is conservatively held at `planned` pending a content-read slice. |
+| D-1 | U sets active store to S1 (allowed); request succeeds. | `2xx` | `covered today` — `apps/api/test/context/context.service.spec.ts`: `"kind='specific' + grant exists → success"` and `"kind='all' + store in tenant → updates session active store"` assert that `switchStore` returns a `2xx`-shape response for a permitted store. `apps/api/test/context/context.controller.spec.ts` confirms the controller forwards `(principal, store_id)` to the service and returns its result verbatim. |
 | D-2 | U attempts to set active store to S2 via context-switch. | `404 not_found` (store-access policy denies; safe 404) | `covered today` ([apps/api/test/context/tenant-context.guard.spec.ts](apps/api/test/context/tenant-context.guard.spec.ts)) |
 | D-3 | U with `kind='specific'` and access only to S1 calls `GET /api/v1/stores/{S2}` directly. | `404 not_found` | `covered today` ([apps/api/test/stores/stores.controller.spec.ts](apps/api/test/stores/stores.controller.spec.ts)) — store-access policy enforced in `StoresService.read` |
 | D-4 | A new store S3 is created in tenant T while U has `kind='all'`. U immediately gains read access to S3. | new store visible in `GET /api/v1/stores`; `GET /api/v1/stores/{S3}` succeeds | `planned (T176 open)` |
@@ -381,14 +381,14 @@ are not counted toward `covered today`.
 | A. Tenant context fail-closed | 6 | 4 | 0 | 2 | 0 |
 | B. Cross-tenant non-disclosure | 14 | 9 | 1 | 4 | 0 |
 | C. Same user, different roles | 5 | 0 | 2 | 3 | 0 |
-| D. Cross-store within tenant | 8 | 3 | 5 | 0 | 0 |
+| D. Cross-store within tenant | 8 | 4 | 4 | 0 | 0 |
 | E. Malicious body overrides | 9 | 2 | 2 | 5 | 0 |
 | F. Worker tenant-context | 8 | 1 | 5 | 1 | 1 |
 | G. RLS bypass probes | 8 | 3 | 4 | 1 | 0 |
 | H. Safe 404 vs 403 split | 6 | 6 | 0 | 0 | 0 |
 | I. Strict DTO validation | 8 | 1 | 0 | 7 | 0 |
 | J. No raw DB entity | 8 | 2 | 3 | 3 | 0 |
-| **Total** | **80** | **31** | **22** | **26** | **1** |
+| **Total** | **80** | **32** | **21** | **26** | **1** |
 
 (Notes:
 - Class F gained one row from the F-7 split into F-7a / F-7b.
@@ -451,12 +451,15 @@ These rows are candidates for a future `tasks.md` amendment slice that
 adds new Tnnn entries to close them. That slice is **not** in scope
 here.
 
-**Note on rows held at `planned (T152 open)` rather than promoted to
-`covered today`** (audit conservatism): C-5 and D-1 cite
+**Note on C-5 held at `planned (T152 open)` rather than promoted to
+`covered today`** (audit conservatism): C-5 cites
 [apps/api/test/context/context.controller.spec.ts](apps/api/test/context/context.controller.spec.ts)
 which exists, but the specific `it()` names that would assert the
-scenario as written have not been content-verified. They remain
-`planned` until a content-read slice confirms or denies the assertion.
+multi-membership signin / no-auto-pick scenario have been content-read
+and confirmed absent. C-5 remains `planned` until a test in the auth
+layer (e.g., `apps/api/test/auth/`) asserts the behaviour directly.
+D-1 was promoted to `covered today` after content-verification confirmed
+the assertions in `apps/api/test/context/context.service.spec.ts`.
 
 ---
 
