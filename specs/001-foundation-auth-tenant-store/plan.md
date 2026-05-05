@@ -201,6 +201,8 @@ Against constitution v3.0.0:
 | Postgres RLS | Row-level security policy on every tenant-scoped table; `app.current_tenant` GUC set per transaction. | Even raw SQL outside Drizzle cannot read other tenants. |
 | Tests | Jest + Supertest + Testcontainers tests assert tenant A cannot read tenant B's resources via ID, query, or batch endpoint; raw-SQL probe verifies RLS independently. | CI fails. |
 
+The canonical regression catalog for all tenant-isolation scenarios is [`tenant-isolation-matrix.md`](./tenant-isolation-matrix.md). Future test-implementation slices that add or change isolation behavior MUST update the matrix's coverage state.
+
 ---
 
 ## 4. Phase 0 — Outline & Research

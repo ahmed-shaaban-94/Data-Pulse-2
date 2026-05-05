@@ -489,7 +489,7 @@ and any plan/tasks generated from it:
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| R-1 | Tenant data leakage via missing scope on a single endpoint. | FR-ISO-1/2/3: defense in depth (DB + ORM defaults + per-endpoint isolation tests). |
+| R-1 | Tenant data leakage via missing scope on a single endpoint. | FR-ISO-1/2/3: defense in depth (DB + ORM defaults + per-endpoint isolation tests). For the exhaustive scenario catalog — including B-class cross-tenant non-disclosure probes and G-class RLS bypass probes — see [`tenant-isolation-matrix.md`](./tenant-isolation-matrix.md) §6 and §11. |
 | R-2 | Performance degradation if every request resolves full role+permission state. | SC-5 defines the budget; plan must include a caching strategy that is reconstructible from Postgres (Constitution Principle III). |
 | R-3 | Role model picked for v1 doesn't fit real customers. | Q2 default (C) leaves room for permission-based custom roles later without schema redesign. |
 | R-4 | Active-context switch races (user switches tenant mid-flight, in-flight requests touch the wrong tenant). | FR-CTX-5 requires server-side switch + audit; plan must define request lifetime semantics for in-flight context. |
