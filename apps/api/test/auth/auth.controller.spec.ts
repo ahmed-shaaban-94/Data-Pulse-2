@@ -49,6 +49,7 @@ import {
 import { ContextInterceptor } from "../../src/context/context.interceptor";
 import { ContextModule } from "../../src/context/context.module";
 import { StoresModule } from "../../src/stores/stores.module";
+import { StoresService } from "../../src/stores/stores.service";
 import { GlobalExceptionFilter } from "../../src/common/exception.filter";
 import { LoggingInterceptor, ROOT_LOGGER } from "../../src/common/logging.interceptor";
 import { RequestIdInterceptor } from "../../src/common/request-id.interceptor";
@@ -743,13 +744,14 @@ describe("T313 / C-5 — multi-tenant sign-in: no active tenant set, subsequent 
         [C5_ROLE_ONE_ID, C5_TENANT_ONE_ID, C5_ROLE_TWO_ID, C5_TENANT_TWO_ID],
       );
       await c5Pool.query(
-        `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES
-           ($1, $2, $3, $4, 'all'),
-           ($5, $6, $3, $7, 'all')`,
-        [
-          C5_MEMBERSHIP_ONE_ID, C5_TENANT_ONE_ID, C5_USER_ID, C5_ROLE_ONE_ID,
-          C5_MEMBERSHIP_TWO_ID, C5_TENANT_TWO_ID, C5_USER_ID, C5_ROLE_TWO_ID,
-        ],
+        `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+         VALUES ($1, $2, $3, $4, 'all')`,
+        [C5_MEMBERSHIP_ONE_ID, C5_TENANT_ONE_ID, C5_USER_ID, C5_ROLE_ONE_ID],
+      );
+      await c5Pool.query(
+        `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+         VALUES ($1, $2, $3, $4, 'all')`,
+        [C5_MEMBERSHIP_TWO_ID, C5_TENANT_TWO_ID, C5_USER_ID, C5_ROLE_TWO_ID],
       );
 
       const moduleRef = await Test.createTestingModule({
@@ -761,6 +763,13 @@ describe("T313 / C-5 — multi-tenant sign-in: no active tenant set, subsequent 
         .useValue(new FakeRedis())
         .overrideProvider(EMAIL_JOB_ENQUEUER)
         .useValue(new NoOpEmailJobEnqueuer())
+        // StoresService has an optional tx?: TenantTxRunner param with no
+        // @Optional() decorator. TypeScript emitDecoratorMetadata emits
+        // `Function` as the token; NestJS can't resolve it. Override with a
+        // stub — the real list() is never called because TenantContextGuard
+        // rejects with 401 before the handler runs.
+        .overrideProvider(StoresService)
+        .useValue({ list: async () => [] })
         .compile();
 
       c5App = moduleRef.createNestApplication({ bufferLogs: true });

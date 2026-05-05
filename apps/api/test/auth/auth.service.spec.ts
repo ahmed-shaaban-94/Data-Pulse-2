@@ -102,13 +102,14 @@ beforeAll(async () => {
       [ROLE_ALPHA_ID, TENANT_ALPHA_ID, ROLE_BETA_ID, TENANT_BETA_ID],
     );
     await pool.query(
-      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES
-         ($1, $2, $3, $4, 'all'),
-         ($5, $6, $3, $7, 'all')`,
-      [
-        MEMBERSHIP_ALPHA_ID, TENANT_ALPHA_ID, BOB_ID, ROLE_ALPHA_ID,
-        MEMBERSHIP_BETA_ID,  TENANT_BETA_ID,  BOB_ID, ROLE_BETA_ID,
-      ],
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      [MEMBERSHIP_ALPHA_ID, TENANT_ALPHA_ID, BOB_ID, ROLE_ALPHA_ID],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      [MEMBERSHIP_BETA_ID, TENANT_BETA_ID, BOB_ID, ROLE_BETA_ID],
     );
 
     sessions = new SessionRepository(pool);
