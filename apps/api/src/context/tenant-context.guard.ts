@@ -69,9 +69,13 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
+import type { Pool, PoolClient } from "pg";
+import { runWithTenantContext } from "@data-pulse-2/db";
 import type { Principal } from "../auth/auth.guard";
+import { PG_POOL } from "../auth/auth.module";
 import { SessionRepository } from "../auth/session.repository";
 import { MembershipRepository } from "./membership.repository";
 import type { ResolvedContext, TenantContextRequest } from "./types";
@@ -83,6 +87,18 @@ export class TenantContextGuard implements CanActivate {
     private readonly sessions: SessionRepository,
     @Inject(MembershipRepository)
     private readonly memberships: MembershipRepository,
+    /**
+     * Optional: when present, membership lookups inside `resolveSession`
+     * run inside `runWithTenantContext({ tenantId: NIL_UUID,
+     * isPlatformAdmin: true })` so RLS is satisfied even when the app
+     * pool is a non-superuser (`app_test` in tests, the production
+     * `app_role` in production). The nil UUID avoids the
+     * `invalid input syntax for type uuid: ""` error that occurs when
+     * `tenantId: null` maps to an empty GUC string that the `::uuid`
+     * cast cannot parse. Omitting this param (unit tests that stub the
+     * repo) falls back to the plain `this.db` surface.
+     */
+    @Optional() @Inject(PG_POOL) private readonly pool?: Pool,
   ) {}
 
   async canActivate(execCtx: ExecutionContext): Promise<boolean> {
@@ -142,41 +158,53 @@ export class TenantContextGuard implements CanActivate {
     const tenantId = session.activeTenantId;
     const storeId = session.activeStoreId;
 
+    // `isPlatformAdmin` queries only `users` — no RLS, safe on plain pool.
     const isPlatformAdmin = await this.memberships.isPlatformAdmin(
       principal.userId,
     );
 
     if (!isPlatformAdmin) {
       // FR-CTX-2: validate active membership.
-      const membership = await this.memberships.findActiveMembership(
-        principal.userId,
-        tenantId,
-      );
-      if (!membership) throw notFound();
-
       // FR-CTX-3: validate active-store reachability if set.
-      if (storeId !== null) {
-        const ok = await this.memberships.canAccessStore(
-          membership.membershipId,
+      // Both queries touch RLS-protected tables (`memberships`,
+      // `store_access`, `stores`). Run them inside a platform-admin GUC
+      // context when a pool is available so non-superuser app roles can
+      // satisfy the RLS predicates.
+      await this.withBootstrapCtx(async (client) => {
+        const membership = await this.memberships.findActiveMembership(
+          principal.userId,
           tenantId,
-          storeId,
-          membership.storeAccessKind,
+          client,
         );
-        if (!ok) throw notFound();
-      }
+        if (!membership) throw notFound();
+
+        if (storeId !== null) {
+          const ok = await this.memberships.canAccessStore(
+            membership.membershipId,
+            tenantId,
+            storeId,
+            membership.storeAccessKind,
+            client,
+          );
+          if (!ok) throw notFound();
+        }
+      });
     } else if (storeId !== null) {
       // Platform admin with an active store: only validate the store
       // belongs to the active tenant (no membership/access policy
       // applies to platform admins). The repo's 'all' branch does
       // exactly that check; we pass a synthetic membershipId because
       // 'all' never references it.
-      const ok = await this.memberships.canAccessStore(
-        "00000000-0000-0000-0000-000000000000",
-        tenantId,
-        storeId,
-        "all",
-      );
-      if (!ok) throw notFound();
+      await this.withBootstrapCtx(async (client) => {
+        const ok = await this.memberships.canAccessStore(
+          "00000000-0000-0000-0000-000000000000",
+          tenantId,
+          storeId,
+          "all",
+          client,
+        );
+        if (!ok) throw notFound();
+      });
     }
 
     return {
@@ -186,6 +214,41 @@ export class TenantContextGuard implements CanActivate {
       isPlatformAdmin,
       source: "session",
     };
+  }
+
+  /**
+   * Run `work` inside a platform-admin GUC context so RLS-protected
+   * membership/store tables are readable by a non-superuser app role.
+   *
+   * Uses `runWithTenantContext(pool, { tenantId: null,
+   * isPlatformAdmin: true }, work)` — the null tenantId maps to `""`
+   * which fails the UUID cast in the RLS predicate, but the
+   * `is_platform_admin = 'true'` OR-branch satisfies it regardless.
+   *
+   * Falls back to a plain async-passthrough when `this.pool` is
+   * undefined (unit-test callers that construct the guard without a
+   * pool and stub the repository). In that scenario the `PoolClient`
+   * parameter will be `undefined` and `MembershipRepository` falls
+   * back to `this.db` — which is fine because unit tests stub the
+   * repository entirely.
+   */
+  private async withBootstrapCtx(
+    work: (client: PoolClient | undefined) => Promise<void>,
+  ): Promise<void> {
+    if (!this.pool) {
+      // Unit-test path: no real pool, repository is stubbed.
+      return work(undefined);
+    }
+    // Use the nil UUID (all-zeros) rather than null so the `::uuid` cast
+    // in RLS policies succeeds. `tenant_id = '00000000-…'` evaluates to
+    // `false` for every real tenant; access is granted via the
+    // `is_platform_admin = 'true'` OR-branch. Passing null would set the
+    // GUC to "" which throws `invalid input syntax for type uuid: ""`.
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: "00000000-0000-0000-0000-000000000000", isPlatformAdmin: true },
+      (client) => work(client),
+    );
   }
 }
 

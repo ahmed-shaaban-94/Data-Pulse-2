@@ -201,35 +201,44 @@ export class StoresService {
   ): Promise<StoreRecord> {
     if (!ctx.tenantId) throw notFound();
 
-    // Stage 1: store-access policy for non-admin, non-token callers.
-    // Token principals don't have memberships in this slice — we let
-    // them through to RLS. Platform-admin sessions skip the check.
-    if (!ctx.isPlatformAdmin && ctx.source === "session" && ctx.userId) {
-      const membership = await this.memberships.findActiveMembership(
-        ctx.userId,
-        ctx.tenantId,
-      );
-      if (!membership) {
-        // No active membership in this tenant. Should be impossible
-        // if TenantContextGuard ran (it requires an active membership
-        // for non-admin sessions), but defensively map to 404.
-        throw notFound();
+    // Both stages run inside ONE `runWithTenantContext` with the
+    // caller's resolved tenant context. That satisfies RLS on
+    // `memberships`, `store_access`, AND `stores` via the standard
+    // tenant-isolation predicate (no bootstrap nil-UUID hack needed
+    // because the caller has a real active tenant). Sharing a
+    // transaction also gives the access check and the row read a
+    // consistent snapshot.
+    return this.tx(this.pool, txCtx(ctx), async (client) => {
+      // Stage 1: store-access policy for non-admin, non-token callers.
+      // Token principals don't have memberships in this slice — we let
+      // them through to RLS. Platform-admin sessions skip the check.
+      if (!ctx.isPlatformAdmin && ctx.source === "session" && ctx.userId) {
+        const membership = await this.memberships.findActiveMembership(
+          ctx.userId,
+          ctx.tenantId as string,
+          client,
+        );
+        if (!membership) {
+          // No active membership in this tenant. Should be impossible
+          // if TenantContextGuard ran (it requires an active membership
+          // for non-admin sessions), but defensively map to 404.
+          throw notFound();
+        }
+        const ok = await this.memberships.canAccessStore(
+          membership.membershipId,
+          ctx.tenantId as string,
+          storeId,
+          membership.storeAccessKind,
+          client,
+        );
+        if (!ok) throw notFound();
       }
-      const ok = await this.memberships.canAccessStore(
-        membership.membershipId,
-        ctx.tenantId,
-        storeId,
-        membership.storeAccessKind,
-      );
-      if (!ok) throw notFound();
-    }
 
-    // Stage 2: RLS-scoped read.
-    const row = await this.tx(this.pool, txCtx(ctx), (client) =>
-      this.stores.findById(client, storeId),
-    );
-    if (!row) throw notFound();
-    return row;
+      // Stage 2: RLS-scoped read.
+      const row = await this.stores.findById(client, storeId);
+      if (!row) throw notFound();
+      return row;
+    });
   }
 
   // ===== UPDATE =====================================================
@@ -306,8 +315,16 @@ function notFound(): NotFoundException {
 
 /**
  * Detect a Postgres unique-constraint violation (`SQLSTATE 23505`) on
- * a specific constraint name. Used to map duplicate-code attempts to
- * 409. Mirrors `TenantsService.isUniqueViolation` exactly.
+ * a specific constraint name.
+ *
+ * Drizzle wraps the underlying `pg` error in a `DrizzleQueryError`
+ * whose `.cause` carries the `pg.DatabaseError` with `code='23505'` and
+ * the constraint name. We recurse one level into `.cause` so wrapping
+ * doesn't defeat the check. The wrapped error's `.message` also
+ * includes the constraint name (Drizzle prints "Failed query: …" with
+ * the original error appended), so the message-substring branch is a
+ * belt-and-suspenders fallback for driver versions that flatten the
+ * cause chain.
  */
 function isUniqueViolation(err: unknown, constraintName: string): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -315,8 +332,18 @@ function isUniqueViolation(err: unknown, constraintName: string): boolean {
     code?: string;
     constraint?: string;
     message?: string;
+    cause?: unknown;
   };
-  if (e.code !== "23505") return false;
-  if (e.constraint === constraintName) return true;
-  return typeof e.message === "string" && e.message.includes(constraintName);
+  if (e.code === "23505") {
+    if (e.constraint === constraintName) return true;
+    if (typeof e.message === "string" && e.message.includes(constraintName)) {
+      return true;
+    }
+  }
+  if (e.cause && typeof e.cause === "object") {
+    return isUniqueViolation(e.cause, constraintName);
+  }
+  return (
+    typeof e.message === "string" && e.message.includes(constraintName)
+  );
 }
