@@ -101,11 +101,15 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
+import type { Pool, PoolClient } from "pg";
+import { runWithTenantContext } from "@data-pulse-2/db";
 
 import type { Principal } from "./auth.guard";
+import { PG_POOL } from "./auth.module";
 import { MembershipRepository } from "../context/membership.repository";
 import type { TenantContextRequest } from "../context/types";
 import {
@@ -121,6 +125,18 @@ export class RolesGuard implements CanActivate {
     private readonly reflector: Reflector,
     @Inject(MembershipRepository)
     private readonly memberships: MembershipRepository,
+    /**
+     * Optional: when present, the role-membership lookup runs inside
+     * `runWithTenantContext({ tenantId: NIL_UUID, isPlatformAdmin: true })`
+     * so `memberships`/`roles` RLS predicates resolve to the
+     * platform-admin OR-branch (the alternative — running on a plain
+     * non-superuser pool — throws `invalid input syntax for type uuid: ""`
+     * because `current_setting('app.current_tenant', true)` returns ''
+     * when unset and the RLS `::uuid` cast fails). Omitting this param
+     * (unit tests that stub the repo) preserves the legacy plain-pool
+     * fast path inside `MembershipRepository` itself.
+     */
+    @Optional() @Inject(PG_POOL) private readonly pool?: Pool,
   ) {}
 
   async canActivate(execCtx: ExecutionContext): Promise<boolean> {
@@ -161,14 +177,38 @@ export class RolesGuard implements CanActivate {
     const userId = principal.userId;
     if (!userId) throw denied(metadata);
 
-    // (7) Membership + role check.
-    const role = await this.memberships.findRoleCodeForUserInTenant(
-      userId,
-      tenantId,
+    // (7) Membership + role check. Runs in a platform-admin GUC context
+    // so `memberships`/`roles` RLS predicates are satisfied on a
+    // non-superuser pool (`app_test` in tests, `app_role` in prod).
+    const role = await this.withBootstrapCtx((client) =>
+      this.memberships.findRoleCodeForUserInTenant(userId, tenantId, client),
     );
     if (!role) throw denied(metadata);
     if (!isAcceptedRole(role, metadata.any)) throw denied(metadata);
     return true;
+  }
+
+  /**
+   * Run `work` inside a platform-admin GUC context so RLS-protected
+   * `memberships`/`roles` lookups succeed on a non-superuser app role.
+   *
+   * Uses the nil UUID (all-zeros) as `tenantId` rather than null so the
+   * `::uuid` cast in the RLS predicate succeeds; access is granted via
+   * the `is_platform_admin = 'true'` OR-branch. Falls back to a plain
+   * passthrough (no client) when `this.pool` is absent — unit tests
+   * that construct the guard directly stub the repository entirely.
+   */
+  private async withBootstrapCtx<T>(
+    work: (client: PoolClient | undefined) => Promise<T>,
+  ): Promise<T> {
+    if (!this.pool) {
+      return work(undefined);
+    }
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: "00000000-0000-0000-0000-000000000000", isPlatformAdmin: true },
+      (client) => work(client),
+    );
   }
 
   /**

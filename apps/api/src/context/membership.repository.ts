@@ -127,6 +127,9 @@ export class MembershipRepository {
    *
    * Used by the guard to bypass per-tenant membership validation for
    * platform admins (FR-TEN-6).
+   *
+   * Queries only the `users` table, which has no RLS policy in the
+   * foundation schema — safe to call on the plain pool without a GUC.
    */
   async isPlatformAdmin(userId: string): Promise<boolean> {
     const rows = await this.db
@@ -147,12 +150,21 @@ export class MembershipRepository {
    * Callers translate `null` into a 404 (not 403) per FR-ISO-4 — the
    * absence of a membership must look identical to "tenant doesn't
    * exist" from outside the system.
+   *
+   * @param client — Optional `PoolClient` from `runWithTenantContext`.
+   *   When provided the query runs inside the caller's GUC-scoped
+   *   transaction so RLS is satisfied. When absent (unit tests, legacy
+   *   callers) falls back to `this.db` (plain pool — caller is
+   *   responsible for ensuring the plain pool has the necessary
+   *   privileges, e.g. a superuser admin pool in test seeding).
    */
   async findActiveMembership(
     userId: string,
     tenantId: string,
+    client?: PoolClient,
   ): Promise<ActiveMembership | null> {
-    const rows = await this.db
+    const db = client ? drizzle(client) : this.db;
+    const rows = await db
       .select({
         membershipId: memberships.id,
         storeAccessKind: memberships.storeAccessKind,
@@ -185,15 +197,21 @@ export class MembershipRepository {
    *
    * `false` is the cross-tenant / cross-store leak rejection signal;
    * the guard translates it into a 404 per FR-ISO-4.
+   *
+   * @param client — Optional `PoolClient` from `runWithTenantContext`.
+   *   Same semantics as `findActiveMembership`.
    */
   async canAccessStore(
     membershipId: string,
     tenantId: string,
     storeId: string,
     kind: StoreAccessKind,
+    client?: PoolClient,
   ): Promise<boolean> {
+    const db = client ? drizzle(client) : this.db;
+
     // Step 1: confirm the store belongs to this tenant (and exists).
-    const storeRows = await this.db
+    const storeRows = await db
       .select({ id: stores.id })
       .from(stores)
       .where(
@@ -208,7 +226,7 @@ export class MembershipRepository {
     if (kind === "all") return true;
 
     // Step 2 (only for 'specific'): require a store_access grant.
-    const grantRows = await this.db
+    const grantRows = await db
       .select({ membershipId: storeAccess.membershipId })
       .from(storeAccess)
       .where(
@@ -233,9 +251,16 @@ export class MembershipRepository {
    * stores per membership) this is bounded and cache-friendly. A
    * future Redis cache (FR-AUTH-6) will fold this into a single
    * lookup.
+   *
+   * @param client — Optional `PoolClient` from `runWithTenantContext`.
+   *   Same semantics as `findActiveMembership`.
    */
-  async listForUser(userId: string): Promise<readonly MembershipSummary[]> {
-    const baseRows = await this.db
+  async listForUser(
+    userId: string,
+    client?: PoolClient,
+  ): Promise<readonly MembershipSummary[]> {
+    const db = client ? drizzle(client) : this.db;
+    const baseRows = await db
       .select({
         membershipId: memberships.id,
         tenantId: memberships.tenantId,
@@ -260,7 +285,7 @@ export class MembershipRepository {
       const kind = row.storeAccessKind as StoreAccessKind;
       let accessible: readonly string[] = [];
       if (kind === "specific") {
-        const grantRows = await this.db
+        const grantRows = await db
           .select({ storeId: storeAccess.storeId })
           .from(storeAccess)
           .innerJoin(stores, eq(stores.id, storeAccess.storeId))
@@ -289,9 +314,16 @@ export class MembershipRepository {
    * caller treats that as "no active context" (a session whose
    * `active_tenant_id` points at a now-deleted tenant should
    * gracefully resolve to `null` rather than fail).
+   *
+   * @param client — Optional `PoolClient` from `runWithTenantContext`.
+   *   Same semantics as `findActiveMembership`.
    */
-  async findTenantSummary(tenantId: string): Promise<TenantSummary | null> {
-    const rows = await this.db
+  async findTenantSummary(
+    tenantId: string,
+    client?: PoolClient,
+  ): Promise<TenantSummary | null> {
+    const db = client ? drizzle(client) : this.db;
+    const rows = await db
       .select({
         id: tenants.id,
         slug: tenants.slug,
@@ -309,9 +341,16 @@ export class MembershipRepository {
    * as `findTenantSummary` — the controller already validated access
    * before writing the active store, but a stale ID can survive a
    * soft-delete; rendering null is the graceful path.
+   *
+   * @param client — Optional `PoolClient` from `runWithTenantContext`.
+   *   Same semantics as `findActiveMembership`.
    */
-  async findStoreSummary(storeId: string): Promise<StoreSummary | null> {
-    const rows = await this.db
+  async findStoreSummary(
+    storeId: string,
+    client?: PoolClient,
+  ): Promise<StoreSummary | null> {
+    const db = client ? drizzle(client) : this.db;
+    const rows = await db
       .select({
         id: stores.id,
         code: stores.code,
@@ -411,8 +450,10 @@ export class MembershipRepository {
   async findRoleCodeForUserInTenant(
     userId: string,
     tenantId: string,
+    client?: PoolClient,
   ): Promise<string | null> {
-    const rows = await this.db
+    const db = client ? drizzle(client) : this.db;
+    const rows = await db
       .select({ code: roles.code })
       .from(memberships)
       .innerJoin(roles, eq(roles.id, memberships.roleId))

@@ -50,6 +50,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
@@ -110,7 +111,7 @@ export class StoresService {
     private readonly stores: StoresRepository,
     private readonly memberships: MembershipRepository,
     /** Optional injected runner for tests. Production callers omit it. */
-    tx?: TenantTxRunner,
+    @Optional() tx?: TenantTxRunner,
   ) {
     this.tx = tx ?? runWithTenantContext;
   }
@@ -200,35 +201,44 @@ export class StoresService {
   ): Promise<StoreRecord> {
     if (!ctx.tenantId) throw notFound();
 
-    // Stage 1: store-access policy for non-admin, non-token callers.
-    // Token principals don't have memberships in this slice — we let
-    // them through to RLS. Platform-admin sessions skip the check.
-    if (!ctx.isPlatformAdmin && ctx.source === "session" && ctx.userId) {
-      const membership = await this.memberships.findActiveMembership(
-        ctx.userId,
-        ctx.tenantId,
-      );
-      if (!membership) {
-        // No active membership in this tenant. Should be impossible
-        // if TenantContextGuard ran (it requires an active membership
-        // for non-admin sessions), but defensively map to 404.
-        throw notFound();
+    // Both stages run inside ONE `runWithTenantContext` with the
+    // caller's resolved tenant context. That satisfies RLS on
+    // `memberships`, `store_access`, AND `stores` via the standard
+    // tenant-isolation predicate (no bootstrap nil-UUID hack needed
+    // because the caller has a real active tenant). Sharing a
+    // transaction also gives the access check and the row read a
+    // consistent snapshot.
+    return this.tx(this.pool, txCtx(ctx), async (client) => {
+      // Stage 1: store-access policy for non-admin, non-token callers.
+      // Token principals don't have memberships in this slice — we let
+      // them through to RLS. Platform-admin sessions skip the check.
+      if (!ctx.isPlatformAdmin && ctx.source === "session" && ctx.userId) {
+        const membership = await this.memberships.findActiveMembership(
+          ctx.userId,
+          ctx.tenantId as string,
+          client,
+        );
+        if (!membership) {
+          // No active membership in this tenant. Should be impossible
+          // if TenantContextGuard ran (it requires an active membership
+          // for non-admin sessions), but defensively map to 404.
+          throw notFound();
+        }
+        const ok = await this.memberships.canAccessStore(
+          membership.membershipId,
+          ctx.tenantId as string,
+          storeId,
+          membership.storeAccessKind,
+          client,
+        );
+        if (!ok) throw notFound();
       }
-      const ok = await this.memberships.canAccessStore(
-        membership.membershipId,
-        ctx.tenantId,
-        storeId,
-        membership.storeAccessKind,
-      );
-      if (!ok) throw notFound();
-    }
 
-    // Stage 2: RLS-scoped read.
-    const row = await this.tx(this.pool, txCtx(ctx), (client) =>
-      this.stores.findById(client, storeId),
-    );
-    if (!row) throw notFound();
-    return row;
+      // Stage 2: RLS-scoped read.
+      const row = await this.stores.findById(client, storeId);
+      if (!row) throw notFound();
+      return row;
+    });
   }
 
   // ===== UPDATE =====================================================

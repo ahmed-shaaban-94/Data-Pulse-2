@@ -50,11 +50,16 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
+import type { Pool, PoolClient } from "pg";
+import { runWithTenantContext } from "@data-pulse-2/db";
 import type { Principal } from "../auth/auth.guard";
+import { PG_POOL } from "../auth/auth.module";
 import { SessionRepository } from "../auth/session.repository";
 import {
   MembershipRepository,
@@ -93,6 +98,15 @@ export class ContextService {
   constructor(
     private readonly sessions: SessionRepository,
     private readonly memberships: MembershipRepository,
+    /**
+     * Optional: when present, RLS-protected membership/store lookups run
+     * inside `runWithTenantContext({ tenantId: null, isPlatformAdmin: true })`
+     * so a non-superuser app role can read those tables. Omitting it
+     * (unit tests that construct `ContextService` directly) falls back to
+     * the plain-pool surface of `MembershipRepository` — those callers
+     * always stub the repo anyway.
+     */
+    @Optional() @Inject(PG_POOL) private readonly pool?: Pool,
   ) {}
 
   // ----- READ -------------------------------------------------------
@@ -116,24 +130,31 @@ export class ContextService {
 
     // Validate the user has an active membership in the requested
     // tenant — UNLESS they're a platform admin (FR-TEN-6).
+    // `isPlatformAdmin` queries only `users` — safe on plain pool.
     const isPlatformAdmin = await this.memberships.isPlatformAdmin(
       principal.userId,
     );
     if (!isPlatformAdmin) {
-      const membership = await this.memberships.findActiveMembership(
-        principal.userId,
-        tenantId,
-      );
-      if (!membership) throw notFound();
+      await this.withBootstrapCtx(async (client) => {
+        const membership = await this.memberships.findActiveMembership(
+          principal.userId,
+          tenantId,
+          client,
+        );
+        if (!membership) throw notFound();
+      });
     } else {
       // Platform admin: still must verify the tenant exists. Otherwise
       // a typo'd UUID would silently set the active tenant to a
       // non-existent one and downstream queries would mysteriously
       // return zero rows.
-      const tenantSummary = await this.memberships.findTenantSummary(
-        tenantId,
-      );
-      if (!tenantSummary) throw notFound();
+      await this.withBootstrapCtx(async (client) => {
+        const tenantSummary = await this.memberships.findTenantSummary(
+          tenantId,
+          client,
+        );
+        if (!tenantSummary) throw notFound();
+      });
     }
 
     const updated = await this.sessions.updateActiveContext(
@@ -164,34 +185,42 @@ export class ContextService {
     }
     const tenantId = session.activeTenantId;
 
+    // `isPlatformAdmin` queries only `users` — safe on plain pool.
     const isPlatformAdmin = await this.memberships.isPlatformAdmin(
       principal.userId,
     );
 
     if (!isPlatformAdmin) {
-      const membership = await this.memberships.findActiveMembership(
-        principal.userId,
-        tenantId,
-      );
-      if (!membership) throw notFound();
-      const allowed = await this.memberships.canAccessStore(
-        membership.membershipId,
-        tenantId,
-        storeId,
-        membership.storeAccessKind,
-      );
-      if (!allowed) throw notFound();
+      await this.withBootstrapCtx(async (client) => {
+        const membership = await this.memberships.findActiveMembership(
+          principal.userId,
+          tenantId,
+          client,
+        );
+        if (!membership) throw notFound();
+        const allowed = await this.memberships.canAccessStore(
+          membership.membershipId,
+          tenantId,
+          storeId,
+          membership.storeAccessKind,
+          client,
+        );
+        if (!allowed) throw notFound();
+      });
     } else {
       // Platform admin: only the store-belongs-to-tenant check
       // applies. The 'all' branch of canAccessStore does exactly
       // that; the synthetic membershipId is unused for kind='all'.
-      const allowed = await this.memberships.canAccessStore(
-        "00000000-0000-0000-0000-000000000000",
-        tenantId,
-        storeId,
-        "all",
-      );
-      if (!allowed) throw notFound();
+      await this.withBootstrapCtx(async (client) => {
+        const allowed = await this.memberships.canAccessStore(
+          "00000000-0000-0000-0000-000000000000",
+          tenantId,
+          storeId,
+          "all",
+          client,
+        );
+        if (!allowed) throw notFound();
+      });
     }
 
     const updated = await this.sessions.updateActiveContext(
@@ -251,6 +280,11 @@ export class ContextService {
       // payload that's still contract-shaped. The user object's
       // fields are placeholders; downstream callers shouldn't lean
       // on `/me` for token-only flows.
+      const activeTenant = principal.tenantId
+        ? await this.withBootstrapCtx((client) =>
+            this.memberships.findTenantSummary(principal.tenantId!, client),
+          )
+        : null;
       return {
         user: {
           id: "",
@@ -258,9 +292,7 @@ export class ContextService {
           display_name: null,
           is_platform_admin: true,
         },
-        active_tenant: principal.tenantId
-          ? await this.memberships.findTenantSummary(principal.tenantId)
-          : null,
+        active_tenant: activeTenant,
         active_store: null,
         active_role_code: null,
         memberships: [],
@@ -274,18 +306,31 @@ export class ContextService {
     activeTenantId: string | null,
     activeStoreId: string | null,
   ): Promise<ContextResponseBody> {
+    // `findUserSummary` queries only `users` (no RLS) — safe on plain
+    // pool, run in parallel with the RLS-gated `listForUser`.
     const [user, summaries] = await Promise.all([
       this.memberships.findUserSummary(userId),
-      this.memberships.listForUser(userId),
+      this.withBootstrapCtx((client) =>
+        this.memberships.listForUser(userId, client),
+      ),
     ]);
     if (!user) throw unauthorized();
 
-    const activeTenant = activeTenantId
-      ? await this.memberships.findTenantSummary(activeTenantId)
-      : null;
-    const activeStore = activeStoreId
-      ? await this.memberships.findStoreSummary(activeStoreId)
-      : null;
+    // `findTenantSummary` and `findStoreSummary` touch RLS-protected
+    // tables. Each gets its own bootstrap-context call (separate pool
+    // connections, safe to run in parallel).
+    const [activeTenant, activeStore] = await Promise.all([
+      activeTenantId
+        ? this.withBootstrapCtx((client) =>
+            this.memberships.findTenantSummary(activeTenantId, client),
+          )
+        : Promise.resolve(null),
+      activeStoreId
+        ? this.withBootstrapCtx((client) =>
+            this.memberships.findStoreSummary(activeStoreId, client),
+          )
+        : Promise.resolve(null),
+    ]);
 
     const activeMembership = activeTenantId
       ? summaries.find((m) => m.tenantId === activeTenantId)
@@ -309,6 +354,45 @@ export class ContextService {
         accessible_store_ids: m.accessibleStoreIds,
       })),
     };
+  }
+
+  /**
+   * Run `work` inside a platform-admin GUC context so RLS-protected
+   * membership/store/tenant tables are readable by a non-superuser app
+   * role.
+   *
+   * Uses `runWithTenantContext(pool, { tenantId: NIL_UUID,
+   * isPlatformAdmin: true }, work)`. The nil UUID (all-zeros) is a
+   * valid UUID that matches no real tenant, so `tenant_id = NIL_UUID`
+   * evaluates to `false` for every row and the
+   * `is_platform_admin = 'true'` OR-branch grants access. Using
+   * `tenantId: null` would set the GUC to `""`, causing
+   * `invalid input syntax for type uuid: ""` when the RLS predicate
+   * attempts the `::uuid` cast — PostgreSQL does not short-circuit `OR`
+   * before evaluating sub-expressions that throw.
+   *
+   * Falls back to calling `work(undefined)` when `this.pool` is absent
+   * (unit tests). In that scenario `MembershipRepository` methods fall
+   * back to `this.db` — which is correct since unit tests stub the repo.
+   */
+  private async withBootstrapCtx<T>(
+    work: (client: PoolClient | undefined) => Promise<T>,
+  ): Promise<T> {
+    if (!this.pool) {
+      return work(undefined);
+    }
+    // Use the nil UUID (all-zeros) rather than null/empty-string so the
+    // `::uuid` cast in RLS policies succeeds. The comparison
+    // `tenant_id = '00000000-…'` evaluates to `false` for every real
+    // tenant, so access is granted exclusively via the
+    // `is_platform_admin = 'true'` OR-branch. Passing null would set the
+    // GUC to "" which throws `invalid input syntax for type uuid: ""` at
+    // the cast site before PostgreSQL can short-circuit the OR.
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: "00000000-0000-0000-0000-000000000000", isPlatformAdmin: true },
+      (client) => work(client),
+    );
   }
 }
 

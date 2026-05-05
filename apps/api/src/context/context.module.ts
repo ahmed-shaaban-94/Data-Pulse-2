@@ -32,6 +32,7 @@ import { Module } from "@nestjs/common";
 import type { Pool } from "pg";
 
 import { AuthModule, PG_POOL } from "../auth/auth.module";
+import { SessionRepository } from "../auth/session.repository";
 import { ContextController } from "./context.controller";
 import { ContextService } from "./context.service";
 import { MembershipRepository } from "./membership.repository";
@@ -47,8 +48,25 @@ import { TenantContextGuard } from "./tenant-context.guard";
         new MembershipRepository(pool),
       inject: [PG_POOL],
     },
-    ContextService,
-    TenantContextGuard,
+    {
+      provide: ContextService,
+      useFactory: (
+        sessions: SessionRepository,
+        memberships: MembershipRepository,
+        pool: Pool,
+      ): ContextService => new ContextService(sessions, memberships, pool),
+      inject: [SessionRepository, MembershipRepository, PG_POOL],
+    },
+    {
+      provide: TenantContextGuard,
+      useFactory: (
+        sessions: SessionRepository,
+        memberships: MembershipRepository,
+        pool: Pool,
+      ): TenantContextGuard =>
+        new TenantContextGuard(sessions, memberships, pool),
+      inject: [SessionRepository, MembershipRepository, PG_POOL],
+    },
   ],
   exports: [MembershipRepository, ContextService, TenantContextGuard],
 })
