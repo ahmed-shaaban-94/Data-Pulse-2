@@ -5,7 +5,7 @@
 **Status**: Draft
 **Created**: 2026-05-01
 **Owner**: Ahmed Shaaban
-**Constitution version**: 2.0.0
+**Constitution version**: 3.0.0
 
 ---
 
@@ -476,7 +476,7 @@ and any plan/tasks generated from it:
 
 ## 12. Dependencies
 
-- **Constitution v2.0.0** (`.specify/memory/constitution.md`) — this spec is
+- **Constitution v3.0.0** (`.specify/memory/constitution.md`) — this spec is
   authored under and validated against it. Constitution Check (§14) is
   mandatory for all plan/task work derived from this spec.
 - **PostgreSQL** as the system of record (Constitution Principle III).
@@ -489,7 +489,7 @@ and any plan/tasks generated from it:
 
 | ID | Risk | Mitigation |
 |---|---|---|
-| R-1 | Tenant data leakage via missing scope on a single endpoint. | FR-ISO-1/2/3: defense in depth (DB + ORM defaults + per-endpoint isolation tests). |
+| R-1 | Tenant data leakage via missing scope on a single endpoint. | FR-ISO-1/2/3: defense in depth (DB + ORM defaults + per-endpoint isolation tests). For the exhaustive scenario catalog — including B-class cross-tenant non-disclosure probes and G-class RLS bypass probes — see [`tenant-isolation-matrix.md`](./tenant-isolation-matrix.md) §6 and §11. |
 | R-2 | Performance degradation if every request resolves full role+permission state. | SC-5 defines the budget; plan must include a caching strategy that is reconstructible from Postgres (Constitution Principle III). |
 | R-3 | Role model picked for v1 doesn't fit real customers. | Q2 default (C) leaves room for permission-based custom roles later without schema redesign. |
 | R-4 | Active-context switch races (user switches tenant mid-flight, in-flight requests touch the wrong tenant). | FR-CTX-5 requires server-side switch + audit; plan must define request lifetime semantics for in-flight context. |
@@ -499,7 +499,7 @@ and any plan/tasks generated from it:
 
 ## 14. Constitution Check
 
-Against `.specify/memory/constitution.md` v2.0.0:
+Against `.specify/memory/constitution.md` v3.0.0:
 
 | Principle | How this spec satisfies it |
 |---|---|
@@ -511,6 +511,12 @@ Against `.specify/memory/constitution.md` v2.0.0:
 | VI. Test-First Quality | SC-1/2/3/9 specify the test posture; plan/tasks will write tests first. |
 | VII. Observable Systems | FR-AUDIT-1/2/3 require structured audit + non-leaky logs. |
 | VIII. Reproducible & Versioned Releases | Spec is versioned (v0.1 draft); migrations follow the constitution rules in plan. |
+| IX. Source-of-Truth Model | Not exercised by this feature — foundation owns identity/tenancy only; catalog / sales entities (where Global / Tenant / Store / SaleLine boundaries apply) are out of scope per §3 and §11. The SaaS-as-truth half (tenants, stores, memberships, integration credentials) is seeded by §7 entities. |
+| X. Retail Temporal Semantics | Not exercised — no sale, order, or POS-event entities are defined here. The spec acknowledges future POS events via FR-POS-SEAM-3; per-entity timestamp catalogs bind future specs. |
+| XI. Idempotency & External IDs | Spec satisfies the seam — FR-POS-SEAM-3 mandates platform-level idempotency representation (`(tenant, store, client, key)`). Real endpoints consuming it are out of scope here; full implementation binds plan/task work. |
+| XII. Authorization & Object Safety | Spec satisfies — FR-CTX-1, FR-CTX-4, FR-ISO-1..4, and FR-ROLE-5 codify server-side tenant/store resolution, default-deny, and FR-ISO-4 safe-404 for cross-tenant lookups. Mass-assignment defense binds plan/task work. |
+| XIII. Auditability & Provenance | Spec satisfies — FR-AUDIT-1..3 define auditable events, the no-PII-leak rule, and tenant-queryable audit. Anonymous-actor pattern, insert-only posture, and ingestion provenance bind plan/task work. |
+| XIV. PII & Data Lifecycle Discipline | Spec satisfies posture — FR-AUDIT-3 forbids PII in logs; FR-TEN-5 / FR-STORE-5 / A-5 require soft-delete with reversible retention. Full data classification taxonomy and right-to-erasure flows bind future specs. |
 
 No principle violations identified at the spec level. Plan-level Constitution
 Check is a separate gate.
@@ -521,7 +527,7 @@ Check is a separate gate.
 
 The foundation is "spec-complete" when:
 
-- All eight Constitution principles are satisfied (§14).
+- All fourteen Constitution principles are satisfied (§14).
 - All nine Functional Requirement groups (§6.1–§6.9) are present and testable.
 - Open Questions Q1/Q2/Q3 are either resolved or explicitly accepted at their
   default per Assumption A-10/A-11/A-12.
