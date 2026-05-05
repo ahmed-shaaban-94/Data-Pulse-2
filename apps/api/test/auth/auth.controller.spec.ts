@@ -41,7 +41,15 @@ import { Pool } from "pg";
 import request from "supertest";
 
 import { AuthModule, PG_POOL, REDIS_CLIENT } from "../../src/auth/auth.module";
-import { EMAIL_JOB_ENQUEUER, type EmailJobEnqueuer } from "../../src/auth/email-job.enqueuer";
+import {
+  EMAIL_JOB_ENQUEUER,
+  NoOpEmailJobEnqueuer,
+  type EmailJobEnqueuer,
+} from "../../src/auth/email-job.enqueuer";
+import { ContextInterceptor } from "../../src/context/context.interceptor";
+import { ContextModule } from "../../src/context/context.module";
+import { StoresModule } from "../../src/stores/stores.module";
+import { StoresService } from "../../src/stores/stores.service";
 import { GlobalExceptionFilter } from "../../src/common/exception.filter";
 import { LoggingInterceptor, ROOT_LOGGER } from "../../src/common/logging.interceptor";
 import { RequestIdInterceptor } from "../../src/common/request-id.interceptor";
@@ -683,5 +691,150 @@ describe("FR-ISO-4 — uniform error envelope shape", () => {
     expect(Object.keys(a.body.error).sort()).toEqual(
       Object.keys(b.body.error).sort(),
     );
+  });
+});
+
+// -----------------------------------------------------------------------
+// T313 / C-5 — multi-tenant sign-in: no active tenant auto-set,
+// subsequent tenant-guarded call returns 401 (spec §5.1)
+// -----------------------------------------------------------------------
+
+describe("T313 / C-5 — multi-tenant sign-in: no active tenant set, subsequent tenant-guarded call → 401", () => {
+  // UUIDv4 pattern matching this file's convention.
+  const C5_USER_ID = "c5000001-0000-4000-8000-000000000001";
+  const C5_USER_EMAIL = "c5-multi@example.com";
+  const C5_USER_PASSWORD = "c5-multi-password-99";
+
+  const C5_TENANT_ONE_ID = "c5000001-0000-4000-8000-000000000010";
+  const C5_TENANT_TWO_ID = "c5000001-0000-4000-8000-000000000011";
+
+  const C5_ROLE_ONE_ID = "c5000001-0000-4000-8000-000000000020";
+  const C5_ROLE_TWO_ID = "c5000001-0000-4000-8000-000000000021";
+
+  const C5_MEMBERSHIP_ONE_ID = "c5000001-0000-4000-8000-000000000030";
+  const C5_MEMBERSHIP_TWO_ID = "c5000001-0000-4000-8000-000000000031";
+
+  let c5Env: PgTestEnv | null = null;
+  let c5Pool: Pool | null = null;
+  let c5App: INestApplication | null = null;
+  let c5Skipped = false;
+
+  beforeAll(async () => {
+    try {
+      c5Env = await startPgEnv();
+      await applyUpAndCreateAppRole(c5Env);
+      c5Pool = new Pool({ connectionString: c5Env.adminUri });
+
+      // Seed: user → tenants → roles → memberships (FK order).
+      const userHash = await hashPassword(C5_USER_PASSWORD);
+      await c5Pool.query(
+        `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
+        [C5_USER_ID, C5_USER_EMAIL, userHash],
+      );
+      await c5Pool.query(
+        `INSERT INTO tenants (id, slug, name) VALUES
+           ($1, 'c5-tenant-one', 'C5 Tenant One'),
+           ($2, 'c5-tenant-two', 'C5 Tenant Two')`,
+        [C5_TENANT_ONE_ID, C5_TENANT_TWO_ID],
+      );
+      await c5Pool.query(
+        `INSERT INTO roles (id, tenant_id, code, name) VALUES
+           ($1, $2, 'member', 'Member'),
+           ($3, $4, 'member', 'Member')`,
+        [C5_ROLE_ONE_ID, C5_TENANT_ONE_ID, C5_ROLE_TWO_ID, C5_TENANT_TWO_ID],
+      );
+      await c5Pool.query(
+        `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+         VALUES ($1, $2, $3, $4, 'all')`,
+        [C5_MEMBERSHIP_ONE_ID, C5_TENANT_ONE_ID, C5_USER_ID, C5_ROLE_ONE_ID],
+      );
+      await c5Pool.query(
+        `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+         VALUES ($1, $2, $3, $4, 'all')`,
+        [C5_MEMBERSHIP_TWO_ID, C5_TENANT_TWO_ID, C5_USER_ID, C5_ROLE_TWO_ID],
+      );
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [AuthModule, ContextModule, StoresModule],
+      })
+        .overrideProvider(PG_POOL)
+        .useValue(c5Pool)
+        .overrideProvider(REDIS_CLIENT)
+        .useValue(new FakeRedis())
+        .overrideProvider(EMAIL_JOB_ENQUEUER)
+        .useValue(new NoOpEmailJobEnqueuer())
+        // StoresService has an optional tx?: TenantTxRunner param with no
+        // @Optional() decorator. TypeScript emitDecoratorMetadata emits
+        // `Function` as the token; NestJS can't resolve it. Override with a
+        // stub — the real list() is never called because TenantContextGuard
+        // rejects with 401 before the handler runs.
+        .overrideProvider(StoresService)
+        .useValue({ list: async () => [] })
+        .compile();
+
+      c5App = moduleRef.createNestApplication({ bufferLogs: true });
+      c5App.use(cookieParser());
+      const logger = createLogger({ service: "api-test", level: "silent" });
+      c5App.useGlobalInterceptors(
+        new RequestIdInterceptor(),
+        new LoggingInterceptor(logger),
+        new ContextInterceptor(),
+      );
+      c5App.useGlobalFilters(new GlobalExceptionFilter());
+      c5App.useGlobalPipes(new ZodValidationPipe());
+      void ROOT_LOGGER;
+      await c5App.init();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
+        // eslint-disable-next-line no-console
+        console.warn(`\n[auth.controller.spec T313] Docker NOT AVAILABLE: ${msg}\n`);
+        c5Skipped = true;
+        return;
+      }
+      throw new Error(`T313 container start failed: ${msg}`);
+    }
+  }, 180_000);
+
+  afterAll(async () => {
+    if (c5App) await c5App.close().catch(() => undefined);
+    if (c5Pool) await c5Pool.end().catch(() => undefined);
+    if (c5Env) await stopPgEnv(c5Env);
+  }, 60_000);
+
+  it("sign-in for a user with 2 memberships returns 200 but GET /api/v1/stores returns 401", async () => {
+    if (c5Skipped) {
+      // eslint-disable-next-line no-console
+      console.warn("[auth.controller.spec T313] skipping (Docker unavailable)");
+      return;
+    }
+
+    const c5Http = () => {
+      if (!c5App) throw new Error("c5App not initialized");
+      return request(c5App.getHttpServer());
+    };
+
+    // Step 1: sign in — expect 200 (credentials are valid).
+    const signinRes = await c5Http()
+      .post("/api/v1/auth/signin")
+      .send({ email: C5_USER_EMAIL, password: C5_USER_PASSWORD });
+    expect(signinRes.status).toBe(200);
+
+    // Step 2: extract the session cookie.
+    const cookie = extractSessionCookie(signinRes);
+
+    // Step 3: GET /api/v1/stores without setting an active tenant first.
+    // TenantContextGuard must reject with 401 because active_tenant_id is NULL.
+    const storesRes = await c5Http()
+      .get("/api/v1/stores")
+      .set("Cookie", cookie);
+    expect(storesRes.status).toBe(401);
+    expect(storesRes.body).toMatchObject({
+      error: {
+        code: "unauthorized",
+        message: expect.any(String),
+        request_id: expect.any(String),
+      },
+    });
   });
 });

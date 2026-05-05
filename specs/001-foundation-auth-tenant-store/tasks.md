@@ -289,6 +289,7 @@
 - [ ] T310 [P] Performance check for SC-5 (context resolution p95 ≤ 200ms) — measurement script + report in `apps/api/test/performance/context-resolution.spec.ts`
 - [ ] T311 [P] Audit log retention policy: BullMQ scheduled job to mark records past retention; tested in `apps/worker/test/audit/retention.spec.ts`
 - [ ] T312 [P] Soft-delete retention worker (30 days for tenants/stores per PQ-6) at `apps/worker/src/cleanup/soft-delete-sweep.processor.ts` with test at `apps/worker/test/cleanup/soft-delete-sweep.spec.ts`
+- [ ] T313 [US3] [P] Test that sign-in for a user with memberships in multiple tenants does NOT auto-set active_tenant_id on the session (spec §5.1 multi-tenant path); and that a subsequent tenant-scoped call returns 401 until context-switch is called. Files: apps/api/test/auth/auth.service.spec.ts and apps/api/test/auth/auth.controller.spec.ts
 
 ---
 

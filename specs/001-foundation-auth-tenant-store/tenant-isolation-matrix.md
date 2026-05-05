@@ -169,7 +169,7 @@ store-access policy MUST resolve **per active tenant**, never globally.
 | C-2 | Same user, switched to T2, calling the same tenant-admin endpoint. | `403 forbidden` (active tenant resolved; role gate fails) | `not yet assigned` |
 | C-3 | Same user switches active tenant T1 → T2; in-flight stale references to T1 resources MUST resolve as `404 not_found` once switch completes. | `404 not_found` for stale T1 ids in T2 context | `planned (T157 open — "active store auto-clears on tenant switch")` partial coverage of the switch flow exists at [apps/api/test/context/auto-clear.spec.ts](apps/api/test/context/auto-clear.spec.ts) for the store-clearing aspect. The cross-tenant reference-staleness aspect is **not yet assigned**. |
 | C-4 | User U is platform admin AND has a `store_staff` membership in T1. Active in T1 with platform-admin GUC unset, role gate evaluates as `store_staff`, not `platform_admin`. | role evaluated per active context, no implicit elevation | `not yet assigned` |
-| C-5 | Authentication that produces a session does not auto-pick a tenant when user has memberships in multiple tenants (FR-AUTH / scenario 5.1). | session created without `active_tenant_id`; subsequent tenant-scoped call → `401` until context-switch endpoint called | `planned (T152 open)` — `apps/api/test/context/context.controller.spec.ts` exists; specific multi-tenant signin / no-auto-pick assertion has not been content-verified, so the row is conservatively held at `planned` pending a content-read slice. |
+| C-5 | Authentication that produces a session does not auto-pick a tenant when user has memberships in multiple tenants (FR-AUTH / scenario 5.1). | session created without `active_tenant_id`; subsequent tenant-scoped call → `401` until context-switch endpoint called | `covered today` — T313: [apps/api/test/auth/auth.service.spec.ts](apps/api/test/auth/auth.service.spec.ts) asserts `activeTenantId` is NULL after sign-in for a two-membership user; [apps/api/test/auth/auth.controller.spec.ts](apps/api/test/auth/auth.controller.spec.ts) asserts GET `/api/v1/stores` returns 401 for the same user before context-switch. |
 
 **Principle**: II, XII for every row above.
 
@@ -380,7 +380,7 @@ are not counted toward `covered today`.
 |---|---:|---:|---:|---:|---:|
 | A. Tenant context fail-closed | 6 | 4 | 0 | 2 | 0 |
 | B. Cross-tenant non-disclosure | 14 | 9 | 1 | 4 | 0 |
-| C. Same user, different roles | 5 | 0 | 2 | 3 | 0 |
+| C. Same user, different roles | 5 | 1 | 1 | 3 | 0 |
 | D. Cross-store within tenant | 8 | 4 | 4 | 0 | 0 |
 | E. Malicious body overrides | 9 | 2 | 2 | 5 | 0 |
 | F. Worker tenant-context | 8 | 1 | 5 | 1 | 1 |
@@ -388,7 +388,7 @@ are not counted toward `covered today`.
 | H. Safe 404 vs 403 split | 6 | 6 | 0 | 0 | 0 |
 | I. Strict DTO validation | 8 | 1 | 0 | 7 | 0 |
 | J. No raw DB entity | 8 | 2 | 3 | 3 | 0 |
-| **Total** | **80** | **32** | **21** | **26** | **1** |
+| **Total** | **80** | **33** | **20** | **26** | **1** |
 
 (Notes:
 - Class F gained one row from the F-7 split into F-7a / F-7b.
@@ -451,13 +451,13 @@ These rows are candidates for a future `tasks.md` amendment slice that
 adds new Tnnn entries to close them. That slice is **not** in scope
 here.
 
-**Note on C-5 held at `planned (T152 open)` rather than promoted to
-`covered today`** (audit conservatism): C-5 cites
-[apps/api/test/context/context.controller.spec.ts](apps/api/test/context/context.controller.spec.ts)
-which exists, but the specific `it()` names that would assert the
-multi-membership signin / no-auto-pick scenario have been content-read
-and confirmed absent. C-5 remains `planned` until a test in the auth
-layer (e.g., `apps/api/test/auth/`) asserts the behaviour directly.
+**C-5 promoted to `covered today` (T313)**: The no-auto-pick scenario
+was confirmed absent from `context.controller.spec.ts` in a prior
+content-read slice. T313 added the assertions directly in the auth layer:
+`auth.service.spec.ts` asserts `activeTenantId` is NULL on the session
+row after sign-in for a two-membership user; `auth.controller.spec.ts`
+asserts GET `/api/v1/stores` returns 401 for the same user before
+any context-switch is called. Both files exist and assert the behaviour.
 D-1 was promoted to `covered today` after content-verification confirmed
 the assertions in `apps/api/test/context/context.service.spec.ts`.
 

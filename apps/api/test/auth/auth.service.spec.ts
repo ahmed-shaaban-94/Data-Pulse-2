@@ -1,5 +1,6 @@
 /**
  * T108 — AuthService spec (sign-in subset).
+ * T313 — C-5: multi-tenant user sign-in must NOT auto-set active_tenant_id.
  *
  * Real Postgres via Testcontainers. The argon2id verify is real — no
  * mocking — so this also doubles as an integration test of the
@@ -13,6 +14,8 @@
  *   - soft-deleted user throws UnauthorizedException
  *   - the same exception shape comes out of all four failure paths
  *     (FR-ISO-4 / no email-existence leak)
+ *   - T313/C-5: multi-tenant user sign-in leaves active_tenant_id NULL
+ *     on the session row (spec §5.1 — no auto-pick for multi-tenant users)
  */
 import { hashPassword } from "@data-pulse-2/auth";
 import { newId } from "@data-pulse-2/shared";
@@ -42,6 +45,20 @@ const SSO_EMAIL = "sso-only@example.com";
 const DELETED_ID = "0a000000-0000-7000-8000-00000000aa03";
 const DELETED_EMAIL = "deleted@example.com";
 
+// T313 / C-5 — multi-tenant fixture (spec §5.1)
+const BOB_ID = "0a000000-0000-7000-8000-00000000aa04";
+const BOB_EMAIL = "bob-multi@example.com";
+const BOB_PASSWORD = "bob-multi-password-99";
+
+const TENANT_ALPHA_ID = "0a000000-0000-7000-8000-00000000bb01";
+const TENANT_BETA_ID = "0a000000-0000-7000-8000-00000000bb02";
+
+const ROLE_ALPHA_ID = "0a000000-0000-7000-8000-00000000cc01";
+const ROLE_BETA_ID = "0a000000-0000-7000-8000-00000000cc02";
+
+const MEMBERSHIP_ALPHA_ID = "0a000000-0000-7000-8000-00000000dd01";
+const MEMBERSHIP_BETA_ID = "0a000000-0000-7000-8000-00000000dd02";
+
 beforeAll(async () => {
   try {
     env = await startPgEnv();
@@ -64,6 +81,35 @@ beforeAll(async () => {
       `INSERT INTO users (id, email, password_hash, deleted_at)
        VALUES ($1, $2, $3, now())`,
       [DELETED_ID, DELETED_EMAIL, deletedHash],
+    );
+
+    // T313 / C-5 — Bob belongs to TWO tenants; sign-in must NOT auto-pick.
+    const bobHash = await hashPassword(BOB_PASSWORD);
+    await pool.query(
+      `INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)`,
+      [BOB_ID, BOB_EMAIL, bobHash],
+    );
+    await pool.query(
+      `INSERT INTO tenants (id, slug, name) VALUES
+         ($1, 'alpha-svc', 'Alpha Service'),
+         ($2, 'beta-svc',  'Beta Service')`,
+      [TENANT_ALPHA_ID, TENANT_BETA_ID],
+    );
+    await pool.query(
+      `INSERT INTO roles (id, tenant_id, code, name) VALUES
+         ($1, $2, 'member', 'Member'),
+         ($3, $4, 'member', 'Member')`,
+      [ROLE_ALPHA_ID, TENANT_ALPHA_ID, ROLE_BETA_ID, TENANT_BETA_ID],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      [MEMBERSHIP_ALPHA_ID, TENANT_ALPHA_ID, BOB_ID, ROLE_ALPHA_ID],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      [MEMBERSHIP_BETA_ID, TENANT_BETA_ID, BOB_ID, ROLE_BETA_ID],
     );
 
     sessions = new SessionRepository(pool);
@@ -171,5 +217,25 @@ describe("AuthService.signIn — input shape", () => {
     // Citext means "ALICE@EXAMPLE.COM" matches the row even though the
     // stored value is lowercase.
     expect(result.userId).toBe(ALICE_ID);
+  });
+});
+
+// T313 / C-5 — spec §5.1: multi-tenant users must NOT have active_tenant_id
+// auto-set on sign-in. Only single-membership users may be auto-picked.
+describe("AuthService.signIn — multi-tenant user: session has no active_tenant_id", () => {
+  it("leaves active_tenant_id NULL when the user belongs to more than one tenant", async () => {
+    if (!pool) return; // Docker unavailable — handled in beforeAll
+
+    const result = await service.signIn({
+      email: BOB_EMAIL,
+      password: BOB_PASSWORD,
+    });
+
+    expect(result.userId).toBe(BOB_ID);
+
+    // Confirm the DB row has active_tenant_id = NULL (no auto-pick).
+    const row = await sessions.findActiveById(result.sessionId);
+    expect(row).not.toBeNull();
+    expect(row!.activeTenantId).toBeNull();
   });
 });
