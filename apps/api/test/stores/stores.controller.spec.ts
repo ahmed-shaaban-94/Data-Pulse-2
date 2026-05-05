@@ -110,7 +110,7 @@ const STORE_GLOBEX_BR1 = "33333333-bbbb-4bbb-8bbb-333333333bbb";
 // ---- Test bootstrap -----------------------------------------------------
 
 let env: PgTestEnv | null = null;
-let pool: Pool | null = null;
+let pool: Pool | null = null; // admin/superuser — seed data + raw assertions only
 let app: INestApplication | null = null;
 let dockerSkipped = false;
 
@@ -151,12 +151,13 @@ async function seed(): Promise<void> {
 
   await pg.query(
     `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
-     VALUES ($1, $2, $3, $4, 'all'),
-            ($5, $2, $6, $7, 'specific')`,
-    [
-      MEMBERSHIP_BOB_ACME, ACME_ID, BOB_ID, ROLE_TENANT_ADMIN_ACME,
-      MEMBERSHIP_CAROL_ACME, ACME_ID, CAROL_ID, ROLE_STORE_STAFF_ACME,
-    ],
+     VALUES ($1, $2, $3, $4, 'all')`,
+    [MEMBERSHIP_BOB_ACME, ACME_ID, BOB_ID, ROLE_TENANT_ADMIN_ACME],
+  );
+  await pg.query(
+    `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+     VALUES ($1, $2, $3, $4, 'specific')`,
+    [MEMBERSHIP_CAROL_ACME, ACME_ID, CAROL_ID, ROLE_STORE_STAFF_ACME],
   );
 
   // Pre-seeded stores: two in acme, one in globex.
@@ -180,14 +181,14 @@ beforeAll(async () => {
   try {
     env = await startPgEnv();
     await applyUpAndCreateAppRole(env);
-    pool = new Pool({ connectionString: env.adminUri });
+    pool = env.admin; // superuser — seed data + raw assertions only
     await seed();
 
     const moduleRef = await Test.createTestingModule({
       imports: [AuthModule, ContextModule, StoresModule],
     })
       .overrideProvider(PG_POOL)
-      .useValue(pool)
+      .useValue(env.app) // non-superuser app role — enforces RLS
       .overrideProvider(REDIS_CLIENT)
       .useValue(new AlwaysAllowRedis())
       .overrideProvider(EMAIL_JOB_ENQUEUER)
@@ -220,7 +221,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (app) await app.close().catch(() => undefined);
-  if (pool) await pool.end().catch(() => undefined);
+  // pool === env.admin — stopPgEnv closes both admin and app pools.
   if (env) await stopPgEnv(env);
 }, 60_000);
 
