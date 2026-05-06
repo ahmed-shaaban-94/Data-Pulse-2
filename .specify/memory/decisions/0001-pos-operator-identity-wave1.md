@@ -142,6 +142,29 @@ session token. This token is operator-session state only:
   re-runs sign-in (which re-verifies Clerk JWT + device).
 - Its scope is `pos_operator`. It is rejected on non-POS routes by a route guard.
 
+**Resolved in PR-4 (cross-repo parity correction, owner-approved option-b)**:
+in **Wave 1**, the backend POS operator session is a **server-side state row
+only** — it is **not** a POS-facing bearer scheme. POS-Pulse does not present
+an internal `posOperatorSession` bearer token, and the OpenAPI contract does
+not declare such a security scheme. POS-Pulse continues to authenticate every
+POS-facing call (including sign-out) with `Authorization: Bearer <clerk_jwt>`
+plus the platform device-token header per the existing 001/002 baseline,
+matching POS-Pulse Endpoint 3's contract of record verbatim. The backend
+session row is identified by its `id` (returned in
+`PosOperatorSessionSummary` at sign-in), which POS-Pulse passes back as
+`session_id` on the sign-out body.
+
+The `auth_tokens` `pos_operator` scope row that PR-3 prepared remains useful
+internally — it records the bound `(operator user, device, tenant, store)`
+tuple at sign-in time and is the row that `session_id` references — but its
+`token_hash` is **not** issued to the POS client in Wave 1. Treat the
+`pos_operator` row as session-state storage, not as a transport credential.
+
+If a POS-facing operator-session bearer is desired in a later wave, it
+requires an explicit POS-Pulse contract revision (cross-repo) before
+Data-Pulse-2 can publish a `posOperatorSession` security scheme on POS-facing
+endpoints.
+
 ### D9. `auth_tokens` schema — scope-aware CHECK
 
 The current `auth_tokens` CHECK forbids both `user_id` and `device_id` being
@@ -217,10 +240,39 @@ discriminator value is shipped now so POS-Pulse can branch its UX without
 a contract bump when the confirmation endpoint lands.
 
 **Resolved in PR-4 (Clerk JWT carrier)**: header — `Authorization: Bearer
-<clerk_jwt>`, modelled as the `clerkJwt` HTTP-bearer security scheme on the
-sign-in operation. Sign-out uses an analogous `posOperatorSession` bearer
-scheme. The Clerk JWT never appears in any request body, response body,
-log line, audit row, or worker payload (FR-POS-AUTH-10 reaffirmed).
+<clerk_jwt>`, modelled as the `clerkJwt` HTTP-bearer security scheme on
+**both** the sign-in and the sign-out operations (per the parity correction
+recorded in D8 above; sign-out no longer uses an internal-bearer scheme).
+The Clerk JWT never appears in any request body, response body, log line,
+audit row, or worker payload (FR-POS-AUTH-10 reaffirmed).
+
+**Resolved in PR-4 (POS-Pulse parity corrections, owner-approved
+option-b)**:
+five mechanical contract corrections were applied to align PR #49 with the
+merged POS-Pulse contract of record
+(`POS-Pulse:specs/004-operator-session/contracts/backend-endpoints.md`):
+
+1. `PosOperatorSignInRequest.kind.enum`: `[operator_signin]` →
+   `[manager_admin]`. POS-Pulse Endpoint 2 line 161 specifies
+   `"kind": "manager_admin"`; `manager_admin` is the only Wave 1 sign-in
+   kind.
+2. `PosOperatorSignInRequest.required` and `properties`: `branch_id`
+   removed from the request body. POS-Pulse Endpoint 2 resolves
+   `branch_id` server-side from the device-token claim, not from the
+   request body. `branch_id` remains in the response payload
+   (`PosOperatorSummary.branch_id`).
+3. `PosOperatorSummary.id`: `format: uuid` (local `users.id`) →
+   plain `string` (Clerk subject = `users.clerk_user_id`). Identity
+   continuity with POS-Pulse roster, takeover, and active-session
+   endpoints requires the Clerk subject as the operator id.
+4. `PosOperatorSignOutRequest`: new schema, required body
+   `{ session_id: uuid }`. POS-Pulse Endpoint 3 lines 267–273 specify
+   `{ "session_id": "<uuid>" }` as a required body.
+5. Sign-out `security`: `posOperatorSession` removed from the
+   contract; sign-out now declares `clerkJwt: []`. The
+   `posOperatorSession` security scheme is removed from
+   `components.securitySchemes` entirely. (See D8 above for the
+   architectural rationale.)
 
 ### D11. Cashier PIN never crosses the backend boundary
 
