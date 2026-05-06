@@ -169,11 +169,20 @@ POS-Pulse Sprint 1 unblocks at PR-6 merge.
 ## 9. Open questions (deferred to subsequent PRs)
 
 - Carrier of the Clerk JWT in the request (header vs body) — must mirror the
-  merged POS-Pulse PR #43 contract verbatim. Resolved in PR-4.
+  merged POS-Pulse PR #43 contract verbatim. **Resolved in PR-4**: header.
+  `Authorization: Bearer <clerk_jwt>` on `POST /api/pos/v1/operators/sign-in`,
+  modelled in OpenAPI as the `clerkJwt` security scheme (HTTP bearer, JWT
+  format). Sign-out uses an analogous `posOperatorSession` bearer scheme.
+  The Clerk JWT never appears in the request body.
 - Operator session token TTL — deployment configuration decision; not a Wave 1
   contract decision.
 - Rate-limit response code (401 vs 429) — must mirror POS-Pulse contract.
-  Resolved in PR-4.
+  **Resolved in PR-4**: 401 for every Wave 1 sign-in / sign-out refusal,
+  including rate-limit exhaustion. Returning a single status code keeps the
+  response body and status line both minimum-disclosure (FR-POS-AUTH-6 +
+  FR-ISO-4 inheritance) — a 429 would itself disclose "rate-limited" as a
+  distinct cause. Server-side back-pressure remains free to log
+  rate-limited refusals separately by `request_id`.
 - Whether to pre-emptively decorate Wave 1 routes with `@Auditable(...)` so they
   light up automatically once `AuditModule` ships. Decision deferred to PR-5.
 

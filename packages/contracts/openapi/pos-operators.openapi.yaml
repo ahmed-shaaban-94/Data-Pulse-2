@@ -1,0 +1,280 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 POS Operators API
+  version: "1.0.0-draft"
+  description: >
+    POS-Pulse 004 Backend Wave 1 operator identity surface. Two endpoints —
+    operator sign-in (Clerk JWT verified at the API edge against Clerk's
+    JWKS) and operator sign-out (revokes the internal POS operator session
+    token). Both endpoints fail closed: every refusal returns the same
+    generic `{ error: { code, message, request_id } }` envelope and does
+    not enumerate causes.
+
+
+    Cross-cutting conventions live in
+    `specs/001-foundation-auth-tenant-store/contracts/README.md`.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/pos/v1/operators/sign-in:
+    post:
+      summary: Sign a POS operator in to a terminal.
+      description: >
+        Verifies the Clerk JWT, resolves `branch_id` to internal `store_id`
+        + `tenant_id`, validates membership/role eligibility, validates the
+        device terminal attestation, and — on success — issues an internal
+        opaque POS operator session token (scope `pos_operator`). The Clerk
+        JWT is **not** propagated past the verifier and never appears in
+        the response.
+      operationId: posOperatorSignIn
+      tags: [pos-operators]
+      security:
+        - clerkJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosOperatorSignInRequest"
+      responses:
+        "200":
+          description: >
+            Either a successful sign-in (`kind: signed_in`) or a
+            minimum-disclosure takeover-required signal
+            (`kind: takeover_required`). The response is a tagged union
+            discriminated by `kind`. Clients MUST switch on `kind` and
+            MUST NOT assume any other field is present until the variant
+            is confirmed.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/PosOperatorSignInSucceeded"
+                  - $ref: "#/components/schemas/PosOperatorTakeoverRequired"
+                discriminator:
+                  propertyName: kind
+                  mapping:
+                    signed_in: "#/components/schemas/PosOperatorSignInSucceeded"
+                    takeover_required: "#/components/schemas/PosOperatorTakeoverRequired"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between invalid
+            Clerk JWT, missing user mapping, disabled or deleted user,
+            absent / non-permitting membership, branch / tenant mismatch,
+            invalid or revoked device token, or rate-limit exhaustion. The
+            actual cause is recorded server-side with `request_id` and is
+            never returned to the client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/pos/v1/operators/sign-out:
+    post:
+      summary: Sign the current POS operator out of a terminal.
+      description: >
+        Revokes the internal POS operator session token presented in
+        `Authorization: Bearer ...`. Idempotent in effect: a token that is
+        already revoked, expired, or unknown returns the same generic
+        refusal envelope as any other invalid sign-out attempt. The Clerk
+        session lifecycle is Clerk's; Data-Pulse-2 does not attempt to
+        revoke the Clerk session here (FR-POS-AUTH-5).
+      operationId: posOperatorSignOut
+      tags: [pos-operators]
+      security:
+        - posOperatorSession: []
+      responses:
+        "200":
+          description: Session revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosOperatorSignOutResponse"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between an
+            invalid, expired, revoked, or unknown operator session token,
+            a token presented on the wrong scope, or rate-limit
+            exhaustion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    clerkJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Clerk-issued JWT, presented as `Authorization: Bearer <jwt>`.
+        Verified at the API edge against Clerk's JWKS (signature, `iss`,
+        `aud`, `exp`, `nbf`, `iat`). Fail-closed on JWKS fetch error or
+        signature mismatch — no allow-list shortcut, no cached
+        last-known-good. The token is not propagated past the verifier.
+    posOperatorSession:
+      type: http
+      scheme: bearer
+      description: >
+        Internal opaque POS operator session token (scope `pos_operator`),
+        issued by Data-Pulse-2 on successful sign-in. Stored hashed at
+        rest. Operator-session state only — not a human identity carrier
+        and not refreshable in Wave 1. Rejected on non-POS routes by a
+        scope guard.
+  schemas:
+    # -------------------------------------------------------------------
+    # Sign-in request
+    # -------------------------------------------------------------------
+    PosOperatorSignInRequest:
+      type: object
+      required: [kind, branch_id, device_token_attestation]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [operator_signin]
+          description: >
+            Discriminator-style request marker. Wave 1 has a single value;
+            future Wave-N additions (e.g., reauth, biometric) would extend
+            the enum without breaking the sign-in operation contract.
+        branch_id:
+          type: string
+          format: uuid
+          description: >
+            POS-facing identifier for the terminal's home branch. Mapped
+            internally to `store_id` (and its parent `tenant_id`) at the
+            DTO/service boundary. `branch_id` is the only POS-facing
+            vocabulary; `store_id` does not appear on POS-facing
+            contracts (FR-POS-AUTH-7).
+        device_token_attestation:
+          type: string
+          minLength: 1
+          description: >
+            Opaque per-terminal token. Backend validates it by hashing
+            and looking up `devices` for the resolved
+            `(tenant_id, store_id)`, with a constant-time hash compare and
+            non-revocation check. The plaintext token never appears in
+            logs, audit rows, or worker payloads.
+    # -------------------------------------------------------------------
+    # Sign-in 200 — discriminated union over `kind`
+    # -------------------------------------------------------------------
+    PosOperatorSignInSucceeded:
+      type: object
+      required: [kind, operator, operator_session]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [signed_in]
+        operator:
+          $ref: "#/components/schemas/PosOperatorSummary"
+        operator_session:
+          $ref: "#/components/schemas/PosOperatorSessionSummary"
+    PosOperatorTakeoverRequired:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      description: >
+        Minimum-disclosure signal that an active operator session already
+        exists on the resolved terminal. The response intentionally
+        contains no operator identity, no session id, no timestamps, and
+        no tenant or branch metadata — clients receive only the signal.
+        The takeover confirmation flow itself is **out of scope for
+        Wave 1** and ships in a later wave; this `kind` exists in the
+        contract so POS-Pulse can branch its UX without a contract bump
+        when the confirmation endpoint lands.
+      properties:
+        kind:
+          type: string
+          enum: [takeover_required]
+    # -------------------------------------------------------------------
+    # Sign-out 200
+    # -------------------------------------------------------------------
+    PosOperatorSignOutResponse:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [signed_out]
+    # -------------------------------------------------------------------
+    # Operator + session summaries — Wave 1 minimum payloads
+    # -------------------------------------------------------------------
+    PosOperatorSummary:
+      type: object
+      required: [id, display_name, role, tenant_id, branch_id]
+      additionalProperties: false
+      description: >
+        Wave 1 operator payload. Carries only what POS-Pulse needs to
+        render the operator in-shift: id, display_name, role, tenant_id,
+        and branch_id. No email, no Clerk subject, no platform-admin
+        flag, no membership detail.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Local `users.id` of the operator.
+        display_name:
+          type: string
+          description: Operator display name (already resolved server-side).
+        role:
+          type: string
+          enum: [manager, admin]
+          description: >
+            Operator role at sign-in time. Wave 1 admits two values —
+            `manager` and `admin`. Future POS roles would extend this
+            enum.
+        tenant_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          description: Internal `store_id`, surfaced as `branch_id` to POS callers.
+    PosOperatorSessionSummary:
+      type: object
+      required: [id, issued_at]
+      additionalProperties: false
+      description: >
+        Wave 1 operator-session payload. The session bearer token itself
+        is **NOT** carried in this object — it is delivered out-of-band
+        per the agreed POS-Pulse Wave 1 transport (typically the
+        `Authorization`-bearing response header / Set-Cookie analogue),
+        and is returned exactly once. This summary is the
+        non-confidential metadata POS-Pulse uses to display the active
+        session.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque session identifier (not the bearer token).
+        issued_at:
+          type: string
+          format: date-time
+    # -------------------------------------------------------------------
+    # Generic error envelope (mirrors auth.openapi.yaml)
+    # -------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable error code. Wave 1 sign-in / sign-out refusals
+                share a single generic code so the response body cannot
+                distinguish causes.
+            message:
+              type: string
+              description: Generic human-readable string. Never enumerates causes.
+            request_id:
+              type: string
+              format: uuid
+              description: >
+                Server-side correlation id. The actual refusal cause is
+                recorded server-side keyed by this id and is never
+                returned in the response body.

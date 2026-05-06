@@ -104,6 +104,23 @@ dashboard / argon2id users keep `NULL`. Devices table and scope-aware
 (`0001_pos_operator_identity.sql`). No endpoints, controllers, services, or
 guards land in PR-3.
 
+**Resolved in PR-4 (contract surface)**:
+`packages/contracts/openapi/pos-operators.openapi.yaml` ships with two
+operations — `posOperatorSignIn` and `posOperatorSignOut`. Sign-in uses the
+`clerkJwt` security scheme (`Authorization: Bearer <clerk_jwt>`) and
+returns a `kind`-discriminated `oneOf` on `200`: `signed_in` with
+`operator { id, display_name, role, tenant_id, branch_id }` and
+`operator_session { id, issued_at }`, OR the minimum-disclosure
+`{ kind: "takeover_required" }`. Sign-out uses the `posOperatorSession`
+bearer scheme and returns `{ kind: "signed_out" }`. Every refusal —
+invalid Clerk JWT, unmapped user, disabled user, branch / tenant
+mismatch, invalid device, invalid session, rate-limit exhausted — returns
+the same generic `401` with the foundation's standard error envelope.
+`branch_id` is the only POS-facing identifier; `store_id` does not appear
+in the contract. Cashier PIN does not appear in any request, response,
+example, description, or error payload (FR-POS-AUTH-8). The Clerk session
+token does not appear in any response (FR-POS-AUTH-10).
+
 ---
 
 ## R-4 — `branch_id` ↔ `store_id` mapping

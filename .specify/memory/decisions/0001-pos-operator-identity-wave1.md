@@ -197,6 +197,31 @@ response body does not distinguish between:
 The actual reason is logged server-side with `request_id`. This inherits
 FR-ISO-4 from the foundation.
 
+**Resolved in PR-4**: status code `401` for every Wave 1 sign-in / sign-out
+refusal — including rate-limit exhaustion. A single status code keeps both
+the response body *and* the status line minimum-disclosure; returning `429`
+on rate-limit would itself disclose "rate-limited" as a distinct cause and
+defeat the spirit of the generic envelope. Server-side back-pressure (log
+shape, metrics, alerting) remains free to flag rate-limited refusals
+separately by `request_id`. The OpenAPI contract
+(`packages/contracts/openapi/pos-operators.openapi.yaml`) shows the single
+`401` response on both endpoints.
+
+**Resolved in PR-4 (sign-in 200 shape)**: the success path returns one of
+two `kind`-discriminated variants on the same `200` status:
+`signed_in` (carries operator + operator_session summaries) or
+`takeover_required` (the minimum-disclosure `{ kind: "takeover_required" }`
+payload — no operator identity, no session id, no timestamps). The
+takeover *confirmation* endpoint itself is out of Wave 1 scope; the
+discriminator value is shipped now so POS-Pulse can branch its UX without
+a contract bump when the confirmation endpoint lands.
+
+**Resolved in PR-4 (Clerk JWT carrier)**: header — `Authorization: Bearer
+<clerk_jwt>`, modelled as the `clerkJwt` HTTP-bearer security scheme on the
+sign-in operation. Sign-out uses an analogous `posOperatorSession` bearer
+scheme. The Clerk JWT never appears in any request body, response body,
+log line, audit row, or worker payload (FR-POS-AUTH-10 reaffirmed).
+
 ### D11. Cashier PIN never crosses the backend boundary
 
 Cashier PIN is local to the POS terminal. PIN values must never:
