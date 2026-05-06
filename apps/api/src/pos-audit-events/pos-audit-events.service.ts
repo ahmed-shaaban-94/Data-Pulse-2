@@ -116,12 +116,11 @@ export class PosAuditEventsService {
 
     // Idempotent insert: ON CONFLICT (id) DO NOTHING RETURNING id.
     const eventId = event.event_id;
-    let outcome: "accepted" | "duplicate" = "duplicate";
 
-    await runWithTenantContext(
+    const outcome = await runWithTenantContext(
       this.pool,
       { tenantId: event.tenant_id, isPlatformAdmin: false },
-      async (client) => {
+      async (client): Promise<"accepted" | "duplicate"> => {
         const r = await client.query<{ id: string }>(
           `INSERT INTO audit_events
              (id, occurred_at, actor_user_id, actor_label,
@@ -147,7 +146,7 @@ export class PosAuditEventsService {
             JSON.stringify(event.payload),
           ],
         );
-        outcome = r.rows.length > 0 ? "accepted" : "duplicate";
+        return r.rows.length > 0 ? "accepted" : "duplicate";
       },
     );
 
