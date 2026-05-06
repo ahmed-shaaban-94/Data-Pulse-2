@@ -11,7 +11,7 @@
  *     so tests that exercise RLS (e.g., AuthTokenRepository tenant
  *     isolation) hit the policies for real.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   PostgreSqlContainer,
@@ -95,4 +95,42 @@ export async function stopPgEnv(env: PgTestEnv): Promise<void> {
   await env.app.end().catch(() => undefined);
   await env.admin.end().catch(() => undefined);
   await env.container.stop().catch(() => undefined);
+}
+
+/**
+ * Apply every UP migration in lex order (matches the production runner's
+ * file walk in `packages/db/src/cli/migrate.ts`). Used by tests that
+ * need the *full* schema across migrations — e.g. POS operator sign-in,
+ * which depends on `users.clerk_user_id`, `devices`, and the scope-aware
+ * `auth_tokens` CHECK shipped in `0001_pos_operator_identity.sql`.
+ *
+ * The single-file `applyUpAndCreateAppRole` is preserved for the
+ * 0000-only specs that exercise just the foundation slice.
+ */
+export async function applyAllUpAndCreateAppRole(env: PgTestEnv): Promise<void> {
+  const upFiles = readdirSync(DRIZZLE_DIR)
+    .filter((n) => /^\d{4}_.+\.sql$/.test(n) && !n.endsWith(".down.sql"))
+    .sort();
+  for (const name of upFiles) {
+    const sql = readFileSync(resolve(DRIZZLE_DIR, name), "utf8");
+    await env.admin.query(sql);
+  }
+  await env.admin.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_ROLE_NAME}') THEN
+        CREATE ROLE ${APP_ROLE_NAME} LOGIN PASSWORD '${APP_ROLE_PASSWORD}';
+      END IF;
+    END
+    $$;
+  `);
+  await env.admin.query(`GRANT USAGE ON SCHEMA public TO ${APP_ROLE_NAME}`);
+  await env.admin.query(`
+    GRANT SELECT, INSERT, UPDATE, DELETE
+    ON ALL TABLES IN SCHEMA public TO ${APP_ROLE_NAME}
+  `);
+  await env.admin.query(`
+    GRANT USAGE, SELECT
+    ON ALL SEQUENCES IN SCHEMA public TO ${APP_ROLE_NAME}
+  `);
 }
