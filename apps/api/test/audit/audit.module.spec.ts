@@ -30,12 +30,14 @@ import {
 } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
+import type { Pool } from "pg";
 import { AuditModule } from "../../src/audit/audit.module";
 import { Auditable } from "../../src/audit/auditable.decorator";
 import {
   AUDIT_JOB_ENQUEUER,
   type AuditJobEnqueuer,
 } from "../../src/audit/audit-job.enqueuer";
+import { PG_POOL } from "../../src/auth/auth.module";
 
 // ---------------------------------------------------------------------------
 // Fake controller — one @Auditable route + one plain route
@@ -72,11 +74,19 @@ describe("AuditModule wiring", () => {
   beforeEach(async () => {
     fakeEnqueuer = { enqueue: jest.fn().mockResolvedValue(undefined) };
 
+    // AuditModule now imports AuthModule (for the read-side audit query
+    // controller's guard chain). AuthModule's `PG_POOL` factory throws at
+    // boot when DATABASE_URL is unset; this spec doesn't exercise the
+    // read path, so override PG_POOL with an unused stub. None of the
+    // providers reached by the @Auditable interceptor fire pool methods,
+    // so the stub is sufficient.
     const moduleRef = await Test.createTestingModule({
       imports: [TestAppModule],
     })
       .overrideProvider(AUDIT_JOB_ENQUEUER)
       .useValue(fakeEnqueuer)
+      .overrideProvider(PG_POOL)
+      .useValue({} as Pool)
       .compile();
 
     app = moduleRef.createNestApplication();

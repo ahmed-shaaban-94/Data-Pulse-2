@@ -1,9 +1,24 @@
 /**
- * AuditModule — Scope A wiring.
+ * AuditModule — Scope A (write-side) + read-side query API wiring.
  *
+ * Write side (Scope A — pre-existing)
+ * -----------------------------------
  * Provides the `AUDIT_JOB_ENQUEUER` token and registers
  * `AuditEmitterInterceptor` as a global interceptor via the `APP_INTERCEPTOR`
  * DI token.
+ *
+ * Read side (T235)
+ * ----------------
+ * Registers `AuditController` (`GET /api/v1/audit/events`), `AuditService`,
+ * and the `AUDIT_REPOSITORY` token bound to `DrizzleAuditRepository`.
+ * Imports `AuthModule` + `ContextModule` so the controller's guard chain
+ * (`AuthGuard` → `TenantContextGuard` → `RolesGuard`) and the
+ * repository's `PG_POOL` injection resolve through normal NestJS module
+ * imports — same pattern as `StoresModule` / `MembershipsModule`.
+ *
+ * `audit.module.spec.ts` overrides `PG_POOL` (and the other AuthModule
+ * boot-time providers) before `.compile()` so its standalone
+ * AuditModule build still works with no `DATABASE_URL` set.
  *
  * APP_INTERCEPTOR vs useGlobalInterceptors
  * ----------------------------------------
@@ -41,6 +56,11 @@ import { Queue, type JobsOptions } from "bullmq";
 
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
+import { AuthModule } from "../auth/auth.module";
+import { ContextModule } from "../context/context.module";
+import { RolesGuard } from "../auth/roles.guard";
+
+import { AuditController } from "./audit.controller";
 import { AuditEmitterInterceptor } from "./audit-emitter.interceptor";
 import {
   AUDIT_JOB_ENQUEUER,
@@ -52,6 +72,11 @@ import {
   AuditQueueProducer,
   type AuditQueueLike,
 } from "./audit-queue.producer";
+import {
+  AUDIT_REPOSITORY,
+  DrizzleAuditRepository,
+} from "./audit.repository";
+import { AuditService } from "./audit.service";
 
 export function auditJobEnqueuerFactory(
   queueFactory?: (url: string) => AuditQueueLike,
@@ -88,8 +113,21 @@ const auditInterceptorProvider: Provider = {
   inject: [Reflector, AUDIT_JOB_ENQUEUER],
 };
 
+const auditRepositoryProvider: Provider = {
+  provide: AUDIT_REPOSITORY,
+  useClass: DrizzleAuditRepository,
+};
+
 @Module({
-  providers: [auditJobEnqueuerProvider, auditInterceptorProvider],
+  imports: [AuthModule, ContextModule],
+  controllers: [AuditController],
+  providers: [
+    auditJobEnqueuerProvider,
+    auditInterceptorProvider,
+    auditRepositoryProvider,
+    AuditService,
+    RolesGuard,
+  ],
   exports: [AUDIT_JOB_ENQUEUER],
 })
 export class AuditModule {}

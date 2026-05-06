@@ -1,0 +1,32 @@
+/**
+ * audit.dto.ts — wire shapes for `GET /api/v1/audit/events`.
+ *
+ * Mirrors `packages/contracts/openapi/audit.openapi.yaml`:
+ *
+ *   AuditEvent: { id, occurred_at, actor_user_id?, actor_label?,
+ *                 tenant_id, store_id?, action, target_type?, target_id?,
+ *                 request_id?, metadata }
+ *   ListAuditEventsResponse: { items: AuditEvent[], next_cursor: string|null }
+ *
+ * Snake_case field names match the OpenAPI YAML — the controller hands
+ * this back verbatim, no further mapping. ISO 8601 string for
+ * `occurred_at` (not `Date`) so JSON serialization is stable.
+ */
+export interface AuditEventDto {
+  readonly id: string;
+  readonly occurred_at: string;
+  readonly actor_user_id: string | null;
+  readonly actor_label: string | null;
+  readonly tenant_id: string;
+  readonly store_id: string | null;
+  readonly action: string;
+  readonly target_type: string | null;
+  readonly target_id: string | null;
+  readonly request_id: string | null;
+  readonly metadata: Record<string, unknown>;
+}
+
+export interface ListAuditEventsResponse {
+  readonly items: readonly AuditEventDto[];
+  readonly next_cursor: string | null;
+}
