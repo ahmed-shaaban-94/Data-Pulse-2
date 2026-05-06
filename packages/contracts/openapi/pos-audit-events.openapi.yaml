@@ -1,0 +1,360 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 POS Audit Events API
+  version: "1.0.0-draft"
+  description: >
+    POS-Pulse 004 Backend Wave 2 audit-event sync surface. One endpoint —
+    `POST /api/pos/v1/audit-events` — accepts batches of locally-emitted
+    audit events from a paired POS terminal and persists them to the
+    backend audit log with per-event idempotency (P5).
+
+
+    Auth model: the terminal authenticates via the `device_token_attestation`
+    field in the request body (matching the Wave 1 body-based pattern from
+    pos-operators.openapi.yaml). The Clerk JWT in `Authorization: Bearer` is
+    OPTIONAL — events emitted during sign-out, takeover confirmation, or
+    mid-session account-disable paths may arrive without a current Clerk JWT.
+    The backend validates events against the device token's tenant + branch
+    scope, never against a Clerk session.
+
+
+    Payload redaction (FR-027 / PR-1): the `payload` field on each event
+    MUST NOT contain `pin`, `pin_hash`, `password`, `password_hash`,
+    `clerk_jwt`, `clerk_session_token`, `device_token`,
+    `device_token_attestation`, `token`, `secret`, or `credential` as a key
+    at any nesting level. The client-side bridge handler enforces this; the
+    backend SHOULD enforce it with a server-side schema validator and reject
+    events that violate it with category `schema_violation`.
+
+
+    Cross-cutting conventions live in
+    `specs/001-foundation-auth-tenant-store/contracts/README.md`.
+servers:
+  - url: https://api.example.com
+paths:
+  /api/pos/v1/audit-events:
+    post:
+      summary: Sync a batch of locally-emitted audit events to the backend.
+      description: >
+        Accepts a batch of audit events from the terminal's offline outbox
+        and persists each event to the backend audit log. Each event is
+        identified by a client-generated `event_id` (UUIDv4) used as the
+        dedup key (P5 idempotency): re-submitting an event that the backend
+        already holds produces a `duplicates` entry rather than a second
+        persisted row.
+
+
+        Per-event isolation: one malformed or tenant-mismatched event MUST
+        NOT prevent the remaining valid events in the same batch from being
+        accepted. The response's `accepted`, `duplicates`, and `rejected`
+        arrays together account for every `event_id` in the request.
+
+
+        The action-category catalogue (FR-026) is closed for this contract
+        version. Events whose `action_category` is not in the recognised
+        set are rejected with category `schema_violation`. The catalogue
+        is append-only; future categories land in a contract revision.
+
+
+        The Clerk JWT (`Authorization: Bearer`) is accepted when present
+        and MUST be verified (signature + `exp` + `nbf` + `iss`) but is
+        NOT required. Event ownership is established by the
+        `acting_operator_id` field (Clerk subject) cross-referenced with
+        the device token's tenant + branch scope, not by the Clerk JWT.
+      operationId: posAuditEventsSync
+      tags: [pos-audit-events]
+      security:
+        - clerkJwt: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosAuditEventsSyncRequest"
+      responses:
+        "200":
+          description: >
+            Batch processed. Every event in the request is accounted for
+            across `accepted`, `duplicates`, and `rejected`. A 200 does
+            NOT mean every event was accepted — check each sub-array.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosAuditEventsSyncResponse"
+        "400":
+          description: >
+            The request body is structurally invalid (missing required
+            top-level fields, non-array `events`, etc.). Per-event
+            validation failures are reported inline in the 200 `rejected`
+            array, not as a 400.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between an invalid
+            or missing device token, an expired Clerk JWT (when present), a
+            device token whose tenant/branch scope cannot be resolved, or
+            rate-limit exhaustion. The actual cause is recorded server-side
+            with `request_id` and is never returned to the client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    clerkJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Clerk-issued JWT, presented as `Authorization: Bearer <jwt>`.
+        Verified at the API edge against Clerk's JWKS (signature, `iss`,
+        `aud`, `exp`, `nbf`, `iat`) when present. OPTIONAL for this
+        endpoint — events emitted during sign-out, takeover, or
+        mid-session account-disable paths may arrive without a current
+        Clerk JWT. Fail-closed on JWKS fetch error or signature mismatch
+        when the header is present. The token is not propagated past the
+        verifier and never appears in response payloads.
+  schemas:
+    # -------------------------------------------------------------------
+    # Top-level request
+    # -------------------------------------------------------------------
+    PosAuditEventsSyncRequest:
+      type: object
+      required: [device_token_attestation, events]
+      additionalProperties: false
+      description: >
+        `device_token_attestation` authenticates the terminal (matching
+        the Wave 1 body-based pattern). `events` is the batch from the
+        terminal's offline outbox; minimum one event per request.
+      properties:
+        device_token_attestation:
+          type: string
+          minLength: 1
+          description: >
+            Terminal-side proof of possession of the paired device token.
+            The backend resolves this to `tenant_id` + `branch_id` scope
+            and validates each event's claimed `tenant_id` and `branch_id`
+            against that scope. The plaintext device token / attestation
+            MUST NOT appear in logs, audit rows, or worker payloads.
+        events:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AuditEventItem"
+          description: >
+            Ordered list of audit events from the terminal's outbox.
+            Events are processed independently; failure of one does not
+            affect others.
+    # -------------------------------------------------------------------
+    # Per-event item
+    # -------------------------------------------------------------------
+    AuditEventItem:
+      type: object
+      required:
+        - event_id
+        - tenant_id
+        - branch_id
+        - originating_terminal_id
+        - acting_operator_id
+        - action_category
+        - created_at
+        - payload
+      additionalProperties: false
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: >
+            Client-generated UUIDv4. Used as the dedup key (P5
+            idempotency). The backend inserts with
+            `ON CONFLICT (event_id) DO NOTHING`; a conflicting id
+            produces a `duplicates` entry in the response.
+        tenant_id:
+          type: string
+          format: uuid
+          description: >
+            Tenant the event belongs to. MUST match the device token's
+            resolved tenant scope; mismatch → `tenant_mismatch` rejection.
+        branch_id:
+          type: string
+          format: uuid
+          description: >
+            Branch (store) the event belongs to. Surfaced as `branch_id`
+            in POS vocabulary; mapped internally to `store_id` at the
+            DTO boundary. MUST match the device token's resolved branch
+            scope; mismatch → `tenant_mismatch` rejection.
+        originating_terminal_id:
+          type: string
+          format: uuid
+          description: >
+            Internal id of the terminal that produced this event
+            (FR-013 minimum-disclosure — not a user-visible label).
+        acting_operator_id:
+          type: string
+          minLength: 1
+          description: >
+            Clerk subject (`clerk_user_id`) of the operator who performed
+            the action. The backend resolves this to `users.id` via the
+            `users.clerk_user_id` column to satisfy the `actor_user_id`
+            FK on the audit_events table. MUST NOT be a PIN, password,
+            or any credential value.
+        session_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Backend operator session id active when the event was emitted.
+            NULL for events emitted before a session was established or
+            after it ended.
+        shift_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Shift id the event is associated with. NULL for events not
+            tied to a shift (e.g. `operator.session.takeover`).
+        action_category:
+          type: string
+          enum:
+            - shift.open
+            - shift.close
+            - shift.forced_close
+            - operator.session.takeover
+            - cashier.pin.reset
+            - cashier.pin.unlock
+          description: >
+            Discriminates the event type. The catalogue is append-only
+            (FR-026); unknown values are rejected with category
+            `schema_violation`. `shift.forced_close` and `shift.close`
+            MUST be persisted distinctly — the backend MUST NOT collapse
+            them.
+        created_at:
+          type: string
+          format: date-time
+          description: >
+            ISO 8601 UTC timestamp when the event was emitted on the
+            terminal. Not the backend ingestion time — the backend
+            records its own `ingested_at` separately.
+        approving_supervisor_id:
+          type: string
+          minLength: 1
+          nullable: true
+          description: >
+            Clerk subject of the supervisor who approved a §A1-gated
+            action (e.g. `cashier.pin.reset`). NULL when not applicable.
+            MUST NOT be a PIN, password, or any credential value.
+        payload:
+          type: object
+          description: >
+            Per-category structured payload. Shape is determined by
+            `action_category` (see data-model.md §"Action Category
+            Catalogue").
+
+
+            FORBIDDEN FIELDS (PR-1 / FR-027): the following keys MUST
+            NOT appear at any nesting level — `pin`, `pin_hash`,
+            `password`, `password_hash`, `clerk_jwt`,
+            `clerk_session_token`, `device_token`,
+            `device_token_attestation`, `token`, `secret`, `credential`.
+            Events whose payload contains any forbidden key are rejected
+            with category `schema_violation`.
+
+
+            Expected shapes per category:
+              shift.open:         { shift_id, opened_at }
+              shift.close:        { shift_id, closed_at, declared_count_state }
+              shift.forced_close: { shift_id, shift_owner_id, forced_close_actor_id,
+                                    forced_close_reason, annotation? }
+              operator.session.takeover: { superseded_session_id, prior_terminal_reference }
+              cashier.pin.reset:  { target_cashier_id, terminal_id }
+              cashier.pin.unlock: { target_cashier_id, terminal_id }
+    # -------------------------------------------------------------------
+    # Response
+    # -------------------------------------------------------------------
+    PosAuditEventsSyncResponse:
+      type: object
+      required: [accepted, duplicates, rejected]
+      additionalProperties: false
+      description: >
+        Every `event_id` from the request appears in exactly one of the
+        three arrays. The client MUST check all three — a 200 does not
+        mean every event was accepted.
+      properties:
+        accepted:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: >
+            `event_id` values the backend has now persisted for the
+            first time. The client MAY mark these as `synced` in its
+            local outbox.
+        duplicates:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: >
+            `event_id` values already known to the backend (P5
+            idempotency). The client MAY treat these as `synced` —
+            they are already in the audit log.
+        rejected:
+          type: array
+          items:
+            $ref: "#/components/schemas/RejectedEvent"
+          description: >
+            Events the backend refuses to persist. These remain in the
+            client's local outbox; support reviews them via
+            support-bundle export.
+    RejectedEvent:
+      type: object
+      required: [event_id, category]
+      additionalProperties: false
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum:
+            - invalid_input
+            - tenant_mismatch
+            - schema_violation
+          description: >
+            `invalid_input` — the event is structurally malformed
+            (missing required fields, wrong types).
+            `tenant_mismatch` — the event's `tenant_id` or `branch_id`
+            does not match the device token's resolved scope.
+            `schema_violation` — the event's `payload` contains a
+            forbidden field name (PR-1 / FR-027) or the `action_category`
+            is unrecognised.
+    # -------------------------------------------------------------------
+    # Generic error envelope (mirrors pos-operators.openapi.yaml)
+    # -------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable error code. Refusals share a single generic code
+                so the response body cannot distinguish causes.
+            message:
+              type: string
+              description: Generic human-readable string. Never enumerates causes.
+            request_id:
+              type: string
+              format: uuid
+              description: >
+                Server-side correlation id. The actual refusal cause is
+                recorded server-side keyed by this id and is never
+                returned in the response body.
