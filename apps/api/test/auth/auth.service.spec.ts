@@ -24,7 +24,7 @@ import { Pool } from "pg";
 import { AuthService } from "../../src/auth/auth.service";
 import { SessionRepository } from "../../src/auth/session.repository";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -62,7 +62,7 @@ const MEMBERSHIP_BETA_ID = "0a000000-0000-7000-8000-00000000dd02";
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
     pool = new Pool({ connectionString: env.adminUri });
 
     const aliceHash = await hashPassword(ALICE_PASSWORD);
