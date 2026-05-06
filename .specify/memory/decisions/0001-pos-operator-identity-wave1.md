@@ -89,6 +89,11 @@ user is mapped, the request returns the generic refusal envelope. There is no JI
 provisioning at sign-in. Operator provisioning is a separate flow with its own
 audit trail and tenant-assignment story.
 
+**Resolved in PR-3**: `users.clerk_user_id` is `TEXT NULL` with a non-empty
+CHECK and a partial UNIQUE index on `(clerk_user_id) WHERE clerk_user_id IS
+NOT NULL`. Existing dashboard / argon2id users keep `NULL`; only Clerk-mapped
+users carry a value. Migration: `0001_pos_operator_identity.sql`.
+
 ### D5. `branch_id` stays in POS-facing surface
 
 `branch_id` is the stable POS-Pulse-facing identifier and remains in POS-facing
@@ -114,6 +119,16 @@ Device trust is orthogonal to human identity. Sign-in requires both:
 Wave 1 uses a `devices` table with hashed device tokens, tenant/store scope, and
 revocation support. The schema lands in PR-3. There is no temporary allow-list.
 
+**Resolved in PR-3**: `devices` table created with columns `id` (UUID PK),
+`tenant_id` (FK → `tenants(id)` ON DELETE RESTRICT, NOT NULL), `store_id`
+(FK → `stores(id)` ON DELETE RESTRICT, NOT NULL), `label` (TEXT NULL,
+non-empty CHECK), `token_hash` (BYTEA NOT NULL UNIQUE), `revoked_at`
+(TIMESTAMPTZ NULL), `created_at`, `updated_at`. RLS + FORCE RLS enabled with
+the standard `tenant_id = current_setting('app.current_tenant',true)::uuid OR
+platform-admin` policy (same shape as `stores` / `memberships`). Active-token
+index `devices_active_idx ON (tenant_id, store_id) WHERE revoked_at IS NULL`.
+`updated_at` trigger reuses the shared `set_updated_at()` function.
+
 ### D8. Internal POS operator session token (operator-session state only)
 
 When sign-in succeeds, Data-Pulse-2 may issue an internal opaque POS operator
@@ -135,6 +150,34 @@ populated on the same row. The POS operator session token requires both.
 Resolution: a scope-aware CHECK lands in PR-3. The `pos_operator` scope permits
 both `user_id` and `device_id` populated; every other scope keeps the current
 "exactly one" invariant. Existing token constraints are not weakened globally.
+
+**Resolved in PR-3**: the original `auth_tokens_principal_xor` CHECK is
+dropped and replaced (not extended) by `auth_tokens_principal_by_scope`:
+
+```sql
+CHECK (
+  (scope = 'pos_operator' AND user_id IS NOT NULL AND device_id IS NOT NULL)
+  OR
+  (scope <> 'pos_operator'
+     AND (user_id IS NOT NULL)::int + (device_id IS NOT NULL)::int = 1)
+)
+```
+
+A fresh constraint name was chosen so a future grep for `principal_xor` does
+not return a stale, no-longer-XOR predicate. PR-3 also closes the
+FR-POS-SEAM-1 reservation by adding FK
+`auth_tokens.device_id → devices(id) ON DELETE RESTRICT` (simple FK,
+matching the table's existing `user_id` / `store_id` pattern; tenant
+consistency for `pos_operator` rows is enforced at the application layer
+in PR-5).
+
+**Rollback hazard documented**: the DOWN migration MUST delete `scope =
+'pos_operator'` rows from `auth_tokens` before re-adding the original XOR
+CHECK, because the restored predicate forbids rows where both `user_id` and
+`device_id` are populated. Once PR-5 ships and live operator sessions exist,
+rolling back PR-3 invalidates every active POS operator session token. The
+DOWN file documents this destructive step inline; production rollback
+should be scheduled in a maintenance window.
 
 ### D10. Generic refusal envelope
 

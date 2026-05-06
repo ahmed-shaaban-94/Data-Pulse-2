@@ -1,15 +1,17 @@
 /**
- * `auth_tokens` — opaque bearer tokens for API consumers and (future) POS
- * devices. (data-model.md §10)
+ * `auth_tokens` — opaque bearer tokens for API consumers and POS terminals.
+ * (data-model.md §10)
  *
  * Constraints declared in SQL:
  *   - UNIQUE `token_hash` (full lookup key — never store the raw token).
- *   - CHECK `(user_id IS NOT NULL)::int + (device_id IS NOT NULL)::int = 1`
- *     — exactly one of user-vs-device per row.
+ *   - CHECK `auth_tokens_principal_by_scope`
+ *       - `pos_operator` rows MUST have both `user_id` and `device_id`
+ *         (operator-session tokens carry both identities).
+ *       - Every other scope keeps the original "exactly one of
+ *         user_id / device_id" invariant.
+ *   - FK `auth_tokens.device_id → devices(id)` (PR-3 closes the FR-POS-SEAM-1
+ *     reservation now that `devices` exists).
  *   - Partial index for active tokens.
- *
- * `device_id` is the FR-POS-SEAM-1 reservation: column exists today, FK to
- * the (future) `devices` table is added in the POS slice.
  *
  * RLS-enabled by `tenant_id`. Platform-scoped tokens (`tenant_id IS NULL`)
  * are visible only to platform admins.
@@ -21,6 +23,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { devices } from "./devices";
 import { stores } from "./stores";
 import { tenants } from "./tenants";
 import { users } from "./users";
@@ -39,10 +42,12 @@ export const authTokens = pgTable("auth_tokens", {
   }),
   userId: uuid("user_id").references(() => users.id, { onDelete: "restrict" }),
   /**
-   * Future POS device identifier. The FK is added when the `devices` table
-   * ships; for v1 the column is reserved and nullable. (FR-POS-SEAM-1)
+   * POS device / terminal identifier. FK to `devices(id)` added in PR-3.
+   * Required for `pos_operator` scope rows; NULL for any other scope.
    */
-  deviceId: uuid("device_id"),
+  deviceId: uuid("device_id").references(() => devices.id, {
+    onDelete: "restrict",
+  }),
   storeId: uuid("store_id").references(() => stores.id, {
     onDelete: "restrict",
   }),
@@ -52,6 +57,6 @@ export const authTokens = pgTable("auth_tokens", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
-export type AuthTokenScope = "dashboard_api" | "pos";
+export type AuthTokenScope = "dashboard_api" | "pos" | "pos_operator";
 export type AuthTokenRow = typeof authTokens.$inferSelect;
 export type NewAuthTokenRow = typeof authTokens.$inferInsert;
