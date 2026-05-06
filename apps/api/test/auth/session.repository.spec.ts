@@ -15,7 +15,7 @@ import { newId } from "@data-pulse-2/shared";
 import { Pool } from "pg";
 import { SessionRepository } from "../../src/auth/session.repository";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -29,7 +29,7 @@ let userId: string;
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
     pool = new Pool({ connectionString: env.adminUri });
 
     // Seed a single user — sessions reference users.id.

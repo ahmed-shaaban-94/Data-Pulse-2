@@ -34,7 +34,7 @@ import { Pool } from "pg";
 
 import { DrizzleAuditRepository } from "../../src/audit/audit.repository";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   APP_ROLE_NAME,
@@ -63,7 +63,7 @@ const AT = (sec: number): string =>
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
 
     // Create a non-superuser pool — the repository uses this in
     // production (where `app_role` cannot bypass RLS). Tests must

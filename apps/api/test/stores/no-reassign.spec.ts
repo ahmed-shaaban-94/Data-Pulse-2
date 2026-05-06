@@ -57,7 +57,7 @@ import { createLogger } from "@data-pulse-2/shared";
 import { StoresModule } from "../../src/stores/stores.module";
 import type { RedisLike } from "../../src/auth/rate-limit";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -145,7 +145,7 @@ async function seed(): Promise<void> {
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
     pool = new Pool({ connectionString: env.adminUri });
     await seed();
 

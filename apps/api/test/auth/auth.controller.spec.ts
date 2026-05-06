@@ -56,7 +56,7 @@ import { ZodValidationPipe } from "../../src/common/zod-validation.pipe";
 import { createLogger } from "@data-pulse-2/shared";
 import type { RedisLike } from "../../src/auth/rate-limit";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -140,7 +140,7 @@ let dockerSkipped = false;
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
     pool = new Pool({ connectionString: env.adminUri });
 
     const aliceHash = await hashPassword(ALICE_PASSWORD);
@@ -721,7 +721,7 @@ describe("T313 / C-5 — multi-tenant sign-in: no active tenant set, subsequent 
   beforeAll(async () => {
     try {
       c5Env = await startPgEnv();
-      await applyUpAndCreateAppRole(c5Env);
+      await applyAllUpAndCreateAppRole(c5Env);
       c5Pool = new Pool({ connectionString: c5Env.adminUri });
 
       // Seed: user → tenants → roles → memberships (FK order).

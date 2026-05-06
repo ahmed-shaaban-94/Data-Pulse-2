@@ -16,7 +16,7 @@ import { newId } from "@data-pulse-2/shared";
 import { Pool } from "pg";
 import { AuthTokenRepository } from "../../src/auth/auth-token.repository";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -31,7 +31,7 @@ const TENANT_B = "0b000000-0000-7000-8000-0000000000b1";
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    await applyAllUpAndCreateAppRole(env);
 
     userId = newId();
     await env.admin.query(
