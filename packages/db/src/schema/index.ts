@@ -6,6 +6,7 @@ export * from "./permissions";
 export * from "./memberships";
 export * from "./store_access";
 export * from "./sessions";
+export * from "./devices";
 export * from "./auth_tokens";
 export * from "./invitations";
 export * from "./audit_events";

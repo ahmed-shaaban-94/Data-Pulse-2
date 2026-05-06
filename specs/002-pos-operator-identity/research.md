@@ -96,6 +96,14 @@ PR-3. Use Clerk `sub` as the durable identifier. Email is informational only.
 local user mapping exists returns the generic refusal envelope. Operator
 provisioning is a separate flow.
 
+**Resolved in PR-3**: `users.clerk_user_id TEXT NULL` shipped with a
+non-empty CHECK (`users_clerk_user_id_format`) and a partial UNIQUE index
+(`users_clerk_user_id_uidx ... WHERE clerk_user_id IS NOT NULL`). Existing
+dashboard / argon2id users keep `NULL`. Devices table and scope-aware
+`auth_tokens` CHECK ship in the same migration
+(`0001_pos_operator_identity.sql`). No endpoints, controllers, services, or
+guards land in PR-3.
+
 ---
 
 ## R-4 — `branch_id` ↔ `store_id` mapping

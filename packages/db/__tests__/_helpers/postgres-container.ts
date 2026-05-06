@@ -12,7 +12,7 @@
  * The migration files live in `packages/db/drizzle/`. We read them from
  * disk so the test exercises the SAME bytes the production runner ships.
  */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { Pool } from "pg";
@@ -103,4 +103,37 @@ export async function stopPgEnv(env: PgTestEnv): Promise<void> {
   await env.app.end().catch(() => undefined);
   await env.admin.end().catch(() => undefined);
   await env.container.stop().catch(() => undefined);
+}
+
+/**
+ * Apply every UP migration in lex order (matches the production runner's
+ * file walk in `src/cli/migrate.ts`). Used by tests that need the *full*
+ * schema across migrations — e.g., `migration_0001.spec.ts`. The
+ * single-file `applyUpAndCreateAppRole` is preserved for the 0000-only
+ * spec which exercises just the foundation slice.
+ */
+export async function applyAllUpAndCreateAppRole(env: PgTestEnv): Promise<void> {
+  const upFiles = readdirSync(DRIZZLE_DIR)
+    .filter((n) => /^\d{4}_.+\.sql$/.test(n) && !n.endsWith(".down.sql"))
+    .sort();
+  for (const name of upFiles) {
+    const sql = readFileSync(resolve(DRIZZLE_DIR, name), "utf8");
+    await env.admin.query(sql);
+  }
+  await ensureAppRole(env);
+}
+
+/**
+ * Apply every DOWN migration in reverse lex order. Mirrors the runner's
+ * one-step `down`, but applied repeatedly to fully reverse the chain.
+ */
+export async function applyAllDown(env: PgTestEnv): Promise<void> {
+  const downFiles = readdirSync(DRIZZLE_DIR)
+    .filter((n) => n.endsWith(".down.sql"))
+    .sort()
+    .reverse();
+  for (const name of downFiles) {
+    const sql = readFileSync(resolve(DRIZZLE_DIR, name), "utf8");
+    await env.admin.query(sql);
+  }
 }
