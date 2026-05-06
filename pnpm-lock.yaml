@@ -101,6 +101,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@data-pulse-2/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@data-pulse-2/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -116,6 +119,9 @@ importers:
       ioredis:
         specifier: 5.10.1
         version: 5.10.1
+      pg:
+        specifier: 8.20.0
+        version: 8.20.0
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
@@ -132,6 +138,9 @@ importers:
       '@types/node':
         specifier: 20.17.6
         version: 20.17.6
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
       jest:
         specifier: 29.7.0
         version: 29.7.0(@types/node@20.17.6)
