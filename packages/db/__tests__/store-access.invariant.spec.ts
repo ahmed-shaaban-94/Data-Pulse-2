@@ -38,6 +38,12 @@ const TENANT_A  = "51000000-1000-4000-8000-000000000001";
 const TENANT_B  = "52000000-2000-4000-8000-000000000002";
 const USER_A    = "53000000-3000-4000-8000-000000000003";
 const USER_B    = "54000000-4000-4000-8000-000000000004";
+// Distinct users for Scenarios 5 and 6. The partial unique index
+// `memberships_tenant_user_active_uidx` rejects a second active membership
+// for the same (tenant_id, user_id), so each scenario that creates a fresh
+// active membership in TENANT_A needs its own user.
+const USER_CASCADE  = "53000000-3000-4000-8000-00000000000e";
+const USER_RESTRICT = "53000000-3000-4000-8000-00000000000f";
 const ROLE_A    = "55000000-5000-4000-8000-000000000005";
 const ROLE_B    = "56000000-6000-4000-8000-000000000006";
 const STORE_A   = "57000000-7000-4000-8000-000000000007"; // belongs to TENANT_A
@@ -99,8 +105,10 @@ async function seedBase(): Promise<void> {
   await pg.query(
     `INSERT INTO users (id, email, password_hash) VALUES
        ($1, 'user-a@inv.test', 'x'),
-       ($2, 'user-b@inv.test', 'x')`,
-    [USER_A, USER_B],
+       ($2, 'user-b@inv.test', 'x'),
+       ($3, 'user-cascade@inv.test', 'x'),
+       ($4, 'user-restrict@inv.test', 'x')`,
+    [USER_A, USER_B, USER_CASCADE, USER_RESTRICT],
   );
 
   await pg.query(
@@ -231,7 +239,7 @@ describe("store_access invariant I-3 — cascade delete on membership", () => {
     await pg.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
        VALUES ($1, $2, $3, $4, 'specific')`,
-      [MEM_CASCADE, TENANT_A, USER_A, ROLE_A],
+      [MEM_CASCADE, TENANT_A, USER_CASCADE, ROLE_A],
     );
     await pg.query(
       `INSERT INTO store_access (membership_id, store_id, tenant_id)
@@ -278,7 +286,7 @@ describe("store_access invariant I-3 — restrict on store delete", () => {
     await pg.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
        VALUES ($1, $2, $3, $4, 'specific')`,
-      [MEM_RESTRICT, TENANT_A, USER_A, ROLE_A],
+      [MEM_RESTRICT, TENANT_A, USER_RESTRICT, ROLE_A],
     );
     await pg.query(
       `INSERT INTO store_access (membership_id, store_id, tenant_id)
