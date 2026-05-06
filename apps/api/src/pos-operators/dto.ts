@@ -73,3 +73,25 @@ export interface PosOperatorTakeoverRequiredBody {
 export type PosOperatorSignInResponseBody =
   | PosOperatorSignInSucceededBody
   | PosOperatorTakeoverRequiredBody;
+
+/**
+ * Sign-out request body. Source of truth:
+ * `PosOperatorSignOutRequest` in `pos-operators.openapi.yaml`.
+ *
+ * The Clerk JWT is carried in `Authorization: Bearer <jwt>`, NOT in the
+ * body. Forbidden fields (`password`, `pin`, `cashier`,
+ * `clerk_session_token`, `device_token_attestation`, `branch_id`) are
+ * rejected by `.strict()` (= OpenAPI `additionalProperties: false`).
+ */
+export const PosOperatorSignOutSchema = z
+  .object({
+    session_id: z.string().uuid(),
+  })
+  .strict();
+
+export type PosOperatorSignOutInput = z.infer<typeof PosOperatorSignOutSchema>;
+
+/** Conforms to OpenAPI `PosOperatorSignOutResponse`. */
+export interface PosOperatorSignOutResponseBody {
+  kind: "signed_out";
+}
