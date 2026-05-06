@@ -1,0 +1,102 @@
+# Data-Pulse-2 CI (T305).
+#
+# Two-job split:
+#   - fast            : no Docker. Build all workspaces (acts as typecheck via tsc) plus
+#                       Docker-free unit tests for worker / shared / auth.
+#   - db-integration  : Docker/Testcontainers. Real Postgres 16-alpine boots for
+#                       packages/db migration UP/DOWN cycles and apps/api RLS suites.
+#
+# Notes:
+#   - MIGRATION_TEST_ALLOW_SKIP is intentionally NOT set anywhere. CI must fail if
+#     Testcontainers cannot start (the soft-skip is a local-Docker-less escape hatch
+#     only, per constitution.md).
+#   - Lint and coverage thresholds are not wired here. ESLint is not installed in
+#     the repo today; adding it would require package.json changes outside this slice.
+
+name: CI
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast:
+    name: fast (build + Docker-free tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all workspaces
+        run: pnpm -r run build
+
+      - name: Test @data-pulse-2/worker
+        run: pnpm --filter @data-pulse-2/worker test
+
+      - name: Test @data-pulse-2/shared
+        run: pnpm --filter @data-pulse-2/shared test
+
+      - name: Test @data-pulse-2/auth
+        run: pnpm --filter @data-pulse-2/auth test
+
+  db-integration:
+    name: db-integration (Testcontainers + RLS + migrations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable corepack and pin pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.15.0 --activate
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspaces required by db/api tests
+        run: >-
+          pnpm
+          --filter @data-pulse-2/shared
+          --filter @data-pulse-2/auth
+          --filter @data-pulse-2/db
+          run build
+
+      - name: Pre-pull postgres:16-alpine
+        run: docker pull postgres:16-alpine
+
+      - name: Test @data-pulse-2/db (migrations + Testcontainers)
+        run: pnpm --filter @data-pulse-2/db test
+
+      - name: Test @data-pulse-2/api (RLS + audit + auth suites)
+        run: pnpm --filter @data-pulse-2/api test
