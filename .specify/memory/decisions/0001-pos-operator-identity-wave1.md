@@ -65,6 +65,11 @@ verification approach against Clerk's JWKS endpoint:
 - Preferred library: `@clerk/backend` if compatible with the Data-Pulse-2 runtime.
 - Fallback: `jose` only if `@clerk/backend` is unsuitable.
 - Library choice and dependency add are gated behind PR-2 (dependency-only PR).
+- **Resolved in PR-2**: `@clerk/backend@3.4.5` selected. Compatibility verdict:
+  Node engine `>=20.9.0` satisfied by the repo's Node 20 LTS pin; pure-JS dual
+  CJS/ESM build with no native compilation; zero peer dependencies. Fallback to
+  `jose` not needed. Added to `@data-pulse-2/auth` (the package that already
+  owns auth primitives such as argon2id and the SHA-256 token-hash helper).
 
 Verification policy: validate signature, `iss`, `aud`, `exp`, `nbf`, `iat`; cache
 JWKS with a short TTL; refresh on `kid` miss once before failing; fail closed on
