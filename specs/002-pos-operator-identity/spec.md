@@ -170,10 +170,14 @@ POS-Pulse Sprint 1 unblocks at PR-6 merge.
 
 - Carrier of the Clerk JWT in the request (header vs body) — must mirror the
   merged POS-Pulse PR #43 contract verbatim. **Resolved in PR-4**: header.
-  `Authorization: Bearer <clerk_jwt>` on `POST /api/pos/v1/operators/sign-in`,
+  `Authorization: Bearer <clerk_jwt>` on **both** `POST
+  /api/pos/v1/operators/sign-in` and `POST /api/pos/v1/operators/sign-out`,
   modelled in OpenAPI as the `clerkJwt` security scheme (HTTP bearer, JWT
-  format). Sign-out uses an analogous `posOperatorSession` bearer scheme.
-  The Clerk JWT never appears in the request body.
+  format). The cross-repo parity correction recorded in ADR D8 + D10 retired
+  the previously-considered `posOperatorSession` POS-facing bearer scheme:
+  in Wave 1, the backend POS operator session is server-side state only and
+  is identified on sign-out by a `session_id` body field (not by an internal
+  bearer token). The Clerk JWT never appears in any request body.
 - Operator session token TTL — deployment configuration decision; not a Wave 1
   contract decision.
 - Rate-limit response code (401 vs 429) — must mirror POS-Pulse contract.
