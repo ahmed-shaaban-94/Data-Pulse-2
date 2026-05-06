@@ -16,6 +16,7 @@ import {
 } from "../src/main";
 import type { INestApplicationContext } from "@nestjs/common";
 import { EmailWorker } from "../src/email/email.worker";
+import { AuditWorker } from "../src/audit/audit.worker";
 
 class FakeEmailWorker {
   starts = 0;
@@ -31,14 +32,41 @@ class FakeEmailWorker {
   }
 }
 
+class FakeAuditWorker {
+  starts = 0;
+  start(): void {
+    this.starts += 1;
+  }
+  async close(): Promise<void> {
+    // see FakeEmailWorker
+  }
+  async onModuleDestroy(): Promise<void> {
+    // not exercised in these tests
+  }
+}
+
 class FakeAppContext implements Partial<INestApplicationContext> {
   closed = 0;
   closeReject?: Error;
-  constructor(private readonly emailWorker: FakeEmailWorker) {}
+  constructor(
+    private readonly emailWorker: FakeEmailWorker,
+    private readonly auditWorker: FakeAuditWorker,
+  ) {}
 
-  // Only `get` and `close` are used by `bootstrap`.
-  get<TInput = unknown, TResult = TInput>(_token: TInput): TResult {
-    return this.emailWorker as unknown as TResult;
+  // Only `get` and `close` are used by `bootstrap`. `get` dispatches by
+  // token: `EmailWorker` → fake email; `AuditWorker` → fake audit.
+  // Anything else throws so a future bootstrap addition surfaces here
+  // instead of silently returning the wrong fake.
+  get<TInput = unknown, TResult = TInput>(token: TInput): TResult {
+    if ((token as unknown) === EmailWorker) {
+      return this.emailWorker as unknown as TResult;
+    }
+    if ((token as unknown) === AuditWorker) {
+      return this.auditWorker as unknown as TResult;
+    }
+    throw new Error(
+      `FakeAppContext.get: unknown token ${String(token)} — extend the fake.`,
+    );
   }
   async close(): Promise<void> {
     this.closed += 1;
@@ -80,13 +108,15 @@ class FakeStderr implements StderrLike {
 
 async function setup(): Promise<{
   emailWorker: FakeEmailWorker;
+  auditWorker: FakeAuditWorker;
   ctx: FakeAppContext;
   proc: FakeProcess;
   stderr: FakeStderr;
   triggerShutdown: (s: "SIGTERM" | "SIGINT") => Promise<void>;
 }> {
   const emailWorker = new FakeEmailWorker();
-  const ctx = new FakeAppContext(emailWorker);
+  const auditWorker = new FakeAuditWorker();
+  const ctx = new FakeAppContext(emailWorker, auditWorker);
   const proc = new FakeProcess();
   const stderr = new FakeStderr();
   const result = await bootstrap({
@@ -97,6 +127,7 @@ async function setup(): Promise<{
   });
   return {
     emailWorker,
+    auditWorker,
     ctx,
     proc,
     stderr,
@@ -108,6 +139,17 @@ describe("bootstrap — happy path", () => {
   it("creates the context, resolves EmailWorker, calls start()", async () => {
     const { emailWorker } = await setup();
     expect(emailWorker.starts).toBe(1);
+  });
+
+  it("creates the context, resolves AuditWorker, calls start()", async () => {
+    const { auditWorker } = await setup();
+    expect(auditWorker.starts).toBe(1);
+  });
+
+  it("starts both workers exactly once each", async () => {
+    const { emailWorker, auditWorker } = await setup();
+    expect(emailWorker.starts).toBe(1);
+    expect(auditWorker.starts).toBe(1);
   });
 
   it("registers SIGTERM and SIGINT handlers exactly once", async () => {
@@ -125,9 +167,10 @@ describe("bootstrap — happy path", () => {
     expect(parsed["component"]).toBe("worker.bootstrap");
   });
 
-  it("returns the email worker reference for callers", async () => {
+  it("returns both worker references for callers", async () => {
     const emailWorker = new FakeEmailWorker();
-    const ctx = new FakeAppContext(emailWorker);
+    const auditWorker = new FakeAuditWorker();
+    const ctx = new FakeAppContext(emailWorker, auditWorker);
     const proc = new FakeProcess();
     const stderr = new FakeStderr();
     const result = await bootstrap({
@@ -138,6 +181,9 @@ describe("bootstrap — happy path", () => {
     });
     expect(result.emailWorker).toBe(
       emailWorker as unknown as EmailWorker,
+    );
+    expect(result.auditWorker).toBe(
+      auditWorker as unknown as AuditWorker,
     );
   });
 });
@@ -173,7 +219,8 @@ describe("bootstrap — shutdown sequence", () => {
 
   it("logs and still exits if app.close() throws", async () => {
     const emailWorker = new FakeEmailWorker();
-    const ctx = new FakeAppContext(emailWorker);
+    const auditWorker = new FakeAuditWorker();
+    const ctx = new FakeAppContext(emailWorker, auditWorker);
     ctx.closeReject = new Error("redis disconnect failed");
     const proc = new FakeProcess();
     const stderr = new FakeStderr();
@@ -196,5 +243,15 @@ describe("bootstrap — shutdown sequence", () => {
     await triggerShutdown("SIGTERM");
     expect(ctx.closed).toBe(1);
     expect(proc.exits).toEqual([0]);
+  });
+
+  it("shuts down both workers via a single app.close() call (Nest lifecycle)", async () => {
+    // Both workers' onModuleDestroy hooks are owned by Nest. The
+    // bootstrap shutdown path must NOT call worker.close() directly —
+    // it calls app.close(), which fans out via Nest. We assert the
+    // app-level close happens exactly once on signal.
+    const { ctx, proc } = await setup();
+    await proc.fire("SIGTERM");
+    expect(ctx.closed).toBe(1);
   });
 });

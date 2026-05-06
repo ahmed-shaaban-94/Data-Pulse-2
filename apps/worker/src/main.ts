@@ -28,6 +28,7 @@ import {
 import { NestFactory } from "@nestjs/core";
 
 import { EmailWorker } from "./email/email.worker";
+import { AuditWorker } from "./audit/audit.worker";
 import { WorkerModule } from "./worker.module";
 
 /**
@@ -64,15 +65,22 @@ export interface BootstrapDeps {
 const logger = new Logger("worker.bootstrap");
 
 /**
- * Bootstraps the worker. Returns the Nest context plus the
- * `EmailWorker` it resolved, and a `triggerShutdown` callable that
- * tests can call to simulate a signal without actually emitting one.
+ * Bootstraps the worker. Returns the Nest context plus the workers it
+ * resolved (`emailWorker`, `auditWorker`), and a `triggerShutdown`
+ * callable that tests can call to simulate a signal without actually
+ * emitting one.
+ *
+ * Both workers are started by this function. Their shutdown is owned
+ * by Nest's lifecycle: `app.close()` (called inside `shutdown()` below)
+ * fires `onModuleDestroy` on every provider, which calls `close()` on
+ * each worker.
  */
 export async function bootstrap(
   deps: BootstrapDeps = {},
 ): Promise<{
   app: INestApplicationContext;
   emailWorker: EmailWorker;
+  auditWorker: AuditWorker;
   /** Test hook: invoke the registered shutdown sequence. */
   triggerShutdown: (signal: "SIGTERM" | "SIGINT") => Promise<void>;
 }> {
@@ -84,7 +92,9 @@ export async function bootstrap(
 
   const app = await createContext();
   const emailWorker = app.get(EmailWorker);
+  const auditWorker = app.get(AuditWorker);
   emailWorker.start();
+  auditWorker.start();
 
   writeLine(stderr, {
     level: "info",
@@ -122,7 +132,7 @@ export async function bootstrap(
     void shutdown(s);
   });
 
-  return { app, emailWorker, triggerShutdown: shutdown };
+  return { app, emailWorker, auditWorker, triggerShutdown: shutdown };
 }
 
 function writeLine(
