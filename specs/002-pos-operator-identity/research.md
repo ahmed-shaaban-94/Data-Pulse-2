@@ -104,6 +104,42 @@ dashboard / argon2id users keep `NULL`. Devices table and scope-aware
 (`0001_pos_operator_identity.sql`). No endpoints, controllers, services, or
 guards land in PR-3.
 
+**Resolved in PR-4 (contract surface, post-parity correction)**:
+`packages/contracts/openapi/pos-operators.openapi.yaml` ships with two
+operations — `posOperatorSignIn` and `posOperatorSignOut` — both
+authenticated by the `clerkJwt` security scheme
+(`Authorization: Bearer <clerk_jwt>`), paired with the platform
+device-token header per the existing 001/002 baseline. Sign-in body is
+`{ kind: "manager_admin", device_token_attestation }`; `branch_id` is
+resolved server-side from the device-token claim and is **not** sent in
+the body. Sign-in returns a `kind`-discriminated `oneOf` on `200`:
+`signed_in` with `operator { id (Clerk subject), display_name, role,
+tenant_id, branch_id }` and `operator_session { id, issued_at }`, OR the
+minimum-disclosure `{ kind: "takeover_required" }`. Sign-out body is
+`{ session_id }`, where `session_id` is the `id` returned in
+`PosOperatorSessionSummary` at sign-in; sign-out returns
+`{ kind: "signed_out" }`. The backend POS operator session is
+**server-side state only** in Wave 1 — POS-Pulse does not receive an
+internal bearer token (per ADR D8 amendment, owner-approved option-b).
+Every refusal — invalid Clerk JWT, unmapped user, disabled user,
+branch / tenant mismatch, invalid device, invalid session id,
+rate-limit exhausted — returns the same generic `401` with the
+foundation's standard error envelope. `branch_id` is the only POS-facing
+identifier on response payloads; `store_id` does not appear as a schema
+field. Cashier PIN does not appear in any request, response, example,
+description, or error payload (FR-POS-AUTH-8). The Clerk session token
+does not appear in any response (FR-POS-AUTH-10).
+
+**Cross-repo parity**: PR #49's contract was cross-checked against the
+merged POS-Pulse contract of record at
+`POS-Pulse:specs/004-operator-session/contracts/backend-endpoints.md`
+(Endpoint 2 = sign-in, Endpoint 3 = sign-out). Five mechanical
+corrections were applied to bring PR #49 into parity (recorded in ADR
+D8 + D10 amendments). After corrections, PR #49 matches POS-Pulse
+Endpoint 2/3 verbatim on namespace, request shape, response shape,
+auth model, identity continuity (`operator.id` = Clerk subject), and
+generic 4xx refusal semantics.
+
 ---
 
 ## R-4 — `branch_id` ↔ `store_id` mapping
