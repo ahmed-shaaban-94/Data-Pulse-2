@@ -347,6 +347,11 @@ function notFound(): NotFoundException {
 /**
  * Detect a Postgres unique-constraint violation (`SQLSTATE 23505`) on
  * a specific constraint name. Used to map slug duplicates to 409.
+ *
+ * Drizzle wraps the underlying `pg` error in a `DrizzleQueryError` whose
+ * `.cause` carries the `pg.DatabaseError` with `code='23505'` and the
+ * constraint name. We recurse one level into `.cause` so the wrapping
+ * doesn't defeat the check.
  */
 function isUniqueViolation(err: unknown, constraintName: string): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -354,10 +359,16 @@ function isUniqueViolation(err: unknown, constraintName: string): boolean {
     code?: string;
     constraint?: string;
     message?: string;
+    cause?: unknown;
   };
-  if (e.code !== "23505") return false;
-  if (e.constraint === constraintName) return true;
-  // Drizzle / pg sometimes surface the constraint via the message text
-  // (depends on driver version). Belt-and-suspenders.
+  if (e.code === "23505") {
+    if (e.constraint === constraintName) return true;
+    if (typeof e.message === "string" && e.message.includes(constraintName)) {
+      return true;
+    }
+  }
+  if (e.cause && typeof e.cause === "object") {
+    return isUniqueViolation(e.cause, constraintName);
+  }
   return typeof e.message === "string" && e.message.includes(constraintName);
 }

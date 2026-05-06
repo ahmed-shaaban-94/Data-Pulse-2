@@ -4,7 +4,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const InvitationCreateSchema = z
   .object({
-    email: z.string().email().min(1),
+    email: z.string().trim().toLowerCase().email().min(1),
     role_code: z.string().min(1),
     store_access_kind: z.enum(["all", "specific"]),
     store_ids: z
