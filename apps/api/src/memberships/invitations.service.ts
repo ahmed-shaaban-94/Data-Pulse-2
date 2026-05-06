@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
@@ -56,7 +57,7 @@ export class InvitationsService {
     private readonly invitations: InvitationsRepository,
     @Inject(EMAIL_JOB_ENQUEUER)
     private readonly emailEnqueuer: EmailJobEnqueuer,
-    tx?: TenantTxRunner,
+    @Optional() tx?: TenantTxRunner,
   ) {
     this.tx = tx ?? runWithTenantContext;
   }

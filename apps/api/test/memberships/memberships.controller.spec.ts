@@ -181,11 +181,11 @@ async function seed(): Promise<void> {
   await pg.query(
     `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
      VALUES ($1,  $2,  $3,  $4,  'all'),
-            ($5,  $2,  $6,  $7,  'all'),
-            ($8,  $2,  $9,  $10, 'all'),
-            ($11, $2,  $12, $13, 'all'),
-            ($14, $15, $16, $17, 'all'),
-            ($18, $15, $19, $17, 'all')`,
+            ($5,  $6,  $7,  $8,  'all'),
+            ($9,  $10, $11, $12, 'all'),
+            ($13, $14, $15, $16, 'all'),
+            ($17, $18, $19, $20, 'all'),
+            ($21, $22, $23, $24, 'all')`,
     [
       MEM_OWNER,      ALPHA_ID, OWNER_ID,  ROLE_OWNER,
       MEM_STAFF,      ALPHA_ID, STAFF_ID,  ROLE_STAFF_A,

@@ -128,6 +128,13 @@ async function seedSession(opts: {
   const tokenHash = hashToken(generateRawToken());
   const expiresAt =
     opts.expiresAt ?? new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const scope = opts.scope ?? "pos_operator";
+  // CHECK auth_tokens_principal_by_scope (migration 0001):
+  //   pos_operator      → user_id AND device_id both required
+  //   any other scope   → exactly one of user_id / device_id
+  // The fixture seeds with user_id; for non-pos_operator scopes
+  // device_id must be NULL to satisfy the constraint.
+  const deviceId = scope === "pos_operator" ? DEVICE_ID : null;
   await pool.query(
     `INSERT INTO auth_tokens
        (id, token_hash, tenant_id, user_id, device_id, store_id,
@@ -138,9 +145,9 @@ async function seedSession(opts: {
       tokenHash,
       TENANT_ID,
       opts.userId,
-      DEVICE_ID,
+      deviceId,
       STORE_ID,
-      opts.scope ?? "pos_operator",
+      scope,
       expiresAt,
       opts.revokedAt ?? null,
     ],

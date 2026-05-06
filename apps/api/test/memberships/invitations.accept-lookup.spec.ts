@@ -46,15 +46,15 @@ class AlwaysAllowRedis implements RedisLike {
 }
 
 // ---- Fixture IDs -------------------------------------------------------------
-// Prefix "g" — must not collide with create spec ("f") or patch spec ("e").
+// Prefix "a" — must not collide with create spec ("f") or patch spec ("e").
 
-const OWNER_ID   = "g1000000-1000-4000-8000-000000000001";
+const OWNER_ID   = "a1000000-1000-4000-8000-000000000001";
 const OWNER_EMAIL = "owner@accept-lookup.test";
 const OWNER_PASS  = "Owner-Lookup-1!";
 
-const ALPHA_ID   = "g2000000-2000-4000-8000-000000000002";
-const ROLE_ID    = "g3000000-3000-4000-8000-000000000003";
-const MEM_ID     = "g4000000-4000-4000-8000-000000000004";
+const ALPHA_ID   = "a2000000-2000-4000-8000-000000000002";
+const ROLE_ID    = "a3000000-3000-4000-8000-000000000003";
+const MEM_ID     = "a4000000-4000-4000-8000-000000000004";
 
 // ---- Bootstrap --------------------------------------------------------------
 
@@ -173,7 +173,7 @@ describe("lookupAndValidateAcceptToken — valid pending token", () => {
   it("returns the invitation row with correct id, email, and tenantId", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "g5000000-5000-4000-8000-000000000005";
+    const id = "a5000000-5000-4000-8000-000000000005";
     await insertInvitation({
       id,
       rawToken,
@@ -208,9 +208,9 @@ describe("lookupAndValidateAcceptToken — non-pending status", () => {
   afterEach(cleanInvitations);
 
   it.each([
-    ["expired",  "g6000000-6000-4000-8000-000000000006"],
-    ["revoked",  "g7000000-7000-4000-8000-000000000007"],
-    ["accepted", "g8000000-8000-4000-8000-000000000008"],
+    ["expired",  "a6000000-6000-4000-8000-000000000006"],
+    ["revoked",  "a7000000-7000-4000-8000-000000000007"],
+    ["accepted", "a8000000-8000-4000-8000-000000000008"],
   ] as const)("status='%s' → BadRequestException", async (status, id) => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
@@ -233,9 +233,9 @@ describe("lookupAndValidateAcceptToken — non-pending status", () => {
     const rawAccepted = generateRawToken();
     const rawUnknown  = generateRawToken();
 
-    await insertInvitation({ id: "g9000000-9000-4000-8000-000000000009", rawToken: rawExpired,  status: "expired",  expiresAt: new Date(Date.now() + 1_000) });
-    await insertInvitation({ id: "ga000000-a000-4000-8000-00000000000a", rawToken: rawRevoked,  status: "revoked",  expiresAt: new Date(Date.now() + 1_000) });
-    await insertInvitation({ id: "gb000000-b000-4000-8000-00000000000b", rawToken: rawAccepted, status: "accepted", expiresAt: new Date(Date.now() + 1_000) });
+    await insertInvitation({ id: "a9000000-9000-4000-8000-000000000009", rawToken: rawExpired,  status: "expired",  expiresAt: new Date(Date.now() + 1_000) });
+    await insertInvitation({ id: "aa000000-a000-4000-8000-00000000000a", rawToken: rawRevoked,  status: "revoked",  expiresAt: new Date(Date.now() + 1_000) });
+    await insertInvitation({ id: "ab000000-b000-4000-8000-00000000000b", rawToken: rawAccepted, status: "accepted", expiresAt: new Date(Date.now() + 1_000) });
 
     const [errExpired, errRevoked, errAccepted, errUnknown] = await Promise.all([
       service!.lookupAndValidateAcceptToken(rawExpired).catch((e: unknown) => e),
@@ -262,7 +262,7 @@ describe("lookupAndValidateAcceptToken — pending but expired by time", () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
     await insertInvitation({
-      id: "gc000000-c000-4000-8000-00000000000c",
+      id: "ac000000-c000-4000-8000-00000000000c",
       rawToken,
       status: "pending",
       expiresAt: new Date(Date.now() - 1_000), // 1 second ago
@@ -282,7 +282,7 @@ describe("lookupAndValidateAcceptToken — no side-effects", () => {
   it("does NOT create a membership row", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "gd000000-d000-4000-8000-00000000000d";
+    const id = "ad000000-d000-4000-8000-00000000000d";
     await insertInvitation({ id, rawToken, status: "pending", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
     const beforeCount = (await pool!.query(`SELECT COUNT(*) FROM memberships WHERE tenant_id = $1`, [ALPHA_ID])).rows[0]?.count as string;
 
@@ -295,7 +295,7 @@ describe("lookupAndValidateAcceptToken — no side-effects", () => {
   it("does NOT create a user row", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "ge000000-e000-4000-8000-00000000000e";
+    const id = "ae000000-e000-4000-8000-00000000000e";
     await insertInvitation({ id, rawToken, status: "pending", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
     const beforeCount = (await pool!.query(`SELECT COUNT(*) FROM users`)).rows[0]?.count as string;
 
@@ -308,7 +308,7 @@ describe("lookupAndValidateAcceptToken — no side-effects", () => {
   it("does NOT create a session row", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "gf000000-f000-4000-8000-00000000000f";
+    const id = "af000000-f000-4000-8000-00000000000f";
     await insertInvitation({ id, rawToken, status: "pending", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
     const beforeCount = (await pool!.query(`SELECT COUNT(*) FROM sessions`)).rows[0]?.count as string;
 
@@ -321,7 +321,7 @@ describe("lookupAndValidateAcceptToken — no side-effects", () => {
   it("does NOT mark the invitation accepted (accepted_at / accepted_by_user_id remain null)", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "g0a00000-0a00-4000-8000-0000000000a0";
+    const id = "a0a00000-0a00-4000-8000-0000000000a0";
     await insertInvitation({ id, rawToken, status: "pending", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
 
     await service!.lookupAndValidateAcceptToken(rawToken);
@@ -345,7 +345,7 @@ describe("lookupAndValidateAcceptToken — returned row surface", () => {
   it("returned InvitationRow keys do not include rawToken", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "g0b00000-0b00-4000-8000-0000000000b0";
+    const id = "a0b00000-0b00-4000-8000-0000000000b0";
     await insertInvitation({ id, rawToken, status: "pending", expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
 
     const row = await service!.lookupAndValidateAcceptToken(rawToken);
