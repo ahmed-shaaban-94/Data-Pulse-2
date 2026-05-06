@@ -45,6 +45,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { AuthGuard, type AuthedRequest } from "../auth/auth.guard";
+import { Auditable } from "../audit/auditable.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import {
   ContextService,
@@ -69,6 +70,7 @@ export class ContextController {
     return this.contextService.getActiveContext(principal);
   }
 
+  @Auditable("context.switch.tenant")
   @Post("tenant")
   @HttpCode(HttpStatus.OK)
   async switchTenant(
@@ -80,6 +82,7 @@ export class ContextController {
     return this.contextService.switchTenant(principal, body.tenant_id);
   }
 
+  @Auditable("context.switch.store")
   @Post("store")
   @HttpCode(HttpStatus.OK)
   async switchStore(
@@ -91,6 +94,7 @@ export class ContextController {
     return this.contextService.switchStore(principal, body.store_id);
   }
 
+  @Auditable("context.clear.store")
   @Delete("store")
   @HttpCode(HttpStatus.OK)
   async clearStore(

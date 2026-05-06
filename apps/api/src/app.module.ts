@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 
+import { AuditModule } from "./audit/audit.module";
 import { AuthModule } from "./auth/auth.module";
 import { ContextModule } from "./context/context.module";
 import { MembershipsModule } from "./memberships/memberships.module";
@@ -10,6 +11,7 @@ import { TenantsModule } from "./tenants/tenants.module";
  * Root module.
  *
  * Domain modules wired so far:
+ *   - `AuditModule`       — audit event queue producer + global APP_INTERCEPTOR (Scope A)
  *   - `AuthModule`        — sign-in, sign-out, refresh, password-reset (slice 3c)
  *   - `ContextModule`     — active tenant/store switching (US3)
  *   - `TenantsModule`     — tenant CRUD (US2)
@@ -20,7 +22,7 @@ import { TenantsModule } from "./tenants/tenants.module";
  * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule],
+  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule],
   controllers: [],
   providers: [],
 })
