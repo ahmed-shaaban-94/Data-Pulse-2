@@ -1,21 +1,27 @@
 /**
- * PosOperatorsController — Wave 1 sign-in endpoint.
+ * PosOperatorsController — Wave 1 sign-in / sign-out endpoints.
  *
- * Implements `POST /api/pos/v1/operators/sign-in` per
+ * Implements `POST /api/pos/v1/operators/sign-in` and
+ * `POST /api/pos/v1/operators/sign-out` per
  * `packages/contracts/openapi/pos-operators.openapi.yaml`.
  *
- *   - Authorization carries the Clerk JWT as `Authorization: Bearer <jwt>`.
- *   - Body is validated by Zod (`PosOperatorSignInSchema`); malformed
- *     bodies are rejected by `ZodValidationPipe` and rendered as 400 by
- *     the global filter.
- *   - On success the response shape is the discriminated union from the
- *     OpenAPI contract: `{ kind: "signed_in", operator, operator_session }`
- *     or `{ kind: "takeover_required" }`.
- *   - Every refusal returns the same generic 401 envelope (ADR D10);
- *     the actual cause is logged server-side keyed by `request_id`
- *     and is not enumerated in the response body.
- *
- * Sign-out and other endpoints are out of scope for this PR.
+ *   - Both endpoints carry the Clerk JWT as `Authorization: Bearer <jwt>`.
+ *   - Bodies are validated by Zod (`PosOperatorSignInSchema` /
+ *     `PosOperatorSignOutSchema`); malformed bodies are rejected by
+ *     `ZodValidationPipe` and rendered as 400 by the global filter.
+ *   - Sign-in success body is the discriminated union
+ *     `{ kind: "signed_in", operator, operator_session }` or
+ *     `{ kind: "takeover_required" }`.
+ *   - Sign-out success body is exactly `{ kind: "signed_out" }` — no
+ *     operator metadata, no session id, no timestamps. Sign-out is
+ *     idempotent in *effect* but NOT in *response*: a session that is
+ *     already revoked / expired / unknown / belongs to a different
+ *     operator returns the uniform 401 envelope, never a second
+ *     `signed_out`. That keeps the endpoint from being an existence
+ *     oracle for `session_id` values (FR-POS-AUTH-6, ADR D10).
+ *   - Every refusal returns the same generic 401 envelope; the actual
+ *     cause is logged server-side keyed by `request_id` and is not
+ *     enumerated in the response body.
  */
 import {
   Body,
@@ -32,8 +38,11 @@ import type { Request } from "express";
 import { PosOperatorsService } from "./pos-operators.service";
 import {
   PosOperatorSignInSchema,
+  PosOperatorSignOutSchema,
   type PosOperatorSignInInput,
   type PosOperatorSignInResponseBody,
+  type PosOperatorSignOutInput,
+  type PosOperatorSignOutResponseBody,
 } from "./dto";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 
@@ -61,6 +70,29 @@ export class PosOperatorsController {
 
     const requestId = req.requestId ?? "unknown";
     const result = await this.service.signIn(rawJwt, body, requestId);
+    if (result.kind === "refused") {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    return result;
+  }
+
+  @Post("sign-out")
+  @HttpCode(HttpStatus.OK)
+  async signOut(
+    @Headers("authorization") authorization: string | undefined,
+    @Body(new ZodValidationPipe(PosOperatorSignOutSchema))
+    body: PosOperatorSignOutInput,
+    @Req() req: Request & { requestId?: string },
+  ): Promise<PosOperatorSignOutResponseBody> {
+    const rawJwt = extractBearer(authorization);
+    if (rawJwt === null) {
+      // Missing / malformed authorization header — same generic 401 as
+      // every other refusal cause.
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const requestId = req.requestId ?? "unknown";
+    const result = await this.service.signOut(rawJwt, body, requestId);
     if (result.kind === "refused") {
       throw new UnauthorizedException("Unauthorized");
     }

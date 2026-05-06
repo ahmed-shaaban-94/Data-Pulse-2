@@ -45,6 +45,8 @@ import type {
   PosOperatorSessionSummaryBody,
   PosOperatorSignInInput,
   PosOperatorSignInResponseBody,
+  PosOperatorSignOutInput,
+  PosOperatorSignOutResponseBody,
   PosOperatorSummaryBody,
 } from "./dto";
 
@@ -81,6 +83,28 @@ export type SignInResult =
     }
   | { kind: "takeover_required" }
   | { kind: "refused"; reason: SignInRefusalReason };
+
+export type SignOutResult =
+  | { kind: "signed_out" }
+  | { kind: "refused"; reason: SignOutRefusalReason };
+
+/**
+ * Internal sign-out refusal taxonomy. Logged server-side keyed by
+ * `request_id` (ADR D10). Never returned to the client — every refusal
+ * cause produces the same generic 401 envelope (FR-POS-AUTH-6). Adding
+ * a value here is a server-side observability change, not a contract
+ * change.
+ */
+export type SignOutRefusalReason =
+  | "clerk_jwt_invalid"
+  | "user_unmapped"
+  | "user_disabled"
+  | "session_unknown"
+  | "session_user_mismatch"
+  | "session_scope_mismatch"
+  | "session_revoked"
+  | "session_expired"
+  | "session_revoke_race";
 
 /**
  * Internal refusal taxonomy. The reason is logged server-side keyed by
@@ -128,6 +152,39 @@ export class PosOperatorsService {
       this.logger.warn(
         { request_id: requestId, refusal: result.reason },
         "pos-operator sign-in refused",
+      );
+      return { kind: "refused" };
+    }
+    return result;
+  }
+
+  /**
+   * Run the sign-out pipeline. The caller (controller) maps any
+   * non-`signed_out` result to the uniform 401 envelope. The body
+   * carries only `session_id` — the device / store / tenant binding is
+   * recorded on the session row at sign-in time and is not re-validated
+   * against client input here (the OpenAPI request body has no device
+   * surface; expanding it would change the contract).
+   *
+   * "Idempotent in effect" means re-revoking a session must NOT echo
+   * `signed_out` — that would let a caller probe whether a `session_id`
+   * ever existed. Already-revoked / expired / unknown / wrong-user /
+   * wrong-scope sessions all collapse to the same generic refusal.
+   */
+  async signOut(
+    rawJwt: string,
+    body: PosOperatorSignOutInput,
+    requestId: string,
+  ): Promise<PosOperatorSignOutResponseBody | { kind: "refused" }> {
+    const result = await this.runSignOutPipeline(rawJwt, body);
+    if (result.kind === "refused") {
+      // Server-side cause record — keyed by request_id. The Clerk JWT
+      // is intentionally excluded (FR-POS-AUTH-10). The session_id is
+      // intentionally NOT logged at WARN level on Clerk-JWT failure, so
+      // a probing client can't correlate guesses against server logs.
+      this.logger.warn(
+        { request_id: requestId, refusal: result.reason },
+        "pos-operator sign-out refused",
       );
       return { kind: "refused" };
     }
@@ -282,6 +339,77 @@ export class PosOperatorsService {
     return r.rows.length > 0;
   }
 
+  private async runSignOutPipeline(
+    rawJwt: string,
+    body: PosOperatorSignOutInput,
+  ): Promise<SignOutResult> {
+    // 1. Clerk JWT verification.
+    let claims;
+    try {
+      claims = await this.clerkVerifier.verify(rawJwt);
+    } catch {
+      return { kind: "refused", reason: "clerk_jwt_invalid" };
+    }
+
+    // 2. Map Clerk subject → local user.
+    const userRow = await this.findUserByClerkSubject(claims.sub);
+    if (!userRow) return { kind: "refused", reason: "user_unmapped" };
+    if (userRow.deleted_at !== null) {
+      return { kind: "refused", reason: "user_disabled" };
+    }
+
+    // 3. Load the session row by id. SELECT-then-conditional-UPDATE so
+    //    each refusal cause is distinguishable in the server-side log
+    //    (without ever appearing in the client response).
+    const session = await this.findOperatorSessionById(body.session_id);
+    if (!session) return { kind: "refused", reason: "session_unknown" };
+    if (session.user_id !== userRow.id) {
+      return { kind: "refused", reason: "session_user_mismatch" };
+    }
+    if (session.scope !== "pos_operator") {
+      return { kind: "refused", reason: "session_scope_mismatch" };
+    }
+    if (session.revoked_at !== null) {
+      return { kind: "refused", reason: "session_revoked" };
+    }
+    if (session.expires_at.getTime() <= Date.now()) {
+      return { kind: "refused", reason: "session_expired" };
+    }
+
+    // 4. Conditional UPDATE — guarded against a concurrent revoke.
+    //    0 rows = a parallel sign-out beat us; treat as refusal so the
+    //    response never confirms "you just won the race".
+    const revoked = await this.markSessionRevoked(body.session_id);
+    if (!revoked) return { kind: "refused", reason: "session_revoke_race" };
+
+    return { kind: "signed_out" };
+  }
+
+  private async findOperatorSessionById(
+    sessionId: string,
+  ): Promise<OperatorSessionLookupRow | null> {
+    const r = await this.pool.query<OperatorSessionLookupRow>(
+      `SELECT id, user_id, scope, revoked_at, expires_at
+         FROM auth_tokens
+        WHERE id = $1
+        LIMIT 1`,
+      [sessionId],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  private async markSessionRevoked(sessionId: string): Promise<boolean> {
+    const r = await this.pool.query<{ id: string }>(
+      `UPDATE auth_tokens
+          SET revoked_at = now()
+        WHERE id = $1
+          AND revoked_at IS NULL
+        RETURNING id`,
+      [sessionId],
+    );
+    return r.rows.length > 0;
+  }
+
   private async issueOperatorSessionRow(input: {
     tenantId: string;
     storeId: string;
@@ -328,4 +456,12 @@ interface MembershipLookupRow {
   revoked_at: Date | null;
   deleted_at: Date | null;
   role_code: string;
+}
+
+interface OperatorSessionLookupRow {
+  id: string;
+  user_id: string;
+  scope: string;
+  revoked_at: Date | null;
+  expires_at: Date;
 }
