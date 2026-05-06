@@ -36,6 +36,14 @@ research note.
 runtime; otherwise fall back to `jose`. The dependency add is gated behind PR-2
 (dependency-only) and is **not** added in PR-1.
 
+**Resolved in PR-2**: `@clerk/backend@3.4.5` selected (exact pin, matches the
+repo's pinned-dependency convention). Engine requirement `node >=20.9.0` is
+satisfied by the Node 20 LTS pin in `package.json`; the package ships dual
+CJS/ESM with no native compilation and no peer dependencies. The fallback to
+`jose` was not needed. The dependency is added to `@data-pulse-2/auth`, which
+already owns argon2id and the SHA-256 token-hash helper; no source code, no
+controllers/services/guards, no contracts, and no schema land in PR-2.
+
 **Rationale**:
 - `@clerk/backend` is Clerk-vendored, bundles JWKS fetch + caching, exposes
   `verifyToken(...)` directly, handles `kid` rotation, and aligns with the
