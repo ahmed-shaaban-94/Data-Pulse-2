@@ -1,13 +1,17 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.0.0 → 3.0.0
-Bump rationale: MAJOR — repository identity refined ("retail data control
-                plane and trust layer"); 6 net-new non-negotiable principles
-                added; existing principles tightened with clauses that can
-                break prior PR habits (cross-tenant 404 semantics, RLS
-                fail-closed, no raw DB entities in responses, no schema/
-                lockfile/migration changes without approval).
+Version change: 3.0.0 → 3.0.1
+Bump rationale: PATCH — clarification only. Adds a Working Agreement
+                bullet pointing to the new
+                `.specify/memory/architecture-impact.md` document, which
+                codifies the Architecture Impact Map pre-flight rule. No
+                Core Principle is added, removed, or redefined; no
+                Constitution-Check table column is added; no existing
+                spec / plan / tasks artifact requires re-versioning. The
+                rule is a process gate in the Working Agreement appendix,
+                not a system invariant, and is therefore explicitly
+                outside the Constitution Check.
 
 Modified principles (kept in-place; numbering unchanged so all existing
 `Principle III/IV/V/VI/VII/VIII` references in specs/plans/tasks remain
@@ -935,6 +939,11 @@ The Working Agreement covers, at minimum:
 - Work in thin, reviewable slices.
 - Before implementation, produce a pre-flight plan showing the exact task
   text from `tasks.md` and the relevant OpenAPI contract surface.
+- Before implementation, produce or update the **Architecture Impact
+  Map** for the affected spec or plan per
+  [`.specify/memory/architecture-impact.md`](architecture-impact.md).
+  Small bugfixes, test-only changes, and documentation-only changes MAY
+  state "No architecture impact" with a brief explanation.
 - Do not implement until approved.
 - Do not commit until explicitly instructed.
 
@@ -943,4 +952,4 @@ do not require a Constitution version bump.
 
 ---
 
-**Version**: 3.0.0 | **Ratified**: 2026-05-01 | **Last Amended**: 2026-05-04
+**Version**: 3.0.1 | **Ratified**: 2026-05-01 | **Last Amended**: 2026-05-06
