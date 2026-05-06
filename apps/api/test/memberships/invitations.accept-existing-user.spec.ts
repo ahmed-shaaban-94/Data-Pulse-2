@@ -48,28 +48,28 @@ class AlwaysAllowRedis implements RedisLike {
 }
 
 // ---- Fixture IDs -------------------------------------------------------------
-// Prefix "h" — must not collide with patch ("e"), create ("f"), lookup ("g").
+// Prefix "b" — must not collide with patch ("e"), create ("f"), lookup ("a").
 
-const OWNER_ID    = "h1000000-1000-4000-8000-000000000001";
+const OWNER_ID    = "b1000000-1000-4000-8000-000000000001";
 const OWNER_EMAIL = "owner@accept-existing.test";
 const OWNER_PASS  = "Owner-Accept-1!";
 
 // The invitee — a user who already has an account
-const INVITEE_ID    = "h2000000-2000-4000-8000-000000000002";
+const INVITEE_ID    = "b2000000-2000-4000-8000-000000000002";
 const INVITEE_EMAIL = "invitee@accept-existing.test";
 const INVITEE_PASS  = "Invitee-Accept-1!";
 
 // A second user for duplicate-membership test
-const SECOND_ID    = "hc000000-c000-4000-8000-00000000000c";
+const SECOND_ID    = "bc000000-c000-4000-8000-00000000000c";
 const SECOND_EMAIL = "second@accept-existing.test";
 
-const ALPHA_ID    = "h3000000-3000-4000-8000-000000000003";
-const ROLE_ID     = "h4000000-4000-4000-8000-000000000004";
-const MEM_OWNER   = "h5000000-5000-4000-8000-000000000005";
+const ALPHA_ID    = "b3000000-3000-4000-8000-000000000003";
+const ROLE_ID     = "b4000000-4000-4000-8000-000000000004";
+const MEM_OWNER   = "b5000000-5000-4000-8000-000000000005";
 
 // Two stores in ALPHA for the specific-access tests
-const STORE_A1    = "h6000000-6000-4000-8000-000000000006";
-const STORE_A2    = "h7000000-7000-4000-8000-000000000007";
+const STORE_A1    = "b6000000-6000-4000-8000-000000000006";
+const STORE_A2    = "b7000000-7000-4000-8000-000000000007";
 
 // ---- Bootstrap --------------------------------------------------------------
 
@@ -225,7 +225,7 @@ describe("acceptInvitationExistingUser — all access happy path", () => {
     if (maybeSkip()) return;
 
     const rawToken = generateRawToken();
-    const id = "h8000000-8000-4000-8000-000000000008";
+    const id = "b8000000-8000-4000-8000-000000000008";
     await insertInvitation({ id, email: INVITEE_EMAIL, rawToken, status: "pending", expiresAt: FUTURE });
 
     // Snapshot before: user count, session count, invitee password_hash
@@ -286,7 +286,7 @@ describe("acceptInvitationExistingUser — specific access happy path", () => {
     if (maybeSkip()) return;
 
     const rawToken = generateRawToken();
-    const id = "h9000000-9000-4000-8000-000000000009";
+    const id = "b9000000-9000-4000-8000-000000000009";
     await insertInvitation({
       id,
       email: INVITEE_EMAIL,
@@ -333,9 +333,9 @@ describe("acceptInvitationExistingUser — non-pending status", () => {
   afterEach(cleanInvitationsAndMemberships);
 
   it.each([
-    ["accepted", "ha000000-a000-4000-8000-00000000000a"],
-    ["expired",  "hb000000-b000-4000-8000-00000000000b"],
-    ["revoked",  "h0e00000-0e00-4000-8000-0000000000e0"],
+    ["accepted", "ba000000-a000-4000-8000-00000000000a"],
+    ["expired",  "bb000000-b000-4000-8000-00000000000b"],
+    ["revoked",  "b0e00000-0e00-4000-8000-0000000000e0"],
   ] as const)("status='%s' → BadRequestException", async (status, id) => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
@@ -355,7 +355,7 @@ describe("acceptInvitationExistingUser — time-expired pending token", () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
     await insertInvitation({
-      id: "hd000000-d000-4000-8000-00000000000d",
+      id: "bd000000-d000-4000-8000-00000000000d",
       email: INVITEE_EMAIL,
       rawToken,
       status: "pending",
@@ -375,7 +375,7 @@ describe("acceptInvitationExistingUser — email not in users table", () => {
   it("throws NotFoundException and leaves invitation status='pending'", async () => {
     if (maybeSkip()) return;
     const rawToken = generateRawToken();
-    const id = "he000000-e000-4000-8000-00000000000e";
+    const id = "be000000-e000-4000-8000-00000000000e";
     await insertInvitation({
       id,
       email: "ghost@accept-existing.test",  // no matching user row
@@ -407,7 +407,7 @@ describe("acceptInvitationExistingUser — duplicate membership conflict", () =>
     if (maybeSkip()) return;
 
     // Pre-create a membership for INVITEE_ID in ALPHA
-    const existingMemId = "hf000000-f000-4000-8000-00000000000f";
+    const existingMemId = "bf000000-f000-4000-8000-00000000000f";
     await pool!.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
        VALUES ($1, $2, $3, $4, 'all')`,
@@ -416,7 +416,7 @@ describe("acceptInvitationExistingUser — duplicate membership conflict", () =>
 
     const rawToken = generateRawToken();
     await insertInvitation({
-      id: "h0a00000-0a00-4000-8000-0000000000a0",
+      id: "b0a00000-0a00-4000-8000-0000000000a0",
       email: INVITEE_EMAIL,
       rawToken,
       status: "pending",
@@ -431,7 +431,7 @@ describe("acceptInvitationExistingUser — duplicate membership conflict", () =>
     // because the tx that called markAccepted also threw ConflictException.
     const invRes = await pool!.query(
       `SELECT status, accepted_by_user_id FROM invitations WHERE id = $1`,
-      ["h0a00000-0a00-4000-8000-0000000000a0"],
+      ["b0a00000-0a00-4000-8000-0000000000a0"],
     );
     expect(invRes.rows[0]?.status).toBe("pending");
     expect(invRes.rows[0]?.accepted_by_user_id).toBeNull();
@@ -457,7 +457,7 @@ describe("acceptInvitationExistingUser — returned shape", () => {
 
     const rawToken = generateRawToken();
     await insertInvitation({
-      id: "h0b00000-0b00-4000-8000-0000000000b0",
+      id: "b0b00000-0b00-4000-8000-0000000000b0",
       email: INVITEE_EMAIL,
       rawToken,
       status: "pending",
@@ -489,7 +489,7 @@ describe("acceptInvitationExistingUser — invitation mutations", () => {
     if (maybeSkip()) return;
 
     const rawToken = generateRawToken();
-    const id = "h0c00000-0c00-4000-8000-0000000000c0";
+    const id = "b0c00000-0c00-4000-8000-0000000000c0";
     await insertInvitation({ id, email: INVITEE_EMAIL, rawToken, status: "pending", expiresAt: FUTURE });
 
     await service!.acceptInvitationExistingUser(rawToken);
@@ -515,7 +515,7 @@ describe("acceptInvitationExistingUser — second call same token", () => {
 
     const rawToken = generateRawToken();
     await insertInvitation({
-      id: "h0d00000-0d00-4000-8000-0000000000d0",
+      id: "b0d00000-0d00-4000-8000-0000000000d0",
       email: INVITEE_EMAIL,
       rawToken,
       status: "pending",

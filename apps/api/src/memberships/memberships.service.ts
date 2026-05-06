@@ -22,7 +22,7 @@
  *   - 404 (not found / already revoked / cross-tenant) → this service
  *   - 400 (invalid role_code / invalid store_ids / logic conflict) → this service
  */
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import {
@@ -58,7 +58,7 @@ export class MembershipsService {
     @Inject(PG_POOL)
     private readonly pool: Pool,
     private readonly memberships: MembershipsRepository,
-    tx?: TenantTxRunner,
+    @Optional() tx?: TenantTxRunner,
   ) {
     this.tx = tx ?? runWithTenantContext;
   }
