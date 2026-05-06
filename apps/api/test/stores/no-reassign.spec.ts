@@ -149,10 +149,14 @@ beforeAll(async () => {
     pool = new Pool({ connectionString: env.adminUri });
     await seed();
 
+    // The API must connect through the non-superuser `app_test` role so
+    // RLS policies actually apply on its queries (Layer 3 of FR-STORE-4
+    // depends on RLS hiding cross-tenant rows). The admin pool above is
+    // reserved for setup + RLS-bypassing post-PATCH verification reads.
     const moduleRef = await Test.createTestingModule({
       imports: [AuthModule, ContextModule, StoresModule],
     })
-      .overrideProvider(PG_POOL).useValue(pool)
+      .overrideProvider(PG_POOL).useValue(env.app)
       .overrideProvider(REDIS_CLIENT).useValue(new AlwaysAllowRedis())
       .overrideProvider(EMAIL_JOB_ENQUEUER).useValue(new NoOpEmailJobEnqueuer())
       .compile();
