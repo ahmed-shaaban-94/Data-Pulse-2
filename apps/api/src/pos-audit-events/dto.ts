@@ -41,11 +41,15 @@ const FORBIDDEN_PAYLOAD_KEYS = new Set<string>([
 
 /**
  * Recursively check whether `value` contains any forbidden key at any
- * nesting level. Returns `true` if a violation is found.
+ * nesting level, including inside array elements. Returns `true` if a
+ * violation is found.
  */
 export function hasForbiddenField(value: unknown, depth = 0): boolean {
-  if (depth > 20 || typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (depth > 20 || typeof value !== "object" || value === null) {
     return false;
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => hasForbiddenField(item, depth + 1));
   }
   for (const key of Object.keys(value as Record<string, unknown>)) {
     if (FORBIDDEN_PAYLOAD_KEYS.has(key)) return true;
