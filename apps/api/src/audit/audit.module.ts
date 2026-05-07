@@ -3,9 +3,11 @@
  *
  * Write side (Scope A — pre-existing)
  * -----------------------------------
- * Provides the `AUDIT_JOB_ENQUEUER` token and registers
- * `AuditEmitterInterceptor` as a global interceptor via the `APP_INTERCEPTOR`
- * DI token.
+ * Registers `AuditEmitterInterceptor` as a global interceptor via the
+ * `APP_INTERCEPTOR` DI token. The `AUDIT_JOB_ENQUEUER` provider itself is
+ * imported from `AuditEnqueuerModule` (a leaf module shared with `AuthModule`
+ * to avoid the `AuthModule → AuditModule → AuthModule` cycle that would arise
+ * from T238's auth-failure audit emission).
  *
  * Read side (T235)
  * ----------------
@@ -29,17 +31,6 @@
  *      work — that only functions when the interceptor is DI-managed.
  *   Manual construction bypasses the DI container and breaks overrideProvider.
  *
- * Factory wiring policy (mirrors `emailJobEnqueuerFactory` in AuthModule)
- * -----------------------------------------------------------------------
- *   - `NODE_ENV=production` + `REDIS_URL` missing → throw at boot.
- *     Silently dropping audit jobs in production is a governance hazard.
- *   - non-production + `REDIS_URL` missing → fall back to
- *     `NoOpAuditJobEnqueuer` so dev / CI machines without Redis still boot.
- *   - `REDIS_URL` set → build an `AuditQueueProducer` backed by a BullMQ Queue.
- *
- * The optional `queueFactory` parameter is a test seam: unit specs inject a
- * `FakeQueue` so the factory can be exercised without a live Redis connection.
- *
  * Operational note
  * ----------------
  * If `REDIS_URL` is set but the audit fan-out worker (Scope B) is not yet
@@ -52,9 +43,6 @@
 import { Module, type Provider } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { Reflector } from "@nestjs/core";
-import { Queue, type JobsOptions } from "bullmq";
-
-import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 import { AuthModule } from "../auth/auth.module";
 import { ContextModule } from "../context/context.module";
@@ -62,49 +50,24 @@ import { RolesGuard } from "../auth/roles.guard";
 
 import { AuditController } from "./audit.controller";
 import { AuditEmitterInterceptor } from "./audit-emitter.interceptor";
+import { AuditEnqueuerModule } from "./audit-enqueuer.module";
 import {
   AUDIT_JOB_ENQUEUER,
   type AuditJobEnqueuer,
-  NoOpAuditJobEnqueuer,
 } from "./audit-job.enqueuer";
-import {
-  AUDIT_QUEUE_NAME,
-  AuditQueueProducer,
-  type AuditQueueLike,
-} from "./audit-queue.producer";
 import {
   AUDIT_REPOSITORY,
   DrizzleAuditRepository,
 } from "./audit.repository";
 import { AuditService } from "./audit.service";
 
-export function auditJobEnqueuerFactory(
-  queueFactory?: (url: string) => AuditQueueLike,
-): AuditJobEnqueuer {
-  const url = process.env["REDIS_URL"];
-  if (!url) {
-    if (process.env["NODE_ENV"] === "production") {
-      throw new Error(
-        "AuditModule: REDIS_URL is required in production " +
-          "(AuditQueueProducer cannot be wired without it).",
-      );
-    }
-    return new NoOpAuditJobEnqueuer();
-  }
-  const queue =
-    queueFactory != null
-      ? queueFactory(url)
-      : new Queue(AUDIT_QUEUE_NAME, {
-          connection: { url },
-          defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
-        });
-  return new AuditQueueProducer(queue);
-}
-
-const auditJobEnqueuerProvider: Provider = {
-  provide: AUDIT_JOB_ENQUEUER,
-  useFactory: auditJobEnqueuerFactory,
-};
+/**
+ * Re-export of the enqueuer factory. Hoisted into `AuditEnqueuerModule` to
+ * cut the `AuthModule ↔ AuditModule` import cycle, but kept reachable from
+ * this path so existing tests (`audit-queue.producer.spec.ts`) that imported
+ * it from `audit.module` continue to work without churn.
+ */
+export { auditJobEnqueuerFactory } from "./audit-enqueuer.module";
 
 const auditInterceptorProvider: Provider = {
   provide: APP_INTERCEPTOR,
@@ -119,15 +82,22 @@ const auditRepositoryProvider: Provider = {
 };
 
 @Module({
-  imports: [AuthModule, ContextModule],
+  imports: [AuditEnqueuerModule, AuthModule, ContextModule],
   controllers: [AuditController],
   providers: [
-    auditJobEnqueuerProvider,
     auditInterceptorProvider,
     auditRepositoryProvider,
     AuditService,
     RolesGuard,
   ],
-  exports: [AUDIT_JOB_ENQUEUER],
+  // Re-export `AuditEnqueuerModule` so downstream consumers of `AuditModule`
+  // see `AUDIT_JOB_ENQUEUER` exactly as before — the token's provider has
+  // moved into the leaf module, but the re-export contract is preserved so
+  // existing tests (`audit.module.spec.ts`) and any downstream module that
+  // expects the token to be reachable through `AuditModule` keeps working.
+  // NOTE: Nest forbids listing a token directly in `exports` when its
+  // provider lives in an imported module — re-exporting the module itself
+  // is the supported mechanism (and is functionally equivalent).
+  exports: [AuditEnqueuerModule],
 })
 export class AuditModule {}

@@ -42,6 +42,11 @@ import {
   type EmailJobEnqueuer,
   NoOpEmailJobEnqueuer,
 } from "./email-job.enqueuer";
+import {
+  type AuditJobEnqueuer,
+  NoOpAuditJobEnqueuer,
+} from "../audit/audit-job.enqueuer";
+import type { AuditJobPayload } from "../audit/audit-job.types";
 
 /**
  * Pre-computed argon2id PHC string used for the constant-time path when
@@ -84,7 +89,26 @@ class NoOpRateLimiter implements RateLimiter {
 
 export interface AuthServiceOptions {
   rateLimiter?: RateLimiter;
+  /**
+   * Enqueuer for `auth.signin.{ok|failed}` audit events (T238).
+   *
+   * Optional so the slice-3a `auth.service.spec.ts` (sign-in only) can keep
+   * its two-arg `new AuthService(pool, sessions)` construction. When omitted,
+   * a `NoOpAuditJobEnqueuer` is used and no audit jobs are produced — the
+   * sign-in success/failure semantics are unchanged.
+   *
+   * Wired in production via `AuthModule` from `AuditEnqueuerModule` (a leaf
+   * module also imported by `AuditModule`, breaking what would otherwise be
+   * a `AuthModule ↔ AuditModule` cycle).
+   */
+  auditEnqueuer?: AuditJobEnqueuer;
 }
+
+/** Audit action strings emitted from the sign-in flow (per `tasks.md` T230). */
+export const AUTH_AUDIT_ACTIONS = {
+  signinOk: "auth.signin.ok",
+  signinFailed: "auth.signin.failed",
+} as const;
 
 export interface SignOutResult {
   /** True on the first revoke call; false if already revoked. */
@@ -103,6 +127,7 @@ export class AuthService {
   private readonly db: NodePgDatabase;
   private readonly rateLimiter: RateLimiter;
   private readonly emailJobs: EmailJobEnqueuer;
+  private readonly auditEnqueuer: AuditJobEnqueuer;
 
   constructor(
     private readonly pool: Pool,
@@ -120,6 +145,7 @@ export class AuthService {
     this.db = drizzle(pool);
     this.rateLimiter = opts.rateLimiter ?? new NoOpRateLimiter();
     this.emailJobs = emailJobs ?? new NoOpEmailJobEnqueuer();
+    this.auditEnqueuer = opts.auditEnqueuer ?? new NoOpAuditJobEnqueuer();
   }
 
   private requireAuthTokens(): AuthTokenRepository {
@@ -154,6 +180,23 @@ export class AuthService {
     const passwordOk = await verifyPassword(phc, password);
 
     if (!userRow || userRow.passwordHash === null || !passwordOk) {
+      // T238 — emit anonymous-actor audit event AFTER the constant-time
+      // verify path so timing is preserved across all failure modes
+      // (unknown email, SSO-only, soft-deleted, wrong password). The
+      // attempted email is the Zod-normalized form (lowercased, trimmed)
+      // already validated by `SignInSchema`; we MUST NOT include the
+      // password, the raw body, or any token in the payload.
+      this.fireAndForgetAudit({
+        actor_user_id: null,
+        actor_label: email,
+        tenant_id: null,
+        store_id: null,
+        action: AUTH_AUDIT_ACTIONS.signinFailed,
+        target_type: null,
+        target_id: null,
+        request_id: null,
+        metadata: null,
+      });
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -163,6 +206,22 @@ export class AuthService {
       id: sessionId,
       userId: userRow.id,
       absoluteExpiresAt,
+    });
+
+    // T238/T230 — successful sign-in audit event. Action string is
+    // mandated by `tasks.md` T230 (`auth.signin.{ok|failed}`); pairs with
+    // the failure emission above so an audit reader sees a complete
+    // outcome record for every credential evaluation.
+    this.fireAndForgetAudit({
+      actor_user_id: userRow.id,
+      actor_label: userRow.email,
+      tenant_id: null,
+      store_id: null,
+      action: AUTH_AUDIT_ACTIONS.signinOk,
+      target_type: null,
+      target_id: null,
+      request_id: null,
+      metadata: null,
     });
 
     return {
@@ -176,6 +235,23 @@ export class AuthService {
         is_platform_admin: userRow.isPlatformAdmin,
       },
     };
+  }
+
+  /**
+   * Enqueue an audit job without awaiting completion and without surfacing
+   * enqueue errors to the caller. Mirrors the policy used by
+   * `AuditEmitterInterceptor` (audit-emitter.interceptor.ts:92): an audit
+   * emission failure is non-fatal — it MUST NOT cause the sign-in flow to
+   * differ in shape, status, or timing from the no-audit baseline.
+   *
+   * NOTE: this is intentionally not `async` and intentionally returns
+   * `void`. Callers MUST NOT await it — doing so would couple sign-in
+   * latency to queue health.
+   */
+  private fireAndForgetAudit(payload: AuditJobPayload): void {
+    void this.auditEnqueuer.enqueue(payload).catch(() => {
+      // Swallow — see method docstring.
+    });
   }
 
   // ---------------------------------------------------------------------

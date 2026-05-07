@@ -40,6 +40,12 @@ import { Pool } from "pg";
 
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
+import { AuditEnqueuerModule } from "../audit/audit-enqueuer.module";
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../audit/audit-job.enqueuer";
+
 import { AuthController } from "./auth.controller";
 import { AuthGuard } from "./auth.guard";
 import { AuthService } from "./auth.service";
@@ -112,6 +118,7 @@ class AlwaysAllowRedis implements RedisLike {
 }
 
 @Module({
+  imports: [AuditEnqueuerModule],
   controllers: [AuthController],
   providers: [
     {
@@ -158,8 +165,18 @@ class AlwaysAllowRedis implements RedisLike {
         sessions: SessionRepository,
         authTokens: AuthTokenRepository,
         emailJobs: EmailJobEnqueuer,
-      ): AuthService => new AuthService(pool, sessions, authTokens, emailJobs),
-      inject: [PG_POOL, SessionRepository, AuthTokenRepository, EMAIL_JOB_ENQUEUER],
+        auditEnqueuer: AuditJobEnqueuer,
+      ): AuthService =>
+        new AuthService(pool, sessions, authTokens, emailJobs, {
+          auditEnqueuer,
+        }),
+      inject: [
+        PG_POOL,
+        SessionRepository,
+        AuthTokenRepository,
+        EMAIL_JOB_ENQUEUER,
+        AUDIT_JOB_ENQUEUER,
+      ],
     },
   ],
   exports: [
