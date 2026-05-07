@@ -605,6 +605,12 @@ import type {
   PosAuditEventsSyncInput,
   PosAuditEventsSyncResponseBody,
 } from "../src/pos-audit-events/dto";
+import { PosOperatorsController } from "../src/pos-operators/pos-operators.controller";
+import { PosOperatorsService } from "../src/pos-operators/pos-operators.service";
+import type {
+  PosOperatorSignInResponseBody,
+  PosOperatorSignOutResponseBody,
+} from "../src/pos-operators/dto";
 
 // ---------------------------------------------------------------------------
 // Schema loading — pos-audit-events validators
@@ -842,6 +848,180 @@ describe("POST /api/pos/v1/audit-events — contract conformance (T300)", () => 
         .expect(401);
 
       assertConformsTo(validatePosAuditError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 4 — POST /api/pos/v1/operators/sign-out
+// =============================================================================
+//
+// pos-operators.openapi.yaml defines named component schemas for the 200 and
+// 401 response statuses. No 400 is defined for this endpoint in the YAML.
+//
+// PosOperatorsController does NOT use @UseGuards() — it calls extractBearer()
+// internally. This means no guard override is needed in the test module.
+
+// ---------------------------------------------------------------------------
+// Schema loading — pos-operators validators
+// ---------------------------------------------------------------------------
+
+const POS_OPERATORS_DOC_ID = "pos-operators.openapi";
+
+let validatePosSignOutResponse: ValidateFunction;
+let validatePosOperatorsError: ValidateFunction;
+
+function buildPosOperatorsValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === POS_OPERATORS_DOC_ID);
+  if (!contract) {
+    throw new Error(
+      `${POS_OPERATORS_DOC_ID} contract not found — check packages/contracts/openapi/`,
+    );
+  }
+  if (!ajv.getSchema(POS_OPERATORS_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: POS_OPERATORS_DOC_ID });
+  }
+  validatePosSignOutResponse = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosOperatorSignOutResponse`,
+  });
+  validatePosOperatorsError = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/Error`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fake service
+// ---------------------------------------------------------------------------
+
+class FakePosOperatorsService {
+  public signOutResult: PosOperatorSignOutResponseBody | { kind: "refused" } = {
+    kind: "signed_out",
+  };
+
+  async signIn(
+    _rawJwt: string,
+    _body: unknown,
+    _requestId: string,
+  ): Promise<PosOperatorSignInResponseBody | { kind: "refused" }> {
+    return { kind: "refused" };
+  }
+
+  async signOut(
+    _rawJwt: string,
+    _body: unknown,
+    _requestId: string,
+  ): Promise<PosOperatorSignOutResponseBody | { kind: "refused" }> {
+    return this.signOutResult;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture
+// ---------------------------------------------------------------------------
+
+const FAKE_POS_OPERATORS_SESSION_ID = "0195b300-0000-7000-8000-000000000001";
+
+let posOperatorsApp: INestApplication;
+let fakePosOperatorsService: FakePosOperatorsService;
+
+beforeAll(async () => {
+  buildPosOperatorsValidators();
+  fakePosOperatorsService = new FakePosOperatorsService();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [PosOperatorsController],
+    providers: [
+      { provide: PosOperatorsService, useValue: fakePosOperatorsService },
+    ],
+  }).compile();
+
+  posOperatorsApp = moduleRef.createNestApplication({ bufferLogs: true });
+  posOperatorsApp.useGlobalPipes(new ZodValidationPipe());
+  posOperatorsApp.useGlobalFilters(new GlobalExceptionFilter());
+  await posOperatorsApp.init();
+});
+
+afterAll(async () => {
+  if (posOperatorsApp) await posOperatorsApp.close();
+});
+
+beforeEach(() => {
+  fakePosOperatorsService.signOutResult = { kind: "signed_out" };
+});
+
+function posOperatorsHttp() {
+  return request(posOperatorsApp.getHttpServer());
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("POST /api/pos/v1/operators/sign-out — contract conformance (T300)", () => {
+  describe("200 — signed_out", () => {
+    it("response body conforms to PosOperatorSignOutResponse schema", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-out")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(200);
+
+      assertConformsTo(validatePosSignOutResponse, res.body);
+    });
+
+    it('body.kind is exactly "signed_out"', async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-out")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(200);
+
+      expect(res.body.kind).toBe("signed_out");
+      assertConformsTo(validatePosSignOutResponse, res.body);
+    });
+  });
+
+  describe("401 — missing Bearer token", () => {
+    it("response body conforms to Error schema when Authorization header is absent", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-out")
+        .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+
+    it("401 error envelope has required error.code and error.message fields", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-out")
+        .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(401);
+
+      expect(res.body).toMatchObject({
+        error: {
+          code: expect.any(String),
+          message: expect.any(String),
+        },
+      });
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+
+  describe("401 — service refuses", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.signOutResult = { kind: "refused" };
+    });
+
+    it("response body conforms to Error schema when service returns refused", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-out")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
     });
   });
 });
