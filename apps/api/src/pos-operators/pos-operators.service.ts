@@ -39,7 +39,7 @@ import { Injectable } from "@nestjs/common";
 import { newId } from "@data-pulse-2/shared";
 import type { Logger } from "@data-pulse-2/shared";
 import { generateRawToken, hashToken } from "@data-pulse-2/auth";
-import { insertAuditEvent } from "@data-pulse-2/db";
+import { insertAuditEvent, runWithTenantContext } from "@data-pulse-2/db";
 import type { Pool } from "pg";
 
 import type { ClerkVerifier } from "./clerk-verifier";
@@ -804,9 +804,12 @@ export class PosOperatorsService {
   /**
    * Upserts an idempotency key for a takeover event_id.
    *
-   * Uses `idempotency_keys` with `client_id = NULL` — the UNIQUE constraint
-   * `(tenant_id, store_id, client_id, key) NULLS NOT DISTINCT` ensures
-   * collision detection even with NULL client_id.
+   * Uses `idempotency_keys` with `client_id = 'pos_takeover'` (sentinel)
+   * because the column is TEXT NOT NULL. The UNIQUE constraint
+   * `(tenant_id, store_id, client_id, key)` ensures collision detection.
+   *
+   * `request_hash` is a SHA-256 Buffer of operatorId (BYTEA NOT NULL).
+   * Comparison uses Buffer.equals() since node-pg deserialises BYTEA → Buffer.
    *
    * Returns:
    *   - `{ type: "fresh" }` → first submission; caller should proceed.
@@ -825,78 +828,88 @@ export class PosOperatorsService {
     | { type: "conflict" }
   > {
     const expiresAt = new Date(Date.now() + OPERATOR_SESSION_TTL_MS);
-    // Attempt insert; on conflict read back the existing row.
-    const insertResult = await this.pool.query<{
-      id: string;
-      response_body: string | null;
-    }>(
-      `INSERT INTO idempotency_keys
-         (id, tenant_id, store_id, client_id, key, request_hash,
-          response_status, response_body, expires_at)
-       VALUES
-         ($1, $2, $3, NULL, $4, $5, 200, $6::jsonb, $7)
-       ON CONFLICT (tenant_id, store_id, client_id, key) DO NOTHING
-       RETURNING id, response_body`,
-      [
-        newId(),
-        tenantId,
-        storeId,
-        eventId,
-        operatorId, // request_hash stores operatorId for cross-check
-        JSON.stringify({ operator_id: operatorId, session_id: null }),
-        expiresAt,
-      ],
+    const requestHashBuf = hashToken(operatorId);
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client): Promise<
+        | { type: "fresh" }
+        | { type: "duplicate"; sessionId: string }
+        | { type: "conflict" }
+      > => {
+        // Attempt insert; on conflict read back the existing row.
+        const insertResult = await client.query<{
+          id: string;
+          response_body: string | null;
+        }>(
+          `INSERT INTO idempotency_keys
+             (id, tenant_id, store_id, client_id, key, request_hash,
+              response_status, response_body, expires_at)
+           VALUES
+             ($1, $2, $3, 'pos_takeover', $4, $5, 200, $6::jsonb, $7)
+           ON CONFLICT (tenant_id, store_id, client_id, key) DO NOTHING
+           RETURNING id, response_body`,
+          [
+            newId(),
+            tenantId,
+            storeId,
+            eventId,
+            requestHashBuf,
+            JSON.stringify({ operator_id: operatorId, session_id: null }),
+            expiresAt,
+          ],
+        );
+
+        if (insertResult.rows.length > 0) {
+          return { type: "fresh" };
+        }
+
+        // Collision: read the existing row.
+        const existingResult = await client.query<{
+          request_hash: Buffer;
+          response_body: string | null;
+        }>(
+          `SELECT request_hash, response_body
+             FROM idempotency_keys
+            WHERE tenant_id = $1
+              AND store_id = $2
+              AND client_id = 'pos_takeover'
+              AND key = $3
+            LIMIT 1`,
+          [tenantId, storeId, eventId],
+        );
+
+        const existing = existingResult.rows[0];
+        if (!existing) {
+          // Race: row was deleted between insert conflict and this read.
+          return { type: "fresh" };
+        }
+
+        if (!existing.request_hash.equals(requestHashBuf)) {
+          // Different operator_id for the same event_id.
+          return { type: "conflict" };
+        }
+
+        // Same operator_id — extract the session_id stored on confirmation.
+        let sessionId: string | null = null;
+        if (existing.response_body) {
+          try {
+            const parsed = JSON.parse(existing.response_body) as { session_id?: string | null };
+            sessionId = parsed.session_id ?? null;
+          } catch {
+            // Malformed JSONB — treat as fresh to avoid silent failure.
+            return { type: "fresh" };
+          }
+        }
+
+        if (!sessionId) {
+          // Idempotency key was inserted but session_id not yet written (concurrent).
+          return { type: "fresh" };
+        }
+
+        return { type: "duplicate", sessionId };
+      },
     );
-
-    if (insertResult.rows.length > 0) {
-      // Fresh insert — no collision.
-      return { type: "fresh" };
-    }
-
-    // Collision: read the existing row.
-    const existingResult = await this.pool.query<{
-      request_hash: string;
-      response_body: string | null;
-    }>(
-      `SELECT request_hash, response_body
-         FROM idempotency_keys
-        WHERE tenant_id = $1
-          AND store_id = $2
-          AND client_id IS NULL
-          AND key = $3
-        LIMIT 1`,
-      [tenantId, storeId, eventId],
-    );
-
-    const existing = existingResult.rows[0];
-    if (!existing) {
-      // Race: row was deleted between insert conflict and this read.
-      return { type: "fresh" };
-    }
-
-    if (existing.request_hash !== operatorId) {
-      // Different operator_id for the same event_id.
-      return { type: "conflict" };
-    }
-
-    // Same operator_id — extract the session_id stored on confirmation.
-    let sessionId: string | null = null;
-    if (existing.response_body) {
-      try {
-        const parsed = JSON.parse(existing.response_body) as { session_id?: string | null };
-        sessionId = parsed.session_id ?? null;
-      } catch {
-        // Malformed JSONB — treat as fresh to avoid silent failure.
-        return { type: "fresh" };
-      }
-    }
-
-    if (!sessionId) {
-      // Idempotency key was inserted but session_id not yet written (concurrent).
-      return { type: "fresh" };
-    }
-
-    return { type: "duplicate", sessionId };
   }
 
   /** Updates the idempotency key row to record the new session id. */
@@ -906,18 +919,23 @@ export class PosOperatorsService {
     storeId: string,
     sessionId: string,
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE idempotency_keys
-          SET response_body = jsonb_set(
-            COALESCE(response_body, '{}'::jsonb),
-            '{session_id}',
-            to_jsonb($1::text)
-          )
-        WHERE tenant_id = $2
-          AND store_id = $3
-          AND client_id IS NULL
-          AND key = $4`,
-      [sessionId, tenantId, storeId, eventId],
+    await runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      (client) =>
+        client.query(
+          `UPDATE idempotency_keys
+              SET response_body = jsonb_set(
+                COALESCE(response_body, '{}'::jsonb),
+                '{session_id}',
+                to_jsonb($1::text)
+              )
+            WHERE tenant_id = $2
+              AND store_id = $3
+              AND client_id = 'pos_takeover'
+              AND key = $4`,
+          [sessionId, tenantId, storeId, eventId],
+        ),
     );
   }
 

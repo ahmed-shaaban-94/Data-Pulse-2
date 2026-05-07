@@ -15,10 +15,29 @@ import type { ClerkVerifier } from "../../src/pos-operators/clerk-verifier";
 
 interface MockPool {
   query: jest.Mock;
+  connect: jest.Mock;
 }
 
+/**
+ * Build a mock pool whose `query` and the PoolClient returned by `connect()`
+ * both draw from the same ordered result sequence, skipping transaction-control
+ * statements emitted by `runWithTenantContext` (BEGIN / COMMIT / ROLLBACK /
+ * set_config). This lets tests specify only the business-query results without
+ * caring whether a query went through the pool directly or through a client.
+ */
 function makePool(): MockPool {
-  return { query: jest.fn() };
+  const queryFn = jest.fn();
+  const TX_CTRL = /^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SELECT set_config)/i;
+  const clientQueryFn = jest.fn(async (sql: string) => {
+    if (TX_CTRL.test(sql.trimStart())) return { rows: [] };
+    return queryFn(sql);
+  });
+  const clientStub = {
+    query: clientQueryFn,
+    release: jest.fn(),
+  };
+  const connectFn = jest.fn(async () => clientStub);
+  return { query: queryFn, connect: connectFn };
 }
 
 function makeVerifier(sub: string | Error = "user_test_sub"): ClerkVerifier {
