@@ -1,15 +1,19 @@
 /**
- * POS-Operators DTOs — Wave 1 sign-in surface.
+ * POS-Operators DTOs — Wave 1 sign-in + Wave 3 roster/takeover/active-session.
  *
  * Source of truth: `packages/contracts/openapi/pos-operators.openapi.yaml`.
  *
- * The Zod schema below mirrors `PosOperatorSignInRequest`:
+ * Wave 1 — sign-in body mirrors `PosOperatorSignInRequest`:
  *   - `kind` is a literal — only "manager_admin" is admitted in Wave 1.
  *   - `device_token_attestation` is a non-empty string (terminal-side proof
  *     of possession of the paired device token).
  *   - `branch_id` is **not** a body field — it is resolved server-side from
  *     the device-token claim. Including it would be an additional property
  *     and rejected by `additionalProperties: false`.
+ *
+ * Wave 3 GET endpoints gate via Clerk JWT only; the contract preamble references
+ * the device-token header inherited from 001/002 boilerplate, but the GET
+ * parameter schemas carry no device attestation surface.
  *
  * Forbidden fields (`password`, `identifier`, `pin`, `cashier`,
  * `clerk_session_token`, `branch_id`) are not declared and are rejected
@@ -94,4 +98,74 @@ export type PosOperatorSignOutInput = z.infer<typeof PosOperatorSignOutSchema>;
 /** Conforms to OpenAPI `PosOperatorSignOutResponse`. */
 export interface PosOperatorSignOutResponseBody {
   kind: "signed_out";
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 — Roster
+// ---------------------------------------------------------------------------
+
+/**
+ * Query params for GET /roster. `branch_id` is UUID-string; NestJS @Query()
+ * delivers raw strings so UUID coercion is enforced at the service boundary.
+ * Omitting branch_id causes the server to refuse (generic 401) because there
+ * is no device attestation on GETs to resolve the branch independently.
+ */
+export const PosRosterQuerySchema = z
+  .object({
+    branch_id: z.string().uuid().optional(),
+  })
+  .strict();
+
+export type PosRosterQueryInput = z.infer<typeof PosRosterQuerySchema>;
+
+/** Conforms to OpenAPI `PosRosterCashierEntry`. */
+export interface PosRosterCashierEntry {
+  id: string;
+  display_name: string;
+  role: "cashier";
+}
+
+/** Conforms to OpenAPI `PosRosterResponse`. */
+export interface PosRosterResponseBody {
+  cashiers: PosRosterCashierEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 — Takeover confirm
+// ---------------------------------------------------------------------------
+
+/**
+ * Takeover confirmation body. Mirrors `PosTakeoverConfirmRequest`.
+ * `event_id` is the client-side UUIDv4 dedup key.
+ * Forbidden additional fields rejected by `.strict()`.
+ */
+export const PosTakeoverConfirmSchema = z
+  .object({
+    event_id: z.string().uuid(),
+    operator_id: z.string().min(1),
+    device_token_attestation: z.string().min(1),
+  })
+  .strict();
+
+export type PosTakeoverConfirmInput = z.infer<typeof PosTakeoverConfirmSchema>;
+
+// ---------------------------------------------------------------------------
+// Wave 3 — Active session (minimum-disclosure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Query params for GET /active-session. `operator_id` is the Clerk subject
+ * of the operator to check.
+ */
+export const PosActiveSessionQuerySchema = z
+  .object({
+    operator_id: z.string().min(1),
+  })
+  .strict();
+
+export type PosActiveSessionQueryInput = z.infer<typeof PosActiveSessionQuerySchema>;
+
+/** Conforms to OpenAPI `PosActiveSessionResponse`. */
+export interface PosActiveSessionResponseBody {
+  kind: "none" | "active";
 }

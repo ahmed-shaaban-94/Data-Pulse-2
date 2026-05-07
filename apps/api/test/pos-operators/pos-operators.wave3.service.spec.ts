@@ -1,0 +1,397 @@
+/**
+ * PosOperatorsService Wave 3 unit spec — roster, takeoverConfirm, activeSession.
+ *
+ * No Postgres, no Clerk network. All dependencies mocked via the same pattern
+ * as the sign-in / sign-out unit specs. Each refusal branch produces a typed
+ * `{ kind: "refused" }` result at the service boundary (ADR D10).
+ */
+import "reflect-metadata";
+
+import type { Pool } from "pg";
+
+import { PosOperatorsService } from "../../src/pos-operators/pos-operators.service";
+import { DeviceRepository } from "../../src/pos-operators/device.repository";
+import type { ClerkVerifier } from "../../src/pos-operators/clerk-verifier";
+
+interface MockPool {
+  query: jest.Mock;
+}
+
+function makePool(): MockPool {
+  return { query: jest.fn() };
+}
+
+function makeVerifier(sub: string | Error = "user_test_sub"): ClerkVerifier {
+  return {
+    verify: jest.fn(async () => {
+      if (sub instanceof Error) throw sub;
+      return { sub };
+    }),
+  };
+}
+
+function makeDeviceRepo(
+  result: Awaited<ReturnType<DeviceRepository["findActiveByAttestation"]>> = null,
+): jest.Mocked<DeviceRepository> {
+  return {
+    findActiveByAttestation: jest.fn(async () => result),
+  } as unknown as jest.Mocked<DeviceRepository>;
+}
+
+const SILENT_LOGGER = {
+  warn: jest.fn(),
+  info: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+  trace: jest.fn(),
+  fatal: jest.fn(),
+  child: jest.fn(() => SILENT_LOGGER),
+} as unknown as ConstructorParameters<typeof PosOperatorsService>[3];
+
+function programPoolQueries(pool: MockPool, results: Array<unknown[]>): void {
+  let i = 0;
+  pool.query.mockImplementation(async () => ({
+    rows: results[i++] ?? [],
+  }));
+}
+
+const TENANT_ID = "11111111-1111-7111-8111-111111111111";
+const STORE_ID = "22222222-2222-7222-8222-222222222222";
+const USER_ID = "33333333-3333-7333-8333-333333333333";
+const OTHER_USER_ID = "44444444-4444-7444-8444-444444444444";
+const SESSION_ID = "55555555-5555-7555-8555-555555555555";
+const MEMBERSHIP_ID = "66666666-6666-7666-8666-666666666666";
+const EVENT_ID = "77777777-7777-4777-8777-777777777777";
+const OPERATOR_CLERK_SUB = "user_test_sub";
+
+const FUTURE = new Date(Date.now() + 60 * 60 * 1000);
+
+const ACTIVE_DEVICE = {
+  id: "88888888-8888-7888-8888-888888888888",
+  tenantId: TENANT_ID,
+  storeId: STORE_ID,
+  tokenHash: "hash",
+  revokedAt: null,
+};
+
+const VALID_USER_ROW = {
+  id: USER_ID,
+  email: "u@example.com",
+  display_name: "Test User",
+  clerk_user_id: OPERATOR_CLERK_SUB,
+  deleted_at: null,
+};
+
+const MANAGER_MEMBERSHIP_ROW = {
+  id: MEMBERSHIP_ID,
+  tenant_id: TENANT_ID,
+  user_id: USER_ID,
+  role_id: "role-id",
+  store_access_kind: "all",
+  revoked_at: null,
+  deleted_at: null,
+  role_code: "store_manager",
+};
+
+// ---------------------------------------------------------------------------
+// GET /roster
+// ---------------------------------------------------------------------------
+
+describe("PosOperatorsService.roster", () => {
+  it("returns 'refused' when verifier throws (invalid Clerk JWT)", async () => {
+    const pool = makePool();
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(new Error("bad sig")),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("bad-jwt", {}, "rid-1");
+    expect(r).toEqual({ kind: "refused" });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  it("returns 'refused' when user is not found", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [[]]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-2");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when branch_id is omitted", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [[VALID_USER_ROW]]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", {}, "rid-3");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when membership lookup returns nothing", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [], // no membership
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-4");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns cashiers array on happy path", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, store_access_kind: "all" }],
+      [
+        { clerk_user_id: "user_staff_1", display_name: "Alice" },
+        { clerk_user_id: "user_staff_2", display_name: "Bob" },
+      ],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-5");
+    expect(r).toEqual({
+      cashiers: [
+        { id: "user_staff_1", display_name: "Alice", role: "cashier" },
+        { id: "user_staff_2", display_name: "Bob", role: "cashier" },
+      ],
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /takeover/confirm
+// ---------------------------------------------------------------------------
+
+describe("PosOperatorsService.takeoverConfirm", () => {
+  const VALID_BODY = {
+    event_id: EVENT_ID,
+    operator_id: OPERATOR_CLERK_SUB,
+    device_token_attestation: "attest",
+  };
+
+  it("returns 'refused' when verifier throws", async () => {
+    const pool = makePool();
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(new Error("bad sig")),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("bad-jwt", VALID_BODY, "rid-1");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when operator_id in body does not match JWT sub", async () => {
+    const pool = makePool();
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier("different_sub"),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-2");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when device attestation is invalid", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [[VALID_USER_ROW]]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(null),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-3");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when no active session to supersede", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
+      // idempotency key INSERT returns fresh row
+      [{ id: "ik-id", response_body: null }],
+      // revokeActiveOperatorSession returns 0 rows
+      [],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-4");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns signed_in on happy path and revokes prior session", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
+      // upsert idempotency key INSERT → fresh
+      [{ id: "ik-id", response_body: null }],
+      // revokeActiveOperatorSession → returns revoked session id
+      [{ id: SESSION_ID }],
+      // issueOperatorSessionRow → INSERT RETURNING
+      [{ id: "new-session-id", issued_at: new Date() }],
+      // updateIdempotencyKeyWithSession UPDATE (no return needed)
+      [],
+      // insertAuditEvent — handled internally, pool not called for this in tests
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-5");
+    expect(r).toMatchObject({
+      kind: "signed_in",
+      operator: {
+        id: OPERATOR_CLERK_SUB,
+        role: "manager",
+        tenant_id: TENANT_ID,
+        branch_id: STORE_ID,
+      },
+      operator_session: { id: "new-session-id" },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /active-session
+// ---------------------------------------------------------------------------
+
+describe("PosOperatorsService.activeSession", () => {
+  it("returns 'refused' when verifier throws", async () => {
+    const pool = makePool();
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(new Error("bad sig")),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("bad-jwt", { operator_id: "any" }, "rid-1");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when requester user is not found", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [[]]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", { operator_id: "any" }, "rid-2");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns { kind: 'none' } when target operator does not exist", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [], // target user lookup → not found
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", { operator_id: "unknown_sub" }, "rid-3");
+    expect(r).toEqual({ kind: "none" });
+  });
+
+  it("returns { kind: 'none' } when target has no active session", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],          // requester lookup
+      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }], // target lookup
+      [],                         // anyActiveOperatorSession → 0 rows
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-4");
+    expect(r).toEqual({ kind: "none" });
+  });
+
+  it("returns { kind: 'active' } when target has an active session", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],          // requester lookup
+      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }], // target lookup
+      [{ one: 1 }],              // anyActiveOperatorSession → 1 row
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-5");
+    expect(r).toEqual({ kind: "active" });
+  });
+
+  it("response is ONLY { kind } — no extra fields", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }],
+      [{ one: 1 }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-6");
+    expect(Object.keys(r)).toEqual(["kind"]);
+  });
+});
