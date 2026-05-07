@@ -506,3 +506,259 @@ describe("POST /api/pos/v1/operators/sign-in (body validation → 400)", () => {
     expect(res.status).toBe(400);
   });
 });
+
+// -----------------------------------------------------------------------
+// Wave 3 — GET /api/pos/v1/operators/roster
+// -----------------------------------------------------------------------
+
+describe("GET /api/pos/v1/operators/roster", () => {
+  it("happy path: returns cashiers for the branch", async () => {
+    if (maybeSkip()) return;
+    // STAFF_USER has store_staff role → appears as cashier
+    const res = await http()
+      .get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-admin");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("cashiers");
+    expect(Array.isArray(res.body.cashiers)).toBe(true);
+    const cashierIds = res.body.cashiers.map((c: { id: string }) => c.id);
+    expect(cashierIds).toContain(STAFF_CLERK_SUB);
+    // Entries must only have id, display_name, role
+    for (const c of res.body.cashiers) {
+      expect(c).toEqual({ id: expect.any(String), display_name: expect.any(String), role: "cashier" });
+    }
+  });
+
+  it("401 when Authorization header is missing", async () => {
+    if (maybeSkip()) return;
+    const res = await http().get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`);
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("401 when branch_id is omitted", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get("/api/pos/v1/operators/roster")
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(401);
+  });
+
+  it("400 on invalid branch_id (non-UUID)", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get("/api/pos/v1/operators/roster?branch_id=not-a-uuid")
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(400);
+  });
+
+  it("response body never contains email, PIN, or credential fields", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(200);
+    const flat = JSON.stringify(res.body);
+    expect(flat).not.toMatch(/email|pin|password|token|clerk_session/i);
+  });
+});
+
+// -----------------------------------------------------------------------
+// Wave 3 — POST /api/pos/v1/operators/takeover/confirm
+// -----------------------------------------------------------------------
+
+describe("POST /api/pos/v1/operators/takeover/confirm", () => {
+  const TAKEOVER_EVENT_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccc01";
+
+  afterEach(async () => {
+    // Remove idempotency keys written during takeover tests.
+    if (pool) {
+      await pool
+        .query(`DELETE FROM idempotency_keys WHERE key = $1`, [TAKEOVER_EVENT_ID])
+        .catch(() => undefined);
+    }
+  });
+
+  it("happy path: confirm takeover after takeover_required sign-in, returns signed_in envelope", async () => {
+    if (maybeSkip()) return;
+    // Step 1: admin signs in → session exists.
+    await http()
+      .post("/api/pos/v1/operators/sign-in")
+      .set("Authorization", "Bearer jwt-admin")
+      .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
+
+    // Step 2: manager sees takeover_required.
+    const takeoverCheck = await http()
+      .post("/api/pos/v1/operators/sign-in")
+      .set("Authorization", "Bearer jwt-manager")
+      .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
+    expect(takeoverCheck.body.kind).toBe("takeover_required");
+
+    // Step 3: manager confirms takeover.
+    const res = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send({
+        event_id: TAKEOVER_EVENT_ID,
+        operator_id: MANAGER_CLERK_SUB,
+        device_token_attestation: DEVICE_A_ATTESTATION,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe("signed_in");
+    expect(res.body.operator.id).toBe(MANAGER_CLERK_SUB);
+    expect(res.body.operator.branch_id).toBe(STORE_ID_A);
+    expect(res.body.operator_session.id).toEqual(expect.any(String));
+
+    // Audit event created.
+    const auditCount = await pool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM audit_events WHERE action = 'operator.session.takeover'`,
+    );
+    expect(auditCount.rows[0]!.count).toBe("1");
+
+    // Prior session should be revoked.
+    const priorActive = await pool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM auth_tokens
+        WHERE scope = 'pos_operator' AND device_id = $1 AND user_id = $2 AND revoked_at IS NULL`,
+      [DEVICE_A_ID, ADMIN_USER_ID],
+    );
+    expect(priorActive.rows[0]!.count).toBe("0");
+  });
+
+  it("idempotency: re-submitting same event_id + operator_id returns same envelope", async () => {
+    if (maybeSkip()) return;
+    // Set up an active session.
+    await http()
+      .post("/api/pos/v1/operators/sign-in")
+      .set("Authorization", "Bearer jwt-admin")
+      .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
+
+    const body = {
+      event_id: TAKEOVER_EVENT_ID,
+      operator_id: MANAGER_CLERK_SUB,
+      device_token_attestation: DEVICE_A_ATTESTATION,
+    };
+
+    const first = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send(body);
+    expect(first.status).toBe(200);
+    expect(first.body.kind).toBe("signed_in");
+    const firstSessionId = first.body.operator_session.id;
+
+    const second = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send(body);
+    expect(second.status).toBe(200);
+    expect(second.body.kind).toBe("signed_in");
+    expect(second.body.operator_session.id).toBe(firstSessionId);
+  });
+
+  it("401 when operator_id in body does not match JWT sub", async () => {
+    if (maybeSkip()) return;
+    // Active session needed for this test to reach the operator_id check.
+    await http()
+      .post("/api/pos/v1/operators/sign-in")
+      .set("Authorization", "Bearer jwt-admin")
+      .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
+
+    const res = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send({
+        event_id: TAKEOVER_EVENT_ID,
+        operator_id: ADMIN_CLERK_SUB, // mismatch: body says admin, JWT says manager
+        device_token_attestation: DEVICE_A_ATTESTATION,
+      });
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("401 when no active session exists to supersede", async () => {
+    if (maybeSkip()) return;
+    // No existing session — no takeover_required was triggered.
+    const res = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send({
+        event_id: TAKEOVER_EVENT_ID,
+        operator_id: MANAGER_CLERK_SUB,
+        device_token_attestation: DEVICE_A_ATTESTATION,
+      });
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("400 when body is missing required fields", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .post("/api/pos/v1/operators/takeover/confirm")
+      .set("Authorization", "Bearer jwt-manager")
+      .send({ event_id: TAKEOVER_EVENT_ID }); // missing operator_id and attestation
+    expect(res.status).toBe(400);
+  });
+});
+
+// -----------------------------------------------------------------------
+// Wave 3 — GET /api/pos/v1/operators/active-session
+// -----------------------------------------------------------------------
+
+describe("GET /api/pos/v1/operators/active-session", () => {
+  it("returns { kind: 'none' } when operator has no active session", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get(`/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`)
+      .set("Authorization", "Bearer jwt-admin");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ kind: "none" });
+  });
+
+  it("returns { kind: 'active' } when operator has an active session", async () => {
+    if (maybeSkip()) return;
+    // Sign admin in.
+    await http()
+      .post("/api/pos/v1/operators/sign-in")
+      .set("Authorization", "Bearer jwt-admin")
+      .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
+
+    const res = await http()
+      .get(`/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`)
+      .set("Authorization", "Bearer jwt-admin");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ kind: "active" });
+    // Minimum-disclosure: only kind present.
+    expect(Object.keys(res.body)).toEqual(["kind"]);
+  });
+
+  it("returns { kind: 'none' } for unknown operator_id (minimum-disclosure, not 401)", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get("/api/pos/v1/operators/active-session?operator_id=user_clerk_never_existed")
+      .set("Authorization", "Bearer jwt-admin");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ kind: "none" });
+  });
+
+  it("401 when Authorization header is missing", async () => {
+    if (maybeSkip()) return;
+    const res = await http().get(
+      `/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`,
+    );
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("400 when operator_id is missing", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get("/api/pos/v1/operators/active-session")
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(400);
+  });
+});
