@@ -1,17 +1,26 @@
 openapi: 3.1.0
 info:
   title: Data-Pulse-2 POS Operators API
-  version: "1.0.0-draft"
+  version: "1.1.0-draft"
   description: >
-    POS-Pulse 004 Backend Wave 1 operator identity surface. Two endpoints —
-    operator sign-in (Clerk JWT verified at the API edge against Clerk's
-    JWKS) and operator sign-out (revokes a backend operator session row
-    identified by `session_id`). Both endpoints authenticate the caller
-    via the Clerk JWT in `Authorization: Bearer <jwt>`, paired with the
-    platform device-token header (per the existing 001/002 baseline).
-    Both endpoints fail closed: every refusal returns the same generic
+    POS-Pulse 004 Backend operator identity surface. Wave 1 (sign-in /
+    sign-out) + Wave 3 (roster, takeover confirm, active-session).
+
+
+    All endpoints authenticate the caller via the Clerk JWT in
+    `Authorization: Bearer <jwt>`, paired with the platform device-token
+    header (per the existing 001/002 baseline). Both endpoints fail closed:
+    every refusal returns the same generic
     `{ error: { code, message, request_id } }` envelope and does not
     enumerate causes.
+
+
+    Wave 3 minimum-disclosure principles (FR-013):
+    - `GET /roster` returns cashier identity only (no PIN, no credentials).
+    - `POST /takeover/confirm` is idempotent via `event_id`; returns the
+      same signed-in envelope as sign-in on success.
+    - `GET /active-session` returns ONLY `{kind}` — no terminal id, no
+      operator identity, no timestamps.
 
 
     Cross-cutting conventions live in
@@ -110,6 +119,159 @@ paths:
             session id, a session id that does not belong to the
             authenticated operator, a tenant / branch mismatch against
             the device-token claim, or rate-limit exhaustion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/pos/v1/operators/roster:
+    get:
+      summary: Return the cashier roster for a branch.
+      description: >
+        Returns all cashier-role members of the branch resolved from the
+        device-token claim. The optional `branch_id` query parameter
+        allows POS-Pulse to confirm the branch scope it expects — the
+        server validates it against the device token's resolved scope and
+        returns a 401 on mismatch.
+
+
+        Minimum-disclosure (FR-013): the response carries only the fields
+        POS-Pulse needs to render the cashier picker — id (Clerk subject),
+        display_name, and role. No email, no phone, no PIN, no credential
+        fragments appear in this response at any time.
+      operationId: posOperatorRoster
+      tags: [pos-operators]
+      security:
+        - clerkJwt: []
+      parameters:
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >
+            Branch id to scope the roster. When provided, the server
+            validates it against the device token's resolved branch scope;
+            a mismatch returns a generic 401. When omitted, the server
+            uses the device token's branch scope directly. POS callers
+            SHOULD always pass this to catch stale token / branch
+            drift early.
+      responses:
+        "200":
+          description: Cashier roster for the resolved branch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosRosterResponse"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between an
+            invalid Clerk JWT, an invalid device token, a
+            `branch_id` mismatch, or rate-limit exhaustion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/pos/v1/operators/takeover/confirm:
+    post:
+      summary: Confirm a POS operator takeover.
+      description: >
+        Confirms the takeover of an active operator session by a new
+        operator who has already received the `kind: takeover_required`
+        signal at sign-in. Supersedes the existing session, creates a new
+        operator session row for the incoming operator, and emits a
+        `operator.session.takeover` audit event.
+
+
+        Idempotency: the `event_id` field acts as the client-side
+        dedup key. Re-submitting the same `event_id` with the same
+        `operator_id` returns the same signed-in envelope without
+        creating a second session row. Re-submitting with a different
+        `operator_id` returns a generic 401 (prevents probing).
+
+
+        On success the response shape is identical to sign-in success
+        (`kind: signed_in`) — POS-Pulse can reuse the same reducer
+        path.
+      operationId: posOperatorTakeoverConfirm
+      tags: [pos-operators]
+      security:
+        - clerkJwt: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosTakeoverConfirmRequest"
+      responses:
+        "200":
+          description: Takeover confirmed; new operator session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosOperatorSignInSucceeded"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between an
+            invalid Clerk JWT, an `operator_id` mismatch against a prior
+            submission of the same `event_id`, no active session to
+            supersede, an invalid device token, a branch / tenant
+            mismatch, or rate-limit exhaustion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/pos/v1/operators/active-session:
+    get:
+      summary: Check whether the caller has an active POS operator session.
+      description: >
+        Returns a minimum-disclosure signal indicating whether the
+        operator identified by `operator_id` currently holds an active
+        (non-revoked, non-expired) POS operator session on any terminal
+        within the branch resolved from the device-token claim.
+
+
+        Minimum-disclosure (FR-013): the response MUST contain ONLY the
+        `kind` discriminator. No terminal id, no session id, no timestamps,
+        no operator identity, no branch metadata. Clients MUST switch on
+        `kind` and MUST NOT assume any other field is present.
+
+
+        This endpoint exists so POS-Pulse can detect mid-session
+        account-disable (FR-016) and surface the appropriate UX without
+        having to poll sign-in. It is NOT a session-token verification
+        endpoint — it does not assert that a Clerk session is valid or
+        that the caller is currently authenticated for a transaction.
+      operationId: posOperatorActiveSession
+      tags: [pos-operators]
+      security:
+        - clerkJwt: []
+      parameters:
+        - name: operator_id
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: >
+            Clerk subject (`clerk_user_id`) of the operator to query.
+            The server resolves this to the internal `users.id` and
+            looks up active operator-session rows scoped to the device
+            token's resolved branch.
+      responses:
+        "200":
+          description: >
+            Minimum-disclosure active-session signal. The body is ONLY
+            `{kind}` — no additional fields are present or implied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosActiveSessionResponse"
+        "401":
+          description: >
+            Generic refusal. The body does not distinguish between an
+            invalid Clerk JWT, an invalid device token, or rate-limit
+            exhaustion.
           content:
             application/json:
               schema:
@@ -275,6 +437,115 @@ components:
         issued_at:
           type: string
           format: date-time
+    # -------------------------------------------------------------------
+    # Wave 3 — Roster
+    # -------------------------------------------------------------------
+    PosRosterResponse:
+      type: object
+      required: [cashiers]
+      additionalProperties: false
+      description: >
+        Wave 3 roster payload. Contains only cashier-role members of the
+        resolved branch. Manager / admin users are excluded — POS-Pulse
+        does not need them in the cashier picker (FR-015 visibility matrix).
+      properties:
+        cashiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosRosterCashierEntry"
+          description: >
+            Ordered list of cashiers for the branch. May be empty if the
+            branch has no active cashier-role members.
+    PosRosterCashierEntry:
+      type: object
+      required: [id, display_name, role]
+      additionalProperties: false
+      description: >
+        Minimum-disclosure cashier record. Carries only what POS-Pulse
+        needs to render the cashier picker — no email, no phone number,
+        no PIN, no credential fragment. The `id` is the Clerk subject
+        (`users.clerk_user_id`) for identity continuity across POS
+        endpoints.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: >
+            Clerk subject of the cashier (`users.clerk_user_id`). Same
+            identifier used in `active-session` and audit-event
+            `acting_operator_id` fields — preserves identity continuity.
+        display_name:
+          type: string
+          description: Cashier display name (resolved server-side).
+        role:
+          type: string
+          enum: [cashier]
+          description: >
+            Always `cashier` for roster entries. A distinct schema from
+            `PosOperatorSummary` to enforce the role separation at the
+            contract level — roster entries are never manager or admin.
+    # -------------------------------------------------------------------
+    # Wave 3 — Takeover confirm request
+    # -------------------------------------------------------------------
+    PosTakeoverConfirmRequest:
+      type: object
+      required: [event_id, operator_id, device_token_attestation]
+      additionalProperties: false
+      description: >
+        Takeover confirmation request. `event_id` is the client-generated
+        dedup key for idempotency — the same `event_id` with the same
+        `operator_id` re-returns the existing signed-in envelope without
+        a second session row. `device_token_attestation` authenticates
+        the terminal (matching the Wave 1 body-based pattern).
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: >
+            Client-generated UUIDv4. Dedup key for idempotency: the backend
+            stores it in the `operator_sessions.takeover_event_id` column
+            and returns the existing session row on collision. POS-Pulse
+            MUST generate a fresh UUIDv4 per takeover attempt, not re-use
+            session ids.
+        operator_id:
+          type: string
+          minLength: 1
+          description: >
+            Clerk subject of the incoming operator requesting the takeover.
+            MUST match the Clerk JWT sub claim. The backend cross-references
+            the two to prevent identity substitution.
+        device_token_attestation:
+          type: string
+          minLength: 1
+          description: >
+            Terminal-side proof of possession of the paired device token.
+            Resolves the terminal's `tenant_id` + `branch_id` scope for
+            the new session row. The plaintext device token / attestation
+            MUST NOT appear in logs, audit rows, or worker payloads.
+    # -------------------------------------------------------------------
+    # Wave 3 — Active-session response (minimum-disclosure)
+    # -------------------------------------------------------------------
+    PosActiveSessionResponse:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      description: >
+        Minimum-disclosure active-session signal (FR-013). The response
+        MUST contain ONLY `kind`. No terminal id, no session id, no
+        timestamps, no operator identity, no branch metadata. Clients
+        MUST switch on `kind` and MUST NOT assume any other field is
+        present — `additionalProperties: false` is enforced at both the
+        schema and AJV conformance levels.
+      properties:
+        kind:
+          type: string
+          enum: [none, active]
+          description: >
+            `none` — no active operator session exists for this operator
+            on the device token's resolved branch.
+            `active` — at least one non-revoked, non-expired operator
+            session row exists. POS-Pulse MUST treat both values as the
+            complete signal and MUST NOT infer any further state.
     # -------------------------------------------------------------------
     # Generic error envelope (mirrors auth.openapi.yaml)
     # -------------------------------------------------------------------
