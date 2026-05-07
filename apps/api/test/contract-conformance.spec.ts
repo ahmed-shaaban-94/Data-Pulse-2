@@ -587,3 +587,261 @@ describe("GET /api/v1/audit/events — contract conformance (T300)", () => {
     });
   });
 });
+
+// =============================================================================
+// T300 thin slice 3 — POST /api/pos/v1/audit-events
+// =============================================================================
+//
+// pos-audit-events.openapi.yaml defines named component schemas for ALL
+// response statuses (200, 400, 401). All three are tested here.
+//
+// The Clerk JWT is optional for this endpoint; the fake ClerkVerifier is
+// wired but never called in the happy-path tests (no Authorization header).
+
+import { PosAuditEventsController } from "../src/pos-audit-events/pos-audit-events.controller";
+import { PosAuditEventsService } from "../src/pos-audit-events/pos-audit-events.service";
+import { CLERK_VERIFIER, type ClerkVerifier } from "../src/pos-operators/clerk-verifier";
+import type {
+  PosAuditEventsSyncInput,
+  PosAuditEventsSyncResponseBody,
+} from "../src/pos-audit-events/dto";
+
+// ---------------------------------------------------------------------------
+// Schema loading — pos-audit-events validators
+// ---------------------------------------------------------------------------
+
+const POS_AUDIT_DOC_ID = "pos-audit-events.openapi";
+
+let validatePosAuditSyncResponse: ValidateFunction;
+let validatePosAuditError: ValidateFunction;
+
+function buildPosAuditValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === POS_AUDIT_DOC_ID);
+  if (!contract) {
+    throw new Error(`${POS_AUDIT_DOC_ID} contract not found — check packages/contracts/openapi/`);
+  }
+
+  if (!ajv.getSchema(POS_AUDIT_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: POS_AUDIT_DOC_ID });
+  }
+
+  validatePosAuditSyncResponse = ajv.compile({
+    $ref: `${POS_AUDIT_DOC_ID}#/components/schemas/PosAuditEventsSyncResponse`,
+  });
+  validatePosAuditError = ajv.compile({
+    $ref: `${POS_AUDIT_DOC_ID}#/components/schemas/Error`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — pos-audit-events slice
+// ---------------------------------------------------------------------------
+
+const FAKE_POS_EVENT_ID = "0195b200-0000-7000-8000-000000000001";
+
+class FakePosAuditEventsService {
+  public response: PosAuditEventsSyncResponseBody | { kind: "device_invalid" } = {
+    accepted: [],
+    duplicates: [],
+    rejected: [],
+  };
+
+  async syncBatch(
+    _body: PosAuditEventsSyncInput,
+    _requestId: string | null,
+  ): Promise<PosAuditEventsSyncResponseBody | { kind: "device_invalid" }> {
+    return this.response;
+  }
+}
+
+/** Fake ClerkVerifier — always succeeds (JWT optional on this endpoint). */
+class PosAuditFakeClerkVerifier implements ClerkVerifier {
+  async verify(_rawJwt: string): Promise<{ sub: string }> {
+    return { sub: "user_fake_clerk_sub" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — pos-audit-events app
+// ---------------------------------------------------------------------------
+
+let posAuditApp: INestApplication;
+let fakePosAuditService: FakePosAuditEventsService;
+
+beforeAll(async () => {
+  buildPosAuditValidators();
+
+  fakePosAuditService = new FakePosAuditEventsService();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [PosAuditEventsController],
+    providers: [
+      { provide: PosAuditEventsService, useValue: fakePosAuditService },
+      { provide: CLERK_VERIFIER, useValue: new PosAuditFakeClerkVerifier() },
+    ],
+  }).compile();
+
+  posAuditApp = moduleRef.createNestApplication({ bufferLogs: true });
+  posAuditApp.useGlobalPipes(new ZodValidationPipe());
+  posAuditApp.useGlobalFilters(new GlobalExceptionFilter());
+  await posAuditApp.init();
+});
+
+afterAll(async () => {
+  if (posAuditApp) await posAuditApp.close();
+});
+
+beforeEach(() => {
+  fakePosAuditService.response = { accepted: [], duplicates: [], rejected: [] };
+});
+
+function posAuditHttp() {
+  return request(posAuditApp.getHttpServer());
+}
+
+/** Minimal valid request body — device attestation + one well-formed event. */
+function makeValidSyncBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    device_token_attestation: "fake-attestation-token",
+    events: [
+      {
+        event_id: FAKE_POS_EVENT_ID,
+        tenant_id: "0195b200-0000-7000-8000-000000000010",
+        branch_id: "0195b200-0000-7000-8000-000000000020",
+        originating_terminal_id: "0195b200-0000-7000-8000-000000000030",
+        acting_operator_id: "user_clerk_fake_sub",
+        action_category: "shift.open",
+        created_at: "2026-01-15T10:00:00.000Z",
+        payload: { shift_id: "0195b200-0000-7000-8000-000000000040", opened_at: "2026-01-15T10:00:00.000Z" },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests — POST /api/pos/v1/audit-events
+// ---------------------------------------------------------------------------
+
+describe("POST /api/pos/v1/audit-events — contract conformance (T300)", () => {
+  describe("200 — accepted response", () => {
+    beforeEach(() => {
+      fakePosAuditService.response = {
+        accepted: [FAKE_POS_EVENT_ID],
+        duplicates: [],
+        rejected: [],
+      };
+    });
+
+    it("response body conforms to PosAuditEventsSyncResponse schema", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(200);
+
+      assertConformsTo(validatePosAuditSyncResponse, res.body);
+    });
+
+    it("accepted contains the submitted event_id; duplicates and rejected are empty arrays", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(200);
+
+      expect(res.body.accepted).toEqual([FAKE_POS_EVENT_ID]);
+      expect(res.body.duplicates).toEqual([]);
+      expect(res.body.rejected).toEqual([]);
+      assertConformsTo(validatePosAuditSyncResponse, res.body);
+    });
+  });
+
+  describe("200 — rejected response (schema_violation)", () => {
+    beforeEach(() => {
+      fakePosAuditService.response = {
+        accepted: [],
+        duplicates: [],
+        rejected: [{ event_id: FAKE_POS_EVENT_ID, category: "schema_violation" }],
+      };
+    });
+
+    it("response body conforms to PosAuditEventsSyncResponse schema with non-empty rejected array", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(200);
+
+      assertConformsTo(validatePosAuditSyncResponse, res.body);
+    });
+
+    it("rejected[0].category is schema_violation (valid enum member)", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(200);
+
+      expect(res.body.rejected).toHaveLength(1);
+      expect(res.body.rejected[0]).toMatchObject({
+        event_id: FAKE_POS_EVENT_ID,
+        category: "schema_violation",
+      });
+      assertConformsTo(validatePosAuditSyncResponse, res.body);
+    });
+  });
+
+  describe("200 — duplicates response", () => {
+    beforeEach(() => {
+      fakePosAuditService.response = {
+        accepted: [],
+        duplicates: [FAKE_POS_EVENT_ID],
+        rejected: [],
+      };
+    });
+
+    it("response body conforms to PosAuditEventsSyncResponse schema with non-empty duplicates array", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(200);
+
+      expect(res.body.duplicates).toEqual([FAKE_POS_EVENT_ID]);
+      assertConformsTo(validatePosAuditSyncResponse, res.body);
+    });
+  });
+
+  describe("400 — structural validation error", () => {
+    it("response body conforms to Error schema when events array is empty", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send({ device_token_attestation: "fake-attestation-token", events: [] })
+        .expect(400);
+
+      assertConformsTo(validatePosAuditError, res.body);
+    });
+
+    it("response body conforms to Error schema when device_token_attestation is missing", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send({ events: [makeValidSyncBody().events] })
+        .expect(400);
+
+      assertConformsTo(validatePosAuditError, res.body);
+    });
+  });
+
+  describe("401 — device invalid", () => {
+    beforeEach(() => {
+      fakePosAuditService.response = { kind: "device_invalid" };
+    });
+
+    it("response body conforms to Error schema when device attestation is rejected", async () => {
+      const res = await posAuditHttp()
+        .post("/api/pos/v1/audit-events")
+        .send(makeValidSyncBody())
+        .expect(401);
+
+      assertConformsTo(validatePosAuditError, res.body);
+    });
+  });
+});
