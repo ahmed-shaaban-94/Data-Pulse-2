@@ -89,7 +89,10 @@ const ACTIVE_DEVICE = {
   id: "88888888-8888-7888-8888-888888888888",
   tenantId: TENANT_ID,
   storeId: STORE_ID,
-  tokenHash: "hash",
+  tokenHash: Buffer.from("hash"),
+  label: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
   revokedAt: null,
 };
 

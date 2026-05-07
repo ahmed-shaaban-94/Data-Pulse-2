@@ -867,7 +867,7 @@ export class PosOperatorsService {
         // Collision: read the existing row.
         const existingResult = await client.query<{
           request_hash: Buffer;
-          response_body: string | null;
+          response_body: { session_id?: string | null } | null;
         }>(
           `SELECT request_hash, response_body
              FROM idempotency_keys
@@ -890,18 +890,8 @@ export class PosOperatorsService {
           return { type: "conflict" };
         }
 
-        // Same operator_id — extract the session_id stored on confirmation.
-        let sessionId: string | null = null;
-        if (existing.response_body) {
-          try {
-            const parsed = JSON.parse(existing.response_body) as { session_id?: string | null };
-            sessionId = parsed.session_id ?? null;
-          } catch {
-            // Malformed JSONB — treat as fresh to avoid silent failure.
-            return { type: "fresh" };
-          }
-        }
-
+        // node-pg deserialises JSONB → JS object automatically; no JSON.parse needed.
+        const sessionId = existing.response_body?.session_id ?? null;
         if (!sessionId) {
           // Idempotency key was inserted but session_id not yet written (concurrent).
           return { type: "fresh" };
