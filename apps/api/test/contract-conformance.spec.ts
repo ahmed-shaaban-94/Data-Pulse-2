@@ -921,6 +921,10 @@ class FakePosOperatorsService {
     kind: "refused",
   };
 
+  public takeoverConfirmResult: PosOperatorSignInResponseBody | { kind: "refused" } = {
+    kind: "refused",
+  };
+
   async signIn(
     _rawJwt: string,
     _body: unknown,
@@ -943,6 +947,14 @@ class FakePosOperatorsService {
     _requestId: string,
   ): Promise<PosActiveSessionResponseBody | { kind: "refused" }> {
     return this.activeSessionResult;
+  }
+
+  async takeoverConfirm(
+    _rawJwt: string,
+    _body: unknown,
+    _requestId: string,
+  ): Promise<PosOperatorSignInResponseBody | { kind: "refused" }> {
+    return this.takeoverConfirmResult;
   }
 }
 
@@ -980,6 +992,7 @@ beforeEach(() => {
   fakePosOperatorsService.signOutResult = { kind: "signed_out" };
   fakePosOperatorsService.signInResult = { kind: "refused" };
   fakePosOperatorsService.activeSessionResult = { kind: "refused" };
+  fakePosOperatorsService.takeoverConfirmResult = { kind: "refused" };
 });
 
 function posOperatorsHttp() {
@@ -1307,6 +1320,100 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
       const res = await posOperatorsHttp()
         .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
         .set("Authorization", "Bearer fake-jwt-token")
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 7 — POST /api/pos/v1/operators/takeover/confirm
+// =============================================================================
+//
+// pos-operators.openapi.yaml defines only 200 and 401 for this endpoint.
+// 200 uses PosOperatorSignInSucceeded (same schema as sign-in success).
+// 401 uses the shared Error schema.
+// No 400 body schema is defined in the contract — 400 tests are omitted.
+//
+// The same posOperatorsApp fixture is reused: PosOperatorsController handles
+// all five POS operator routes including takeover/confirm.
+
+const FAKE_TAKEOVER_EVENT_ID = "0195b500-0000-7000-8000-000000000001";
+
+function makeConfirmBody(): Record<string, unknown> {
+  return {
+    event_id: FAKE_TAKEOVER_EVENT_ID,
+    operator_id: "user_fake_clerk_sub",
+    device_token_attestation: "fake-attestation",
+  };
+}
+
+describe("POST /api/pos/v1/operators/takeover/confirm — contract conformance (T300)", () => {
+  describe("200 — signed_in", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.takeoverConfirmResult = makeSignedInResult();
+    });
+
+    it("response body conforms to PosOperatorSignInSucceeded schema", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/takeover/confirm")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeConfirmBody())
+        .expect(200);
+
+      assertConformsTo(validatePosSignInSucceeded, res.body);
+    });
+
+    it('body.kind is "signed_in" and operator/operator_session are present', async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/takeover/confirm")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeConfirmBody())
+        .expect(200);
+
+      expect(res.body.kind).toBe("signed_in");
+      expect(res.body.operator).toBeDefined();
+      expect(typeof res.body.operator.id).toBe("string");
+      expect(res.body.operator_session).toBeDefined();
+      expect(typeof res.body.operator_session.id).toBe("string");
+      assertConformsTo(validatePosSignInSucceeded, res.body);
+    });
+  });
+
+  describe("401 — missing Bearer token", () => {
+    it("response body conforms to Error schema when Authorization header is absent", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/takeover/confirm")
+        .send(makeConfirmBody())
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+
+    it("401 error envelope has required error.code and error.message fields", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/takeover/confirm")
+        .send(makeConfirmBody())
+        .expect(401);
+
+      expect(res.body).toMatchObject({
+        error: {
+          code: expect.any(String),
+          message: expect.any(String),
+        },
+      });
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+
+  describe("401 — service refuses", () => {
+    it("response body conforms to Error schema when service returns refused", async () => {
+      // takeoverConfirmResult is reset to { kind: "refused" } by the outer beforeEach
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/takeover/confirm")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeConfirmBody())
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
