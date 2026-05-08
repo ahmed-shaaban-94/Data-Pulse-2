@@ -1,0 +1,183 @@
+name: Spec-backed task
+description: Track a small reviewable slice backed by specs/tasks.md
+title: "[T###] "
+labels:
+  - scope:spec-backed
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template only for Data-Pulse-2 work that is backed by the active specs/tasks.md source of truth.
+
+        Keep issues small and reviewable. Do not use this issue to introduce dashboard UI, POS-Pulse app work, billing, analytics, reports, dbt, ClickHouse, Dagster, or other out-of-scope work unless the spec has been explicitly amended first.
+
+  - type: input
+    id: spec
+    attributes:
+      label: Spec
+      description: Spec or feature identifier.
+      placeholder: "001-foundation-auth-tenant-store"
+    validations:
+      required: true
+
+  - type: input
+    id: task_id
+    attributes:
+      label: Task ID
+      description: Exact task ID from specs/001-foundation-auth-tenant-store/tasks.md.
+      placeholder: "T300"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Phase
+      options:
+        - Phase 1
+        - Phase 2
+        - Phase 3
+        - Phase 4
+        - Phase 5
+        - Phase 6
+        - Phase 7
+        - Phase 8
+        - Phase 9
+        - Phase 10
+        - N/A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: user_story
+    attributes:
+      label: User Story
+      options:
+        - US1
+        - US2
+        - US3
+        - US4
+        - US5
+        - US6
+        - US7
+        - Cross-cutting
+        - N/A
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - api
+        - contracts
+        - db
+        - worker
+        - auth
+        - context
+        - audit
+        - memberships
+        - tenants
+        - stores
+        - pos-api
+        - project-management
+    validations:
+      required: true
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - test
+        - feature
+        - infra
+        - docs
+        - cleanup
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P1
+        - P2
+        - P3
+        - P4
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Describe the smallest reviewable slice to implement.
+      placeholder: |
+        Include:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Be explicit about boundaries.
+      placeholder: |
+        - No source changes outside ...
+        - No package/lock/schema/migration/OpenAPI changes unless approved.
+        - No dashboard, POS-Pulse app, billing, analytics, or reports work.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_files
+    attributes:
+      label: Expected files
+      placeholder: |
+        - apps/api/test/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation commands
+      placeholder: |
+        ```bash
+        pnpm --filter @data-pulse-2/api test -- ...
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: linked_prs
+    attributes:
+      label: Linked PRs
+      description: Add PRs when available.
+      placeholder: |
+        - Closes #...
+        - Related PR: #...
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Additional context, risks, or dependencies.
+    validations:
+      required: false
