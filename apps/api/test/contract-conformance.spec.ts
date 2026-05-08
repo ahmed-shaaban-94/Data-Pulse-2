@@ -608,6 +608,7 @@ import type {
 import { PosOperatorsController } from "../src/pos-operators/pos-operators.controller";
 import { PosOperatorsService } from "../src/pos-operators/pos-operators.service";
 import type {
+  PosActiveSessionResponseBody,
   PosOperatorSignInResponseBody,
   PosOperatorSignOutResponseBody,
 } from "../src/pos-operators/dto";
@@ -872,6 +873,7 @@ let validatePosSignOutResponse: ValidateFunction;
 let validatePosOperatorsError: ValidateFunction;
 let validatePosSignInSucceeded: ValidateFunction;
 let validatePosTakeoverRequired: ValidateFunction;
+let validatePosActiveSessionResponse: ValidateFunction;
 
 function buildPosOperatorsValidators(): void {
   const contracts = loadOpenApiContracts();
@@ -897,6 +899,9 @@ function buildPosOperatorsValidators(): void {
   validatePosTakeoverRequired = ajv.compile({
     $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosOperatorTakeoverRequired`,
   });
+  validatePosActiveSessionResponse = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosActiveSessionResponse`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -909,6 +914,10 @@ class FakePosOperatorsService {
   };
 
   public signInResult: PosOperatorSignInResponseBody | { kind: "refused" } = {
+    kind: "refused",
+  };
+
+  public activeSessionResult: PosActiveSessionResponseBody | { kind: "refused" } = {
     kind: "refused",
   };
 
@@ -926,6 +935,14 @@ class FakePosOperatorsService {
     _requestId: string,
   ): Promise<PosOperatorSignOutResponseBody | { kind: "refused" }> {
     return this.signOutResult;
+  }
+
+  async activeSession(
+    _rawJwt: string,
+    _query: unknown,
+    _requestId: string,
+  ): Promise<PosActiveSessionResponseBody | { kind: "refused" }> {
+    return this.activeSessionResult;
   }
 }
 
@@ -962,6 +979,7 @@ afterAll(async () => {
 beforeEach(() => {
   fakePosOperatorsService.signOutResult = { kind: "signed_out" };
   fakePosOperatorsService.signInResult = { kind: "refused" };
+  fakePosOperatorsService.activeSessionResult = { kind: "refused" };
 });
 
 function posOperatorsHttp() {
@@ -1184,6 +1202,111 @@ describe("POST /api/pos/v1/operators/sign-in — contract conformance (T300)", (
         .post("/api/pos/v1/operators/sign-in")
         .set("Authorization", "Bearer fake-jwt-token")
         .send(makeSignInBody())
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 6 — GET /api/pos/v1/operators/active-session
+// =============================================================================
+//
+// pos-operators.openapi.yaml defines one 200 schema (PosActiveSessionResponse)
+// with two enum values for `kind` (none / active), and a 401 using the shared
+// Error schema. No 400 response body is defined in the contract.
+//
+// The same posOperatorsApp fixture is reused. FakePosOperatorsService gains
+// activeSessionResult + activeSession() — same pattern as signInResult.
+//
+// NestJS resolves @Query() parameter pipes before the method body executes,
+// so missing-Bearer 401 tests must include ?operator_id=user_fake_clerk_sub
+// to avoid hitting the Zod query validation 400 first.
+
+const FAKE_ACTIVE_SESSION_OPERATOR_ID = "user_fake_clerk_sub";
+
+describe("GET /api/pos/v1/operators/active-session — contract conformance (T300)", () => {
+  describe("200 — kind: none", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.activeSessionResult = { kind: "none" };
+    });
+
+    it("response body conforms to PosActiveSessionResponse schema", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      assertConformsTo(validatePosActiveSessionResponse, res.body);
+    });
+
+    it('body.kind is exactly "none"', async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      expect(res.body.kind).toBe("none");
+      assertConformsTo(validatePosActiveSessionResponse, res.body);
+    });
+  });
+
+  describe("200 — kind: active", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.activeSessionResult = { kind: "active" };
+    });
+
+    it("response body conforms to PosActiveSessionResponse schema", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      assertConformsTo(validatePosActiveSessionResponse, res.body);
+    });
+
+    it('body.kind is exactly "active"', async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      expect(res.body.kind).toBe("active");
+      assertConformsTo(validatePosActiveSessionResponse, res.body);
+    });
+  });
+
+  describe("401 — missing Bearer token", () => {
+    it("response body conforms to Error schema when Authorization header is absent", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+
+    it("401 error envelope has required error.code and error.message fields", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .expect(401);
+
+      expect(res.body).toMatchObject({
+        error: {
+          code: expect.any(String),
+          message: expect.any(String),
+        },
+      });
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+
+  describe("401 — service refuses", () => {
+    it("response body conforms to Error schema when service returns refused", async () => {
+      // activeSessionResult is reset to { kind: "refused" } by the outer beforeEach
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
