@@ -50,6 +50,12 @@ paths:
       responses:
         "204":
           description: Session revoked; cookie cleared.
+        "401":
+          description: Not authenticated or non-session credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/auth/refresh:
     post:
       summary: Extend the sliding session window (within absolute cap).
@@ -59,6 +65,10 @@ paths:
           description: Session refreshed.
         "401":
           description: Session expired; sign in required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/auth/password-reset/request:
     post:
       summary: Request a password reset email. Always returns 202 to avoid leaking account existence.
@@ -101,6 +111,10 @@ paths:
           description: Password updated. All existing sessions for the user are revoked.
         "400":
           description: Invalid or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/auth/email/verify/request:
     post:
       summary: Request a verification email for the signed-in user.
@@ -108,6 +122,12 @@ paths:
       responses:
         "202":
           description: Email queued.
+        "401":
+          description: Not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/auth/email/verify/confirm:
     post:
       summary: Confirm email verification using the token from the email.
@@ -128,6 +148,10 @@ paths:
           description: Email verified.
         "400":
           description: Invalid or expired token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
     cookieAuth:
