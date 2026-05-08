@@ -32,6 +32,7 @@ import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import cookieParser from "cookie-parser";
 import {
+  BadRequestException,
   type CanActivate,
   type ExecutionContext,
   INestApplication,
@@ -45,6 +46,7 @@ import { AuthService } from "../src/auth/auth.service";
 import { AuthGuard } from "../src/auth/auth.guard";
 import { RateLimiter } from "../src/auth/rate-limit";
 import type { SignInResult } from "../src/auth/dto";
+import type { RefreshResult } from "../src/auth/auth.service";
 import { RolesGuard } from "../src/auth/roles.guard";
 import { TenantContextGuard } from "../src/context/tenant-context.guard";
 import { AuditController } from "../src/audit/audit.controller";
@@ -166,6 +168,9 @@ const FAKE_SESSION_ID = "0195b100-0000-7000-8000-000000000002";
 
 class FakeAuthService {
   public mode: "ok" | "bad-credentials" = "ok";
+  public refreshMode: "ok" | "expired" = "ok";
+  public confirmPasswordResetThrows = false;
+  public confirmEmailVerificationThrows = false;
 
   async signIn(_email: string, _password: string): Promise<SignInResult> {
     if (this.mode === "bad-credentials") {
@@ -184,13 +189,32 @@ class FakeAuthService {
     };
   }
 
-  // Other methods called by the controller that are not exercised here
   async signOut(_sessionId: string): Promise<void> {}
-  async refreshSession(_sessionId: string): Promise<void> {}
+
+  async refresh(_sessionId: string): Promise<RefreshResult | null> {
+    if (this.refreshMode === "expired") return null;
+    return {
+      sessionId: FAKE_SESSION_ID,
+      userId: FAKE_USER_ID,
+      absoluteExpiresAt: new Date(Date.now() + 86_400_000),
+    };
+  }
+
   async requestPasswordReset(_email: string): Promise<void> {}
-  async confirmPasswordReset(_token: string, _newPassword: string): Promise<void> {}
+
+  async confirmPasswordReset(_token: string, _newPassword: string): Promise<void> {
+    if (this.confirmPasswordResetThrows) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+  }
+
   async requestEmailVerification(_userId: string): Promise<void> {}
-  async confirmEmailVerification(_token: string): Promise<void> {}
+
+  async confirmEmailVerification(_token: string): Promise<void> {
+    if (this.confirmEmailVerificationThrows) {
+      throw new BadRequestException("Invalid or expired token");
+    }
+  }
 }
 
 class ScriptedAuthGuard implements CanActivate {
@@ -256,11 +280,18 @@ afterAll(async () => {
 
 beforeEach(() => {
   fakeAuth.mode = "ok";
+  fakeAuth.refreshMode = "ok";
+  fakeAuth.confirmPasswordResetThrows = false;
+  fakeAuth.confirmEmailVerificationThrows = false;
   authGuard.mode = "ok";
 });
 
 function http() {
   return request(app.getHttpServer());
+}
+
+function assertNoBody(res: { text: string }): void {
+  expect(res.text).toBe("");
 }
 
 function assertConformsTo(validate: ValidateFunction, body: unknown): void {
@@ -1949,5 +1980,100 @@ describe("DELETE /api/v1/context/store — contract conformance (T300)", () => {
 
     expect(res.body.active_store).toBeNull();
     assertConformsTo(validateContextResponse, res.body);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice T300 — auth remaining endpoints contract conformance
+// ---------------------------------------------------------------------------
+
+describe("POST /api/v1/auth/signout", () => {
+  it("204 — success has no body", async () => {
+    const res = await http().post("/api/v1/auth/signout").expect(204);
+    assertNoBody(res);
+  });
+
+  it("401 — guard rejection conforms to Error schema", async () => {
+    authGuard.mode = "reject";
+    const res = await http().post("/api/v1/auth/signout").expect(401);
+    assertConformsTo(validateError, res.body);
+  });
+});
+
+describe("POST /api/v1/auth/refresh", () => {
+  it("204 — success has no body", async () => {
+    const res = await http().post("/api/v1/auth/refresh").expect(204);
+    assertNoBody(res);
+  });
+
+  it("401 — expired session conforms to Error schema", async () => {
+    fakeAuth.refreshMode = "expired";
+    const res = await http().post("/api/v1/auth/refresh").expect(401);
+    assertConformsTo(validateError, res.body);
+  });
+});
+
+describe("POST /api/v1/auth/password-reset/request", () => {
+  it("202 — success has no body", async () => {
+    const res = await http()
+      .post("/api/v1/auth/password-reset/request")
+      .send({ email: "user@example.com" })
+      .expect(202);
+    assertNoBody(res);
+  });
+});
+
+describe("POST /api/v1/auth/password-reset/confirm", () => {
+  it("204 — success has no body", async () => {
+    const res = await http()
+      .post("/api/v1/auth/password-reset/confirm")
+      .send({ token: "tok", new_password: "supersecret123" })
+      .expect(204);
+    assertNoBody(res);
+  });
+
+  it("400 — invalid token conforms to Error schema", async () => {
+    fakeAuth.confirmPasswordResetThrows = true;
+    const res = await http()
+      .post("/api/v1/auth/password-reset/confirm")
+      .send({ token: "bad", new_password: "supersecret123" })
+      .expect(400);
+    assertConformsTo(validateError, res.body);
+  });
+});
+
+describe("POST /api/v1/auth/email/verify/request", () => {
+  it("202 — success has no body", async () => {
+    const res = await http()
+      .post("/api/v1/auth/email/verify/request")
+      .expect(202);
+    assertNoBody(res);
+  });
+
+  it("401 — guard rejection conforms to Error schema", async () => {
+    authGuard.mode = "reject";
+    const res = await http()
+      .post("/api/v1/auth/email/verify/request")
+      .expect(401);
+    assertConformsTo(validateError, res.body);
+  });
+});
+
+describe("POST /api/v1/auth/email/verify/confirm", () => {
+  it("204 — success has no body", async () => {
+    const res = await http()
+      .post("/api/v1/auth/email/verify/confirm")
+      .send({ token: "tok" })
+      .expect(204);
+    assertNoBody(res);
+  });
+
+  it("400 — invalid token conforms to Error schema", async () => {
+    fakeAuth.confirmEmailVerificationThrows = true;
+    const res = await http()
+      .post("/api/v1/auth/email/verify/confirm")
+      .send({ token: "bad" })
+      .expect(400);
+    assertConformsTo(validateError, res.body);
   });
 });
