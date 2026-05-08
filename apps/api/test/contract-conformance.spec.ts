@@ -611,6 +611,7 @@ import type {
   PosActiveSessionResponseBody,
   PosOperatorSignInResponseBody,
   PosOperatorSignOutResponseBody,
+  PosRosterResponseBody,
 } from "../src/pos-operators/dto";
 
 // ---------------------------------------------------------------------------
@@ -874,6 +875,7 @@ let validatePosOperatorsError: ValidateFunction;
 let validatePosSignInSucceeded: ValidateFunction;
 let validatePosTakeoverRequired: ValidateFunction;
 let validatePosActiveSessionResponse: ValidateFunction;
+let validatePosRosterResponse: ValidateFunction;
 
 function buildPosOperatorsValidators(): void {
   const contracts = loadOpenApiContracts();
@@ -902,6 +904,9 @@ function buildPosOperatorsValidators(): void {
   validatePosActiveSessionResponse = ajv.compile({
     $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosActiveSessionResponse`,
   });
+  validatePosRosterResponse = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosRosterResponse`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -922,6 +927,10 @@ class FakePosOperatorsService {
   };
 
   public takeoverConfirmResult: PosOperatorSignInResponseBody | { kind: "refused" } = {
+    kind: "refused",
+  };
+
+  public rosterResult: PosRosterResponseBody | { kind: "refused" } = {
     kind: "refused",
   };
 
@@ -955,6 +964,14 @@ class FakePosOperatorsService {
     _requestId: string,
   ): Promise<PosOperatorSignInResponseBody | { kind: "refused" }> {
     return this.takeoverConfirmResult;
+  }
+
+  async roster(
+    _rawJwt: string,
+    _query: unknown,
+    _requestId: string,
+  ): Promise<PosRosterResponseBody | { kind: "refused" }> {
+    return this.rosterResult;
   }
 }
 
@@ -993,6 +1010,7 @@ beforeEach(() => {
   fakePosOperatorsService.signInResult = { kind: "refused" };
   fakePosOperatorsService.activeSessionResult = { kind: "refused" };
   fakePosOperatorsService.takeoverConfirmResult = { kind: "refused" };
+  fakePosOperatorsService.rosterResult = { kind: "refused" };
 });
 
 function posOperatorsHttp() {
@@ -1414,6 +1432,122 @@ describe("POST /api/pos/v1/operators/takeover/confirm — contract conformance (
         .post("/api/pos/v1/operators/takeover/confirm")
         .set("Authorization", "Bearer fake-jwt-token")
         .send(makeConfirmBody())
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 8 — GET /api/pos/v1/operators/roster
+// =============================================================================
+//
+// pos-operators.openapi.yaml defines only 200 and 401 for this endpoint.
+// 200 uses PosRosterResponse: { cashiers: PosRosterCashierEntry[] }.
+// 401 uses the shared Error schema.
+// No 400 body schema is defined in the contract — 400 tests are omitted.
+//
+// branch_id is an optional query param but is included in all requests,
+// including missing-Bearer tests, to avoid triggering Zod 400 before auth.
+//
+// The same posOperatorsApp fixture is reused.
+
+const FAKE_ROSTER_BRANCH_ID = "0195b600-0000-7000-8000-000000000010";
+
+describe("GET /api/pos/v1/operators/roster — contract conformance (T300)", () => {
+  describe("200 — empty roster", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.rosterResult = { cashiers: [] };
+    });
+
+    it("response body conforms to PosRosterResponse schema", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      assertConformsTo(validatePosRosterResponse, res.body);
+    });
+
+    it("cashiers is an empty array", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      expect(res.body.cashiers).toEqual([]);
+      assertConformsTo(validatePosRosterResponse, res.body);
+    });
+  });
+
+  describe("200 — one cashier", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.rosterResult = {
+        cashiers: [
+          {
+            id: "user_fake_clerk_sub",
+            display_name: "Test Cashier",
+            role: "cashier",
+          },
+        ],
+      };
+    });
+
+    it("response body conforms to PosRosterResponse schema", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      assertConformsTo(validatePosRosterResponse, res.body);
+    });
+
+    it("cashier entry has id, display_name, and role cashier", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
+        .expect(200);
+
+      expect(res.body.cashiers).toHaveLength(1);
+      const cashier = res.body.cashiers[0];
+      expect(typeof cashier.id).toBe("string");
+      expect(typeof cashier.display_name).toBe("string");
+      expect(cashier.role).toBe("cashier");
+      assertConformsTo(validatePosRosterResponse, res.body);
+    });
+  });
+
+  describe("401 — missing Bearer token", () => {
+    it("response body conforms to Error schema when Authorization header is absent", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+
+    it("401 error envelope has required error.code and error.message fields", async () => {
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .expect(401);
+
+      expect(res.body).toMatchObject({
+        error: {
+          code: expect.any(String),
+          message: expect.any(String),
+        },
+      });
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+
+  describe("401 — service refuses", () => {
+    it("response body conforms to Error schema when service returns refused", async () => {
+      // rosterResult is reset to { kind: "refused" } by the outer beforeEach
+      const res = await posOperatorsHttp()
+        .get(`/api/pos/v1/operators/roster?branch_id=${FAKE_ROSTER_BRANCH_ID}`)
+        .set("Authorization", "Bearer fake-jwt-token")
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
