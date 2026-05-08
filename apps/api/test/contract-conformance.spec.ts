@@ -1683,9 +1683,40 @@ const SWITCHED_TENANT_RESPONSE: ContextResponseBody = {
   ],
 };
 
+const SWITCHED_STORE_RESPONSE: ContextResponseBody = {
+  user: {
+    id: FAKE_CONTEXT_USER_ID,
+    email: "test@example.com",
+    display_name: "Test User",
+    is_platform_admin: false,
+  },
+  active_tenant: {
+    id: FAKE_CONTEXT_TENANT_ID,
+    slug: "acme",
+    name: "Acme Corp",
+  },
+  active_store: {
+    id: FAKE_CONTEXT_STORE_ID,
+    code: "S01",
+    name: "Main Store",
+  },
+  active_role_code: "tenant_admin",
+  memberships: [
+    {
+      tenant_id: FAKE_CONTEXT_TENANT_ID,
+      tenant_name: "Acme Corp",
+      role_code: "tenant_admin",
+      store_access_kind: "all",
+      accessible_store_ids: [FAKE_CONTEXT_STORE_ID],
+    },
+  ],
+};
+
 class FakeContextService {
   public response: ContextResponseBody = EMPTY_CONTEXT_RESPONSE;
   public switchTenantResponse: ContextResponseBody = EMPTY_CONTEXT_RESPONSE;
+  public switchStoreResponse: ContextResponseBody = EMPTY_CONTEXT_RESPONSE;
+  public clearStoreResponse: ContextResponseBody = EMPTY_CONTEXT_RESPONSE;
 
   async getActiveContext(_principal: unknown): Promise<ContextResponseBody> {
     return this.response;
@@ -1693,6 +1724,14 @@ class FakeContextService {
 
   async switchTenant(_principal: unknown, _tenantId: string): Promise<ContextResponseBody> {
     return this.switchTenantResponse;
+  }
+
+  async switchStore(_principal: unknown, _storeId: string): Promise<ContextResponseBody> {
+    return this.switchStoreResponse;
+  }
+
+  async clearStore(_principal: unknown): Promise<ContextResponseBody> {
+    return this.clearStoreResponse;
   }
 }
 
@@ -1745,6 +1784,8 @@ afterAll(async () => {
 beforeEach(() => {
   fakeContextService.response = EMPTY_CONTEXT_RESPONSE;
   fakeContextService.switchTenantResponse = EMPTY_CONTEXT_RESPONSE;
+  fakeContextService.switchStoreResponse = EMPTY_CONTEXT_RESPONSE;
+  fakeContextService.clearStoreResponse = EMPTY_CONTEXT_RESPONSE;
 });
 
 function contextHttp() {
@@ -1850,6 +1891,63 @@ describe("POST /api/v1/context/tenant — contract conformance (T300)", () => {
     expect(res.body.memberships).toHaveLength(1);
     expect(Array.isArray(res.body.memberships[0].accessible_store_ids)).toBe(true);
     expect(typeof res.body.active_role_code).toBe("string");
+    assertConformsTo(validateContextResponse, res.body);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — POST /api/v1/context/store
+// ---------------------------------------------------------------------------
+
+describe("POST /api/v1/context/store — contract conformance (T300)", () => {
+  beforeEach(() => {
+    fakeContextService.switchStoreResponse = SWITCHED_STORE_RESPONSE;
+  });
+
+  it("200 — response body conforms to ContextResponse schema", async () => {
+    const res = await contextHttp()
+      .post("/api/v1/context/store")
+      .send({ store_id: FAKE_CONTEXT_STORE_ID })
+      .expect(200);
+
+    assertConformsTo(validateContextResponse, res.body);
+  });
+
+  it("200 — active_store is non-null and id matches requested store_id", async () => {
+    const res = await contextHttp()
+      .post("/api/v1/context/store")
+      .send({ store_id: FAKE_CONTEXT_STORE_ID })
+      .expect(200);
+
+    expect(res.body.active_store).not.toBeNull();
+    expect(res.body.active_store.id).toBe(FAKE_CONTEXT_STORE_ID);
+    assertConformsTo(validateContextResponse, res.body);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — DELETE /api/v1/context/store
+// ---------------------------------------------------------------------------
+
+describe("DELETE /api/v1/context/store — contract conformance (T300)", () => {
+  beforeEach(() => {
+    fakeContextService.clearStoreResponse = SWITCHED_TENANT_RESPONSE;
+  });
+
+  it("200 — response body conforms to ContextResponse schema", async () => {
+    const res = await contextHttp()
+      .delete("/api/v1/context/store")
+      .expect(200);
+
+    assertConformsTo(validateContextResponse, res.body);
+  });
+
+  it("200 — active_store is null after clear", async () => {
+    const res = await contextHttp()
+      .delete("/api/v1/context/store")
+      .expect(200);
+
+    expect(res.body.active_store).toBeNull();
     assertConformsTo(validateContextResponse, res.body);
   });
 });
