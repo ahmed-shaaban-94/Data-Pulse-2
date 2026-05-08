@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Security icon</title>
+  <desc id="desc">Shield security icon.</desc>
+  <rect width="96" height="96" rx="20" fill="#eff6ff"/>
+  <path d="M48 14 75 25v20c0 18-10 30-27 39-17-9-27-21-27-39V25z" fill="#1d4ed8"/>
+  <path d="m36 49 8 8 18-22" fill="none" stroke="#bfdbfe" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

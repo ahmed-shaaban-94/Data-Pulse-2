@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Worker icon</title>
+  <desc id="desc">Background worker processing icon.</desc>
+  <rect width="96" height="96" rx="20" fill="#ecfdf5"/>
+  <circle cx="48" cy="48" r="24" fill="#0f766e"/>
+  <path d="M48 20v10M48 66v10M20 48h10M66 48h10M28 28l7 7M61 61l7 7M68 28l-7 7M35 61l-7 7" stroke="#14b8a6" stroke-width="5" stroke-linecap="round"/>
+  <path d="M43 38 58 48 43 58z" fill="#ccfbf1"/>
+</svg>

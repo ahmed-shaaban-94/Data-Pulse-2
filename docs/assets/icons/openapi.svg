@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">OpenAPI icon</title>
+  <desc id="desc">OpenAPI contract hub icon.</desc>
+  <rect width="96" height="96" rx="20" fill="#f0fdfa"/>
+  <circle cx="48" cy="48" r="27" fill="none" stroke="#0f766e" stroke-width="7"/>
+  <circle cx="48" cy="48" r="8" fill="#0f766e"/>
+  <path d="M48 21v14M48 61v14M21 48h14M61 48h14" stroke="#14b8a6" stroke-width="6" stroke-linecap="round"/>
+</svg>

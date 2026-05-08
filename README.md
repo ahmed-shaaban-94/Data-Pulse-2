@@ -1,97 +1,109 @@
-# Data-Pulse-2
+# Data Pulse
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-339933.svg)](.nvmrc)
-[![pnpm](https://img.shields.io/badge/pnpm-9.15.0-F69220.svg)](package.json)
-[![TypeScript](https://img.shields.io/badge/typescript-strict-3178C6.svg)](tsconfig.base.json)
-[![NestJS](https://img.shields.io/badge/NestJS-11-E0234E.svg)](apps/api)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D20-2563eb.svg)](.nvmrc)
+[![pnpm](https://img.shields.io/badge/pnpm-9.15.0-f59e0b.svg)](package.json)
+[![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6.svg)](tsconfig.base.json)
+[![NestJS](https://img.shields.io/badge/NestJS-11-e0234e.svg)](apps/api)
 
-Data-Pulse-2 is the backend foundation for a multi-tenant SaaS platform. It
-owns the API, worker runtime, database schema, shared contracts, and
-cross-cutting platform primitives that future dashboard and POS experiences
-will build on.
+Data Pulse is the secure multi-tenant SaaS foundation for retail operations.
+This repository, `Data-Pulse-2`, contains the backend platform layer: API,
+workers, database schema, contract packages, and shared primitives that future
+dashboard and POS experiences build on.
 
-The repository is intentionally backend-first today. The dashboard UI is a
-deferred feature, and POS applications live outside this repository.
+The current product slice is intentionally backend-first. The dashboard UI is a
+separate future feature, and POS applications live in separate repositories.
 
-![Data-Pulse-2 architecture](docs/assets/data-pulse-architecture.svg)
+![Data Pulse platform hero](docs/assets/hero-data-pulse.svg)
 
-## Highlights
+## Why Data Pulse
 
-- Multi-tenant API foundation with tenant and store context switching.
-- Contract-first OpenAPI 3.1 package used as the source of API truth.
-- PostgreSQL 16 schema and explicit SQL migrations managed through Drizzle
-  schema definitions and a migration CLI.
-- BullMQ worker process for asynchronous email jobs, backed by Redis.
-- Shared security and observability primitives: argon2id password hashing,
-  token hashing, structured error envelopes, pino logging, OpenTelemetry setup,
-  request IDs, Zod validation, and Helmet.
-- Testable NestJS modules with Jest, Supertest, and Testcontainers coverage
-  patterns.
+Retail data systems become expensive when tenant boundaries, store ownership,
+audit trails, and POS integration contracts are treated as afterthoughts. Data
+Pulse makes those platform rules explicit from the start.
+
+| Capability | What it protects |
+| --- | --- |
+| ![Tenant isolation](docs/assets/icons/tenant-isolation.svg) Tenant isolation | Tenant and store context are first-class at the API, database, and test layers. |
+| ![Contracts](docs/assets/icons/contracts.svg) Contract-first APIs | OpenAPI 3.1 contracts are the integration source of truth, not generated side effects. |
+| ![Audit](docs/assets/icons/audit.svg) Auditability | Security-sensitive workflows preserve actor, tenant, operation, outcome, and correlation context. |
+| ![Workers](docs/assets/icons/worker.svg) Worker-owned async jobs | Email, fanout, retries, and future scheduled work live outside request handlers. |
+| ![Observability](docs/assets/icons/observability.svg) Operational visibility | Request IDs, structured logging, and OpenTelemetry primitives are built into the platform layer. |
+| ![Database](docs/assets/icons/database.svg) Durable source of truth | PostgreSQL remains authoritative; Redis-backed state is disposable coordination. |
+
+## Platform Shape
+
+Data Pulse is a pnpm workspace with two deployable services and four internal
+packages. The API owns synchronous HTTP behavior; the worker owns asynchronous
+processing; PostgreSQL owns durable state; Redis coordinates queues.
+
+![Data Pulse architecture](docs/assets/architecture-isometric.svg)
+
+```mermaid
+flowchart LR
+  clients["Dashboard / API clients<br/>future consumers"]
+  pos["POS clients<br/>external repo"]
+  api["apps/api<br/>NestJS HTTP API"]
+  worker["apps/worker<br/>NestJS worker"]
+  contracts["packages/contracts<br/>OpenAPI 3.1"]
+  auth["packages/auth<br/>passwords and tokens"]
+  db["packages/db<br/>schema and migrations"]
+  shared["packages/shared<br/>errors, logs, ids, queues"]
+  pg[("PostgreSQL 16<br/>system of record")]
+  redis[("Redis 7<br/>BullMQ coordination")]
+
+  clients --> api
+  pos -. authenticated contracts .-> api
+  api --> contracts
+  api --> auth
+  api --> db
+  api --> shared
+  api --> pg
+  api -- enqueue jobs --> redis
+  worker -- consume jobs --> redis
+  worker --> shared
+```
 
 ## Repository Map
 
 | Path | Purpose |
 | --- | --- |
-| `apps/api` | NestJS HTTP API with auth, active context, validation, logging, request IDs, exception envelopes, and OpenAPI loading. |
-| `apps/worker` | NestJS standalone worker process for BullMQ-backed background jobs. |
-| `packages/auth` | Shared password, token, session, and auth token primitives. |
+| `apps/api` | NestJS HTTP API with auth, active context, validation, request IDs, logging, exception envelopes, and OpenAPI loading. |
+| `apps/worker` | Standalone NestJS worker runtime for BullMQ-backed background processing. |
+| `packages/auth` | Password hashing, token hashing, session types, and auth primitives. |
 | `packages/contracts` | OpenAPI 3.1 YAML contracts of record. |
-| `packages/db` | Drizzle schema, SQL migrations, tenant helpers, and migration CLI. |
-| `packages/shared` | Shared Zod, errors, logging, observability, IDs, and queue configuration. |
-| `specs/001-foundation-auth-tenant-store` | Product, architecture, data model, and acceptance artifacts for the active foundation feature. |
-| `docs` | GitHub-facing architecture and contributor documentation. |
+| `packages/db` | Drizzle schema, explicit SQL migrations, tenant helpers, and migration CLI. |
+| `packages/shared` | Shared Zod helpers, error envelopes, logging, observability, IDs, and queue configuration. |
+| `specs/001-foundation-auth-tenant-store` | Active foundation feature artifacts: spec, plan, research, data model, contracts, quickstart, and tasks. |
+| `specs/002-pos-operator-identity` | POS operator identity specification and contracts. |
+| `docs` | Architecture, documentation index, and presentation assets. |
 
-## Architecture
+## What This Repo Owns
 
-Data-Pulse-2 is a pnpm workspace with two deployable apps and four internal
-packages. The API owns synchronous HTTP behavior; workers own asynchronous
-processing; PostgreSQL remains the system of record; Redis supports queues and
-runtime coordination.
+- Multi-tenant SaaS backend foundation.
+- Admin/dashboard backend APIs and shared contracts.
+- Worker runtime and queue integration patterns.
+- PostgreSQL schema, migrations, and tenant helpers.
+- Shared platform primitives for auth, observability, validation, and errors.
 
-```mermaid
-flowchart LR
-  clients["Dashboard UI / API clients<br/>future dashboard feature"]
-  pos["POS clients<br/>future external repo"]
+## What This Repo Does Not Own
 
-  api["apps/api<br/>NestJS HTTP API"]
-  worker["apps/worker<br/>NestJS worker runtime"]
-
-  contracts["packages/contracts<br/>OpenAPI 3.1 YAML"]
-  auth["packages/auth<br/>passwords, tokens, session types"]
-  dbpkg["packages/db<br/>schema, migrations, tenant helpers"]
-  shared["packages/shared<br/>logging, errors, zod, otel, queues"]
-
-  postgres[("PostgreSQL 16<br/>system of record")]
-  redis[("Redis 7<br/>BullMQ + runtime coordination")]
-
-  clients --> api
-  pos -. reserved contracts .-> api
-  api --> contracts
-  api --> auth
-  api --> dbpkg
-  api --> shared
-  api --> postgres
-  api --> redis
-  api -- email jobs --> redis
-  worker --> redis
-  worker --> shared
-  worker --> postgres
-```
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module map,
-data flow, deployment shape, and boundaries.
+- POS application code.
+- Dashboard frontend implementation.
+- Production infrastructure manifests beyond local development support.
+- Legacy `Data-Pulse` code as source material. The legacy repo is reference
+  only and must be re-specified before anything is rebuilt here.
 
 ## Tech Stack
 
-- Runtime: Node.js 20, pnpm 9.15, TypeScript 5.6 strict mode.
-- API: NestJS 11, Express platform, Helmet, cookie-parser, Zod validation.
-- Data: PostgreSQL 16, Drizzle ORM schema, explicit SQL migrations, RLS-oriented
-  tenant context helpers.
-- Jobs: Redis 7, BullMQ.
-- Observability: pino, OpenTelemetry SDK and HTTP/Postgres/Redis
-  instrumentation.
-- Testing: Jest, ts-jest, Supertest, Testcontainers PostgreSQL.
+| Layer | Stack |
+| --- | --- |
+| Runtime | Node.js 20 LTS, pnpm 9.15, TypeScript 5 strict mode |
+| API | NestJS 11, Express platform, Helmet, cookie-parser, Zod validation |
+| Data | PostgreSQL 16, Drizzle schema, explicit SQL migrations |
+| Jobs | Redis 7, BullMQ |
+| Observability | pino, OpenTelemetry SDK, HTTP/Postgres/Redis instrumentation |
+| Testing | Jest, ts-jest, Supertest, Testcontainers PostgreSQL |
 
 ## Getting Started
 
@@ -108,7 +120,7 @@ data flow, deployment shape, and boundaries.
 pnpm install
 ```
 
-### Start local infrastructure
+### Start Local Infrastructure
 
 ```bash
 pnpm db:up
@@ -126,7 +138,7 @@ DATABASE_URL=postgres://dp2:dp2_dev_password@localhost:5432/data_pulse_2
 REDIS_URL=redis://localhost:6379
 ```
 
-### Build, test, and lint
+### Build, Test, And Lint
 
 ```bash
 pnpm build
@@ -134,7 +146,7 @@ pnpm test
 pnpm lint
 ```
 
-### Run apps
+### Run Services
 
 ```bash
 pnpm --filter @data-pulse-2/api start
@@ -144,38 +156,23 @@ pnpm --filter @data-pulse-2/worker start
 During development, package-level `start:dev` scripts compile in watch mode
 where available.
 
-## Development Workflow
-
-1. Read [CLAUDE.md](CLAUDE.md) and the active spec before changing behavior.
-2. Keep code inside the existing workspace boundaries: apps depend on packages;
-   packages do not depend on apps.
-3. Add or update tests with behavior changes, especially for tenant isolation,
-   authz, migrations, and worker failure paths.
-4. Run the narrowest useful verification locally, then the root commands before
-   opening a PR.
-5. Use the existing GitHub pull request template and fill out the Constitution
-   Check for every change.
-
-## Deployment Notes
-
-- `apps/api` is the HTTP service and requires `DATABASE_URL`; production email
-  job enqueueing requires `REDIS_URL`.
-- `apps/worker` is a standalone Nest application context; production requires
-  `REDIS_URL` so BullMQ workers can subscribe to queues.
-- PostgreSQL is the source of truth. Redis-backed state must remain disposable.
-- SQL migrations under `packages/db/drizzle` are versioned artifacts and should
-  be reviewed with rollback and lock-duration risk in mind.
-- The local Docker compose file is developer-only and is not a production
-  deployment manifest.
-
 ## Documentation
 
+- [Documentation index](docs/README.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 - [Foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md)
 - [Foundation data model](specs/001-foundation-auth-tenant-store/data-model.md)
+- [Contracts package](packages/contracts/README.md)
 - [Pull request template](.github/pull_request_template.md)
+
+## Development Agreement
+
+Data Pulse follows the active Constitution and Spec Kit workflow. Start from
+the current spec, keep changes thin, preserve tenant isolation, and do not
+change dependency manifests, lockfiles, SQL migrations, or database schema
+without explicit approval.
 
 ## License
 

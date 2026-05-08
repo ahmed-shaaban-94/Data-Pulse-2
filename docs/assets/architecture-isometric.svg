@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Data Pulse isometric architecture</title>
+  <desc id="desc">Isometric architecture view showing clients, API, worker, packages, PostgreSQL, Redis, OpenAPI contracts, and observability.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="0.55" stop-color="#eef7f7"/>
+      <stop offset="1" stop-color="#f8f5ed"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0891b2"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="slate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#475569"/>
+      <stop offset="1" stop-color="#1e293b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.18"/>
+    </filter>
+    <style>
+      .title { font: 800 30px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #475569; }
+      .white { font: 800 18px Arial, sans-serif; fill: #ffffff; }
+      .whiteSmall { font: 600 13px Arial, sans-serif; fill: #e2e8f0; }
+      .dark { font: 800 15px Arial, sans-serif; fill: #0f172a; }
+      .small { font: 600 12px Arial, sans-serif; fill: #475569; }
+      .line { stroke: #334155; stroke-width: 4; stroke-linecap: round; fill: none; }
+      .dash { stroke: #64748b; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 8 10; fill: none; }
+    </style>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <text x="72" y="72" class="title">Data Pulse Backend Foundation</text>
+  <text x="72" y="100" class="subtitle">Tenant-safe API, worker runtime, contracts, durable PostgreSQL state, and Redis coordination.</text>
+
+  <path d="M244 248 C348 190 426 192 520 238" class="line"/>
+  <path d="M742 256 C805 246 866 260 932 304" class="line"/>
+  <path d="M602 420 C604 478 566 520 498 548" class="dash"/>
+  <path d="M704 420 C764 500 850 534 950 514" class="dash"/>
+
+  <g filter="url(#shadow)">
+    <polygon points="96,248 224,184 352,248 224,312" fill="#dbeafe"/>
+    <polygon points="96,248 224,312 224,382 96,318" fill="#bfdbfe"/>
+    <polygon points="224,312 352,248 352,318 224,382" fill="#93c5fd"/>
+    <text x="180" y="252" class="dark">Clients</text>
+    <text x="152" y="282" class="small">Dashboard / API</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <polygon points="472,232 640,148 808,232 640,316" fill="url(#blue)"/>
+    <polygon points="472,232 640,316 640,442 472,358" fill="#1d4ed8"/>
+    <polygon points="640,316 808,232 808,358 640,442" fill="#0e7490"/>
+    <text x="600" y="232" class="white">apps/api</text>
+    <text x="552" y="262" class="whiteSmall">Auth, context, validation</text>
+    <text x="522" y="342" class="whiteSmall">OpenAPI loading</text>
+    <text x="664" y="342" class="whiteSmall">Tenant-safe DB access</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <polygon points="932,304 1050,245 1168,304 1050,363" fill="url(#teal)"/>
+    <polygon points="932,304 1050,363 1050,450 932,391" fill="#0f766e"/>
+    <polygon points="1050,363 1168,304 1168,391 1050,450" fill="#115e59"/>
+    <text x="997" y="307" class="white">apps/worker</text>
+    <text x="1001" y="337" class="whiteSmall">BullMQ jobs</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <polygon points="338,548 498,468 658,548 498,628" fill="#ffffff"/>
+    <polygon points="338,548 498,628 498,662 338,582" fill="#e2e8f0"/>
+    <polygon points="498,628 658,548 658,582 498,662" fill="#cbd5e1"/>
+    <text x="436" y="548" class="dark">Packages</text>
+    <text x="388" y="576" class="small">contracts auth db shared</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <polygon points="806,540 948,469 1090,540 948,611" fill="url(#amber)"/>
+    <polygon points="806,540 948,611 948,652 806,581" fill="#d97706"/>
+    <polygon points="948,611 1090,540 1090,581 948,652" fill="#b45309"/>
+    <text x="901" y="540" class="white">PostgreSQL</text>
+    <text x="892" y="570" class="whiteSmall">System of record</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="892" y="112" width="220" height="72" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="922" y="145" class="dark">OpenAPI contracts</text>
+    <text x="922" y="168" class="small">packages/contracts</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="132" y="456" width="174" height="68" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+    <text x="162" y="486" class="dark">Redis 7</text>
+    <text x="162" y="508" class="small">Queues and coordination</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="704" y="84" width="142" height="58" rx="12" fill="url(#slate)"/>
+    <text x="734" y="118" class="white">Telemetry</text>
+  </g>
+</svg>

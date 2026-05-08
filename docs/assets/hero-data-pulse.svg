@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
+  <title id="title">Data Pulse platform hero</title>
+  <desc id="desc">Enterprise SaaS hero showing tenant-safe retail data flowing through API, workers, contracts, PostgreSQL, and Redis.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.5" stop-color="#10233d"/>
+      <stop offset="1" stop-color="#0f3b3f"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#2dd4bf"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+    <style>
+      .eyebrow { font: 700 15px Arial, sans-serif; letter-spacing: 2px; fill: #67e8f9; }
+      .title { font: 800 58px Arial, sans-serif; fill: #ffffff; }
+      .copy { font: 500 21px Arial, sans-serif; fill: #cbd5e1; }
+      .chip { font: 700 13px Arial, sans-serif; fill: #dbeafe; }
+      .nodeTitle { font: 800 18px Arial, sans-serif; fill: #ffffff; }
+      .nodeText { font: 600 13px Arial, sans-serif; fill: #dbeafe; }
+      .line { stroke: #67e8f9; stroke-width: 3; stroke-linecap: round; fill: none; opacity: 0.7; }
+    </style>
+  </defs>
+  <rect width="1280" height="520" fill="url(#bg)"/>
+  <path d="M0 410 C190 350 300 440 468 372 C665 292 810 360 992 294 C1122 247 1200 250 1280 224 L1280 520 L0 520 Z" fill="#0f766e" opacity="0.18"/>
+  <path d="M0 456 C238 400 330 486 520 428 C710 370 820 430 1018 356 C1132 314 1215 316 1280 294 L1280 520 L0 520 Z" fill="#2563eb" opacity="0.16"/>
+
+  <g transform="translate(76 92)">
+    <text class="eyebrow" x="0" y="0">MULTI-TENANT RETAIL SAAS FOUNDATION</text>
+    <text class="title" x="0" y="72">Data Pulse</text>
+    <text class="copy" x="0" y="118">Secure API, worker, contract, and data primitives for</text>
+    <text class="copy" x="0" y="150">tenant-safe retail operations at SaaS scale.</text>
+    <g transform="translate(0 204)">
+      <rect width="140" height="38" rx="19" fill="#ffffff" opacity="0.1" stroke="#38bdf8" stroke-opacity="0.45"/>
+      <text class="chip" x="22" y="25">Tenant-safe</text>
+      <rect x="158" width="152" height="38" rx="19" fill="#ffffff" opacity="0.1" stroke="#38bdf8" stroke-opacity="0.45"/>
+      <text class="chip" x="181" y="25">Contract-first</text>
+      <rect x="328" width="130" height="38" rx="19" fill="#ffffff" opacity="0.1" stroke="#38bdf8" stroke-opacity="0.45"/>
+      <text class="chip" x="352" y="25">Auditable</text>
+    </g>
+  </g>
+
+  <g transform="translate(690 72)" filter="url(#shadow)">
+    <rect x="0" y="0" width="466" height="338" rx="24" fill="url(#panel)" stroke="#94a3b8" stroke-opacity="0.35"/>
+    <g transform="translate(54 54)">
+      <path d="M72 80 C120 32 190 30 238 78" class="line"/>
+      <path d="M92 175 C155 215 236 204 286 143" class="line"/>
+      <path d="M244 78 C304 72 336 104 348 158" class="line"/>
+      <g>
+        <polygon points="42,78 96,48 150,78 96,108" fill="url(#accent)"/>
+        <polygon points="42,78 96,108 96,158 42,128" fill="#2563eb"/>
+        <polygon points="96,108 150,78 150,128 96,158" fill="#0891b2"/>
+        <text class="nodeTitle" x="74" y="84">API</text>
+        <text class="nodeText" x="54" y="124">NestJS</text>
+      </g>
+      <g>
+        <polygon points="228,78 282,48 336,78 282,108" fill="url(#gold)"/>
+        <polygon points="228,78 282,108 282,158 228,128" fill="#d97706"/>
+        <polygon points="282,108 336,78 336,128 282,158" fill="#b45309"/>
+        <text class="nodeTitle" x="249" y="84">DB</text>
+        <text class="nodeText" x="244" y="124">Postgres</text>
+      </g>
+      <g>
+        <polygon points="132,198 186,168 240,198 186,228" fill="#334155"/>
+        <polygon points="132,198 186,228 186,278 132,248" fill="#1e293b"/>
+        <polygon points="186,228 240,198 240,248 186,278" fill="#0f172a"/>
+        <text class="nodeTitle" x="148" y="204">Contracts</text>
+        <text class="nodeText" x="151" y="244">OpenAPI</text>
+      </g>
+      <g>
+        <polygon points="286,186 340,156 394,186 340,216" fill="#14b8a6"/>
+        <polygon points="286,186 340,216 340,266 286,236" fill="#0f766e"/>
+        <polygon points="340,216 394,186 394,236 340,266" fill="#115e59"/>
+        <text class="nodeTitle" x="302" y="192">Worker</text>
+        <text class="nodeText" x="314" y="232">BullMQ</text>
+      </g>
+    </g>
+  </g>
+</svg>

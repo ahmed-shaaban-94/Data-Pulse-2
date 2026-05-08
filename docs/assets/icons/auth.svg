@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Auth icon</title>
+  <desc id="desc">Secure lock and token icon.</desc>
+  <rect width="96" height="96" rx="20" fill="#ecfdf5"/>
+  <rect x="25" y="42" width="46" height="36" rx="8" fill="#0f766e"/>
+  <path d="M34 42v-9c0-9 6-15 14-15s14 6 14 15v9" fill="none" stroke="#115e59" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="48" cy="60" r="6" fill="#ccfbf1"/>
+  <path d="M48 66v6" stroke="#ccfbf1" stroke-width="4" stroke-linecap="round"/>
+</svg>

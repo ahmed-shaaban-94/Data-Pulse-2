@@ -1,20 +1,33 @@
-# Data-Pulse-2 Architecture
+# Data Pulse Architecture
 
-Data-Pulse-2 is a backend-first TypeScript monorepo for a multi-tenant SaaS
-foundation. The current repository owns the API, worker runtime, contracts,
-database schema, and shared platform primitives. The dashboard frontend is a
-separate future feature, and POS applications are external to this repository.
+Data Pulse is a backend-first TypeScript monorepo for a multi-tenant SaaS
+foundation. The repository owns the API, worker runtime, contracts, database
+schema, and shared platform primitives. Dashboard UI work is deferred to a
+separate feature, and POS applications remain external repositories.
 
-![Data-Pulse-2 architecture](assets/data-pulse-architecture.svg)
+![Data Pulse architecture](assets/architecture-isometric.svg)
+
+## Executive Summary
+
+Data Pulse separates synchronous platform behavior from asynchronous processing.
+`apps/api` handles authenticated HTTP requests, tenant/store context selection,
+validation, logging, contract loading, and database access. `apps/worker`
+handles background jobs through Redis and BullMQ. Internal packages hold the
+shared contracts, database schema, auth primitives, and cross-cutting platform
+utilities.
+
+PostgreSQL is the durable source of truth. Redis is runtime coordination, never
+domain truth. OpenAPI YAML in `packages/contracts/openapi` is the integration
+contract of record.
 
 ## System Shape
 
 ```mermaid
 flowchart TB
-  subgraph clients["Clients"]
+  subgraph clients["Clients and consumers"]
     dashboard["Dashboard UI<br/>future feature"]
     apiClients["API consumers"]
-    pos["POS clients<br/>external future repo"]
+    pos["POS clients<br/>external repository"]
   end
 
   subgraph apps["Deployable apps"]
@@ -30,11 +43,11 @@ flowchart TB
   end
 
   postgres[("PostgreSQL 16<br/>system of record")]
-  redis[("Redis 7<br/>BullMQ, rate-limit seams, coordination")]
+  redis[("Redis 7<br/>BullMQ coordination")]
 
   dashboard --> api
   apiClients --> api
-  pos -. contract reserved .-> api
+  pos -. reserved authenticated contracts .-> api
 
   api --> contracts
   api --> auth
@@ -43,7 +56,7 @@ flowchart TB
   api --> postgres
   api --> redis
 
-  api -- enqueue email jobs --> redis
+  api -- enqueue async jobs --> redis
   worker -- consume jobs --> redis
   worker --> shared
   worker -. future processors .-> postgres
@@ -56,7 +69,7 @@ flowchart TB
 | `apps/api` | HTTP bootstrap, auth endpoints, active tenant/store context, validation, exception envelopes, request IDs, logging, OpenAPI contract loading, PostgreSQL access, queue production. | Background processing, dashboard UI, POS app code. |
 | `apps/worker` | Standalone Nest application context, BullMQ worker factory, email queue consumption, provider-adapter seams, graceful shutdown. | HTTP routing, tenant context selection, frontend behavior. |
 | PostgreSQL | Durable source of truth, constraints, migrations, tenant isolation policy support. | Cache semantics or queue delivery. |
-| Redis | BullMQ transport and runtime coordination seams. | Durable domain truth. |
+| Redis | BullMQ transport and runtime coordination. | Durable domain truth. |
 
 ## Package Boundaries
 
@@ -79,7 +92,7 @@ flowchart LR
   db -. no app imports .-> shared
 ```
 
-Rules:
+Boundary rules:
 
 - Apps may depend on packages.
 - Packages must not import from `apps/*`.
@@ -99,11 +112,11 @@ sequenceDiagram
   participant Queue as Redis/BullMQ
 
   Client->>API: HTTP request
-  API->>API: request id, logging, helmet, cookies
-  API->>API: Zod validation and exception envelope
-  API->>Auth: session or token validation
+  API->>API: assign request id, log, helmet, cookies
+  API->>API: validate body and normalize exception envelope
+  API->>Auth: validate session or token
   Auth->>DB: session/token lookup
-  API->>Context: tenant/store context resolution
+  API->>Context: resolve tenant/store context
   Context->>DB: membership and store access lookup
   API->>DB: tenant-scoped read/write
   API-->>Queue: enqueue async email job when needed
@@ -165,7 +178,8 @@ Required production configuration:
 ## Current Gaps By Design
 
 - Dashboard/web UI is not scaffolded in this foundation slice.
-- POS endpoints are reserved by contract strategy but are out of scope here.
+- POS endpoints are reserved by contract strategy but POS app code is out of
+  scope here.
 - Real email provider wiring is behind the worker adapter seam.
-- Additional domain modules such as tenants, stores, memberships, invitations,
-  and audit are staged through the active specification and task list.
+- Additional retail domain modules are staged through active specifications and
+  task lists.

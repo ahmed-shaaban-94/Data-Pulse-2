@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Audit icon</title>
+  <desc id="desc">Audit log document with verified checkmark.</desc>
+  <rect width="96" height="96" rx="20" fill="#f8fafc"/>
+  <rect x="25" y="16" width="46" height="64" rx="8" fill="#ffffff" stroke="#334155" stroke-width="4"/>
+  <path d="M36 34h24M36 46h20M36 58h14" stroke="#64748b" stroke-width="4" stroke-linecap="round"/>
+  <path d="m49 68 7 7 16-20" fill="none" stroke="#0f766e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
