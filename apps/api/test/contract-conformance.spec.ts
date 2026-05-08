@@ -82,11 +82,26 @@ function openapiSchemaToJsonSchema(node: unknown): unknown {
     result[key] = openapiSchemaToJsonSchema(value);
   }
 
+  // Case 1: { type: T, nullable: true } → { type: [T, "null"] }
   if (
     result["nullable"] === true &&
     typeof result["type"] === "string"
   ) {
     result["type"] = [result["type"] as string, "null"];
+    delete result["nullable"];
+  }
+
+  // Case 2: { $ref: "...", nullable: true } → { anyOf: [{ $ref }, { type: "null" }] }
+  // OpenAPI 3.0 places nullable at the same level as $ref; JSON Schema requires anyOf.
+  if (result["nullable"] === true && typeof result["$ref"] === "string") {
+    const ref = result["$ref"] as string;
+    delete result["nullable"];
+    delete result["$ref"];
+    return { ...result, anyOf: [{ $ref: ref }, { type: "null" }] };
+  }
+
+  // Case 3: stray nullable (no type, no $ref) — remove to avoid AJV keyword errors.
+  if (result["nullable"] === true) {
     delete result["nullable"];
   }
 
@@ -1551,6 +1566,215 @@ describe("GET /api/pos/v1/operators/roster — contract conformance (T300)", () 
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 9 — GET /api/v1/context/me
+// =============================================================================
+//
+// context.openapi.yaml defines one 200 schema (ContextResponse, named
+// component). 401 is a bare description line with no content/schema —
+// conformance tests for that status are intentionally omitted.
+// AuthGuard only — no TenantContextGuard or RolesGuard for this endpoint.
+
+import { ContextController } from "../src/context/context.controller";
+import { ContextService, type ContextResponseBody } from "../src/context/context.service";
+
+// ---------------------------------------------------------------------------
+// Schema loading — context validators
+// ---------------------------------------------------------------------------
+
+const CONTEXT_DOC_ID = "context.openapi";
+
+let validateContextResponse: ValidateFunction;
+
+function buildContextValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === CONTEXT_DOC_ID);
+  if (!contract) {
+    throw new Error(
+      `${CONTEXT_DOC_ID} contract not found — check packages/contracts/openapi/`,
+    );
+  }
+  if (!ajv.getSchema(CONTEXT_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: CONTEXT_DOC_ID });
+  }
+  validateContextResponse = ajv.compile({
+    $ref: `${CONTEXT_DOC_ID}#/components/schemas/ContextResponse`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — context slice
+// ---------------------------------------------------------------------------
+
+const FAKE_CONTEXT_USER_ID = "0195c100-0000-7000-8000-000000000001";
+const FAKE_CONTEXT_SESSION_ID = "0195c100-0000-7000-8000-000000000002";
+const FAKE_CONTEXT_TENANT_ID = "0195c100-0000-7000-8000-000000000010";
+const FAKE_CONTEXT_STORE_ID = "0195c100-0000-7000-8000-000000000020";
+
+const EMPTY_CONTEXT_RESPONSE: ContextResponseBody = {
+  user: {
+    id: FAKE_CONTEXT_USER_ID,
+    email: "test@example.com",
+    display_name: null,
+    is_platform_admin: false,
+  },
+  active_tenant: null,
+  active_store: null,
+  active_role_code: null,
+  memberships: [],
+};
+
+const ACTIVE_CONTEXT_RESPONSE: ContextResponseBody = {
+  user: {
+    id: FAKE_CONTEXT_USER_ID,
+    email: "test@example.com",
+    display_name: "Test User",
+    is_platform_admin: false,
+  },
+  active_tenant: {
+    id: FAKE_CONTEXT_TENANT_ID,
+    slug: "acme",
+    name: "Acme Corp",
+  },
+  active_store: {
+    id: FAKE_CONTEXT_STORE_ID,
+    code: "S01",
+    name: "Main Store",
+  },
+  active_role_code: "tenant_admin",
+  memberships: [
+    {
+      tenant_id: FAKE_CONTEXT_TENANT_ID,
+      tenant_name: "Acme Corp",
+      role_code: "tenant_admin",
+      store_access_kind: "all",
+      accessible_store_ids: [FAKE_CONTEXT_STORE_ID],
+    },
+  ],
+};
+
+class FakeContextService {
+  public response: ContextResponseBody = EMPTY_CONTEXT_RESPONSE;
+
+  async getActiveContext(_principal: unknown): Promise<ContextResponseBody> {
+    return this.response;
+  }
+}
+
+/** Populates request.principal (AuthGuard contract). */
+class ContextScriptedAuthGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.principal = {
+      kind: "session",
+      sessionId: FAKE_CONTEXT_SESSION_ID,
+      userId: FAKE_CONTEXT_USER_ID,
+    };
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — context app
+// ---------------------------------------------------------------------------
+
+let contextApp: INestApplication;
+let fakeContextService: FakeContextService;
+
+beforeAll(async () => {
+  buildContextValidators();
+
+  fakeContextService = new FakeContextService();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [ContextController],
+    providers: [
+      { provide: ContextService, useValue: fakeContextService },
+    ],
+  })
+    .overrideGuard(AuthGuard)
+    .useValue(new ContextScriptedAuthGuard())
+    .compile();
+
+  contextApp = moduleRef.createNestApplication({ bufferLogs: true });
+  contextApp.use(cookieParser());
+  contextApp.useGlobalPipes(new ZodValidationPipe());
+  contextApp.useGlobalFilters(new GlobalExceptionFilter());
+  await contextApp.init();
+});
+
+afterAll(async () => {
+  if (contextApp) await contextApp.close();
+});
+
+beforeEach(() => {
+  fakeContextService.response = EMPTY_CONTEXT_RESPONSE;
+});
+
+function contextHttp() {
+  return request(contextApp.getHttpServer());
+}
+
+// ---------------------------------------------------------------------------
+// Tests — GET /api/v1/context/me
+// ---------------------------------------------------------------------------
+
+describe("GET /api/v1/context/me — contract conformance (T300)", () => {
+  describe("200 empty / no active context", () => {
+    it("response body conforms to ContextResponse schema", async () => {
+      const res = await contextHttp()
+        .get("/api/v1/context/me")
+        .expect(200);
+
+      assertConformsTo(validateContextResponse, res.body);
+    });
+
+    it("active_tenant, active_store, active_role_code are null and memberships is an empty array", async () => {
+      const res = await contextHttp()
+        .get("/api/v1/context/me")
+        .expect(200);
+
+      expect(res.body.active_tenant).toBeNull();
+      expect(res.body.active_store).toBeNull();
+      expect(res.body.active_role_code).toBeNull();
+      expect(Array.isArray(res.body.memberships)).toBe(true);
+      expect(res.body.memberships).toHaveLength(0);
+      assertConformsTo(validateContextResponse, res.body);
+    });
+  });
+
+  describe("200 active tenant/store context", () => {
+    beforeEach(() => {
+      fakeContextService.response = ACTIVE_CONTEXT_RESPONSE;
+    });
+
+    it("response body conforms to ContextResponse schema when active_tenant and active_store are set", async () => {
+      const res = await contextHttp()
+        .get("/api/v1/context/me")
+        .expect(200);
+
+      assertConformsTo(validateContextResponse, res.body);
+    });
+
+    it("non-null active_tenant, active_store, active_role_code and memberships with accessible_store_ids", async () => {
+      const res = await contextHttp()
+        .get("/api/v1/context/me")
+        .expect(200);
+
+      expect(res.body.active_tenant).not.toBeNull();
+      expect(typeof res.body.active_tenant.id).toBe("string");
+      expect(res.body.active_store).not.toBeNull();
+      expect(typeof res.body.active_store.id).toBe("string");
+      expect(typeof res.body.active_role_code).toBe("string");
+      expect(Array.isArray(res.body.memberships)).toBe(true);
+      expect(res.body.memberships).toHaveLength(1);
+      expect(Array.isArray(res.body.memberships[0].accessible_store_ids)).toBe(true);
+      assertConformsTo(validateContextResponse, res.body);
     });
   });
 });
