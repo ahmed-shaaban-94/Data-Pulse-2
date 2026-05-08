@@ -870,6 +870,8 @@ const POS_OPERATORS_DOC_ID = "pos-operators.openapi";
 
 let validatePosSignOutResponse: ValidateFunction;
 let validatePosOperatorsError: ValidateFunction;
+let validatePosSignInSucceeded: ValidateFunction;
+let validatePosTakeoverRequired: ValidateFunction;
 
 function buildPosOperatorsValidators(): void {
   const contracts = loadOpenApiContracts();
@@ -889,6 +891,12 @@ function buildPosOperatorsValidators(): void {
   validatePosOperatorsError = ajv.compile({
     $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/Error`,
   });
+  validatePosSignInSucceeded = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosOperatorSignInSucceeded`,
+  });
+  validatePosTakeoverRequired = ajv.compile({
+    $ref: `${POS_OPERATORS_DOC_ID}#/components/schemas/PosOperatorTakeoverRequired`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -900,12 +908,16 @@ class FakePosOperatorsService {
     kind: "signed_out",
   };
 
+  public signInResult: PosOperatorSignInResponseBody | { kind: "refused" } = {
+    kind: "refused",
+  };
+
   async signIn(
     _rawJwt: string,
     _body: unknown,
     _requestId: string,
   ): Promise<PosOperatorSignInResponseBody | { kind: "refused" }> {
-    return { kind: "refused" };
+    return this.signInResult;
   }
 
   async signOut(
@@ -949,6 +961,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   fakePosOperatorsService.signOutResult = { kind: "signed_out" };
+  fakePosOperatorsService.signInResult = { kind: "refused" };
 });
 
 function posOperatorsHttp() {
@@ -1019,6 +1032,158 @@ describe("POST /api/pos/v1/operators/sign-out — contract conformance (T300)", 
         .post("/api/pos/v1/operators/sign-out")
         .set("Authorization", "Bearer fake-jwt-token")
         .send({ session_id: FAKE_POS_OPERATORS_SESSION_ID })
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// SLICE 5 — POST /api/pos/v1/operators/sign-in
+// =============================================================================
+//
+// pos-operators.openapi.yaml defines two named 200 variant schemas:
+//   - PosOperatorSignInSucceeded  (kind: signed_in)
+//   - PosOperatorTakeoverRequired (kind: takeover_required)
+// and a 401 using the shared Error schema.
+//
+// Each variant is validated directly against its named component schema —
+// not against the full oneOf union — consistent with the slice 4 pattern.
+//
+// The same posOperatorsApp fixture from slice 4 is reused: PosOperatorsController
+// handles both sign-in and sign-out, so no new Nest app is needed.
+
+const FAKE_POS_SIGN_IN_SESSION_ID = "0195b400-0000-7000-8000-000000000001";
+const FAKE_POS_SIGN_IN_TENANT_ID = "0195b400-0000-7000-8000-000000000010";
+const FAKE_POS_SIGN_IN_BRANCH_ID = "0195b400-0000-7000-8000-000000000020";
+
+function makeSignInBody(): Record<string, unknown> {
+  return {
+    kind: "manager_admin",
+    device_token_attestation: "fake-attestation",
+  };
+}
+
+function makeSignedInResult(): PosOperatorSignInResponseBody {
+  return {
+    kind: "signed_in",
+    operator: {
+      id: "user_fake_clerk_sub",
+      display_name: "Test Operator",
+      role: "manager",
+      tenant_id: FAKE_POS_SIGN_IN_TENANT_ID,
+      branch_id: FAKE_POS_SIGN_IN_BRANCH_ID,
+    },
+    operator_session: {
+      id: FAKE_POS_SIGN_IN_SESSION_ID,
+      issued_at: new Date("2026-01-15T10:00:00.000Z").toISOString(),
+    },
+  };
+}
+
+describe("POST /api/pos/v1/operators/sign-in — contract conformance (T300)", () => {
+  describe("200 — signed_in", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.signInResult = makeSignedInResult();
+    });
+
+    it("response body conforms to PosOperatorSignInSucceeded schema", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
+        .expect(200);
+
+      assertConformsTo(validatePosSignInSucceeded, res.body);
+    });
+
+    it('body.kind is exactly "signed_in"', async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
+        .expect(200);
+
+      expect(res.body.kind).toBe("signed_in");
+      assertConformsTo(validatePosSignInSucceeded, res.body);
+    });
+
+    it("operator and operator_session fields are present and schema-valid", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
+        .expect(200);
+
+      expect(res.body.operator).toBeDefined();
+      expect(typeof res.body.operator.id).toBe("string");
+      expect(res.body.operator_session).toBeDefined();
+      expect(typeof res.body.operator_session.id).toBe("string");
+      assertConformsTo(validatePosSignInSucceeded, res.body);
+    });
+  });
+
+  describe("200 — takeover_required", () => {
+    beforeEach(() => {
+      fakePosOperatorsService.signInResult = { kind: "takeover_required" };
+    });
+
+    it("response body conforms to PosOperatorTakeoverRequired schema", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
+        .expect(200);
+
+      assertConformsTo(validatePosTakeoverRequired, res.body);
+    });
+
+    it('body.kind is exactly "takeover_required"', async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
+        .expect(200);
+
+      expect(res.body.kind).toBe("takeover_required");
+      assertConformsTo(validatePosTakeoverRequired, res.body);
+    });
+  });
+
+  describe("401 — missing Bearer token", () => {
+    it("response body conforms to Error schema when Authorization header is absent", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .send(makeSignInBody())
+        .expect(401);
+
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+
+    it("401 error envelope has required error.code and error.message fields", async () => {
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .send(makeSignInBody())
+        .expect(401);
+
+      expect(res.body).toMatchObject({
+        error: {
+          code: expect.any(String),
+          message: expect.any(String),
+        },
+      });
+      assertConformsTo(validatePosOperatorsError, res.body);
+    });
+  });
+
+  describe("401 — service refuses", () => {
+    it("response body conforms to Error schema when service returns refused", async () => {
+      // signInResult is reset to { kind: "refused" } by the outer beforeEach
+      const res = await posOperatorsHttp()
+        .post("/api/pos/v1/operators/sign-in")
+        .set("Authorization", "Bearer fake-jwt-token")
+        .send(makeSignInBody())
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
