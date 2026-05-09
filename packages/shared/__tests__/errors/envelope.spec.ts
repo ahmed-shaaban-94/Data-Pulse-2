@@ -89,6 +89,10 @@ describe("isErrorEnvelope", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects { error: null }", () => {
+    expect(isErrorEnvelope({ error: null })).toBe(false);
+  });
 });
 
 describe("ErrorCodes", () => {
