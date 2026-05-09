@@ -12,4 +12,10 @@ module.exports = {
   // multi-step UP/DOWN/UP cycles. Per-test timeout, not per-suite.
   testTimeout: 180000,
   verbose: false,
+  collectCoverageFrom: [
+    "src/**/*.ts",
+    "!src/**/*.spec.ts",
+    "!src/**/*.d.ts",
+    "!src/index.ts",
+  ],
 };
