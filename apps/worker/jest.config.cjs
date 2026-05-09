@@ -20,4 +20,10 @@ module.exports = {
   restoreMocks: true,
   testTimeout: 30000,
   verbose: false,
+  collectCoverageFrom: [
+    "src/**/*.ts",
+    "!src/**/*.spec.ts",
+    "!src/**/*.d.ts",
+    "!src/main.ts",
+  ],
 };

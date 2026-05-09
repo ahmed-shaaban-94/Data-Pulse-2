@@ -8,4 +8,10 @@ module.exports = {
   clearMocks: true,
   restoreMocks: true,
   verbose: false,
+  collectCoverageFrom: [
+    "src/**/*.ts",
+    "!src/**/*.spec.ts",
+    "!src/**/*.d.ts",
+    "!src/index.ts",
+  ],
 };
