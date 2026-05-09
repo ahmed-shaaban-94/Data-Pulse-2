@@ -85,3 +85,5 @@ export async function shutdownOtel(): Promise<void> {
   sdk = null;
   await current.shutdown();
 }
+
+export * from "./bullmq-propagation";
