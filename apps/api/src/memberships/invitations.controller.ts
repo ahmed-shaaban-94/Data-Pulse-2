@@ -32,12 +32,12 @@ export class InvitationsController {
   ): Promise<object> {
     const ctx = request.context;
     if (!ctx) throw new UnauthorizedException("Unauthorized");
-    const row = await this.invitationsService.invite(ctx, dto);
+    const { row, roleCode } = await this.invitationsService.invite(ctx, dto);
     return {
       id: row.id,
       tenant_id: row.tenantId,
       email: row.email,
-      role_id: row.roleId,
+      role_code: roleCode,
       store_access_kind: row.storeAccessKind,
       invited_store_ids: row.invitedStoreIds,
       status: row.status,

@@ -25,6 +25,11 @@ import type { MembershipDetail } from "../context/membership.repository";
 import type { InvitationCreateDto } from "./invitation.dto";
 import { InvitationsRepository } from "./invitations.repository";
 
+export interface InviteResult {
+  row: InvitationRow;
+  roleCode: string;
+}
+
 type TenantTxRunner = <T>(
   pool: Pool,
   ctx: TenantContext,
@@ -71,7 +76,7 @@ export class InvitationsService {
   async invite(
     ctx: ResolvedContext,
     dto: InvitationCreateDto,
-  ): Promise<InvitationRow> {
+  ): Promise<InviteResult> {
     const tenantId = ctx.tenantId as string;
     const invitedByUserId = ctx.userId;
     if (!invitedByUserId) throw new UnauthorizedException("Unauthorized");
@@ -143,7 +148,7 @@ export class InvitationsService {
       tenantId,
     });
 
-    return row;
+    return { row, roleCode: dto.role_code };
   }
 
   /**

@@ -353,7 +353,8 @@ describe("InvitationsService.invite()", () => {
       role_code: "owner",
       store_access_kind: "all",
     });
-    expect(result).toBe(expected);
+    expect(result.row).toBe(expected);
+    expect(result.roleCode).toBe("owner");
     expect(enqueuer.enqueueInvitationCalled).toBe(true);
     expect(enqueuer.lastJob).toMatchObject({ tenantId: TENANT_ID });
   });
@@ -368,7 +369,8 @@ describe("InvitationsService.invite()", () => {
       role_code: "owner",
       store_access_kind: "all",
     });
-    expect(result).toBe(expected);
+    expect(result.row).toBe(expected);
+    expect(result.roleCode).toBe("owner");
     // Enqueuer receives the normalised address
     expect((enqueuer.lastJob as { email: string }).email).toBe("invitee@example.com");
   });
@@ -385,7 +387,8 @@ describe("InvitationsService.invite()", () => {
       store_access_kind: "specific",
       store_ids: [STORE_ID_A, STORE_ID_A],
     });
-    expect(result).toBe(expected);
+    expect(result.row).toBe(expected);
+    expect(result.roleCode).toBe("owner");
     expect(enqueuer.enqueueInvitationCalled).toBe(true);
   });
 
