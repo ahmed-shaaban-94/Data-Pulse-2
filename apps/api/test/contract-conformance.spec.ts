@@ -56,6 +56,10 @@ import type { ListAuditEventsInput } from "../src/audit/audit.service";
 import { ZodValidationPipe } from "../src/common/zod-validation.pipe";
 import { GlobalExceptionFilter } from "../src/common/exception.filter";
 import { loadOpenApiContracts } from "../src/openapi/loader";
+import { InvitationsController } from "../src/memberships/invitations.controller";
+import { InvitationsService } from "../src/memberships/invitations.service";
+import type { InviteResult } from "../src/memberships/invitations.service";
+import type { InvitationRow } from "@data-pulse-2/db/schema";
 
 // ---------------------------------------------------------------------------
 // Schema loading + ajv setup
@@ -2075,5 +2079,168 @@ describe("POST /api/v1/auth/email/verify/confirm", () => {
       .send({ token: "bad" })
       .expect(400);
     assertConformsTo(validateError, res.body);
+  });
+});
+
+// =============================================================================
+// T304-B slice 10 — POST /api/v1/memberships/invite
+// =============================================================================
+//
+// memberships.openapi.yaml defines Invitation schema (201 response).
+// Validates that role_code (string) is present and role_id is absent.
+
+// ---------------------------------------------------------------------------
+// Schema loading — memberships validators
+// ---------------------------------------------------------------------------
+
+const MEMBERSHIPS_DOC_ID = "memberships.openapi";
+let validateInvitation: ValidateFunction;
+
+function buildMembershipsValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === MEMBERSHIPS_DOC_ID);
+  if (!contract) {
+    throw new Error(`${MEMBERSHIPS_DOC_ID} contract not found — check packages/contracts/openapi/`);
+  }
+  if (!ajv.getSchema(MEMBERSHIPS_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: MEMBERSHIPS_DOC_ID });
+  }
+  validateInvitation = ajv.compile({
+    $ref: `${MEMBERSHIPS_DOC_ID}#/components/schemas/Invitation`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — memberships invite slice
+// ---------------------------------------------------------------------------
+
+const MEMBERSHIPS_INVITATION_ID = "0195d100-0000-7000-8000-000000000001";
+const MEMBERSHIPS_TENANT_ID     = "0195d100-0000-7000-8000-000000000010";
+const MEMBERSHIPS_USER_ID       = "0195d100-0000-7000-8000-000000000020";
+
+class FakeMembershipsInvitationsService {
+  async invite(_ctx: unknown, _dto: unknown): Promise<InviteResult> {
+    const row: InvitationRow = {
+      id: MEMBERSHIPS_INVITATION_ID,
+      tenantId: MEMBERSHIPS_TENANT_ID,
+      email: "invitee@example.com",
+      roleId: "ignored-role-uuid",
+      storeAccessKind: "all",
+      invitedStoreIds: [],
+      invitedByUserId: MEMBERSHIPS_USER_ID,
+      tokenHash: Buffer.alloc(0),
+      status: "pending",
+      expiresAt: new Date("2026-05-24T00:00:00.000Z"),
+      acceptedByUserId: null,
+      acceptedAt: null,
+      createdAt: new Date("2026-05-17T00:00:00.000Z"),
+      updatedAt: new Date("2026-05-17T00:00:00.000Z"),
+      deletedAt: null,
+    };
+    return { row, roleCode: "tenant_admin" };
+  }
+}
+
+class MembershipsScriptedAuthGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.principal = { kind: "session", sessionId: "memberships-session-1", userId: MEMBERSHIPS_USER_ID };
+    return true;
+  }
+}
+
+class MembershipsScriptedTenantContextGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.context = {
+      userId: MEMBERSHIPS_USER_ID,
+      tenantId: MEMBERSHIPS_TENANT_ID,
+      storeId: null,
+      isPlatformAdmin: false,
+      source: "session" as const,
+    };
+    return true;
+  }
+}
+
+class MembershipsScriptedRolesGuard implements CanActivate {
+  canActivate(_ctx: ExecutionContext): boolean { return true; }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — memberships invite app
+// ---------------------------------------------------------------------------
+
+let membershipsApp: INestApplication;
+
+beforeAll(async () => {
+  buildMembershipsValidators();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [InvitationsController],
+    providers: [
+      { provide: InvitationsService, useValue: new FakeMembershipsInvitationsService() },
+    ],
+  })
+    .overrideGuard(AuthGuard).useValue(new MembershipsScriptedAuthGuard())
+    .overrideGuard(TenantContextGuard).useValue(new MembershipsScriptedTenantContextGuard())
+    .overrideGuard(RolesGuard).useValue(new MembershipsScriptedRolesGuard())
+    .compile();
+
+  membershipsApp = moduleRef.createNestApplication({ bufferLogs: true });
+  membershipsApp.useGlobalPipes(new ZodValidationPipe());
+  membershipsApp.useGlobalFilters(new GlobalExceptionFilter());
+  await membershipsApp.init();
+});
+
+afterAll(async () => {
+  if (membershipsApp) await membershipsApp.close();
+});
+
+function membershipsHttp() {
+  return request(membershipsApp.getHttpServer());
+}
+
+const VALID_INVITE_BODY = {
+  email: "invitee@example.com",
+  role_code: "tenant_admin",
+  store_access_kind: "all",
+};
+
+// ---------------------------------------------------------------------------
+// Tests — POST /api/v1/memberships/invite
+// ---------------------------------------------------------------------------
+
+describe("POST /api/v1/memberships/invite — contract conformance (T304-B slice 10)", () => {
+  describe("201 Invitation — role_code present, role_id absent", () => {
+    it("response body conforms to Invitation schema", async () => {
+      const res = await membershipsHttp()
+        .post("/api/v1/memberships/invite")
+        .send(VALID_INVITE_BODY)
+        .expect(201);
+
+      assertConformsTo(validateInvitation, res.body);
+    });
+
+    it("response contains role_code as a string", async () => {
+      const res = await membershipsHttp()
+        .post("/api/v1/memberships/invite")
+        .send(VALID_INVITE_BODY)
+        .expect(201);
+
+      expect(typeof res.body.role_code).toBe("string");
+      assertConformsTo(validateInvitation, res.body);
+    });
+
+    it("response does NOT expose role_id", async () => {
+      const res = await membershipsHttp()
+        .post("/api/v1/memberships/invite")
+        .send(VALID_INVITE_BODY)
+        .expect(201);
+
+      expect(Object.keys(res.body)).not.toContain("role_id");
+      assertConformsTo(validateInvitation, res.body);
+    });
   });
 });

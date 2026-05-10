@@ -10,14 +10,6 @@
  * Endpoint:
  *   POST /api/v1/memberships/invite → 201 invitation body
  *
- * NOTE — OpenAPI / implementation mismatch (documented, not fixed here):
- *   The OpenAPI `Invitation` schema declares `role_code: string` (the human-
- *   readable code, e.g. "tenant_admin"). However, InvitationsController maps
- *   directly from `InvitationRow` (the Drizzle DB row), which contains
- *   `roleId` (a UUID). The controller therefore returns `role_id` (a UUID),
- *   NOT `role_code`. This spec asserts the current implementation behaviour.
- *   A separate approved change is required to align the response with the
- *   OpenAPI contract.
  */
 import "reflect-metadata";
 
@@ -51,6 +43,7 @@ const INVITATION_ID = "0d000000-0000-7000-8000-000000000002";
 const ROLE_ID       = "0d000000-0000-7000-8000-000000000003";
 const USER_ID       = "0d000000-0000-7000-8000-000000000004";
 const STORE_ID      = "0d000000-0000-7000-8000-000000000005";
+const ROLE_CODE     = "tenant_admin";
 
 const EXPIRES_AT = new Date("2026-05-17T00:00:00.000Z");
 
@@ -60,7 +53,7 @@ const EXPIRES_AT = new Date("2026-05-17T00:00:00.000Z");
 
 class FakeInvitationsService {
   public lastInviteArgs: { ctx: ResolvedContext; dto: unknown } | null = null;
-  public inviteResult: InvitationRow = {
+  public inviteRow: InvitationRow = {
     id: INVITATION_ID,
     tenantId: TENANT_ID,
     email: "user@example.com",
@@ -77,10 +70,11 @@ class FakeInvitationsService {
     updatedAt: EXPIRES_AT,
     deletedAt: null,
   };
+  public inviteRoleCode: string = ROLE_CODE;
 
-  async invite(ctx: ResolvedContext, dto: unknown): Promise<InvitationRow> {
+  async invite(ctx: ResolvedContext, dto: unknown): Promise<{ row: InvitationRow; roleCode: string }> {
     this.lastInviteArgs = { ctx, dto };
-    return this.inviteResult;
+    return { row: this.inviteRow, roleCode: this.inviteRoleCode };
   }
 }
 
@@ -184,7 +178,7 @@ beforeEach(() => {
     source: "session",
   };
   svc.lastInviteArgs = null;
-  svc.inviteResult = {
+  svc.inviteRow = {
     id: INVITATION_ID,
     tenantId: TENANT_ID,
     email: "user@example.com",
@@ -201,6 +195,7 @@ beforeEach(() => {
     updatedAt: EXPIRES_AT,
     deletedAt: null,
   };
+  svc.inviteRoleCode = ROLE_CODE;
 });
 
 function http() {
@@ -248,10 +243,7 @@ describe("POST /api/v1/memberships/invite", () => {
     });
   });
 
-  it("response projection: maps InvitationRow fields — NOTE: returns role_id (UUID), not role_code (string)", async () => {
-    // IMPORTANT: The controller returns `role_id` from InvitationRow, not `role_code`.
-    // This diverges from the OpenAPI Invitation schema which declares `role_code: string`.
-    // See file-level comment for details. Asserting current behaviour here.
+  it("response projection: maps InvitationRow fields and returns role_code (not role_id)", async () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .send(VALID_BODY);
@@ -261,7 +253,7 @@ describe("POST /api/v1/memberships/invite", () => {
       id: INVITATION_ID,
       tenant_id: TENANT_ID,
       email: "user@example.com",
-      role_id: ROLE_ID,         // UUID, not role_code string
+      role_code: ROLE_CODE,
       store_access_kind: "all",
       invited_store_ids: [],
       status: "pending",
@@ -269,18 +261,18 @@ describe("POST /api/v1/memberships/invite", () => {
     expect(res.body.expires_at).toBeDefined();
   });
 
-  it("response does NOT contain role_code (mismatch with OpenAPI — field is role_id)", async () => {
+  it("response does NOT expose role_id", async () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .send(VALID_BODY);
 
     expect(res.status).toBe(201);
-    expect(Object.keys(res.body)).not.toContain("role_code");
+    expect(Object.keys(res.body)).not.toContain("role_id");
   });
 
   it("specific-store invite: forwards store_ids in dto", async () => {
-    svc.inviteResult = {
-      ...svc.inviteResult,
+    svc.inviteRow = {
+      ...svc.inviteRow,
       storeAccessKind: "specific",
       invitedStoreIds: [STORE_ID],
     };
