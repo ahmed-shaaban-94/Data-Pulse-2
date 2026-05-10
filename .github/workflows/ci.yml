@@ -99,4 +99,13 @@ jobs:
         run: pnpm --filter @data-pulse-2/db test
 
       - name: Test @data-pulse-2/api (RLS + audit + auth suites)
-        run: pnpm --filter @data-pulse-2/api test
+        run: pnpm --filter @data-pulse-2/api test -- --coverage --coverageReporters=lcov --coverageReporters=text-summary
+
+      - name: Upload API coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: apps/api/coverage/lcov.info
+          flags: api
+          fail_ci_if_error: false
