@@ -17,5 +17,14 @@ module.exports = {
     "!src/**/*.spec.ts",
     "!src/**/*.d.ts",
     "!src/index.ts",
+    // CLI entry points are exercised via child-process spawn in migrate.spec.ts;
+    // Istanbul does not instrument spawned child processes, so coverage reads 0%
+    // regardless of test completeness. Exclude to avoid misleading the denominator.
+    "!src/cli/**",
+    // Drizzle schema declarations contain FK lazy-reference callbacks such as
+    // `() => tenants.id` that are part of Drizzle's internal builder API, not
+    // application logic. Excluding prevents ~78 uncallable functions from
+    // inflating the function denominator.
+    "!src/schema/**",
   ],
 };
