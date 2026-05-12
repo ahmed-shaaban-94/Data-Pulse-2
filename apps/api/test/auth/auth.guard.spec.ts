@@ -14,6 +14,7 @@ import { ExecutionContext, UnauthorizedException } from "@nestjs/common";
 import type { AuthTokenRow, SessionRow } from "@data-pulse-2/db/schema";
 import {
   AuthGuard,
+  BEARER_AUTH_SCOPES,
   SESSION_COOKIE_NAME,
   type AuthedRequest,
   type Principal,
@@ -175,6 +176,7 @@ describe("AuthGuard — bearer path", () => {
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      scope: "dashboard_api",
     });
   });
 
@@ -198,8 +200,42 @@ describe("AuthGuard — bearer path", () => {
       tokenId: TOKEN_ID,
       tenantId: null,
       userId: null,
+      scope: "dashboard_api",
     });
   });
+
+  it("rejects a token with scope 'password_reset' (single-use workflow token cannot authenticate)", async () => {
+    tokenRepo.findActiveByRawToken.mockResolvedValue(
+      activeToken({ scope: "password_reset" }),
+    );
+    const request = makeRequest({ authorization: `Bearer ${RAW_TOKEN}` });
+
+    await expect(guard.canActivate(makeContext(request))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it("rejects a token with scope 'email_verify' (single-use workflow token cannot authenticate)", async () => {
+    tokenRepo.findActiveByRawToken.mockResolvedValue(
+      activeToken({ scope: "email_verify" }),
+    );
+    const request = makeRequest({ authorization: `Bearer ${RAW_TOKEN}` });
+
+    await expect(guard.canActivate(makeContext(request))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it.each(["dashboard_api", "pos", "pos_operator"] as const)(
+    "accepts token with bearer-safe scope '%s'",
+    async (scope) => {
+      tokenRepo.findActiveByRawToken.mockResolvedValue(activeToken({ scope }));
+      const request = makeRequest({ authorization: `Bearer ${RAW_TOKEN}` });
+
+      await expect(guard.canActivate(makeContext(request))).resolves.toBe(true);
+      expect((request.principal as Principal & { kind: "token" }).scope).toBe(scope);
+    },
+  );
 
   it("rejects when token lookup returns null (revoked/expired/unknown)", async () => {
     tokenRepo.findActiveByRawToken.mockResolvedValue(null);
@@ -271,17 +307,27 @@ describe("AuthGuard — precedence and uniformity", () => {
 
   it("uses the same exception class for every failure mode (FR-ISO-4)", async () => {
     sessionRepo.findActiveById.mockResolvedValue(null);
+    // Default: token lookup returns null (expired/unknown). The wrong-scope
+    // case below overrides this with a live token that has a disallowed scope.
     tokenRepo.findActiveByRawToken.mockResolvedValue(null);
 
-    const cases: AuthedRequest[] = [
-      makeRequest({}),
-      makeRequest({ cookies: { [SESSION_COOKIE_NAME]: SESSION_ID } }),
-      makeRequest({ authorization: `Bearer ${RAW_TOKEN}` }),
-      makeRequest({ authorization: "Basic xyz" }),
-      makeRequest({ authorization: "Bearer " }),
+    const cases: Array<{ req: AuthedRequest; tokenOverride?: ReturnType<typeof activeToken> }> = [
+      { req: makeRequest({}) },
+      { req: makeRequest({ cookies: { [SESSION_COOKIE_NAME]: SESSION_ID } }) },
+      { req: makeRequest({ authorization: `Bearer ${RAW_TOKEN}` }) },
+      { req: makeRequest({ authorization: "Basic xyz" }) },
+      { req: makeRequest({ authorization: "Bearer " }) },
+      // Wrong-scope token: token lookup finds a row, but the scope is single-use.
+      {
+        req: makeRequest({ authorization: `Bearer ${RAW_TOKEN}` }),
+        tokenOverride: activeToken({ scope: "password_reset" }),
+      },
     ];
 
-    for (const req of cases) {
+    for (const { req, tokenOverride } of cases) {
+      if (tokenOverride !== undefined) {
+        tokenRepo.findActiveByRawToken.mockResolvedValueOnce(tokenOverride);
+      }
       const err = await guard
         .canActivate(makeContext(req))
         .then(() => null)
@@ -289,5 +335,11 @@ describe("AuthGuard — precedence and uniformity", () => {
       expect(err).toBeInstanceOf(UnauthorizedException);
       expect((err as UnauthorizedException).getStatus()).toBe(401);
     }
+  });
+
+  it("BEARER_AUTH_SCOPES contains exactly dashboard_api, pos, and pos_operator", () => {
+    expect([...BEARER_AUTH_SCOPES].sort()).toEqual(
+      ["dashboard_api", "pos", "pos_operator"].sort(),
+    );
   });
 });

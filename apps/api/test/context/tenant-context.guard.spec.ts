@@ -355,6 +355,7 @@ describe("TenantContextGuard — token principal", () => {
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      scope: "dashboard_api",
     });
     await expect(guard.canActivate(makeContext(request))).resolves.toBe(true);
 
@@ -377,6 +378,7 @@ describe("TenantContextGuard — token principal", () => {
       tokenId: TOKEN_ID,
       tenantId: null,
       userId: null,
+      scope: "dashboard_api",
     });
     await expect(guard.canActivate(makeContext(request))).resolves.toBe(true);
 
@@ -400,6 +402,7 @@ describe("TenantContextGuard — token principal", () => {
       tokenId: TOKEN_ID,
       tenantId: OTHER_TENANT_ID,
       userId: USER_ID,
+      scope: "dashboard_api",
     });
     await expect(guard.canActivate(makeContext(request))).resolves.toBe(true);
     expect(request.context?.tenantId).toBe(OTHER_TENANT_ID);

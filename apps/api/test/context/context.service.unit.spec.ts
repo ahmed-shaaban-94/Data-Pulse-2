@@ -232,6 +232,7 @@ const TOKEN_PRINCIPAL: Principal = {
   tokenId: TOKEN_ID,
   tenantId: TENANT_ID,
   userId: USER_ID,
+  scope: "dashboard_api",
 };
 
 /** Platform-scoped token — no user, no tenant. */
@@ -240,6 +241,7 @@ const PLATFORM_TOKEN_NO_USER_NO_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: null,
   userId: null,
+  scope: "dashboard_api",
 };
 
 /** Platform-scoped token — no user but HAS a tenantId. */
@@ -248,6 +250,7 @@ const PLATFORM_TOKEN_NO_USER_WITH_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: TENANT_ID,
   userId: null,
+  scope: "dashboard_api",
 };
 
 /** Token with userId set but tenantId is null. */
@@ -256,6 +259,7 @@ const TOKEN_WITH_USER_NO_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: null,
   userId: USER_ID,
+  scope: "dashboard_api",
 };
 
 // ---------------------------------------------------------------------------

@@ -109,6 +109,7 @@ import type { Pool, PoolClient } from "pg";
 import { runWithTenantContext } from "@data-pulse-2/db";
 
 import type { Principal } from "./auth.guard";
+import { BEARER_AUTH_SCOPES } from "./auth.guard";
 import { PG_POOL } from "./auth.module";
 import { MembershipRepository } from "../context/membership.repository";
 import type { TenantContextRequest } from "../context/types";
@@ -222,7 +223,18 @@ export class RolesGuard implements CanActivate {
     request: TenantContextRequest,
   ): Promise<boolean> {
     if (request.context?.isPlatformAdmin === true) return true;
-    if (principal.kind === "token" && principal.tenantId === null) return true;
+    // Defense-in-depth: only tokens with both a null tenantId AND a
+    // bearer-safe scope get the platform-admin bypass. Single-use workflow
+    // tokens (password_reset / email_verify) should never reach this guard
+    // because AuthGuard rejects them; this check prevents a bypass if the
+    // guard chain is misconfigured.
+    if (
+      principal.kind === "token" &&
+      principal.tenantId === null &&
+      BEARER_AUTH_SCOPES.has(principal.scope)
+    ) {
+      return true;
+    }
     const userId = principal.userId;
     if (!userId) return false;
     return this.memberships.isPlatformAdmin(userId);

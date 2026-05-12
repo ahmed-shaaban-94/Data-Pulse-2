@@ -25,6 +25,7 @@ import type {
   AuthedRequest,
   Principal,
 } from "../../src/auth/auth.guard";
+import type { BearerAuthScope } from "@data-pulse-2/db/schema";
 import type { MembershipRepository } from "../../src/context/membership.repository";
 import type {
   ResolvedContext,
@@ -97,12 +98,13 @@ const sessionPrincipal = (overrides: Partial<Principal> = {}): Principal =>
     ...overrides,
   }) as Principal;
 
-const tokenPrincipal = (overrides: Partial<Principal> = {}): Principal =>
+const tokenPrincipal = (overrides: Partial<Principal & { scope: BearerAuthScope }> = {}): Principal =>
   ({
     kind: "token",
     tokenId: TOKEN_ID,
     tenantId: TENANT_ID,
     userId: USER_ID,
+    scope: "dashboard_api" as BearerAuthScope,
     ...overrides,
   }) as Principal;
 
@@ -604,5 +606,52 @@ describe("RolesGuard", () => {
     await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  // --- Scope-hardening: single-use tokens must not bypass platform-admin --
+
+  it("does NOT grant platform-admin bypass to a null-tenant token with scope 'password_reset'", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 404,
+    };
+    memberships.platformAdmin = false;
+    const req = buildRequest({
+      // Simulate a misconfigured guard chain: workflow token with null tenantId
+      principal: tokenPrincipal({
+        tenantId: null,
+        scope: "password_reset" as unknown as BearerAuthScope,
+      }),
+    });
+    // Falls through to the DB lookup (isPlatformAdmin returns false), then
+    // has no tenantId for the membership check → ForbiddenException (step 5).
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(memberships.isPlatformAdminCalls).toEqual([USER_ID]);
+  });
+
+  it("does NOT grant platform-admin bypass to a null-tenant token with scope 'email_verify'", async () => {
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 404,
+    };
+    memberships.platformAdmin = false;
+    const req = buildRequest({
+      principal: tokenPrincipal({
+        tenantId: null,
+        scope: "email_verify" as unknown as BearerAuthScope,
+      }),
+    });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(memberships.isPlatformAdminCalls).toEqual([USER_ID]);
   });
 });

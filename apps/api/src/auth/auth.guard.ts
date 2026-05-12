@@ -30,12 +30,23 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Request } from "express";
-import type { AuthTokenRow, SessionRow } from "@data-pulse-2/db/schema";
+import type { AuthTokenRow, BearerAuthScope, SessionRow } from "@data-pulse-2/db/schema";
 import { SessionRepository } from "./session.repository";
 import { AuthTokenRepository } from "./auth-token.repository";
 
 export const SESSION_COOKIE_NAME = "dp2_session";
 const BEARER_PREFIX = "bearer ";
+
+/**
+ * Scopes that are valid for general bearer API authentication. Single-use
+ * workflow tokens (`password_reset`, `email_verify`) are intentionally
+ * excluded — they must never be accepted as API credentials.
+ */
+export const BEARER_AUTH_SCOPES = new Set<BearerAuthScope>([
+  "dashboard_api",
+  "pos",
+  "pos_operator",
+]);
 
 /**
  * The authenticated caller, attached as `request.principal` on success.
@@ -57,6 +68,8 @@ export type Principal =
       tokenId: string;
       tenantId: string | null;
       userId: string | null;
+      /** Always a bearer-safe scope — single-use workflow scopes are rejected before principal creation. */
+      scope: BearerAuthScope;
     };
 
 /**
@@ -91,7 +104,11 @@ export class AuthGuard implements CanActivate {
     const rawToken = readBearerToken(request);
     if (rawToken !== null) {
       const token = await this.authTokens.findActiveByRawToken(rawToken);
-      if (!token) throw unauthorized();
+      // Reject missing tokens AND single-use workflow tokens — both must
+      // produce the same UnauthorizedException shape (FR-ISO-4).
+      if (!token || !BEARER_AUTH_SCOPES.has(token.scope as BearerAuthScope)) {
+        throw unauthorized();
+      }
       request.principal = principalFromToken(token);
       return true;
     }
@@ -132,6 +149,7 @@ function principalFromToken(token: AuthTokenRow): Principal {
     tokenId: token.id,
     tenantId: token.tenantId,
     userId: token.userId,
+    scope: token.scope as BearerAuthScope,
   };
 }
 

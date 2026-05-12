@@ -179,6 +179,7 @@ const PLATFORM_TOKEN: Principal = {
   tokenId: "0a000000-0000-7000-8000-0000000000d4",
   tenantId: null,
   userId: null,
+  scope: "dashboard_api",
 };
 
 const TENANT_TOKEN: Principal = {
@@ -186,6 +187,7 @@ const TENANT_TOKEN: Principal = {
   tokenId: "0a000000-0000-7000-8000-0000000000d4",
   tenantId: TENANT_ID,
   userId: USER_ID,
+  scope: "dashboard_api",
 };
 
 // --- Wiring -----------------------------------------------------------
@@ -249,6 +251,7 @@ describe("TenantsService.list", () => {
       tokenId: "0a000000-0000-7000-8000-0000000000d5",
       tenantId: TENANT_ID,
       userId: null,
+      scope: "dashboard_api",
     };
     const out = await service.list(userlessTenantToken);
     expect(out).toEqual([]);
@@ -351,6 +354,7 @@ describe("TenantsService.read", () => {
       tokenId: "0a000000-0000-7000-8000-0000000000d5",
       tenantId: TENANT_ID,
       userId: null,
+      scope: "dashboard_api",
     };
     await expect(
       service.read(userlessTenantToken, TENANT_ID),

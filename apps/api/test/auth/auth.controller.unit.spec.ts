@@ -413,7 +413,7 @@ describe("POST /api/v1/auth/signout", () => {
   });
 
   it("returns 401 when principal is kind='token' — service not called", async () => {
-    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID };
+    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID, scope: "dashboard_api" as const };
     const res = await http().post("/api/v1/auth/signout");
 
     expect(res.status).toBe(401);
@@ -463,7 +463,7 @@ describe("POST /api/v1/auth/refresh", () => {
   });
 
   it("returns 401 when principal is kind='token'", async () => {
-    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID };
+    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID, scope: "dashboard_api" as const };
     const res = await http().post("/api/v1/auth/refresh");
 
     expect(res.status).toBe(401);
@@ -598,7 +598,7 @@ describe("POST /api/v1/auth/email/verify/request", () => {
   });
 
   it("happy path (token principal with non-null userId): 202", async () => {
-    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID };
+    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: USER_ID, scope: "dashboard_api" as const };
     const res = await http().post("/api/v1/auth/email/verify/request");
 
     expect(res.status).toBe(202);
@@ -607,7 +607,7 @@ describe("POST /api/v1/auth/email/verify/request", () => {
   });
 
   it("returns 400 when token principal has null userId", async () => {
-    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: null };
+    guard.principal = { kind: "token", tokenId: TOKEN_ID, tenantId: TENANT_ID, userId: null, scope: "dashboard_api" as const };
     const res = await http().post("/api/v1/auth/email/verify/request");
 
     expect(res.status).toBe(400);
