@@ -78,7 +78,7 @@ export class MembershipsController {
       role_code: detail.roleCode,
       store_access_kind: detail.storeAccessKind,
       accessible_store_ids: detail.accessibleStoreIds,
-      revoked_at: detail.revokedAt ?? null,
+      revoked_at: detail.revokedAt ? detail.revokedAt.toISOString() : null,
     };
   }
 }

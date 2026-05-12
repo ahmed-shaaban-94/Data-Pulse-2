@@ -371,4 +371,25 @@ describe("PATCH /api/v1/memberships/:membership_id", () => {
     expectErrorEnvelope(res.body, "validation_error");
     expect(svc.lastUpdateArgs).toBeNull();
   });
+
+  it("serializes revokedAt: null → revoked_at: null (wire shape)", async () => {
+    svc.updateResult = { ...svc.updateResult, revokedAt: null };
+    const res = await http()
+      .patch(`/api/v1/memberships/${MEMBERSHIP_ID}`)
+      .send({ role_code: "tenant_admin" });
+    expect(res.status).toBe(200);
+    expect(res.body.revoked_at).toBeNull();
+  });
+
+  it("serializes revokedAt: Date → revoked_at: ISO string (wire shape)", async () => {
+    svc.updateResult = {
+      ...svc.updateResult,
+      revokedAt: new Date("2024-07-01T00:00:00.000Z"),
+    };
+    const res = await http()
+      .patch(`/api/v1/memberships/${MEMBERSHIP_ID}`)
+      .send({ role_code: "tenant_admin" });
+    expect(res.status).toBe(200);
+    expect(res.body.revoked_at).toBe("2024-07-01T00:00:00.000Z");
+  });
 });
