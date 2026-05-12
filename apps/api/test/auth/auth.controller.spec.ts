@@ -665,6 +665,58 @@ describe("POST /api/v1/auth/email/verify/confirm", () => {
 });
 
 // -----------------------------------------------------------------------
+// Token-scope hardening: single-use tokens must not authenticate via Bearer
+// -----------------------------------------------------------------------
+
+describe("Bearer token scope hardening", () => {
+  it("returns 401 when a password_reset token is replayed as a Bearer credential", async () => {
+    if (maybeSkip()) return;
+
+    // Request a password-reset token for alice; capture rawToken via the spy.
+    await http()
+      .post("/api/v1/auth/password-reset/request")
+      .send({ email: ALICE_EMAIL });
+    const lastCall = emailSpy.enqueuePasswordReset.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const rawToken = lastCall![0].rawToken;
+
+    // Attempt to use that rawToken as a Bearer credential against a
+    // protected endpoint (email/verify/request requires AuthGuard).
+    const res = await http()
+      .post("/api/v1/auth/email/verify/request")
+      .set("Authorization", `Bearer ${rawToken}`);
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("returns 401 when an email_verify token is replayed as a Bearer credential", async () => {
+    if (maybeSkip()) return;
+
+    // Sign in as alice, request an email-verify token.
+    const signin = await http()
+      .post("/api/v1/auth/signin")
+      .send({ email: ALICE_EMAIL, password: ALICE_PASSWORD });
+    const cookie = extractSessionCookie(signin);
+
+    await http()
+      .post("/api/v1/auth/email/verify/request")
+      .set("Cookie", cookie);
+    const lastCall = emailSpy.enqueueEmailVerification.mock.calls.at(-1);
+    expect(lastCall).toBeDefined();
+    const rawToken = lastCall![0].rawToken;
+
+    // Replay the email_verify token as Bearer — must be rejected.
+    const res = await http()
+      .post("/api/v1/auth/email/verify/request")
+      .set("Authorization", `Bearer ${rawToken}`);
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+});
+
+// -----------------------------------------------------------------------
 // FR-ISO-4: 401 envelope shape ≡ 404 envelope shape
 // -----------------------------------------------------------------------
 

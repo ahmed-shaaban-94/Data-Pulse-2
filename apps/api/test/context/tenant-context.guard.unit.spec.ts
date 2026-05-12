@@ -64,6 +64,7 @@ const tokenPrincipal = (tenantId: string | null): Extract<Principal, { kind: "to
   tokenId: TOKEN_ID,
   tenantId,
   userId: USER_ID,
+  scope: "dashboard_api",
 });
 
 // ---------------------------------------------------------------------------

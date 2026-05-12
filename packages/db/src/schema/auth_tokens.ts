@@ -57,6 +57,10 @@ export const authTokens = pgTable("auth_tokens", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
-export type AuthTokenScope = "dashboard_api" | "pos" | "pos_operator";
+/** Scopes that are valid for general API bearer authentication. */
+export type BearerAuthScope = "dashboard_api" | "pos" | "pos_operator";
+/** Scopes reserved for single-use workflow tokens (password reset, email verify). */
+export type SingleUseTokenScope = "password_reset" | "email_verify";
+export type AuthTokenScope = BearerAuthScope | SingleUseTokenScope;
 export type AuthTokenRow = typeof authTokens.$inferSelect;
 export type NewAuthTokenRow = typeof authTokens.$inferInsert;
