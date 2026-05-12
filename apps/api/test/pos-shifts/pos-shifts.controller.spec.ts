@@ -11,12 +11,15 @@
  *   - 200 empty: no stuck shifts when all open shifts have active sessions.
  *   - 401 when Authorization header is absent.
  *   - 401 when Authorization header is not Bearer form.
- *   - 401 when JWT maps to no local user.
+ *   - 401 when JWT verifier throws (unknown token — verifier error path).
+ *   - 401 when JWT subject resolves but no matching users row exists (user-lookup path).
  *   - 401 when user has store_staff role (ineligible).
  *   - 401 when specific-access member requests a branch they lack access to.
  *   - 400 when branch_id query param is missing.
  *   - 400 when branch_id is not a UUID.
  *   - Response shape: no internal IDs (users.id, devices.id, Clerk subjects).
+ *   - 200 allowed for owner role (positive authorization coverage).
+ *   - 200 allowed for tenant_admin role (positive authorization coverage).
  */
 import "reflect-metadata";
 
@@ -54,20 +57,31 @@ const TENANT_ID         = "0c000000-0000-4000-8000-000000000001";
 const STORE_ID          = "0c000000-0000-4000-8000-00000000aa01";
 const STORE_ID_B        = "0c000000-0000-4000-8000-00000000aa02";
 
-const MANAGER_ROLE_ID   = "0c000000-0000-4000-8000-00000000bb01";
-const STAFF_ROLE_ID     = "0c000000-0000-4000-8000-00000000bb02";
+const MANAGER_ROLE_ID      = "0c000000-0000-4000-8000-00000000bb01";
+const STAFF_ROLE_ID        = "0c000000-0000-4000-8000-00000000bb02";
+const OWNER_ROLE_ID        = "0c000000-0000-4000-8000-00000000bb03";
+const TENANT_ADMIN_ROLE_ID = "0c000000-0000-4000-8000-00000000bb04";
 
-const MANAGER_USER_ID   = "0c000000-0000-4000-8000-00000000cc01";
-const MANAGER_CLERK_SUB = "user_clerk_mgr_shifts";
-const STAFF_USER_ID     = "0c000000-0000-4000-8000-00000000cc02";
-const STAFF_CLERK_SUB   = "user_clerk_staff_shifts";
-const CASHIER_USER_ID   = "0c000000-0000-4000-8000-00000000cc03";
-const SPECIFIC_USER_ID  = "0c000000-0000-4000-8000-00000000cc04";
-const SPECIFIC_CLERK_SUB = "user_clerk_specific_shifts";
+const MANAGER_USER_ID      = "0c000000-0000-4000-8000-00000000cc01";
+const MANAGER_CLERK_SUB    = "user_clerk_mgr_shifts";
+const STAFF_USER_ID        = "0c000000-0000-4000-8000-00000000cc02";
+const STAFF_CLERK_SUB      = "user_clerk_staff_shifts";
+const CASHIER_USER_ID      = "0c000000-0000-4000-8000-00000000cc03";
+const SPECIFIC_USER_ID     = "0c000000-0000-4000-8000-00000000cc04";
+const SPECIFIC_CLERK_SUB   = "user_clerk_specific_shifts";
+// Orphan: Clerk sub exists in the verifier map but has NO matching users row.
+const ORPHAN_CLERK_SUB     = "user_clerk_orphan_no_row";
+// Owner and tenant_admin positive-authz fixtures.
+const OWNER_USER_ID        = "0c000000-0000-4000-8000-00000000cc05";
+const OWNER_CLERK_SUB      = "user_clerk_owner_shifts";
+const TADMIN_USER_ID       = "0c000000-0000-4000-8000-00000000cc06";
+const TADMIN_CLERK_SUB     = "user_clerk_tadmin_shifts";
 
 const MANAGER_MEMBERSHIP_ID  = "0c000000-0000-4000-8000-00000000dd01";
 const STAFF_MEMBERSHIP_ID    = "0c000000-0000-4000-8000-00000000dd02";
 const SPECIFIC_MEMBERSHIP_ID = "0c000000-0000-4000-8000-00000000dd03";
+const OWNER_MEMBERSHIP_ID    = "0c000000-0000-4000-8000-00000000dd04";
+const TADMIN_MEMBERSHIP_ID   = "0c000000-0000-4000-8000-00000000dd05";
 
 const DEVICE_ID         = "0c000000-0000-4000-8000-00000000ee01";
 const DEVICE_ATTESTATION = "device-att-shifts-spec";
@@ -136,22 +150,30 @@ beforeAll(async () => {
     await pool.query(
       `INSERT INTO roles (id, tenant_id, code, name) VALUES
          ($1, $2, 'store_manager', 'Manager'),
-         ($3, $2, 'store_staff',   'Staff')`,
-      [MANAGER_ROLE_ID, TENANT_ID, STAFF_ROLE_ID],
+         ($3, $2, 'store_staff',   'Staff'),
+         ($4, $2, 'owner',         'Owner'),
+         ($5, $2, 'tenant_admin',  'Tenant Admin')`,
+      [MANAGER_ROLE_ID, TENANT_ID, STAFF_ROLE_ID, OWNER_ROLE_ID, TENANT_ADMIN_ROLE_ID],
     );
 
     // ---- users ----
+    // NOTE: No users row for ORPHAN_CLERK_SUB — that is intentional; it tests the
+    // service path where Clerk verify() succeeds but the DB lookup returns no match.
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES
          ($1, 'manager@shifts.example',  'Shift Manager',  $2),
          ($3, 'staff@shifts.example',    'Shift Staff',    $4),
          ($5, 'cashier@shifts.example',  'Jane Cashier',   NULL),
-         ($6, 'specific@shifts.example', 'Specific Mgr',   $7)`,
+         ($6, 'specific@shifts.example', 'Specific Mgr',   $7),
+         ($8, 'owner@shifts.example',    'Store Owner',    $9),
+         ($10,'tadmin@shifts.example',   'Tenant Admin',   $11)`,
       [
         MANAGER_USER_ID, MANAGER_CLERK_SUB,
-        STAFF_USER_ID, STAFF_CLERK_SUB,
+        STAFF_USER_ID,   STAFF_CLERK_SUB,
         CASHIER_USER_ID,
         SPECIFIC_USER_ID, SPECIFIC_CLERK_SUB,
+        OWNER_USER_ID,    OWNER_CLERK_SUB,
+        TADMIN_USER_ID,   TADMIN_CLERK_SUB,
       ],
     );
     // Give the cashier a clerk_user_id so shift display_name is not null
@@ -163,13 +185,17 @@ beforeAll(async () => {
     // ---- memberships ----
     await pool.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES
-         ($1, $2, $3, $4, 'all'),
-         ($5, $2, $6, $7, 'all'),
-         ($8, $2, $9, $4, 'specific')`,
+         ($1, $2, $3, $4,  'all'),
+         ($5, $2, $6, $7,  'all'),
+         ($8, $2, $9, $4,  'specific'),
+         ($10,$2, $11,$12, 'all'),
+         ($13,$2, $14,$15, 'all')`,
       [
         MANAGER_MEMBERSHIP_ID, TENANT_ID, MANAGER_USER_ID, MANAGER_ROLE_ID,
-        STAFF_MEMBERSHIP_ID, STAFF_USER_ID, STAFF_ROLE_ID,
-        SPECIFIC_MEMBERSHIP_ID, SPECIFIC_USER_ID,
+        STAFF_MEMBERSHIP_ID,             STAFF_USER_ID,   STAFF_ROLE_ID,
+        SPECIFIC_MEMBERSHIP_ID,          SPECIFIC_USER_ID,
+        OWNER_MEMBERSHIP_ID,             OWNER_USER_ID,   OWNER_ROLE_ID,
+        TADMIN_MEMBERSHIP_ID,            TADMIN_USER_ID,  TENANT_ADMIN_ROLE_ID,
       ],
     );
     // specific user gets access to STORE_ID_B only
@@ -213,6 +239,11 @@ beforeAll(async () => {
       ["jwt-manager",  MANAGER_CLERK_SUB],
       ["jwt-staff",    STAFF_CLERK_SUB],
       ["jwt-specific", SPECIFIC_CLERK_SUB],
+      // jwt-orphan: verifier maps to a sub that has NO matching users row.
+      // This exercises service.ts line where userRow.rows[0] is undefined.
+      ["jwt-orphan",   ORPHAN_CLERK_SUB],
+      ["jwt-owner",    OWNER_CLERK_SUB],
+      ["jwt-tadmin",   TADMIN_CLERK_SUB],
     ]);
 
     const moduleRef = await Test.createTestingModule({
@@ -285,11 +316,24 @@ describe("GET /api/pos/v1/shifts/stuck", () => {
     expectErrorEnvelope(res.body, "unauthorized");
   });
 
-  it("returns 401 when JWT is not recognized by the verifier", async () => {
+  it("returns 401 when JWT is not recognized by the verifier (verifier throws)", async () => {
     if (maybeSkip()) return;
+    // Token not in the stub map → StubClerkVerifier throws → service try/catch path.
     const res = await http()
       .get(`/api/pos/v1/shifts/stuck?branch_id=${STORE_ID}`)
       .set("Authorization", "Bearer jwt-unknown-not-in-map")
+      .expect(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("returns 401 when JWT subject resolves to no local user (user-lookup miss)", async () => {
+    if (maybeSkip()) return;
+    // jwt-orphan is accepted by the verifier (sub = ORPHAN_CLERK_SUB) but
+    // no users row with that clerk_user_id was inserted — exercises the
+    // service path at userRow.rows[0] being undefined.
+    const res = await http()
+      .get(`/api/pos/v1/shifts/stuck?branch_id=${STORE_ID}`)
+      .set("Authorization", "Bearer jwt-orphan")
       .expect(401);
     expectErrorEnvelope(res.body, "unauthorized");
   });
@@ -407,5 +451,31 @@ describe("GET /api/pos/v1/shifts/stuck", () => {
 
     expect(res.body).toMatchObject({ kind: "ok" });
     expect(Array.isArray(res.body.shifts)).toBe(true);
+  });
+
+  it("owner role is allowed (positive authorization coverage)", async () => {
+    if (maybeSkip()) return;
+    // STORE_ID_B has no shifts seeded → expect empty ok response.
+    // Confirms the 'owner' role code is in ELIGIBLE_INTERNAL_ROLES and
+    // the request is not refused for role reasons.
+    const res = await http()
+      .get(`/api/pos/v1/shifts/stuck?branch_id=${STORE_ID_B}`)
+      .set("Authorization", "Bearer jwt-owner")
+      .expect(200);
+
+    expect(res.body).toMatchObject({ kind: "ok", shifts: [] });
+  });
+
+  it("tenant_admin role is allowed (positive authorization coverage)", async () => {
+    if (maybeSkip()) return;
+    // STORE_ID_B has no shifts seeded → expect empty ok response.
+    // Confirms the 'tenant_admin' role code is in ELIGIBLE_INTERNAL_ROLES and
+    // the request is not refused for role reasons.
+    const res = await http()
+      .get(`/api/pos/v1/shifts/stuck?branch_id=${STORE_ID_B}`)
+      .set("Authorization", "Bearer jwt-tadmin")
+      .expect(200);
+
+    expect(res.body).toMatchObject({ kind: "ok", shifts: [] });
   });
 });
