@@ -6,6 +6,7 @@ import { ContextModule } from "./context/context.module";
 import { MembershipsModule } from "./memberships/memberships.module";
 import { PosAuditEventsModule } from "./pos-audit-events/pos-audit-events.module";
 import { PosOperatorsModule } from "./pos-operators/pos-operators.module";
+import { PosShiftsModule } from "./pos-shifts/pos-shifts.module";
 import { StoresModule } from "./stores/stores.module";
 import { TenantsModule } from "./tenants/tenants.module";
 
@@ -26,7 +27,7 @@ import { TenantsModule } from "./tenants/tenants.module";
  * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, PosOperatorsModule, PosAuditEventsModule],
+  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule],
   controllers: [],
   providers: [],
 })
