@@ -60,6 +60,9 @@ import { InvitationsController } from "../src/memberships/invitations.controller
 import { InvitationsService } from "../src/memberships/invitations.service";
 import type { InviteResult } from "../src/memberships/invitations.service";
 import type { InvitationRow } from "@data-pulse-2/db/schema";
+import { StoresController } from "../src/stores/stores.controller";
+import { StoresService } from "../src/stores/stores.service";
+import type { StoreRecord } from "../src/stores/stores.repository";
 
 // ---------------------------------------------------------------------------
 // Schema loading + ajv setup
@@ -2241,6 +2244,188 @@ describe("POST /api/v1/memberships/invite — contract conformance (T304-B slice
 
       expect(Object.keys(res.body)).not.toContain("role_id");
       assertConformsTo(validateInvitation, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// Slice 11 — stores (T300)
+// =============================================================================
+//
+// Covers:
+//   GET /api/v1/stores          200 → Store[]
+//   GET /api/v1/stores/:store_id 200 → Store
+//
+// Wire-shape goal: confirm StoresController.toBody() serialises Date fields
+// to ISO strings before AJV evaluates format: date-time.
+// =============================================================================
+
+const STORES_DOC_ID = "stores.openapi";
+
+let validateStoreArray: ValidateFunction;
+let validateStore: ValidateFunction;
+
+function buildStoresValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === STORES_DOC_ID);
+  if (!contract) {
+    throw new Error(
+      `${STORES_DOC_ID} contract not found — check packages/contracts/openapi/`,
+    );
+  }
+  if (!ajv.getSchema(STORES_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: STORES_DOC_ID });
+  }
+  validateStore = ajv.compile({
+    $ref: `${STORES_DOC_ID}#/components/schemas/Store`,
+  });
+  validateStoreArray = ajv.compile({
+    type: "array",
+    items: { $ref: `${STORES_DOC_ID}#/components/schemas/Store` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — stores slice
+// ---------------------------------------------------------------------------
+
+const STORES_TENANT_ID = "11111111-1111-7111-8111-111111111111";
+const STORES_STORE_ID  = "22222222-2222-7222-8222-222222222222";
+const STORES_USER_ID   = "33333333-3333-7333-8333-333333333333";
+
+/** Fixture using Date objects — toBody() must convert them to ISO strings. */
+const STORE_RECORD: StoreRecord = {
+  id: STORES_STORE_ID,
+  tenantId: STORES_TENANT_ID,
+  code: "S001",
+  name: "Test Store",
+  isActive: true,
+  createdAt: new Date("2024-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2024-06-01T00:00:00.000Z"),
+  deletedAt: null,
+};
+
+class FakeStoresService {
+  async list(_ctx: unknown): Promise<StoreRecord[]> {
+    return [STORE_RECORD];
+  }
+
+  async read(_ctx: unknown, _storeId: string): Promise<StoreRecord> {
+    return STORE_RECORD;
+  }
+}
+
+/** Populates request.principal (AuthGuard contract). */
+class StoresScriptedAuthGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.principal = {
+      kind: "session",
+      sessionId: "stores-session-1",
+      userId: STORES_USER_ID,
+    };
+    return true;
+  }
+}
+
+/**
+ * Populates request.context (TenantContextGuard contract).
+ * StoresController reads ctx = request.context and throws 401 when absent.
+ */
+class StoresScriptedTenantContextGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.context = {
+      userId: STORES_USER_ID,
+      tenantId: STORES_TENANT_ID,
+      storeId: null,
+      isPlatformAdmin: false,
+      source: "session" as const,
+    };
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — stores app
+// ---------------------------------------------------------------------------
+
+let storesApp: INestApplication;
+
+beforeAll(async () => {
+  buildStoresValidators();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [StoresController],
+    providers: [
+      { provide: StoresService, useValue: new FakeStoresService() },
+    ],
+  })
+    .overrideGuard(AuthGuard).useValue(new StoresScriptedAuthGuard())
+    .overrideGuard(TenantContextGuard).useValue(new StoresScriptedTenantContextGuard())
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
+
+  storesApp = moduleRef.createNestApplication({ bufferLogs: true });
+  storesApp.useGlobalPipes(new ZodValidationPipe());
+  storesApp.useGlobalFilters(new GlobalExceptionFilter());
+  await storesApp.init();
+});
+
+afterAll(async () => {
+  if (storesApp) await storesApp.close();
+});
+
+function storesHttp() {
+  return request(storesApp.getHttpServer());
+}
+
+// ---------------------------------------------------------------------------
+// Tests — stores slice (T300 slice 11)
+// ---------------------------------------------------------------------------
+
+describe("Slice 11 — stores (T300)", () => {
+  describe("GET /api/v1/stores → 200 Store[]", () => {
+    it("response body conforms to Store[] schema", async () => {
+      const res = await storesHttp()
+        .get("/api/v1/stores")
+        .expect(200);
+
+      assertConformsTo(validateStoreArray, res.body);
+    });
+
+    it("date fields are ISO strings, not Date objects", async () => {
+      const res = await storesHttp()
+        .get("/api/v1/stores")
+        .expect(200);
+
+      const store = res.body[0];
+      expect(store.created_at).toBe("2024-01-01T00:00:00.000Z");
+      expect(store.updated_at).toBe("2024-06-01T00:00:00.000Z");
+      expect(store.deleted_at).toBeNull();
+      assertConformsTo(validateStoreArray, res.body);
+    });
+  });
+
+  describe("GET /api/v1/stores/:store_id → 200 Store", () => {
+    it("response body conforms to Store schema", async () => {
+      const res = await storesHttp()
+        .get(`/api/v1/stores/${STORES_STORE_ID}`)
+        .expect(200);
+
+      assertConformsTo(validateStore, res.body);
+    });
+
+    it("date fields are ISO strings, not Date objects", async () => {
+      const res = await storesHttp()
+        .get(`/api/v1/stores/${STORES_STORE_ID}`)
+        .expect(200);
+
+      expect(res.body.created_at).toBe("2024-01-01T00:00:00.000Z");
+      expect(res.body.updated_at).toBe("2024-06-01T00:00:00.000Z");
+      expect(res.body.deleted_at).toBeNull();
+      assertConformsTo(validateStore, res.body);
     });
   });
 });
