@@ -406,7 +406,7 @@ describe("POST /api/pos/v1/audit-events — forbidden-field enforcement (integra
             acting_operator_id: OPERATOR_CLERK,
             action_category: "shift.open",
             created_at: new Date().toISOString(),
-            payload: { shift_number: 7, terminal_label: "POS-1" },
+            payload: { shift_id: "0a000000-0000-4000-8000-000000ff6001", shift_number: 7, terminal_label: "POS-1" },
           },
         ],
       });
