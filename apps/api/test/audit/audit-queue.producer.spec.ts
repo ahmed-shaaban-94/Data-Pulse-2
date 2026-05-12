@@ -9,7 +9,10 @@
  *     - AUDIT_QUEUE_NAME literal pin ("audit")
  *     - AUDIT_FANOUT_JOB_NAME_API literal pin ("audit-fanout")
  *     - queue.add receives AUDIT_FANOUT_JOB_NAME_API as the job name
- *     - payload passes through as the data argument
+ *     - payload fields pass through in data
+ *     - data.traceContext is a plain object (injected from active OTel span)
+ *     - data.traceContext.traceparent matches W3C shape inside an active span
+ *     - data.traceContext does not contain payload PII/metadata values
  *     - opts must NOT contain a jobId (no dedup — every emission is distinct)
  *     - two identical enqueue() calls produce two queue.add() calls
  *     - queue.add() errors propagate (not swallowed)
@@ -28,6 +31,12 @@ import {
 import { auditJobEnqueuerFactory } from "../../src/audit/audit.module";
 import { NoOpAuditJobEnqueuer } from "../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../src/audit/audit-job.types";
+import {
+  createTestTracerProvider,
+  context,
+  trace,
+  type TestTracerHandle,
+} from "@data-pulse-2/shared/observability/otel";
 
 // ---------------------------------------------------------------------------
 // Fake queue spy
@@ -86,11 +95,63 @@ describe("AuditQueueProducer — enqueue", () => {
     expect(q.calls[0]!.name).toBe(AUDIT_FANOUT_JOB_NAME_API);
   });
 
-  it("passes payload as the data argument to queue.add", async () => {
+  it("passes original audit payload fields in data to queue.add", async () => {
     const q = new FakeQueue();
     const producer = new AuditQueueProducer(q);
     await producer.enqueue(examplePayload);
-    expect(q.calls[0]!.data).toBe(examplePayload);
+    expect(q.calls[0]!.data).toEqual(
+      expect.objectContaining({
+        actor_user_id: examplePayload.actor_user_id,
+        tenant_id:     examplePayload.tenant_id,
+        action:        examplePayload.action,
+        request_id:    examplePayload.request_id,
+      }),
+    );
+  });
+
+  it("injects traceContext into job data as a plain object", async () => {
+    const q = new FakeQueue();
+    const producer = new AuditQueueProducer(q);
+    await producer.enqueue(examplePayload);
+    const data = q.calls[0]!.data as Record<string, unknown>;
+    expect(typeof data["traceContext"]).toBe("object");
+    expect(data["traceContext"]).not.toBeNull();
+  });
+
+  it("traceContext.traceparent matches W3C shape when called inside an active span", async () => {
+    const handle: TestTracerHandle = createTestTracerProvider();
+    try {
+      const tracer = trace.getTracer("test-audit-producer");
+      const span = tracer.startSpan("audit.enqueue");
+      const ctx = trace.setSpan(context.active(), span);
+
+      const q = new FakeQueue();
+      const producer = new AuditQueueProducer(q);
+      await context.with(ctx, () => producer.enqueue(examplePayload));
+      span.end();
+
+      const data = q.calls[0]!.data as Record<string, unknown>;
+      const carrier = data["traceContext"] as Record<string, unknown>;
+      expect(typeof carrier["traceparent"]).toBe("string");
+      expect(carrier["traceparent"]).toMatch(
+        /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+      );
+    } finally {
+      await handle.teardown();
+    }
+  });
+
+  it("traceContext does not contain payload PII or metadata values", async () => {
+    const q = new FakeQueue();
+    const producer = new AuditQueueProducer(q);
+    await producer.enqueue(examplePayload);
+    const data = q.calls[0]!.data as Record<string, unknown>;
+    const carrier = data["traceContext"] as Record<string, unknown>;
+    const carrierValues = Object.values(carrier);
+    expect(carrierValues).not.toContain(examplePayload.actor_user_id);
+    expect(carrierValues).not.toContain(examplePayload.tenant_id);
+    expect(carrierValues).not.toContain(examplePayload.request_id);
+    expect(carrierValues).not.toContain(examplePayload.action);
   });
 
   it("does not set a jobId in opts (no dedup — must not collapse retried events)", async () => {
