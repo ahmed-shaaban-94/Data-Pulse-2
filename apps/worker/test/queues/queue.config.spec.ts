@@ -10,8 +10,7 @@
  *    sides to diverge; this pin catches it at the import boundary.
  *
  * 2. DLQ metric registry — presence and coverage
- *    - Exactly two entries (email + audit).
- *    - session-revoke MUST be absent (T302 scope, hard boundary).
+ *    - Exactly three entries (email + audit + session-revoke).
  *    - Each descriptor is structurally valid (non-empty strings).
  *    - metric keys follow the `queue.<name>.dlq` convention.
  *    - Registry is deeply frozen (immutability — same rationale as shared).
@@ -40,6 +39,7 @@ import {
 
 import { EMAIL_QUEUE_NAME } from "../../src/email/email.worker";
 import { AUDIT_QUEUE_NAME } from "../../src/audit/audit.worker";
+import { SESSION_REVOKE_JOB_NAME } from "../../src/auth/session-revoke.processor";
 
 // ---------------------------------------------------------------------------
 // 1. Re-export identity — worker shim must not duplicate shared constants
@@ -64,8 +64,8 @@ describe("worker queue.config — re-export identity", () => {
 // ---------------------------------------------------------------------------
 
 describe("DLQ_METRIC_REGISTRY — coverage", () => {
-  it("contains exactly two entries (email + audit; session-revoke is T302)", () => {
-    expect(DLQ_METRIC_REGISTRY).toHaveLength(2);
+  it("contains exactly three entries (email + audit + session-revoke)", () => {
+    expect(DLQ_METRIC_REGISTRY).toHaveLength(3);
   });
 
   it("contains an entry for the email queue", () => {
@@ -78,12 +78,9 @@ describe("DLQ_METRIC_REGISTRY — coverage", () => {
     expect(found).toBeDefined();
   });
 
-  it("does NOT contain a session-revoke entry (T302 scope hard boundary)", () => {
-    const found = DLQ_METRIC_REGISTRY.find(
-      (d) => d.queueName.toLowerCase().includes("session") ||
-             d.queueName.toLowerCase().includes("revoke"),
-    );
-    expect(found).toBeUndefined();
+  it("contains an entry for the session-revoke queue", () => {
+    const found = DLQ_METRIC_REGISTRY.find((d) => d.queueName === SESSION_REVOKE_JOB_NAME);
+    expect(found).toBeDefined();
   });
 
   it("queue names are non-empty strings", () => {
@@ -110,6 +107,11 @@ describe("DLQ_METRIC_REGISTRY — metric key convention", () => {
   it("audit metric key follows queue.<name>.dlq convention", () => {
     const d = DLQ_METRIC_REGISTRY.find((e) => e.queueName === AUDIT_QUEUE_NAME)!;
     expect(d.metricKey).toBe(`queue.${AUDIT_QUEUE_NAME}.dlq`);
+  });
+
+  it("session-revoke metric key follows queue.<name>.dlq convention", () => {
+    const d = DLQ_METRIC_REGISTRY.find((e) => e.queueName === SESSION_REVOKE_JOB_NAME)!;
+    expect(d.metricKey).toBe(`queue.${SESSION_REVOKE_JOB_NAME}.dlq`);
   });
 
   it("all metric keys start with 'queue.' prefix", () => {
@@ -160,7 +162,7 @@ describe("DLQ_METRIC_REGISTRY — immutability", () => {
 // ---------------------------------------------------------------------------
 
 describe("DLQ_METRIC_REGISTRY — worker class consistency", () => {
-  const knownQueueNames = new Set([EMAIL_QUEUE_NAME, AUDIT_QUEUE_NAME]);
+  const knownQueueNames = new Set([EMAIL_QUEUE_NAME, AUDIT_QUEUE_NAME, SESSION_REVOKE_JOB_NAME]);
 
   it("every registry entry references a known *_QUEUE_NAME constant", () => {
     for (const d of DLQ_METRIC_REGISTRY) {
