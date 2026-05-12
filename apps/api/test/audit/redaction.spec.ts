@@ -238,7 +238,6 @@ import {
 const TENANT_ID      = "0a000000-0000-7000-8000-000000ff1001";
 const BRANCH_ID      = "0a000000-0000-7000-8000-000000ff2001";
 const TERMINAL_ID    = "0a000000-0000-7000-8000-000000ff3001";
-const DEVICE_ID      = "0a000000-0000-7000-8000-000000ff4001";
 const OPERATOR_ID    = "0a000000-0000-7000-8000-000000ff5001";
 // clerk_user_id — used as acting_operator_id in POS event requests.
 const OPERATOR_CLERK = "clerk_redact_op_t236";
@@ -291,7 +290,7 @@ beforeAll(async () => {
     // Active device: revoked_at IS NULL. Hash computed in Node, not via pgcrypto.
     await pool.query(
       `INSERT INTO devices (id, tenant_id, store_id, label, token_hash) VALUES ($1, $2, $3, 'POS-R', $4)`,
-      [DEVICE_ID, TENANT_ID, BRANCH_ID, hashToken(ATTESTATION)],
+      [TERMINAL_ID, TENANT_ID, BRANCH_ID, hashToken(ATTESTATION)],
     );
 
     // Boot the PosAuditEventsModule with the test pool and stub Clerk verifier —
