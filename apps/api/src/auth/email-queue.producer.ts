@@ -31,6 +31,7 @@
 import { Injectable } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Queue } from "bullmq";
+import { injectTraceContext } from "@data-pulse-2/shared/observability/otel";
 import {
   type EmailJobEnqueuer,
   type EmailVerificationEmailJob,
@@ -78,19 +79,31 @@ export class EmailQueueProducer implements EmailJobEnqueuer {
 
   async enqueuePasswordReset(job: PasswordResetEmailJob): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.passwordReset, job.rawToken);
-    await this.queue.add(EMAIL_JOB_NAMES.passwordReset, job, { jobId });
+    await this.queue.add(
+      EMAIL_JOB_NAMES.passwordReset,
+      { ...job, traceContext: injectTraceContext() },
+      { jobId },
+    );
   }
 
   async enqueueEmailVerification(
     job: EmailVerificationEmailJob,
   ): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.emailVerification, job.rawToken);
-    await this.queue.add(EMAIL_JOB_NAMES.emailVerification, job, { jobId });
+    await this.queue.add(
+      EMAIL_JOB_NAMES.emailVerification,
+      { ...job, traceContext: injectTraceContext() },
+      { jobId },
+    );
   }
 
   async enqueueInvitation(job: InvitationEmailJob): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.invitation, job.rawToken);
-    await this.queue.add(EMAIL_JOB_NAMES.invitation, job, { jobId });
+    await this.queue.add(
+      EMAIL_JOB_NAMES.invitation,
+      { ...job, traceContext: injectTraceContext() },
+      { jobId },
+    );
   }
 }
 

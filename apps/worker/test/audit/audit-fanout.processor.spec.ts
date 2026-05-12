@@ -27,6 +27,8 @@
  *   - tenant_id null forwarded (RLS guards at DB, not here)
  *   - unknown job name → UnknownAuditJobError
  *   - AUDIT_FANOUT_JOB_NAME literal pin
+ *   - T303: jobs with traceContext still parse and insert normally
+ *   - T303: active context inside process() carries the producer traceId
  */
 import {
   AuditFanoutProcessor,
@@ -36,6 +38,13 @@ import {
   type AuditDbLike,
   type AuditEventInsertRow,
 } from "../../src/audit/audit-fanout.processor";
+import {
+  createTestTracerProvider,
+  context,
+  trace,
+  injectTraceContext,
+  type TestTracerHandle,
+} from "@data-pulse-2/shared/observability/otel";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -316,5 +325,59 @@ describe("AuditFanoutProcessor", () => {
 
   it("AUDIT_FANOUT_JOB_NAME is exactly 'audit-fanout'", () => {
     expect(AUDIT_FANOUT_JOB_NAME).toBe("audit-fanout");
+  });
+});
+
+describe("T303 — OTel traceContext wiring in AuditFanoutProcessor", () => {
+  let db: ReturnType<typeof buildSpyDb>;
+  let processor: AuditFanoutProcessor;
+  let tracerHandle: TestTracerHandle;
+
+  beforeEach(() => {
+    tracerHandle = createTestTracerProvider();
+    db = buildSpyDb();
+    processor = new AuditFanoutProcessor(db);
+  });
+
+  afterEach(async () => {
+    await tracerHandle.teardown();
+  });
+
+  it("processes a job that includes traceContext without error and inserts the row", async () => {
+    await processor.process(AUDIT_FANOUT_JOB_NAME, {
+      ...VALID_PAYLOAD,
+      traceContext: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+    });
+    expect(db.insertAuditEvent).toHaveBeenCalledTimes(1);
+    expect(db.capturedRows[0]!.action).toBe(VALID_PAYLOAD.action);
+  });
+
+  it("legacy job without traceContext still inserts normally", async () => {
+    await processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD);
+    expect(db.insertAuditEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("active context inside process() carries the producer traceId from traceContext", async () => {
+    const tracer = trace.getTracer("test-producer");
+    const producerSpan = tracer.startSpan("api.audit-enqueue");
+    const producerCtx = trace.setSpan(context.active(), producerSpan);
+    const traceContext = context.with(producerCtx, () => injectTraceContext());
+    producerSpan.end();
+    const producerTraceId = producerSpan.spanContext().traceId;
+
+    let contextTraceId: string | undefined;
+    const origInsert = db.insertAuditEvent.bind(db);
+    db.insertAuditEvent = jest.fn(async (row: AuditEventInsertRow) => {
+      const spanCtx = trace.getSpanContext(context.active());
+      contextTraceId = spanCtx?.traceId;
+      return origInsert(row);
+    });
+
+    await processor.process(AUDIT_FANOUT_JOB_NAME, {
+      ...VALID_PAYLOAD,
+      traceContext,
+    });
+
+    expect(contextTraceId).toBe(producerTraceId);
   });
 });

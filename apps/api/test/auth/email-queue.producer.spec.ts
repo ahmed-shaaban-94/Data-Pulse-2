@@ -16,6 +16,7 @@
  *     rawToken (jobId carries a scope prefix)
  *   - jobId leaks none of: email, userId, rawToken
  *   - errors raised by `queue.add` propagate to the caller
+ *   - T303: job.data includes traceContext as a plain object with traceparent
  */
 import {
   deriveJobId,
@@ -23,6 +24,12 @@ import {
   EmailQueueProducer,
   type QueueLike,
 } from "../../src/auth/email-queue.producer";
+import {
+  createTestTracerProvider,
+  context,
+  trace,
+  type TestTracerHandle,
+} from "@data-pulse-2/shared/observability/otel";
 
 interface RecordedCall {
   name: string;
@@ -52,10 +59,16 @@ const USER_A = "0a000000-0000-7000-8000-00000000aa01";
 
 let queue: FakeQueue;
 let producer: EmailQueueProducer;
+let tracerHandle: TestTracerHandle;
 
 beforeEach(() => {
+  tracerHandle = createTestTracerProvider();
   queue = new FakeQueue();
   producer = new EmailQueueProducer(queue);
+});
+
+afterEach(async () => {
+  await tracerHandle.teardown();
 });
 
 describe("EmailQueueProducer.enqueuePasswordReset", () => {
@@ -70,11 +83,13 @@ describe("EmailQueueProducer.enqueuePasswordReset", () => {
     const [call] = queue.calls;
     expect(call!.name).toBe(EMAIL_JOB_NAMES.passwordReset);
     expect(call!.name).toBe("auth.password-reset");
-    expect(call!.data).toEqual({
-      email: EMAIL_A,
-      rawToken: RAW_TOKEN_A,
-      userId: USER_A,
-    });
+    expect(call!.data).toEqual(
+      expect.objectContaining({
+        email: EMAIL_A,
+        rawToken: RAW_TOKEN_A,
+        userId: USER_A,
+      }),
+    );
   });
 
   it("uses the deterministic jobId derived from the rawToken", async () => {
@@ -112,11 +127,13 @@ describe("EmailQueueProducer.enqueueEmailVerification", () => {
     const [call] = queue.calls;
     expect(call!.name).toBe(EMAIL_JOB_NAMES.emailVerification);
     expect(call!.name).toBe("auth.email-verify");
-    expect(call!.data).toEqual({
-      email: EMAIL_A,
-      rawToken: RAW_TOKEN_A,
-      userId: USER_A,
-    });
+    expect(call!.data).toEqual(
+      expect.objectContaining({
+        email: EMAIL_A,
+        rawToken: RAW_TOKEN_A,
+        userId: USER_A,
+      }),
+    );
   });
 
   it("uses the deterministic jobId derived from the rawToken", async () => {
@@ -229,5 +246,78 @@ describe("deriveJobId — stable shape", () => {
     const id = deriveJobId("verify", RAW_TOKEN_A);
     expect(id.startsWith("verify:")).toBe(true);
     expect(id.split(":")[1]).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("T303 — OTel trace context wiring", () => {
+  it("job.data includes traceContext with a traceparent header when called inside an active span", async () => {
+    const tracer = trace.getTracer("test-api");
+    const span = tracer.startSpan("api.enqueue");
+    const ctx = trace.setSpan(context.active(), span);
+
+    await context.with(ctx, () =>
+      producer.enqueuePasswordReset({
+        email: EMAIL_A,
+        rawToken: RAW_TOKEN_A,
+        userId: USER_A,
+      }),
+    );
+    span.end();
+
+    const call = queue.calls[0]!;
+    const data = call.data as Record<string, unknown>;
+    expect(data["traceContext"]).toBeDefined();
+    expect(typeof data["traceContext"]).toBe("object");
+    expect(data["traceContext"]).not.toBeNull();
+    const carrier = data["traceContext"] as Record<string, unknown>;
+    expect(typeof carrier["traceparent"]).toBe("string");
+    expect(carrier["traceparent"]).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+    );
+  });
+
+  it("enqueueEmailVerification also injects traceContext with traceparent", async () => {
+    const tracer = trace.getTracer("test-api");
+    const span = tracer.startSpan("api.enqueue-verify");
+    const ctx = trace.setSpan(context.active(), span);
+
+    await context.with(ctx, () =>
+      producer.enqueueEmailVerification({
+        email: EMAIL_A,
+        rawToken: RAW_TOKEN_A,
+        userId: USER_A,
+      }),
+    );
+    span.end();
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["traceContext"]).toBeDefined();
+    const carrier = data["traceContext"] as Record<string, unknown>;
+    expect(typeof carrier["traceparent"]).toBe("string");
+    expect(carrier["traceparent"]).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/,
+    );
+  });
+
+  it("traceContext does not contain PII (email, userId, rawToken)", async () => {
+    const tracer = trace.getTracer("test-api");
+    const span = tracer.startSpan("api.enqueue-pii-check");
+    const ctx = trace.setSpan(context.active(), span);
+
+    await context.with(ctx, () =>
+      producer.enqueuePasswordReset({
+        email: EMAIL_A,
+        rawToken: RAW_TOKEN_A,
+        userId: USER_A,
+      }),
+    );
+    span.end();
+
+    const carrier = JSON.stringify(
+      (queue.calls[0]!.data as Record<string, unknown>)["traceContext"],
+    );
+    expect(carrier).not.toContain(EMAIL_A);
+    expect(carrier).not.toContain(USER_A);
+    expect(carrier).not.toContain(RAW_TOKEN_A);
   });
 });

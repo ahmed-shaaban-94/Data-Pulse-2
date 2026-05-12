@@ -41,6 +41,11 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { z } from "zod";
 import {
+  extractTraceContext,
+  context,
+  type TraceCarrier,
+} from "@data-pulse-2/shared/observability/otel";
+import {
   EMAIL_ADAPTER,
   type EmailAdapter,
 } from "./email.adapter";
@@ -108,25 +113,33 @@ export class EmailProcessor {
   ) {}
 
   async process(jobName: string, data: unknown): Promise<void> {
-    switch (jobName) {
-      case EMAIL_JOB_NAMES.passwordReset: {
-        const parsed = parseAuthJobData(jobName, data);
-        await this.adapter.send(renderPasswordResetEmail(parsed));
-        return;
+    const carrier =
+      typeof data === "object" && data !== null && "traceContext" in data
+        ? ((data as { traceContext?: TraceCarrier }).traceContext ?? {})
+        : {};
+    const restoredCtx = extractTraceContext(carrier);
+
+    return context.with(restoredCtx, async () => {
+      switch (jobName) {
+        case EMAIL_JOB_NAMES.passwordReset: {
+          const parsed = parseAuthJobData(jobName, data);
+          await this.adapter.send(renderPasswordResetEmail(parsed));
+          return;
+        }
+        case EMAIL_JOB_NAMES.emailVerification: {
+          const parsed = parseAuthJobData(jobName, data);
+          await this.adapter.send(renderEmailVerificationEmail(parsed));
+          return;
+        }
+        case EMAIL_JOB_NAMES.invitation: {
+          const parsed = parseInvitationJobData(jobName, data);
+          await this.adapter.send(renderInvitationEmail(parsed));
+          return;
+        }
+        default:
+          throw new UnknownEmailJobError(jobName);
       }
-      case EMAIL_JOB_NAMES.emailVerification: {
-        const parsed = parseAuthJobData(jobName, data);
-        await this.adapter.send(renderEmailVerificationEmail(parsed));
-        return;
-      }
-      case EMAIL_JOB_NAMES.invitation: {
-        const parsed = parseInvitationJobData(jobName, data);
-        await this.adapter.send(renderInvitationEmail(parsed));
-        return;
-      }
-      default:
-        throw new UnknownEmailJobError(jobName);
-    }
+    });
   }
 }
 
