@@ -37,8 +37,8 @@
  *    - `metricKey`  — dotted-lowercase identifier for the metric counter
  *                     (`"queue.<name>.dlq"` convention).
  *
- *    session-revoke is explicitly out of scope (T302) and MUST NOT appear
- *    here until the queue is implemented end-to-end.
+ *    All three active queues — email, audit-fanout, and session-revoke —
+ *    have entries here.
  */
 
 export {
@@ -51,6 +51,7 @@ export {
 
 import { EMAIL_QUEUE_NAME } from "../email/email.worker";
 import { AUDIT_QUEUE_NAME } from "../audit/audit.worker";
+import { SESSION_REVOKE_JOB_NAME } from "../auth/session-revoke.processor";
 import { deepFreeze } from "@data-pulse-2/shared/queues/queue-config";
 
 /** One entry per active worker queue. */
@@ -76,5 +77,9 @@ export const DLQ_METRIC_REGISTRY: readonly DlqMetricDescriptor[] = deepFreeze([
   {
     queueName: AUDIT_QUEUE_NAME,
     metricKey: `queue.${AUDIT_QUEUE_NAME}.dlq`,
+  },
+  {
+    queueName: SESSION_REVOKE_JOB_NAME,
+    metricKey: `queue.${SESSION_REVOKE_JOB_NAME}.dlq`,
   },
 ]);
