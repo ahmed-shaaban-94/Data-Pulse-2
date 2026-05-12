@@ -2604,3 +2604,207 @@ describe("Slice 12 — tenants (T300)", () => {
     });
   });
 });
+
+// =============================================================================
+// Slice 13 — PATCH /api/v1/memberships/:membership_id (T300)
+// =============================================================================
+//
+// memberships.openapi.yaml defines the Membership schema (200 response for
+// PATCH /api/v1/memberships/{membership_id}).
+//
+// Wire-shape goal:
+//   - revoked_at: null       when service detail has revokedAt: null
+//   - revoked_at: ISO string when service detail has revokedAt: Date
+//
+// The memberships.openapi document is already registered with AJV by
+// buildMembershipsValidators() in Slice 10. No re-registration is needed.
+//
+// Guard note: MembershipsController uses AuthGuard + TenantContextGuard
+// (class-level) and RolesGuard (method-level). All three must be overridden
+// so the module boots without real PG_POOL / Redis dependencies.
+// =============================================================================
+
+import { MembershipsController } from "../src/memberships/memberships.controller";
+import { MembershipsService } from "../src/memberships/memberships.service";
+import type { MembershipDetail } from "../src/context/membership.repository";
+
+// ---------------------------------------------------------------------------
+// Schema loading — memberships PATCH validator
+// ---------------------------------------------------------------------------
+
+// memberships.openapi is already added to ajv in Slice 10's buildMembershipsValidators().
+// Compile the Membership schema validator here — called inside the beforeAll below.
+let validateMembership: ValidateFunction;
+
+function buildMembershipUpdateValidator(): void {
+  // Guard: if memberships.openapi was not yet registered (test isolation),
+  // register it now. In the normal full-suite run Slice 10 already did this.
+  if (!ajv.getSchema(MEMBERSHIPS_DOC_ID)) {
+    const contracts = loadOpenApiContracts();
+    const contract = contracts.find((c) => c.id === MEMBERSHIPS_DOC_ID);
+    if (!contract) {
+      throw new Error(`${MEMBERSHIPS_DOC_ID} contract not found — check packages/contracts/openapi/`);
+    }
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: MEMBERSHIPS_DOC_ID });
+  }
+  validateMembership = ajv.compile({
+    $ref: `${MEMBERSHIPS_DOC_ID}#/components/schemas/Membership`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — memberships PATCH slice
+// ---------------------------------------------------------------------------
+
+const PATCH_MEMBERSHIP_ID = "cc000000-cc00-7000-8000-000000000001";
+const PATCH_TENANT_ID     = "cc000000-cc00-7000-8000-000000000010";
+const PATCH_USER_ID       = "cc000000-cc00-7000-8000-000000000020";
+
+const BASE_MEMBERSHIP_DETAIL: MembershipDetail = {
+  membershipId: PATCH_MEMBERSHIP_ID,
+  user: { id: PATCH_USER_ID, email: "member@example.com", displayName: "Member One" },
+  roleCode: "tenant_admin",
+  storeAccessKind: "all",
+  accessibleStoreIds: [],
+  revokedAt: null,
+};
+
+class FakeMembershipsUpdateService {
+  public detail: MembershipDetail = { ...BASE_MEMBERSHIP_DETAIL };
+
+  async update(_ctx: unknown, _membershipId: string, _dto: unknown): Promise<MembershipDetail> {
+    return this.detail;
+  }
+
+  async revoke(_ctx: unknown, _membershipId: string): Promise<void> {}
+}
+
+class PatchMembershipsScriptedAuthGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.principal = { kind: "session", sessionId: "patch-memberships-session-1", userId: PATCH_USER_ID };
+    return true;
+  }
+}
+
+class PatchMembershipsScriptedTenantContextGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.context = {
+      userId: PATCH_USER_ID,
+      tenantId: PATCH_TENANT_ID,
+      storeId: null,
+      isPlatformAdmin: false,
+      source: "session" as const,
+    };
+    return true;
+  }
+}
+
+class PatchMembershipsScriptedRolesGuard implements CanActivate {
+  canActivate(_ctx: ExecutionContext): boolean { return true; }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — memberships PATCH app
+// ---------------------------------------------------------------------------
+
+let membershipsUpdateApp: INestApplication;
+let fakeMembershipsUpdateService: FakeMembershipsUpdateService;
+
+beforeAll(async () => {
+  buildMembershipUpdateValidator();
+
+  fakeMembershipsUpdateService = new FakeMembershipsUpdateService();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [MembershipsController],
+    providers: [
+      { provide: MembershipsService, useValue: fakeMembershipsUpdateService },
+    ],
+  })
+    .overrideGuard(AuthGuard).useValue(new PatchMembershipsScriptedAuthGuard())
+    .overrideGuard(TenantContextGuard).useValue(new PatchMembershipsScriptedTenantContextGuard())
+    .overrideGuard(RolesGuard).useValue(new PatchMembershipsScriptedRolesGuard())
+    .compile();
+
+  membershipsUpdateApp = moduleRef.createNestApplication({ bufferLogs: true });
+  membershipsUpdateApp.useGlobalPipes(new ZodValidationPipe());
+  membershipsUpdateApp.useGlobalFilters(new GlobalExceptionFilter());
+  await membershipsUpdateApp.init();
+});
+
+afterAll(async () => {
+  if (membershipsUpdateApp) await membershipsUpdateApp.close();
+});
+
+beforeEach(() => {
+  fakeMembershipsUpdateService.detail = { ...BASE_MEMBERSHIP_DETAIL };
+});
+
+function membershipsUpdateHttp() {
+  return request(membershipsUpdateApp.getHttpServer());
+}
+
+// ---------------------------------------------------------------------------
+// Tests — PATCH /api/v1/memberships/:membership_id (T300 slice 13)
+// ---------------------------------------------------------------------------
+
+describe("Slice 13 — PATCH /api/v1/memberships/:membership_id (T300)", () => {
+  describe("200 Membership — revoked_at: null", () => {
+    it("response body conforms to Membership schema when revokedAt is null", async () => {
+      fakeMembershipsUpdateService.detail = { ...BASE_MEMBERSHIP_DETAIL, revokedAt: null };
+
+      const res = await membershipsUpdateHttp()
+        .patch(`/api/v1/memberships/${PATCH_MEMBERSHIP_ID}`)
+        .send({ role_code: "tenant_admin" })
+        .expect(200);
+
+      assertConformsTo(validateMembership, res.body);
+    });
+
+    it("revoked_at is null in the wire response when revokedAt is null", async () => {
+      fakeMembershipsUpdateService.detail = { ...BASE_MEMBERSHIP_DETAIL, revokedAt: null };
+
+      const res = await membershipsUpdateHttp()
+        .patch(`/api/v1/memberships/${PATCH_MEMBERSHIP_ID}`)
+        .send({ role_code: "tenant_admin" })
+        .expect(200);
+
+      expect(res.body.revoked_at).toBeNull();
+      assertConformsTo(validateMembership, res.body);
+    });
+  });
+
+  describe("200 Membership — revoked_at: ISO string", () => {
+    it("response body conforms to Membership schema when revokedAt is a Date", async () => {
+      fakeMembershipsUpdateService.detail = {
+        ...BASE_MEMBERSHIP_DETAIL,
+        revokedAt: new Date("2024-07-01T00:00:00.000Z"),
+      };
+
+      const res = await membershipsUpdateHttp()
+        .patch(`/api/v1/memberships/${PATCH_MEMBERSHIP_ID}`)
+        .send({ role_code: "tenant_admin" })
+        .expect(200);
+
+      assertConformsTo(validateMembership, res.body);
+    });
+
+    it("revoked_at is an ISO string in the wire response when revokedAt is a Date", async () => {
+      fakeMembershipsUpdateService.detail = {
+        ...BASE_MEMBERSHIP_DETAIL,
+        revokedAt: new Date("2024-07-01T00:00:00.000Z"),
+      };
+
+      const res = await membershipsUpdateHttp()
+        .patch(`/api/v1/memberships/${PATCH_MEMBERSHIP_ID}`)
+        .send({ role_code: "tenant_admin" })
+        .expect(200);
+
+      expect(res.body.revoked_at).toBe("2024-07-01T00:00:00.000Z");
+      assertConformsTo(validateMembership, res.body);
+    });
+  });
+});
