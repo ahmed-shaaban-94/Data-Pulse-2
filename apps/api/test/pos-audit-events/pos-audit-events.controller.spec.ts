@@ -71,6 +71,8 @@ const EVT_3 = "0c111111-0000-4000-8000-000000000003";
 const EVT_4 = "0c111111-0000-4000-8000-000000000004";
 const EVT_5 = "0c111111-0000-4000-8000-000000000005";
 
+const SHIFT_ID = "0c222222-0000-4000-8000-000000000001";
+
 const CREATED_AT = "2026-01-15T10:00:00.000Z";
 
 function makeShiftOpen(eventId: string) {
@@ -82,7 +84,7 @@ function makeShiftOpen(eventId: string) {
     acting_operator_id: OPERATOR_CLERK_SUB,
     action_category: "shift.open",
     created_at: CREATED_AT,
-    payload: { shift_id: "0c222222-0000-4000-8000-000000000001", opened_at: CREATED_AT },
+    payload: { shift_id: SHIFT_ID, opened_at: CREATED_AT },
   };
 }
 
@@ -193,6 +195,9 @@ afterAll(async () => {
 
 afterEach(async () => {
   if (pool) {
+    await pool
+      .query(`DELETE FROM shifts WHERE tenant_id = $1`, [TENANT_ID])
+      .catch(() => undefined);
     await pool
       .query(`DELETE FROM audit_events WHERE tenant_id = $1`, [TENANT_ID])
       .catch(() => undefined);
@@ -470,5 +475,130 @@ describe("POST /api/pos/v1/audit-events (body validation → 400)", () => {
       .send({ device_token_attestation: DEVICE_ATTESTATION, events: [noCategory] });
     expect(res.status).toBe(400);
     expectErrorEnvelope(res.body, "validation_error");
+  });
+});
+
+// -----------------------------------------------------------------------
+// Wave 4.1a: shifts write path
+// -----------------------------------------------------------------------
+
+describe("POST /api/pos/v1/audit-events (Wave 4.1a: shifts write path)", () => {
+  const SHIFT_EVT = "0c111111-0000-4000-8000-000000000040";
+  const SHIFT_EVT_2 = "0c111111-0000-4000-8000-000000000041";
+  const SHIFT_EVT_3 = "0c111111-0000-4000-8000-000000000042";
+  const SHIFT_ID_ALT = "0c222222-0000-4000-8000-000000000099";
+
+  it("accepted shift.open creates a shifts row with correct field values", async () => {
+    if (maybeSkip()) return;
+
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [makeShiftOpen(SHIFT_EVT)] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.accepted).toEqual([SHIFT_EVT]);
+
+    const r = await pool!.query<{
+      shift_id: string;
+      tenant_id: string;
+      store_id: string;
+      opening_cashier_user_id: string;
+      opening_device_id: string;
+      opened_at: string;
+      lifecycle_state: string;
+    }>(
+      `SELECT shift_id, tenant_id, store_id, opening_cashier_user_id,
+              opening_device_id, opened_at::text, lifecycle_state
+       FROM shifts WHERE shift_id = $1`,
+      [SHIFT_ID],
+    );
+
+    expect(r.rows).toHaveLength(1);
+    const row = r.rows[0]!;
+    expect(row.tenant_id).toBe(TENANT_ID);
+    expect(row.store_id).toBe(STORE_ID);
+    expect(row.opening_cashier_user_id).toBe(OPERATOR_USER_ID);
+    expect(row.opening_device_id).toBe(DEVICE_ID);
+    expect(new Date(row.opened_at).getTime()).toBe(new Date(CREATED_AT).getTime());
+    expect(row.lifecycle_state).toBe("open");
+  });
+
+  it("duplicate shift.open (same event_id) → duplicates; no second shifts row", async () => {
+    if (maybeSkip()) return;
+
+    await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [makeShiftOpen(SHIFT_EVT_2)] });
+
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [makeShiftOpen(SHIFT_EVT_2)] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.duplicates).toEqual([SHIFT_EVT_2]);
+
+    const r = await pool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM shifts WHERE shift_id = $1`,
+      [SHIFT_ID],
+    );
+    expect(r.rows[0]!.count).toBe("1");
+  });
+
+  it("shift.open with missing payload.shift_id → schema_violation, no shifts row", async () => {
+    if (maybeSkip()) return;
+
+    const evt = {
+      ...makeShiftOpen(SHIFT_EVT_3),
+      payload: { opened_at: CREATED_AT }, // shift_id intentionally absent
+    };
+
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.rejected).toEqual([{ event_id: SHIFT_EVT_3, category: "schema_violation" }]);
+
+    const r = await pool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM shifts WHERE shift_id = $1`,
+      [SHIFT_ID],
+    );
+    expect(r.rows[0]!.count).toBe("0");
+  });
+
+  it("shift.open with non-UUID payload.shift_id → schema_violation, no shifts row", async () => {
+    if (maybeSkip()) return;
+
+    const EVT_BAD_UUID = "0c111111-0000-4000-8000-000000000043";
+    const evt = {
+      ...makeShiftOpen(EVT_BAD_UUID),
+      payload: { shift_id: "not-a-uuid", opened_at: CREATED_AT },
+    };
+
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.rejected).toEqual([{ event_id: EVT_BAD_UUID, category: "schema_violation" }]);
+  });
+
+  it("rejected event (tenant mismatch) does not write a shifts row", async () => {
+    if (maybeSkip()) return;
+
+    const EVT_MISMATCH = "0c111111-0000-4000-8000-000000000044";
+    const evt = { ...makeShiftOpen(EVT_MISMATCH), tenant_id: TENANT_ID_OTHER, payload: { shift_id: SHIFT_ID_ALT, opened_at: CREATED_AT } };
+
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
+
+    expect(res.body.rejected[0]).toMatchObject({ category: "tenant_mismatch" });
+
+    const r = await pool!.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM shifts WHERE shift_id = $1`,
+      [SHIFT_ID_ALT],
+    );
+    expect(r.rows[0]!.count).toBe("0");
   });
 });

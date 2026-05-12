@@ -11,3 +11,4 @@ export * from "./auth_tokens";
 export * from "./invitations";
 export * from "./audit_events";
 export * from "./idempotency_keys";
+export * from "./shifts";

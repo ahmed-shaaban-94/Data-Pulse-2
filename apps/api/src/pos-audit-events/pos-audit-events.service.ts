@@ -40,6 +40,8 @@ import {
 
 const ACTION_CATEGORY_SET = new Set<string>(POS_AUDIT_ACTION_CATEGORIES);
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Injectable()
 export class PosAuditEventsService {
   constructor(
@@ -101,6 +103,15 @@ export class PosAuditEventsService {
       return;
     }
 
+    // shift.open: payload.shift_id must be a valid UUID string.
+    if (event.action_category === "shift.open") {
+      const payloadShiftId = (event.payload as Record<string, unknown>)["shift_id"];
+      if (typeof payloadShiftId !== "string" || !UUID_RE.test(payloadShiftId)) {
+        rejected.push({ event_id: event.event_id, category: "schema_violation" });
+        return;
+      }
+    }
+
     // Tenant/branch scope check.
     if (event.tenant_id !== deviceTenantId || event.branch_id !== deviceStoreId) {
       rejected.push({ event_id: event.event_id, category: "tenant_mismatch" });
@@ -146,7 +157,28 @@ export class PosAuditEventsService {
             JSON.stringify(event.payload),
           ],
         );
-        return r.rows.length > 0 ? "accepted" : "duplicate";
+
+        const accepted = r.rows.length > 0;
+
+        if (accepted && event.action_category === "shift.open") {
+          const shiftId = (event.payload as Record<string, unknown>)["shift_id"] as string;
+          await client.query(
+            `INSERT INTO shifts
+               (shift_id, tenant_id, store_id, opening_cashier_user_id, opening_device_id, opened_at)
+             VALUES ($1, $2, $3, $4, $5, $6::timestamptz)
+             ON CONFLICT (shift_id) DO NOTHING`,
+            [
+              shiftId,
+              event.tenant_id,
+              event.branch_id,
+              actorUserId,
+              event.originating_terminal_id,
+              event.created_at,
+            ],
+          );
+        }
+
+        return accepted ? "accepted" : "duplicate";
       },
     );
 
