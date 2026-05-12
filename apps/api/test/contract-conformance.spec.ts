@@ -63,6 +63,9 @@ import type { InvitationRow } from "@data-pulse-2/db/schema";
 import { StoresController } from "../src/stores/stores.controller";
 import { StoresService } from "../src/stores/stores.service";
 import type { StoreRecord } from "../src/stores/stores.repository";
+import { TenantsController } from "../src/tenants/tenants.controller";
+import { TenantsService } from "../src/tenants/tenants.service";
+import type { TenantRecord } from "../src/tenants/tenants.repository";
 
 // ---------------------------------------------------------------------------
 // Schema loading + ajv setup
@@ -2426,6 +2429,178 @@ describe("Slice 11 — stores (T300)", () => {
       expect(res.body.updated_at).toBe("2024-06-01T00:00:00.000Z");
       expect(res.body.deleted_at).toBeNull();
       assertConformsTo(validateStore, res.body);
+    });
+  });
+});
+
+// =============================================================================
+// Slice 12 — tenants (T300)
+// =============================================================================
+//
+// Covers:
+//   GET /api/v1/tenants               200 → TenantSummary[]
+//   GET /api/v1/tenants/:tenant_id    200 → Tenant
+//
+// Wire-shape goal:
+//   - TenantSummary: id/slug/name only — no date fields.
+//   - Tenant (allOf TenantSummary): confirm toFullBody() serialises Date
+//     fields to ISO strings before AJV evaluates format: date-time.
+//
+// Guard note: TenantsController uses only AuthGuard (class-wide). It reads
+// request.principal, NOT request.context. No TenantContextGuard override
+// is needed. RolesGuard must still be overridden because NestJS resolves
+// all guard constructors at module-init time (per-method guards are still
+// instantiated); without the override the module fails to boot due to
+// RolesGuard's MembershipRepository/PG_POOL dependencies.
+// =============================================================================
+
+const TENANTS_DOC_ID    = "tenants.openapi";
+const TENANTS_TENANT_ID = "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa";
+const TENANTS_USER_ID   = "bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb";
+
+let validateTenantSummaryArray: ValidateFunction;
+let validateTenant: ValidateFunction;
+
+function buildTenantsValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const contract = contracts.find((c) => c.id === TENANTS_DOC_ID);
+  if (!contract) {
+    throw new Error(
+      `${TENANTS_DOC_ID} contract not found — check packages/contracts/openapi/`,
+    );
+  }
+  if (!ajv.getSchema(TENANTS_DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(contract.document) as object;
+    ajv.addSchema({ ...processedDoc, $id: TENANTS_DOC_ID });
+  }
+  validateTenant = ajv.compile({
+    $ref: `${TENANTS_DOC_ID}#/components/schemas/Tenant`,
+  });
+  validateTenantSummaryArray = ajv.compile({
+    type: "array",
+    items: { $ref: `${TENANTS_DOC_ID}#/components/schemas/TenantSummary` },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Test doubles — tenants slice
+// ---------------------------------------------------------------------------
+
+/** Fixture with real Date objects — toFullBody() must convert to ISO strings. */
+const TENANT_RECORD: TenantRecord = {
+  id: TENANTS_TENANT_ID,
+  slug: "acme-corp",
+  name: "Acme Corp",
+  status: "active",
+  createdAt: new Date("2024-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2024-06-01T00:00:00.000Z"),
+  deletedAt: null,
+};
+
+class FakeTenantsService {
+  async list(_principal: unknown): Promise<TenantRecord[]> {
+    return [TENANT_RECORD];
+  }
+
+  async read(_principal: unknown, _tenantId: string): Promise<TenantRecord> {
+    return TENANT_RECORD;
+  }
+}
+
+/** Populates request.principal (AuthGuard contract). */
+class TenantsScriptedAuthGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest();
+    req.principal = {
+      kind: "session",
+      sessionId: "tenants-session-1",
+      userId: TENANTS_USER_ID,
+    };
+    return true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture — tenants app
+// ---------------------------------------------------------------------------
+
+let tenantsApp: INestApplication;
+
+beforeAll(async () => {
+  buildTenantsValidators();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [TenantsController],
+    providers: [
+      { provide: TenantsService, useValue: new FakeTenantsService() },
+    ],
+  })
+    .overrideGuard(AuthGuard).useValue(new TenantsScriptedAuthGuard())
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
+
+  tenantsApp = moduleRef.createNestApplication({ bufferLogs: true });
+  tenantsApp.useGlobalPipes(new ZodValidationPipe());
+  tenantsApp.useGlobalFilters(new GlobalExceptionFilter());
+  await tenantsApp.init();
+});
+
+afterAll(async () => {
+  if (tenantsApp) await tenantsApp.close();
+});
+
+function tenantsHttp() {
+  return request(tenantsApp.getHttpServer());
+}
+
+// ---------------------------------------------------------------------------
+// Tests — tenants slice (T300 slice 12)
+// ---------------------------------------------------------------------------
+
+describe("Slice 12 — tenants (T300)", () => {
+  describe("GET /api/v1/tenants → 200 TenantSummary[]", () => {
+    it("response body conforms to TenantSummary[] schema", async () => {
+      const res = await tenantsHttp()
+        .get("/api/v1/tenants")
+        .expect(200);
+
+      assertConformsTo(validateTenantSummaryArray, res.body);
+    });
+
+    it("summary fields are id/slug/name only; no date fields", async () => {
+      const res = await tenantsHttp()
+        .get("/api/v1/tenants")
+        .expect(200);
+
+      const summary = res.body[0];
+      expect(summary.id).toBe(TENANTS_TENANT_ID);
+      expect(summary.slug).toBe("acme-corp");
+      expect(summary.name).toBe("Acme Corp");
+      expect(summary).not.toHaveProperty("created_at");
+      expect(summary).not.toHaveProperty("updated_at");
+      expect(summary).not.toHaveProperty("deleted_at");
+      assertConformsTo(validateTenantSummaryArray, res.body);
+    });
+  });
+
+  describe("GET /api/v1/tenants/:tenant_id → 200 Tenant", () => {
+    it("response body conforms to Tenant schema", async () => {
+      const res = await tenantsHttp()
+        .get(`/api/v1/tenants/${TENANTS_TENANT_ID}`)
+        .expect(200);
+
+      assertConformsTo(validateTenant, res.body);
+    });
+
+    it("date fields are ISO strings, not Date objects", async () => {
+      const res = await tenantsHttp()
+        .get(`/api/v1/tenants/${TENANTS_TENANT_ID}`)
+        .expect(200);
+
+      expect(res.body.created_at).toBe("2024-01-01T00:00:00.000Z");
+      expect(res.body.updated_at).toBe("2024-06-01T00:00:00.000Z");
+      expect(res.body.deleted_at).toBeNull();
+      assertConformsTo(validateTenant, res.body);
     });
   });
 });
