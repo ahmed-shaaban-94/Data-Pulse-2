@@ -25,6 +25,7 @@
  */
 import { Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
+import { injectTraceContext } from "@data-pulse-2/shared/observability/otel";
 import type { AuditJobEnqueuer } from "./audit-job.enqueuer";
 import type { AuditJobPayload } from "./audit-job.types";
 
@@ -54,6 +55,6 @@ export class AuditQueueProducer implements AuditJobEnqueuer {
 
   async enqueue(payload: AuditJobPayload): Promise<void> {
     // No jobId — every emission must produce a distinct BullMQ job entry.
-    await this.queue.add(AUDIT_FANOUT_JOB_NAME_API, payload);
+    await this.queue.add(AUDIT_FANOUT_JOB_NAME_API, { ...payload, traceContext: injectTraceContext() });
   }
 }
