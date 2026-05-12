@@ -401,4 +401,49 @@ This plan is "complete" when:
 
 ---
 
+## 12. Post-implementation Constitution Check
+
+Re-checked against **Constitution v3.0.1** (the v3.0.0 principle set,
+clarification-only patch; 14 core principles unchanged).
+
+Scope of evidence: the foundation backend as implemented through PR #150
+(latest main SHA `081f373`). Deferred areas are explicitly noted; they do
+not represent violations of the principle but rather boundaries of this
+feature's scope.
+
+| # | Principle | Post-implementation evidence | Status |
+|---|---|---|---|
+| I | Reference, Not Source of Truth | No code, schema, or contract was copied from the legacy `Data-Pulse` repo. Stack, schema, and contracts were independently designed via speckit. | ✅ |
+| II | Multi-Tenant SaaS by Default | Every tenant-owned table carries `tenant_id NOT NULL` + FK + RLS policy (fail-closed `current_setting(..., true)` form). `TenantContextGuard` resolves active tenant server-side. `withTenant` helper enforces scoped queries. Cross-tenant non-disclosure (safe 404) enforced by `ExceptionFilter` + `RolesGuard`. Runtime DB role has no `BYPASSRLS`. Workers carry `tenantId` in job payload and set `app.current_tenant` before DB access. | ✅ |
+| III | Backend Authority & Data Integrity (NON-NEGOTIABLE) | `AuthGuard` + `RolesGuard` + `TenantContextGuard` enforce server-side authz on every request. DB constraints (FK, CHECK, partial unique indexes, `NOT NULL`) encode invariants. Redis session cache is read-through only; PostgreSQL is system of record. Uniform error envelope `{ error: { code, message, request_id } }` enforced by global `ExceptionFilter`. Money representation deferred — no monetary fields in this feature. | ✅ (money deferred to future pricing/catalog spec) |
+| IV | Contract-First POS Integration | OpenAPI 3.1 YAMLs in `packages/contracts/openapi/` are the source of truth for all implemented endpoints (auth, context, tenants, stores, memberships, audit). Contract-conformance tests cover `GET /tenants`, `GET /stores`, `PATCH /memberships` (additional slices in progress). API responses use explicit wire shapes via `toBody()`-style projections. `/api/pos/v1/*` namespace reserved (returns standard not-found envelope); no POS sync endpoints exist. | ✅ (conformance coverage expanding; POS sync out of scope) |
+| V | Async Work Belongs in Workers | Email delivery (verify + password-reset), audit fan-out, and session revocation all run as BullMQ jobs in `apps/worker`. Each job carries `tenantId`/`correlationId`. Retry/backoff/DLQ defaults are configured per queue. OTel trace context propagates from API → worker via job payload. Failed-job log redaction enforced. Session-revoke processor and registry layers are implemented; runtime scheduling of that processor is wired via the queue defaults. Soft-delete sweep processor (T312) layer is scaffolded; **runtime sweep scheduling is not yet wired** (Layer A only). | ✅ for implemented workers; T312 runtime scheduling deferred |
+| VI | Test-First Quality | All slices followed RED → GREEN → IMPROVE order. Unit coverage ≥ 80% enforced via Jest coverage thresholds per app/package. Testcontainers-backed migration integration test verifies all tables, FKs, constraints, RLS policies, and triggers. Cross-tenant and cross-store isolation tests exist for auth, tenants, stores, context, memberships, and audit layers. RLS bypass probe (`T207`) implemented. Frontend-bypass and default-deny probes implemented. SC-1..SC-9 formal verification pass not yet recorded — see T309 follow-up note. | ✅ (T309 SC verification not yet formally recorded) |
+| VII | Observable Systems | `RequestIdInterceptor` assigns UUID per request; exposed in response header and pino log line. `LoggingInterceptor` emits structured pino JSON with `request_id`, `tenant_id`, `user_id`, route, status, latency, `trace_id`. OTel SDK wired for HTTP, Postgres, Redis, BullMQ. BullMQ job payloads carry `traceId`/`spanId` for cross-service trace propagation. No secrets, tokens, or PII appear in logs (redaction list enforced at logger boundary). Production metrics (queue lag, RLS failure rate) are instrumentable via OTel but not yet plumbed to an exporter — deferred to deployment spec. | ✅ (exporter target deferred to deployment spec) |
+| VIII | Reproducible & Versioned Releases | Explicit SQL migration `0000_initial.sql` with paired rollback `0000_initial.down.sql` committed. `CHANGELOG.md` updated with v0.1.0 entry. pnpm lockfile pinned. Docker images produced per app. API versioned at `v1` from day one. No `package.json`, `pnpm-lock.yaml`, DB schema, or migration changes made without explicit task approval. | ✅ |
+| IX | Source-of-Truth Model | SaaS-as-truth half fully implemented: tenants, stores, memberships, invitations, auth state, integration credentials are all SaaS-owned and PostgreSQL-authoritative. Global Catalog / Tenant Catalog / Store Override / SaleLine snapshot layers are not exercised by this feature — they bind future catalog and sales features. | ✅ for implemented scope; catalog/sales layers out of scope |
+| X | Retail Temporal Semantics | No sale, order, or POS-event entities exist in this feature. `audit_events.occurred_at` is single-purpose and stored as `TIMESTAMPTZ` UTC. Security clocks (token expiry, session expiry, rate-limit windows) use server clock, not client-reported time. Per-entity timestamp catalogs bind future features. | ✅ for implemented scope; sales/POS temporal semantics out of scope |
+| XI | Idempotency & External IDs | `idempotency_keys` table present in schema with Redis-primary + Postgres-mirror helper. Email and audit jobs are idempotent: retry produces same state, no duplicate side effects. Session-revoke processor is idempotent. No real consumer API endpoint uses `Idempotency-Key` yet — POS ingestion is out of scope. | ✅ (platform layer built; POS consumer out of scope) |
+| XII | Authorization & Object Safety | Zod `.strict()` `ValidationPipe` rejects unknown request keys. Command DTOs omit `tenant_id`, `store_id`, `role`, `status`, `acceptedAt`, `createdBy`, `is_platform_admin`, and other mass-assignable fields. Object-level authorization enforced on every protected read and write via `TenantContextGuard` + `RolesGuard`. Cross-tenant lookups return safe 404. Default-deny test (T206) confirms unannotated endpoints fail closed. | ✅ |
+| XIII | Auditability & Provenance | `AuditEmitter` interceptor enqueues a BullMQ job for each auditable action (auth sign-in/failure, role/access changes, context switch, soft-delete, platform-admin cross-tenant). `audit-fanout` processor inserts rows into `audit_events` (insert-only enforced at application layer). Anonymous-actor pattern implemented: pre-auth failures record `actor_user_id IS NULL` with `actor_label`. PII/credential redaction enforced at the emitter. `AuditController` provides tenant-scoped, cursor-paginated query API. **Audit log retention policy (T311) is not yet implemented** — blocked pending retention schema design decisions. | ✅ for audit capture and query; T311 retention policy deferred |
+| XIV | PII & Data Lifecycle Discipline | pino redaction list enforced at the logger boundary (tokens, passwords, invitation secrets, payment data, PII beyond actor identifier are never logged). Job IDs and observability tags carry no PII. Soft-delete is the default for tenants, stores, memberships. Invitation secrets are hashed at rest (token visible once). Soft-delete sweep processor scaffolded (T312). **Audit log retention sweep (T311) pending**. Data classification taxonomy (PII / payment / business / public) and right-to-erasure flow are deferred to a future data-lifecycle spec. | ✅ (posture); T311 + classification taxonomy + right-to-erasure deferred |
+
+### Known follow-up items
+
+| Item | Status |
+|---|---|
+| T309 — SC-1..SC-9 formal verification against running system | Not yet recorded; follow-up task |
+| T311 — Audit log retention policy (BullMQ scheduled sweep) | Blocked pending retention schema and design decisions |
+| T312 — Soft-delete sweep runtime scheduling | Processor layer complete (Layer A); runtime cron wiring deferred |
+| Contract-conformance coverage | Conformance tests exist for key endpoints; full sweep across all contract operations is in progress |
+| OTel metrics exporter target | Instrumentation wired; exporter/sink target deferred to deployment spec |
+| Data classification taxonomy + right-to-erasure flow | Deferred to future data-lifecycle spec |
+| Money representation | No monetary fields in this feature; explicit representation must be defined before any catalog/pricing feature |
+
+**Result**: All 14 Constitution v3.0.1 / v3.0.0 principles hold for the
+implemented foundation scope. No violations. Deferred items are bounded to
+out-of-scope concerns or explicitly tracked follow-up tasks.
+
+---
+
 **End of plan.**
