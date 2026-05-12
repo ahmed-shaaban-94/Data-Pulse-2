@@ -81,7 +81,8 @@ describe("runWithTenantContext — input validation", () => {
       tenantId: null,
       isPlatformAdmin: true,
     }, async (client) => readTenantContext(client));
-    expect(ctx.currentTenant).toBeNull(); // empty string canonicalised to null
+    // NIL UUID is set as the GUC value; readTenantContext returns it as-is.
+    expect(ctx.currentTenant).toBe("00000000-0000-0000-0000-000000000000");
     expect(ctx.isPlatformAdmin).toBe("true");
   });
 
@@ -249,5 +250,36 @@ describe("runWithTenantContext — RLS smoke (non-superuser app role)", () => {
     expect(codes.every((c) => c.startsWith("TC-B") || c.startsWith("B-"))).toBe(true);
     expect(codes).not.toContain("TC-A-1");
     expect(codes).not.toContain("A-1");
+  });
+
+  it("null tenantId + isPlatformAdmin:true does not throw a uuid cast error (app role)", async () => {
+    // Regression: tenantId:null must not map to '' which throws
+    // "invalid input syntax for type uuid: ''" before the is_platform_admin
+    // OR-branch is evaluated.
+    await expect(
+      runWithTenantContext(
+        env!.app,
+        { tenantId: null, isPlatformAdmin: true },
+        async (client) => {
+          // A real SELECT against an RLS-protected table is required; reading
+          // GUCs alone would pass even with the '' bug.
+          await client.query("SELECT id FROM stores LIMIT 1");
+        },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("null tenantId + isPlatformAdmin:false does not throw and returns no rows (app role)", async () => {
+    // With no tenant and no platform-admin flag the RLS policy must produce
+    // an empty result set, not a uuid cast error.
+    const result = await runWithTenantContext(
+      env!.app,
+      { tenantId: null, isPlatformAdmin: false },
+      async (client) => {
+        return client.query<{ id: string }>("SELECT id FROM stores LIMIT 1");
+      },
+    );
+    // NIL UUID never matches a real tenant_id, so no rows are visible.
+    expect(result.rows).toHaveLength(0);
   });
 });

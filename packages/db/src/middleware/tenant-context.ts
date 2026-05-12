@@ -24,11 +24,23 @@ import type { Pool, PoolClient } from "pg";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Sentinel UUID used when `tenantId` is `null` (platform-admin, no tenant).
+ *
+ * PostgreSQL RLS policies cast `current_setting('app.current_tenant', true)::uuid`.
+ * An empty string throws `invalid input syntax for type uuid: ""` before the
+ * `OR is_platform_admin = 'true'` branch is reached — the OR does NOT short-circuit
+ * the cast. NIL UUID passes the cast safely; platform access is then granted via
+ * `app.is_platform_admin = 'true'`. NIL UUID never matches a real tenant row
+ * because no tenant may be created with this id.
+ */
+const NIL_TENANT_ID = "00000000-0000-0000-0000-000000000000";
+
 export interface TenantContext {
   /**
-   * Active tenant UUID. Pass `null` for platform-admin operations that
-   * don't have a tenant context (the policy's platform-admin OR-branch
-   * applies in that case).
+   * Active tenant UUID. Pass `null` for platform-admin operations that don't
+   * have a tenant context. The middleware maps `null` to `NIL_TENANT_ID` so
+   * RLS `::uuid` casts succeed; access is granted via `isPlatformAdmin: true`.
    */
   tenantId: string | null;
   /**
@@ -73,12 +85,12 @@ export async function runWithTenantContext<T>(
   try {
     await client.query("BEGIN");
     try {
-      // Empty string for tenantId === null — current_setting('app.current_tenant', true)::uuid
-      // will fail-cast on '', and the policy short-circuits via the
-      // is_platform_admin OR-branch.
+      // Use NIL_TENANT_ID when tenantId is null so the RLS policy's
+      // current_setting(...)::uuid cast succeeds. Platform access is then
+      // granted by the app.is_platform_admin GUC set below.
       await client.query(
         "SELECT set_config('app.current_tenant', $1, true)",
-        [ctx.tenantId ?? ""],
+        [ctx.tenantId ?? NIL_TENANT_ID],
       );
       await client.query(
         "SELECT set_config('app.is_platform_admin', $1, true)",

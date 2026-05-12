@@ -148,18 +148,20 @@ describe("runWithTenantContext — happy path lifecycle", () => {
 // ---------------------------------------------------------------------------
 
 describe("runWithTenantContext — GUC param encoding", () => {
-  it("TC-U10: tenantId null maps to empty-string GUC param", async () => {
+  it("TC-U10: tenantId null maps to NIL UUID GUC param (not empty string)", async () => {
     const { client, query } = makeClient();
     const pool = makePool(client);
 
     await runWithTenantContext(pool, { tenantId: null, isPlatformAdmin: false }, async () => undefined);
 
-    // Find the set_config call for app.current_tenant and check its param value
+    // Find the set_config call for app.current_tenant and check its param value.
+    // NIL UUID is required so the RLS ::uuid cast succeeds; empty string throws
+    // "invalid input syntax for type uuid: ''" before the OR branch fires.
     const tenantCall = query.mock.calls.find(
       (args: unknown[]) => typeof args[0] === "string" && (args[0] as string).includes("app.current_tenant"),
     );
     expect(tenantCall).toBeDefined();
-    expect(tenantCall![1]).toEqual([""]);
+    expect(tenantCall![1]).toEqual(["00000000-0000-0000-0000-000000000000"]);
   });
 
   it("TC-U11: isPlatformAdmin true maps to literal string 'true'", async () => {
