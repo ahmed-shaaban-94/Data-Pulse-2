@@ -21,6 +21,8 @@
  *   - tags are PII-free
  *   - to === payload.email
  *   - subject is non-empty
+ *   - T303: jobs with traceContext still parse and send normally
+ *   - T303: legacy jobs without traceContext still work
  */
 import {
   EmailProcessor,
@@ -32,6 +34,13 @@ import {
   RecordingEmailAdapter,
   type EmailMessage,
 } from "../../src/email/email.adapter";
+import {
+  createTestTracerProvider,
+  context,
+  trace,
+  injectTraceContext,
+  type TestTracerHandle,
+} from "@data-pulse-2/shared/observability/otel";
 
 const TENANT_ID = "0b000000-0000-7000-8000-00000000bb01";
 
@@ -345,5 +354,91 @@ describe("EmailProcessor — job name contract with EmailQueueProducer", () => {
   });
   it("uses 'memberships.invitation' for invitation jobs", () => {
     expect(EMAIL_JOB_NAMES.invitation).toBe("memberships.invitation");
+  });
+});
+
+describe("T303 — OTel traceContext wiring in EmailProcessor", () => {
+  let tracerHandle: TestTracerHandle;
+
+  beforeEach(() => {
+    tracerHandle = createTestTracerProvider();
+  });
+
+  afterEach(async () => {
+    await tracerHandle.teardown();
+  });
+
+  it("processes a password-reset job that includes traceContext without error", async () => {
+    await processor.process(EMAIL_JOB_NAMES.passwordReset, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+      traceContext: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+    });
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]!.to).toBe(EMAIL);
+  });
+
+  it("processes an email-verify job that includes traceContext without error", async () => {
+    await processor.process(EMAIL_JOB_NAMES.emailVerification, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+      traceContext: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+    });
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]!.to).toBe(EMAIL);
+  });
+
+  it("processes an invitation job that includes traceContext without error", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+      traceContext: { traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01" },
+    });
+    expect(adapter.sent).toHaveLength(1);
+    expect(adapter.sent[0]!.to).toBe(EMAIL);
+  });
+
+  it("legacy job without traceContext still processes normally", async () => {
+    await processor.process(EMAIL_JOB_NAMES.passwordReset, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+      // no traceContext — legacy producer
+    });
+    expect(adapter.sent).toHaveLength(1);
+  });
+
+  it("active context inside process() carries the producer traceId from traceContext", async () => {
+    const tracer = trace.getTracer("test-producer");
+    const producerSpan = tracer.startSpan("api.enqueue");
+    const producerCtx = trace.setSpan(context.active(), producerSpan);
+    const traceContext = context.with(producerCtx, () => injectTraceContext());
+    producerSpan.end();
+    const producerTraceId = producerSpan.spanContext().traceId;
+
+    let contextTraceId: string | undefined;
+    const capturingAdapter = new RecordingEmailAdapter();
+    const capturingProcessor = new EmailProcessor(capturingAdapter);
+
+    const origSend = capturingAdapter.send.bind(capturingAdapter);
+    capturingAdapter.send = async (msg) => {
+      // Inside context.with(restoredCtx), the active context carries the
+      // producer's span context — extractable via trace.getSpanContext.
+      const spanCtx = trace.getSpanContext(context.active());
+      contextTraceId = spanCtx?.traceId;
+      return origSend(msg);
+    };
+
+    await capturingProcessor.process(EMAIL_JOB_NAMES.passwordReset, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+      traceContext,
+    });
+
+    expect(contextTraceId).toBe(producerTraceId);
   });
 });

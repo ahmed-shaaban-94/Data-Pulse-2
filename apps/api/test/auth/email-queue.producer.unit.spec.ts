@@ -86,13 +86,15 @@ describe("EmailQueueProducer.enqueuePasswordReset", () => {
     expect(queue.add.mock.calls[0]![0]).toBe("auth.password-reset");
   });
 
-  it("EQP-U2: passes the payload verbatim as second argument", async () => {
+  it("EQP-U2: passes the payload fields in the second argument", async () => {
     const queue = makeMockQueue();
     const producer = new EmailQueueProducer(queue);
 
     await producer.enqueuePasswordReset(PW_RESET_JOB);
 
-    expect(queue.add.mock.calls[0]![1]).toEqual(PW_RESET_JOB);
+    expect(queue.add.mock.calls[0]![1]).toEqual(
+      expect.objectContaining(PW_RESET_JOB),
+    );
   });
 
   it("EQP-U3: derives jobId deterministically from rawToken with 'pwreset' scope", async () => {
@@ -133,13 +135,15 @@ describe("EmailQueueProducer.enqueueEmailVerification", () => {
     expect(queue.add.mock.calls[0]![0]).toBe("auth.email-verify");
   });
 
-  it("EQP-U6: passes the payload verbatim as second argument", async () => {
+  it("EQP-U6: passes the payload fields in the second argument", async () => {
     const queue = makeMockQueue();
     const producer = new EmailQueueProducer(queue);
 
     await producer.enqueueEmailVerification(EMAIL_VERIFY_JOB);
 
-    expect(queue.add.mock.calls[0]![1]).toEqual(EMAIL_VERIFY_JOB);
+    expect(queue.add.mock.calls[0]![1]).toEqual(
+      expect.objectContaining(EMAIL_VERIFY_JOB),
+    );
   });
 
   it("EQP-U7: derives jobId deterministically from rawToken with 'verify' scope", async () => {
@@ -180,13 +184,15 @@ describe("EmailQueueProducer.enqueueInvitation", () => {
     expect(queue.add.mock.calls[0]![0]).toBe("memberships.invitation");
   });
 
-  it("EQP-U10: passes the invitation payload verbatim as second argument", async () => {
+  it("EQP-U10: passes the invitation payload fields in the second argument", async () => {
     const queue = makeMockQueue();
     const producer = new EmailQueueProducer(queue);
 
     await producer.enqueueInvitation(INVITATION_JOB);
 
-    expect(queue.add.mock.calls[0]![1]).toEqual(INVITATION_JOB);
+    expect(queue.add.mock.calls[0]![1]).toEqual(
+      expect.objectContaining(INVITATION_JOB),
+    );
   });
 
   it("EQP-U11: derives jobId deterministically from rawToken with 'invite' scope", async () => {
