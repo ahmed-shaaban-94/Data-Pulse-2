@@ -39,8 +39,8 @@ import {
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
-import { AuthGuard } from "../../src/auth/auth.guard";
 import type { Principal } from "../../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { RolesGuard } from "../../src/auth/roles.guard";
 import { ZodValidationPipe } from "../../src/common/zod-validation.pipe";
 import { GlobalExceptionFilter } from "../../src/common/exception.filter";
@@ -194,7 +194,7 @@ beforeAll(async () => {
       { provide: TenantsService, useValue: svc },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(auth)
+    .overrideGuard(DashboardAuthGuard).useValue(auth)
     .overrideGuard(RolesGuard).useValue(roles)
     .compile();
 

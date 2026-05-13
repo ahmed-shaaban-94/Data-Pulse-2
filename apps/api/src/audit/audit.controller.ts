@@ -42,7 +42,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
-import { AuthGuard } from "../auth/auth.guard";
+import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { TenantContextGuard } from "../context/tenant-context.guard";
@@ -57,7 +57,7 @@ import {
 import type { ListAuditEventsResponse } from "./audit.dto";
 
 @Controller("api/v1/audit")
-@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)
+@UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
 export class AuditController {
   constructor(
     @Inject(AuditService)

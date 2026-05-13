@@ -63,7 +63,8 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { AuthGuard, type AuthedRequest } from "../auth/auth.guard";
+import type { AuthedRequest } from "../auth/auth.guard";
+import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import {
   PlatformAdminOnly,
   RolesFromParam,
@@ -150,7 +151,7 @@ function toFullBody(record: TenantRecord): TenantBody {
 }
 
 @Controller("api/v1/tenants")
-@UseGuards(AuthGuard)
+@UseGuards(DashboardAuthGuard)
 export class TenantsController {
   constructor(private readonly tenantsService: TenantsService) {}
 
