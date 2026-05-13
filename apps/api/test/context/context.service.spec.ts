@@ -134,7 +134,7 @@ class FakeMembershipRepository {
   async findTenantSummary(tenantId: string): Promise<TenantSummary | null> {
     return this.tenantSummaryById.get(tenantId) ?? null;
   }
-  async findStoreSummary(storeId: string): Promise<StoreSummary | null> {
+  async findStoreSummary(storeId: string, _tenantId: string): Promise<StoreSummary | null> {
     return this.storeSummaryById.get(storeId) ?? null;
   }
   async findUserSummary(_userId: string): Promise<
@@ -517,5 +517,38 @@ describe("ContextService.clearStore", () => {
     await expect(
       service.clearStore(TOKEN_PRINCIPAL),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+// --- I-4 defensive read: cross-tenant active store --------------------
+//
+// These tests verify that buildResponse silently renders active_store: null
+// when findStoreSummary returns null (because the DB's tenant_id filter
+// excluded the mismatched store). This is the read-side complement to the
+// DB trigger that blocks future writes.
+
+describe("ContextService — I-4 defensive read (active_store cross-tenant)", () => {
+  const STORE_ID_WRONG_TENANT = "0a000000-0000-7000-8000-0000000sto99";
+
+  it("renders active_store: null when the stored store ID is not found for the active tenant", async () => {
+    // STORE_ID_WRONG_TENANT is NOT in storeSummaryById — simulates
+    // findStoreSummary returning null because of the tenant_id filter.
+    sessions.rows.push(
+      activeSession({ activeTenantId: TENANT_ID, activeStoreId: STORE_ID_WRONG_TENANT }),
+    );
+    const out = await service.getActiveContext(SESSION_PRINCIPAL);
+    expect(out.active_store).toBeNull();
+    expect(out.active_tenant?.id).toBe(TENANT_ID);
+  });
+
+  it("skips the store lookup and renders active_store: null when active_tenant_id is null", async () => {
+    // Guard: even if active_store_id is set, buildResponse must not call
+    // findStoreSummary without a tenant context (would skip the tenant filter).
+    sessions.rows.push(
+      activeSession({ activeTenantId: null, activeStoreId: STORE_ID }),
+    );
+    const out = await service.getActiveContext(SESSION_PRINCIPAL);
+    expect(out.active_store).toBeNull();
+    expect(out.active_tenant).toBeNull();
   });
 });

@@ -347,6 +347,7 @@ export class MembershipRepository {
    */
   async findStoreSummary(
     storeId: string,
+    tenantId: string,
     client?: PoolClient,
   ): Promise<StoreSummary | null> {
     const db = client ? drizzle(client) : this.db;
@@ -357,7 +358,13 @@ export class MembershipRepository {
         name: stores.name,
       })
       .from(stores)
-      .where(and(eq(stores.id, storeId), isNull(stores.deletedAt)))
+      .where(
+        and(
+          eq(stores.id, storeId),
+          eq(stores.tenantId, tenantId),
+          isNull(stores.deletedAt),
+        ),
+      )
       .limit(1);
     return rows[0] ?? null;
   }
