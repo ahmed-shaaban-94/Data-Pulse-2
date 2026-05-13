@@ -79,6 +79,16 @@ const STAFF_MEMBERSHIP_ID = "0b000000-0000-4000-8000-00000000dd03";
 const SPECIFIC_MEMBERSHIP_ID = "0b000000-0000-4000-8000-00000000dd04";
 const DELETED_MEMBERSHIP_ID = "0b000000-0000-4000-8000-00000000dd05";
 
+// Roster negative-test fixtures
+const TENANT_ID_B = "0b000000-0000-4000-8000-000000000002";
+const TENANT_B_ROLE_ID = "0b000000-0000-4000-8000-00000000bb04";
+const TENANT_B_USER_ID = "0b000000-0000-4000-8000-00000000cc06";
+const TENANT_B_CLERK_SUB = "user_clerk_tenant_b_roster";
+const TENANT_B_MEMBERSHIP_ID = "0b000000-0000-4000-8000-00000000dd06";
+const REVOKED_MBR_USER_ID = "0b000000-0000-4000-8000-00000000cc07";
+const REVOKED_MBR_CLERK_SUB = "user_clerk_revoked_mbr_roster";
+const REVOKED_MBR_MEMBERSHIP_ID = "0b000000-0000-4000-8000-00000000dd07";
+
 const DEVICE_A_ID = "0b000000-0000-4000-8000-00000000ee01";
 const DEVICE_B_ID = "0b000000-0000-4000-8000-00000000ee02";
 const DEVICE_REVOKED_ID = "0b000000-0000-4000-8000-00000000ee03";
@@ -196,6 +206,35 @@ beforeAll(async () => {
       [SPECIFIC_MEMBERSHIP_ID, STORE_ID_B, TENANT_ID],
     );
 
+    // ---- tenant B (cross-tenant isolation) ----
+    await pool.query(
+      `INSERT INTO tenants (id, slug, name) VALUES ($1, 'tenant-b-roster', 'Tenant B Roster')`,
+      [TENANT_ID_B],
+    );
+    await pool.query(
+      `INSERT INTO roles (id, tenant_id, code, name) VALUES ($1, $2, 'store_manager', 'Manager B')`,
+      [TENANT_B_ROLE_ID, TENANT_ID_B],
+    );
+    await pool.query(
+      `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES ($1, 'mgr-b@tenantb.example', 'Manager B', $2)`,
+      [TENANT_B_USER_ID, TENANT_B_CLERK_SUB],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES ($1, $2, $3, $4, 'all')`,
+      [TENANT_B_MEMBERSHIP_ID, TENANT_ID_B, TENANT_B_USER_ID, TENANT_B_ROLE_ID],
+    );
+
+    // ---- revoked membership ----
+    await pool.query(
+      `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES ($1, 'revoked@pr5.example', 'Revoked User', $2)`,
+      [REVOKED_MBR_USER_ID, REVOKED_MBR_CLERK_SUB],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind, revoked_at)
+         VALUES ($1, $2, $3, $4, 'all', now())`,
+      [REVOKED_MBR_MEMBERSHIP_ID, TENANT_ID, REVOKED_MBR_USER_ID, MANAGER_ROLE_ID],
+    );
+
     // ---- devices ----
     const hashA = hashToken(DEVICE_A_ATTESTATION);
     const hashB = hashToken(DEVICE_B_ATTESTATION);
@@ -220,6 +259,8 @@ beforeAll(async () => {
       ["jwt-specific", SPECIFIC_CLERK_SUB],
       ["jwt-deleted",  DELETED_CLERK_SUB],
       ["jwt-unmapped", "user_clerk_unmapped_pr5"],
+      ["jwt-tenant-b-mgr", TENANT_B_CLERK_SUB],
+      ["jwt-revoked-mbr", REVOKED_MBR_CLERK_SUB],
     ]);
 
     const moduleRef = await Test.createTestingModule({
@@ -561,6 +602,43 @@ describe("GET /api/pos/v1/operators/roster", () => {
     expect(res.status).toBe(200);
     const flat = JSON.stringify(res.body);
     expect(flat).not.toMatch(/email|pin|password|token|clerk_session/i);
+  });
+
+  it("401 when requester belongs to a different tenant than the branch (cross-tenant isolation)", async () => {
+    if (maybeSkip()) return;
+    // TENANT_B manager requests STORE_ID_A which belongs to TENANT_ID.
+    // findActiveMembershipByStore JOINs stores ON stores.tenant_id = memberships.tenant_id,
+    // so no row is found → refused → 401.
+    const res = await http()
+      .get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-tenant-b-mgr");
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("401 when requester has specific store access but requests a branch outside their grant", async () => {
+    if (maybeSkip()) return;
+    // SPECIFIC_USER is granted access to STORE_ID_B only.
+    // Requesting STORE_ID_A must be refused.
+    const res = await http()
+      .get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-specific");
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("401 when requester membership is revoked", async () => {
+    if (maybeSkip()) return;
+    // REVOKED_MBR_USER has a membership with revoked_at set.
+    // findActiveMembershipByStore filters WHERE m.revoked_at IS NULL, so no row found → refused.
+    const res = await http()
+      .get(`/api/pos/v1/operators/roster?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-revoked-mbr");
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
   });
 });
 

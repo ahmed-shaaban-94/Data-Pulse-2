@@ -204,6 +204,27 @@ describe("PosOperatorsService.roster", () => {
       ],
     });
   });
+
+  it("returns 'refused' when store_access_kind is 'specific' and store not in access set", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, store_access_kind: "specific" }],
+      [], // storeIsInAccessSet returns no rows — store not granted
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-6");
+    expect(r).toEqual({ kind: "refused" });
+    // Exactly 3 queries: user lookup, membership lookup, access-set check.
+    // Cashier fetch (query 4) must NOT have been called.
+    expect(pool.query).toHaveBeenCalledTimes(3);
+  });
 });
 
 // ---------------------------------------------------------------------------
