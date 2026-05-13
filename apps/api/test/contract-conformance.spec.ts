@@ -1309,10 +1309,12 @@ describe("POST /api/pos/v1/operators/sign-in — contract conformance (T300)", (
 // activeSessionResult + activeSession() — same pattern as signInResult.
 //
 // NestJS resolves @Query() parameter pipes before the method body executes,
-// so missing-Bearer 401 tests must include ?operator_id=user_fake_clerk_sub
-// to avoid hitting the Zod query validation 400 first.
+// so missing-Bearer 401 tests must include both required query params
+// (?branch_id=...&operator_id=...) to avoid hitting the Zod query validation 400 first.
 
+const FAKE_ACTIVE_SESSION_BRANCH_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const FAKE_ACTIVE_SESSION_OPERATOR_ID = "user_fake_clerk_sub";
+const FAKE_ACTIVE_SESSION_QUERY = `branch_id=${FAKE_ACTIVE_SESSION_BRANCH_ID}&operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`;
 
 describe("GET /api/pos/v1/operators/active-session — contract conformance (T300)", () => {
   describe("200 — kind: none", () => {
@@ -1322,7 +1324,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
 
     it("response body conforms to PosActiveSessionResponse schema", async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .set("Authorization", "Bearer fake-jwt-token")
         .expect(200);
 
@@ -1331,7 +1333,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
 
     it('body.kind is exactly "none"', async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .set("Authorization", "Bearer fake-jwt-token")
         .expect(200);
 
@@ -1347,7 +1349,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
 
     it("response body conforms to PosActiveSessionResponse schema", async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .set("Authorization", "Bearer fake-jwt-token")
         .expect(200);
 
@@ -1356,7 +1358,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
 
     it('body.kind is exactly "active"', async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .set("Authorization", "Bearer fake-jwt-token")
         .expect(200);
 
@@ -1368,7 +1370,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
   describe("401 — missing Bearer token", () => {
     it("response body conforms to Error schema when Authorization header is absent", async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .expect(401);
 
       assertConformsTo(validatePosOperatorsError, res.body);
@@ -1376,7 +1378,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
 
     it("401 error envelope has required error.code and error.message fields", async () => {
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .expect(401);
 
       expect(res.body).toMatchObject({
@@ -1393,7 +1395,7 @@ describe("GET /api/pos/v1/operators/active-session — contract conformance (T30
     it("response body conforms to Error schema when service returns refused", async () => {
       // activeSessionResult is reset to { kind: "refused" } by the outer beforeEach
       const res = await posOperatorsHttp()
-        .get(`/api/pos/v1/operators/active-session?operator_id=${FAKE_ACTIVE_SESSION_OPERATOR_ID}`)
+        .get(`/api/pos/v1/operators/active-session?${FAKE_ACTIVE_SESSION_QUERY}`)
         .set("Authorization", "Bearer fake-jwt-token")
         .expect(401);
 

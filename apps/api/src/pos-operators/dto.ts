@@ -159,6 +159,7 @@ export type PosTakeoverConfirmInput = z.infer<typeof PosTakeoverConfirmSchema>;
  */
 export const PosActiveSessionQuerySchema = z
   .object({
+    branch_id: z.string().uuid(),
     operator_id: z.string().min(1),
   })
   .strict();

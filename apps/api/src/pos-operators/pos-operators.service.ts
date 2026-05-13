@@ -153,7 +153,8 @@ export type ActiveSessionRefusalReason =
   | "clerk_jwt_invalid"
   | "user_unmapped"
   | "user_disabled"
-  | "membership_missing";
+  | "membership_missing"
+  | "store_not_accessible";
 
 /**
  * Internal refusal taxonomy. The reason is logged server-side keyed by
@@ -586,15 +587,25 @@ export class PosOperatorsService {
     if (!requesterRow) return { kind: "refused", reason: "user_unmapped" };
     if (requesterRow.deleted_at !== null) return { kind: "refused", reason: "user_disabled" };
 
-    // Resolve the target operator by Clerk subject (operator_id query param).
+    // Validate requester has an active membership in the branch's tenant.
+    // Uses the same JOIN-via-stores pattern as roster to enforce cross-tenant protection.
+    const membership = await this.findActiveMembershipByStore(query.branch_id, requesterRow.id);
+    if (!membership) return { kind: "refused", reason: "membership_missing" };
+
+    // If store-specific access, confirm the caller has the branch in their access set.
+    if (membership.store_access_kind === "specific") {
+      const ok = await this.storeIsInAccessSet(membership.id, query.branch_id);
+      if (!ok) return { kind: "refused", reason: "store_not_accessible" };
+    }
+
+    // Resolve the target operator AFTER branch authorization succeeds (minimum disclosure).
     const targetRow = await this.findUserByClerkSubject(query.operator_id);
     if (!targetRow || targetRow.deleted_at !== null) {
       // Non-existent or disabled target → "none" (minimum disclosure, not 401).
       return { kind: "none" };
     }
 
-    // Check for any active pos_operator session for the target user (any device/store).
-    const hasActive = await this.anyActiveOperatorSession(targetRow.id);
+    const hasActive = await this.anyActiveOperatorSessionInStore(targetRow.id, query.branch_id);
     return { kind: hasActive ? "active" : "none" };
   }
 
@@ -952,19 +963,20 @@ export class PosOperatorsService {
   }
 
   /**
-   * Checks whether a user has any active pos_operator session (any store/device).
-   * Used by active-session endpoint (minimum disclosure — no branch filter).
+   * Checks whether a user has an active pos_operator session in the given store.
+   * Used by active-session endpoint after branch authorization is confirmed.
    */
-  private async anyActiveOperatorSession(userId: string): Promise<boolean> {
+  private async anyActiveOperatorSessionInStore(userId: string, storeId: string): Promise<boolean> {
     const r = await this.pool.query<{ one: number }>(
       `SELECT 1 AS one
          FROM auth_tokens
         WHERE scope = 'pos_operator'
           AND user_id = $1
+          AND store_id = $2
           AND revoked_at IS NULL
           AND expires_at > now()
         LIMIT 1`,
-      [userId],
+      [userId, storeId],
     );
     return r.rows.length > 0;
   }

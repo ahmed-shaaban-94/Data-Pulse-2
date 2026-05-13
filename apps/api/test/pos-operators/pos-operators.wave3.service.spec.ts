@@ -318,6 +318,8 @@ describe("PosOperatorsService.takeoverConfirm", () => {
 // GET /active-session
 // ---------------------------------------------------------------------------
 
+const ACTIVE_SESSION_QUERY = { branch_id: STORE_ID, operator_id: OPERATOR_CLERK_SUB };
+
 describe("PosOperatorsService.activeSession", () => {
   it("returns 'refused' when verifier throws", async () => {
     const pool = makePool();
@@ -328,8 +330,9 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("bad-jwt", { operator_id: "any" }, "rid-1");
+    const r = await svc.activeSession("bad-jwt", ACTIVE_SESSION_QUERY, "rid-1");
     expect(r).toEqual({ kind: "refused" });
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it("returns 'refused' when requester user is not found", async () => {
@@ -342,15 +345,51 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("jwt", { operator_id: "any" }, "rid-2");
+    const r = await svc.activeSession("jwt", ACTIVE_SESSION_QUERY, "rid-2");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when requester has no membership for the branch", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [], // membership lookup → not found
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", ACTIVE_SESSION_QUERY, "rid-3");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when store_access_kind is specific and store not in access set", async () => {
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, store_access_kind: "specific" }],
+      [], // storeIsInAccessSet → not granted
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", ACTIVE_SESSION_QUERY, "rid-4");
     expect(r).toEqual({ kind: "refused" });
   });
 
   it("returns { kind: 'none' } when target operator does not exist", async () => {
     const pool = makePool();
     programPoolQueries(pool, [
-      [VALID_USER_ROW],
-      [], // target user lookup → not found
+      [VALID_USER_ROW],             // requester lookup
+      [MANAGER_MEMBERSHIP_ROW],     // membership lookup
+      [],                           // target user lookup → not found
     ]);
     const svc = new PosOperatorsService(
       pool as unknown as Pool,
@@ -359,16 +398,21 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("jwt", { operator_id: "unknown_sub" }, "rid-3");
+    const r = await svc.activeSession(
+      "jwt",
+      { branch_id: STORE_ID, operator_id: "unknown_sub" },
+      "rid-5",
+    );
     expect(r).toEqual({ kind: "none" });
   });
 
-  it("returns { kind: 'none' } when target has no active session", async () => {
+  it("returns { kind: 'none' } when target has no active session in the branch", async () => {
     const pool = makePool();
     programPoolQueries(pool, [
-      [VALID_USER_ROW],          // requester lookup
-      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }], // target lookup
-      [],                         // anyActiveOperatorSession → 0 rows
+      [VALID_USER_ROW],                                  // requester lookup
+      [MANAGER_MEMBERSHIP_ROW],                          // membership lookup
+      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }],        // target lookup
+      [],                                                // anyActiveOperatorSessionInStore → 0 rows
     ]);
     const svc = new PosOperatorsService(
       pool as unknown as Pool,
@@ -377,16 +421,21 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-4");
+    const r = await svc.activeSession(
+      "jwt",
+      { branch_id: STORE_ID, operator_id: "target_sub" },
+      "rid-6",
+    );
     expect(r).toEqual({ kind: "none" });
   });
 
-  it("returns { kind: 'active' } when target has an active session", async () => {
+  it("returns { kind: 'active' } when target has an active session in the branch", async () => {
     const pool = makePool();
     programPoolQueries(pool, [
-      [VALID_USER_ROW],          // requester lookup
-      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }], // target lookup
-      [{ one: 1 }],              // anyActiveOperatorSession → 1 row
+      [VALID_USER_ROW],                                  // requester lookup
+      [MANAGER_MEMBERSHIP_ROW],                          // membership lookup
+      [{ ...VALID_USER_ROW, id: OTHER_USER_ID }],        // target lookup
+      [{ one: 1 }],                                      // anyActiveOperatorSessionInStore → 1 row
     ]);
     const svc = new PosOperatorsService(
       pool as unknown as Pool,
@@ -395,7 +444,11 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-5");
+    const r = await svc.activeSession(
+      "jwt",
+      { branch_id: STORE_ID, operator_id: "target_sub" },
+      "rid-7",
+    );
     expect(r).toEqual({ kind: "active" });
   });
 
@@ -403,6 +456,7 @@ describe("PosOperatorsService.activeSession", () => {
     const pool = makePool();
     programPoolQueries(pool, [
       [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
       [{ ...VALID_USER_ROW, id: OTHER_USER_ID }],
       [{ one: 1 }],
     ]);
@@ -413,7 +467,11 @@ describe("PosOperatorsService.activeSession", () => {
       SILENT_LOGGER,
     );
 
-    const r = await svc.activeSession("jwt", { operator_id: "target_sub" }, "rid-6");
+    const r = await svc.activeSession(
+      "jwt",
+      { branch_id: STORE_ID, operator_id: "target_sub" },
+      "rid-8",
+    );
     expect(Object.keys(r)).toEqual(["kind"]);
   });
 });
