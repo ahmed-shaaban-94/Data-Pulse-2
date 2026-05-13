@@ -710,7 +710,9 @@ describe("GET /api/pos/v1/operators/active-session", () => {
   it("returns { kind: 'none' } when operator has no active session", async () => {
     if (maybeSkip()) return;
     const res = await http()
-      .get(`/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`)
+      .get(
+        `/api/pos/v1/operators/active-session?branch_id=${STORE_ID_A}&operator_id=${ADMIN_CLERK_SUB}`,
+      )
       .set("Authorization", "Bearer jwt-admin");
 
     expect(res.status).toBe(200);
@@ -719,14 +721,16 @@ describe("GET /api/pos/v1/operators/active-session", () => {
 
   it("returns { kind: 'active' } when operator has an active session", async () => {
     if (maybeSkip()) return;
-    // Sign admin in.
+    // Sign admin in on device A (→ STORE_ID_A).
     await http()
       .post("/api/pos/v1/operators/sign-in")
       .set("Authorization", "Bearer jwt-admin")
       .send({ kind: "manager_admin", device_token_attestation: DEVICE_A_ATTESTATION });
 
     const res = await http()
-      .get(`/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`)
+      .get(
+        `/api/pos/v1/operators/active-session?branch_id=${STORE_ID_A}&operator_id=${ADMIN_CLERK_SUB}`,
+      )
       .set("Authorization", "Bearer jwt-admin");
 
     expect(res.status).toBe(200);
@@ -738,7 +742,9 @@ describe("GET /api/pos/v1/operators/active-session", () => {
   it("returns { kind: 'none' } for unknown operator_id (minimum-disclosure, not 401)", async () => {
     if (maybeSkip()) return;
     const res = await http()
-      .get("/api/pos/v1/operators/active-session?operator_id=user_clerk_never_existed")
+      .get(
+        `/api/pos/v1/operators/active-session?branch_id=${STORE_ID_A}&operator_id=user_clerk_never_existed`,
+      )
       .set("Authorization", "Bearer jwt-admin");
 
     expect(res.status).toBe(200);
@@ -748,13 +754,43 @@ describe("GET /api/pos/v1/operators/active-session", () => {
   it("401 when Authorization header is missing", async () => {
     if (maybeSkip()) return;
     const res = await http().get(
-      `/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`,
+      `/api/pos/v1/operators/active-session?branch_id=${STORE_ID_A}&operator_id=${ADMIN_CLERK_SUB}`,
     );
     expect(res.status).toBe(401);
     expectErrorEnvelope(res.body, "unauthorized");
   });
 
+  it("401 when requester has no membership for the queried branch", async () => {
+    if (maybeSkip()) return;
+    // Use a UUID that is not a known store in any tenant.
+    const unknownBranch = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+    const res = await http()
+      .get(
+        `/api/pos/v1/operators/active-session?branch_id=${unknownBranch}&operator_id=${ADMIN_CLERK_SUB}`,
+      )
+      .set("Authorization", "Bearer jwt-admin");
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+  });
+
+  it("400 when branch_id is missing", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get(`/api/pos/v1/operators/active-session?operator_id=${ADMIN_CLERK_SUB}`)
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(400);
+  });
+
   it("400 when operator_id is missing", async () => {
+    if (maybeSkip()) return;
+    const res = await http()
+      .get(`/api/pos/v1/operators/active-session?branch_id=${STORE_ID_A}`)
+      .set("Authorization", "Bearer jwt-admin");
+    expect(res.status).toBe(400);
+  });
+
+  it("400 when both branch_id and operator_id are missing", async () => {
     if (maybeSkip()) return;
     const res = await http()
       .get("/api/pos/v1/operators/active-session")

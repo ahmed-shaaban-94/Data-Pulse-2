@@ -228,7 +228,8 @@ paths:
         Returns a minimum-disclosure signal indicating whether the
         operator identified by `operator_id` currently holds an active
         (non-revoked, non-expired) POS operator session on any terminal
-        within the branch resolved from the device-token claim.
+        within the specified `branch_id`. The caller must have an active
+        membership for that branch; the check is refused otherwise.
 
 
         Minimum-disclosure (FR-013): the response MUST contain ONLY the
@@ -247,6 +248,17 @@ paths:
       security:
         - clerkJwt: []
       parameters:
+        - name: branch_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: >
+            UUID of the branch (store) to scope the session check to.
+            Required because GET endpoints carry no device-token
+            attestation — the branch cannot be resolved implicitly.
+            The caller must have an active membership for this branch.
         - name: operator_id
           in: query
           required: true
@@ -256,8 +268,8 @@ paths:
           description: >
             Clerk subject (`clerk_user_id`) of the operator to query.
             The server resolves this to the internal `users.id` and
-            looks up active operator-session rows scoped to the device
-            token's resolved branch.
+            looks up active operator-session rows scoped to the
+            specified branch.
       responses:
         "200":
           description: >
