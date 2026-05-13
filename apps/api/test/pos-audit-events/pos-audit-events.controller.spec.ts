@@ -59,6 +59,12 @@ const STORE_ID = "0c000000-0000-4000-8000-00000000aa01";
 const OPERATOR_USER_ID = "0c000000-0000-4000-8000-00000000cc01";
 const OPERATOR_CLERK_SUB = "user_clerk_op_ae_pr6";
 
+const OPERATOR_OTHER_TENANT_USER_ID = "0c000000-0000-4000-8000-00000000cc02";
+const OPERATOR_OTHER_TENANT_CLERK_SUB = "user_clerk_op_ae_other_tenant";
+
+const OPERATOR_REVOKED_USER_ID = "0c000000-0000-4000-8000-00000000cc03";
+const OPERATOR_REVOKED_CLERK_SUB = "user_clerk_op_ae_revoked";
+
 const DEVICE_ID = "0c000000-0000-4000-8000-00000000ee01";
 const DEVICE_REVOKED_ID = "0c000000-0000-4000-8000-00000000ee02";
 
@@ -142,6 +148,35 @@ beforeAll(async () => {
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES ($1, 'op@ae.example', 'Operator AE', $2)`,
       [OPERATOR_USER_ID, OPERATOR_CLERK_SUB],
+    );
+
+    // Membership for the primary operator in TENANT_ID (required by the tenant-scoped actor lookup).
+    const ROLE_ID = "0c000000-0000-4000-8000-00000000ff01";
+    await pool.query(
+      `INSERT INTO roles (id, tenant_id, code, name) VALUES ($1, $2, 'cashier', 'Cashier AE') ON CONFLICT DO NOTHING`,
+      [ROLE_ID, TENANT_ID],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      ["0c000000-0000-4000-8000-00000000dd01", TENANT_ID, OPERATOR_USER_ID, ROLE_ID],
+    );
+
+    // User with NO membership in TENANT_ID (belongs to TENANT_ID_OTHER only).
+    await pool.query(
+      `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES ($1, 'op@ae-other.example', 'Operator Other Tenant', $2)`,
+      [OPERATOR_OTHER_TENANT_USER_ID, OPERATOR_OTHER_TENANT_CLERK_SUB],
+    );
+
+    // User with a REVOKED membership in TENANT_ID.
+    await pool.query(
+      `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES ($1, 'op-revoked@ae.example', 'Operator Revoked', $2)`,
+      [OPERATOR_REVOKED_USER_ID, OPERATOR_REVOKED_CLERK_SUB],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind, revoked_at)
+       VALUES ($1, $2, $3, $4, 'all', now())`,
+      ["0c000000-0000-4000-8000-00000000dd02", TENANT_ID, OPERATOR_REVOKED_USER_ID, ROLE_ID],
     );
 
     const hashActive = hashToken(DEVICE_ATTESTATION);
@@ -440,6 +475,40 @@ describe("POST /api/pos/v1/audit-events (per-event rejections)", () => {
       .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
     expect(res.status).toBe(200);
     expect(res.body.rejected[0]).toMatchObject({ category: "invalid_input" });
+  });
+
+  it("acting_operator_id belongs to a user with no membership in device tenant → invalid_input", async () => {
+    if (maybeSkip()) return;
+    // OPERATOR_OTHER_TENANT_USER_ID exists in users but has no membership in TENANT_ID.
+    const evt = {
+      ...makeShiftOpen("0c111111-0000-4000-8000-000000000025"),
+      acting_operator_id: OPERATOR_OTHER_TENANT_CLERK_SUB,
+    };
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
+    expect(res.status).toBe(200);
+    expect(res.body.rejected[0]).toMatchObject({
+      event_id: "0c111111-0000-4000-8000-000000000025",
+      category: "invalid_input",
+    });
+  });
+
+  it("acting_operator_id has a revoked membership in device tenant → invalid_input", async () => {
+    if (maybeSkip()) return;
+    // OPERATOR_REVOKED_USER_ID has a membership in TENANT_ID but revoked_at IS NOT NULL.
+    const evt = {
+      ...makeShiftOpen("0c111111-0000-4000-8000-000000000026"),
+      acting_operator_id: OPERATOR_REVOKED_CLERK_SUB,
+    };
+    const res = await http()
+      .post("/api/pos/v1/audit-events")
+      .send({ device_token_attestation: DEVICE_ATTESTATION, events: [evt] });
+    expect(res.status).toBe(200);
+    expect(res.body.rejected[0]).toMatchObject({
+      event_id: "0c111111-0000-4000-8000-000000000026",
+      category: "invalid_input",
+    });
   });
 });
 

@@ -118,8 +118,8 @@ export class PosAuditEventsService {
       return;
     }
 
-    // Resolve acting_operator_id (Clerk subject) → users.id.
-    const actorUserId = await this.resolveActorUserId(event.acting_operator_id);
+    // Resolve acting_operator_id (Clerk subject) → users.id scoped to device tenant.
+    const actorUserId = await this.resolveActorUserId(event.acting_operator_id, deviceTenantId);
     if (actorUserId === null) {
       rejected.push({ event_id: event.event_id, category: "invalid_input" });
       return;
@@ -189,10 +189,18 @@ export class PosAuditEventsService {
     }
   }
 
-  private async resolveActorUserId(clerkSubject: string): Promise<string | null> {
+  private async resolveActorUserId(clerkSubject: string, tenantId: string): Promise<string | null> {
     const r = await this.pool.query<{ id: string }>(
-      `SELECT id FROM users WHERE clerk_user_id = $1 AND deleted_at IS NULL LIMIT 1`,
-      [clerkSubject],
+      `SELECT u.id
+       FROM users u
+       JOIN memberships m ON m.user_id = u.id
+       WHERE u.clerk_user_id = $1
+         AND u.deleted_at IS NULL
+         AND m.tenant_id = $2
+         AND m.deleted_at IS NULL
+         AND m.revoked_at IS NULL
+       LIMIT 1`,
+      [clerkSubject, tenantId],
     );
     return r.rows[0]?.id ?? null;
   }

@@ -287,6 +287,16 @@ beforeAll(async () => {
       `INSERT INTO users (id, email, clerk_user_id) VALUES ($1, 'op@redact.example', $2)`,
       [OPERATOR_ID, OPERATOR_CLERK],
     );
+    // Active membership required by the tenant-scoped actor lookup (CODX-POS-2).
+    await pool.query(
+      `INSERT INTO roles (id, tenant_id, code, name) VALUES ($1, $2, 'cashier', 'Cashier T236')`,
+      ["0a000000-0000-7000-8000-000000ff4001", TENANT_ID],
+    );
+    await pool.query(
+      `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind)
+       VALUES ($1, $2, $3, $4, 'all')`,
+      ["0a000000-0000-7000-8000-000000ff4002", TENANT_ID, OPERATOR_ID, "0a000000-0000-7000-8000-000000ff4001"],
+    );
     // Active device: revoked_at IS NULL. Hash computed in Node, not via pgcrypto.
     await pool.query(
       `INSERT INTO devices (id, tenant_id, store_id, label, token_hash) VALUES ($1, $2, $3, 'POS-R', $4)`,
