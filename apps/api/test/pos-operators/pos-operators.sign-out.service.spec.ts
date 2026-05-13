@@ -335,8 +335,11 @@ describe("PosOperatorsService.signOut", () => {
     );
     expect(updateCalls).toHaveLength(1);
     const sql = updateCalls[0]![0] as string;
+    const params = updateCalls[0]![1] as unknown[];
     expect(sql).toMatch(/SET\s+revoked_at\s*=\s*now\(\)/i);
+    expect(sql).toMatch(/WHERE[\s\S]+user_id\s*=\s*\$2/i);
     expect(sql).toMatch(/WHERE[\s\S]+revoked_at\s+IS\s+NULL/i);
+    expect(params).toEqual([SESSION_ID, USER_ID]);
   });
 
   it("returns 'refused' when the UPDATE finds no row to revoke (race lost)", async () => {

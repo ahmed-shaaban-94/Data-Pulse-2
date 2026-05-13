@@ -713,10 +713,11 @@ export class PosOperatorsService {
       return { kind: "refused", reason: "session_expired" };
     }
 
-    // 4. Conditional UPDATE — guarded against a concurrent revoke.
-    //    0 rows = a parallel sign-out beat us; treat as refusal so the
-    //    response never confirms "you just won the race".
-    const revoked = await this.markSessionRevoked(body.session_id);
+    // 4. Conditional UPDATE — guarded against concurrent revoke and (defense-
+    //    in-depth) the same ownership check the SELECT already enforced. The
+    //    user_id clause ensures no UPDATE ever fires for a row that belongs to a
+    //    different user even if the application-layer check above is bypassed.
+    const revoked = await this.markSessionRevoked(body.session_id, userRow.id);
     if (!revoked) return { kind: "refused", reason: "session_revoke_race" };
 
     return { kind: "signed_out" };
@@ -981,14 +982,15 @@ export class PosOperatorsService {
     return r.rows.length > 0;
   }
 
-  private async markSessionRevoked(sessionId: string): Promise<boolean> {
+  private async markSessionRevoked(sessionId: string, userId: string): Promise<boolean> {
     const r = await this.pool.query<{ id: string }>(
       `UPDATE auth_tokens
           SET revoked_at = now()
         WHERE id = $1
+          AND user_id = $2
           AND revoked_at IS NULL
         RETURNING id`,
-      [sessionId],
+      [sessionId, userId],
     );
     return r.rows.length > 0;
   }
