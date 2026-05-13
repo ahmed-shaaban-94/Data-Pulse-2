@@ -468,7 +468,7 @@ describe("MembershipRepository.findStoreSummary", () => {
     _selectRows = [{ id: STORE_ID_1, code: "S01", name: "Main Store" }];
     const { repo } = buildRepo();
 
-    const result = await repo.findStoreSummary(STORE_ID_1);
+    const result = await repo.findStoreSummary(STORE_ID_1, TENANT_ID);
 
     expect(result).not.toBeNull();
     expect(result!.id).toBe(STORE_ID_1);
@@ -480,7 +480,7 @@ describe("MembershipRepository.findStoreSummary", () => {
     _selectRows = [];
     const { repo } = buildRepo();
 
-    const result = await repo.findStoreSummary(STORE_ID_1);
+    const result = await repo.findStoreSummary(STORE_ID_1, TENANT_ID);
 
     expect(result).toBeNull();
   });
@@ -489,7 +489,7 @@ describe("MembershipRepository.findStoreSummary", () => {
     _selectRows = [{ id: STORE_ID_2, code: "S02", name: "Branch" }];
     const { repo, fakeClient } = buildRepo();
 
-    const result = await repo.findStoreSummary(STORE_ID_2, fakeClient);
+    const result = await repo.findStoreSummary(STORE_ID_2, TENANT_ID, fakeClient);
 
     expect(result!.code).toBe("S02");
   });
@@ -498,7 +498,7 @@ describe("MembershipRepository.findStoreSummary", () => {
     _selectRows = [];
     const { repo, fakeClient } = buildRepo();
 
-    const result = await repo.findStoreSummary(STORE_ID_1, fakeClient);
+    const result = await repo.findStoreSummary(STORE_ID_1, TENANT_ID, fakeClient);
 
     expect(result).toBeNull();
   });

@@ -127,7 +127,7 @@ class FakeMembershipRepository {
   async findTenantSummary(id: string): Promise<TenantSummary | null> {
     return this.tenantSummaryById.get(id) ?? null;
   }
-  async findStoreSummary(id: string): Promise<StoreSummary | null> {
+  async findStoreSummary(id: string, _tenantId: string): Promise<StoreSummary | null> {
     return this.storeSummaryById.get(id) ?? null;
   }
   async findUserSummary(): Promise<typeof this.userSummary> {

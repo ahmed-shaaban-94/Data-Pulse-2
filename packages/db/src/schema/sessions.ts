@@ -3,8 +3,9 @@
  *
  * Constraints declared in SQL:
  *   - CHECK: `active_store_id IS NULL` OR `active_tenant_id IS NOT NULL`
- *   - Trigger / app-level check that `active_store_id`'s tenant matches
- *     `active_tenant_id` (Invariant I-4).
+ *   - Trigger `sessions_active_store_tenant_check` enforces that
+ *     `active_store_id`'s tenant matches `active_tenant_id` (Invariant I-4,
+ *     migration 0003).
  *   - Partial indexes for active sessions and absolute-expiry sweeps.
  *
  * NO RLS (sessions are user-scoped, not tenant-scoped).

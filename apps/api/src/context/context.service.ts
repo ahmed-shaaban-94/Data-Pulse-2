@@ -325,9 +325,9 @@ export class ContextService {
             this.memberships.findTenantSummary(activeTenantId, client),
           )
         : Promise.resolve(null),
-      activeStoreId
+      activeStoreId && activeTenantId
         ? this.withBootstrapCtx((client) =>
-            this.memberships.findStoreSummary(activeStoreId, client),
+            this.memberships.findStoreSummary(activeStoreId, activeTenantId, client),
           )
         : Promise.resolve(null),
     ]);

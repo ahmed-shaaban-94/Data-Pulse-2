@@ -185,7 +185,7 @@ class FakeMembershipRepository {
     return this.tenantSummaryById.get(tenantId) ?? null;
   }
 
-  async findStoreSummary(storeId: string): Promise<StoreSummary | null> {
+  async findStoreSummary(storeId: string, _tenantId: string): Promise<StoreSummary | null> {
     this.findStoreSummaryCalls.push(storeId);
     return this.storeSummaryById.get(storeId) ?? null;
   }
