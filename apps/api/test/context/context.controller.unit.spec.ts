@@ -43,9 +43,8 @@ import {
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
-import { AuthGuard } from "../../src/auth/auth.guard";
-import type { AuthedRequest } from "../../src/auth/auth.guard";
-import type { Principal } from "../../src/auth/auth.guard";
+import type { AuthedRequest, Principal } from "../../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { ContextController } from "../../src/context/context.controller";
 import { ContextService } from "../../src/context/context.service";
 import { ZodValidationPipe } from "../../src/common/zod-validation.pipe";
@@ -150,7 +149,7 @@ beforeAll(async () => {
       { provide: ContextService, useValue: fakeSvc },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(guard)
+    .overrideGuard(DashboardAuthGuard).useValue(guard)
     .compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });

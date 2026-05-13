@@ -69,7 +69,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 
-import { AuthGuard } from "../auth/auth.guard";
+import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -110,7 +110,7 @@ function toBody(record: StoreRecord): StoreBody {
 }
 
 @Controller("api/v1/stores")
-@UseGuards(AuthGuard, TenantContextGuard)
+@UseGuards(DashboardAuthGuard, TenantContextGuard)
 export class StoresController {
   constructor(private readonly storesService: StoresService) {}
 

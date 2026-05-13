@@ -31,7 +31,7 @@ import { Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
-import { AuthGuard } from "../../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { RolesGuard } from "../../src/auth/roles.guard";
 import { TenantContextGuard } from "../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../src/context/types";
@@ -137,12 +137,12 @@ beforeAll(async () => {
     controllers: [AuditController],
     providers: [
       { provide: AuditService, useValue: auditService },
-      { provide: AuthGuard, useValue: auth },
+      { provide: DashboardAuthGuard, useValue: auth },
       { provide: TenantContextGuard, useValue: tenant },
       { provide: RolesGuard, useValue: roles },
     ],
   })
-    .overrideGuard(AuthGuard)
+    .overrideGuard(DashboardAuthGuard)
     .useValue(auth)
     .overrideGuard(TenantContextGuard)
     .useValue(tenant)

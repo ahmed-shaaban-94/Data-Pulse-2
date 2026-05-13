@@ -44,6 +44,7 @@ import request from "supertest";
 import { AuthController } from "../src/auth/auth.controller";
 import { AuthService } from "../src/auth/auth.service";
 import { AuthGuard } from "../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../src/auth/dashboard-auth.guard";
 import { RateLimiter } from "../src/auth/rate-limit";
 import type { SignInResult } from "../src/auth/dto";
 import type { RefreshResult } from "../src/auth/auth.service";
@@ -505,7 +506,7 @@ beforeAll(async () => {
       { provide: AuditService, useValue: fakeAuditService },
     ],
   })
-    .overrideGuard(AuthGuard)
+    .overrideGuard(DashboardAuthGuard)
     .useValue(new AuditScriptedAuthGuard())
     .overrideGuard(TenantContextGuard)
     .useValue(new AuditScriptedTenantContextGuard())
@@ -1807,7 +1808,7 @@ beforeAll(async () => {
       { provide: ContextService, useValue: fakeContextService },
     ],
   })
-    .overrideGuard(AuthGuard)
+    .overrideGuard(DashboardAuthGuard)
     .useValue(new ContextScriptedAuthGuard())
     .compile();
 
@@ -2365,7 +2366,7 @@ beforeAll(async () => {
       { provide: StoresService, useValue: new FakeStoresService() },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(new StoresScriptedAuthGuard())
+    .overrideGuard(DashboardAuthGuard).useValue(new StoresScriptedAuthGuard())
     .overrideGuard(TenantContextGuard).useValue(new StoresScriptedTenantContextGuard())
     .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
     .compile();
@@ -2535,7 +2536,7 @@ beforeAll(async () => {
       { provide: TenantsService, useValue: new FakeTenantsService() },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(new TenantsScriptedAuthGuard())
+    .overrideGuard(DashboardAuthGuard).useValue(new TenantsScriptedAuthGuard())
     .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
     .compile();
 
@@ -2724,7 +2725,7 @@ beforeAll(async () => {
       { provide: MembershipsService, useValue: fakeMembershipsUpdateService },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(new PatchMembershipsScriptedAuthGuard())
+    .overrideGuard(DashboardAuthGuard).useValue(new PatchMembershipsScriptedAuthGuard())
     .overrideGuard(TenantContextGuard).useValue(new PatchMembershipsScriptedTenantContextGuard())
     .overrideGuard(RolesGuard).useValue(new PatchMembershipsScriptedRolesGuard())
     .compile();

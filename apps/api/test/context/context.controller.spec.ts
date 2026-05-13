@@ -6,7 +6,7 @@
  *   - the right service method is invoked with the right args,
  *   - DTO validation pinning (the service spec covers business logic),
  *   - error → HTTP shape comes from the service (controller is thin),
- *   - `@UseGuards(AuthGuard)` is applied at the class level so
+ *   - `@UseGuards(DashboardAuthGuard)` is applied at the class level so
  *     unauthenticated requests are rejected by the guard upstream.
  *
  * This complements `context.service.spec.ts` which owns the meat —
@@ -22,7 +22,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import type { AuthedRequest, Principal } from "../../src/auth/auth.guard";
-import { AuthGuard } from "../../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { ContextController } from "../../src/context/context.controller";
 import {
   type ContextResponseBody,
@@ -118,13 +118,13 @@ beforeEach(() => {
 // --- Class-level guard pin -------------------------------------------
 
 describe("ContextController — wiring", () => {
-  it("applies AuthGuard at the class level so unauthenticated requests are blocked upstream", () => {
+  it("applies DashboardAuthGuard at the class level so unauthenticated requests are blocked upstream", () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       ContextController,
     ) as unknown[];
     expect(guards).toBeDefined();
-    expect(guards).toContain(AuthGuard);
+    expect(guards).toContain(DashboardAuthGuard);
   });
 
   it("is mounted at /api/v1/context", () => {

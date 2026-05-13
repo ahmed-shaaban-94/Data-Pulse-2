@@ -40,7 +40,7 @@ import { Test } from "@nestjs/testing";
 import { Reflector } from "@nestjs/core";
 import request from "supertest";
 
-import { AuthGuard } from "../../src/auth/auth.guard";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { RolesGuard } from "../../src/auth/roles.guard";
 import { TenantContextGuard } from "../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../src/context/types";
@@ -172,7 +172,7 @@ beforeAll(async () => {
       { provide: AuditService, useValue: fakeSvc },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(auth)
+    .overrideGuard(DashboardAuthGuard).useValue(auth)
     .overrideGuard(TenantContextGuard).useValue(tenant)
     .overrideGuard(RolesGuard).useValue(roles)
     .compile();

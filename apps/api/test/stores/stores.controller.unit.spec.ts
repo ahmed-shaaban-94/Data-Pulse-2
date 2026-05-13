@@ -7,7 +7,7 @@
  * Guards replaced with scripted CanActivate doubles; StoresService
  * replaced with a hand-written fake. No Testcontainers, no DB, no network.
  *
- * Guard chain: AuthGuard (class) → TenantContextGuard (class) →
+ * Guard chain: DashboardAuthGuard (class) → TenantContextGuard (class) →
  *   RolesGuard (per-method on POST/PATCH/DELETE).
  *
  * NOTE: The scripted RolesGuard always throws ForbiddenException for
@@ -35,12 +35,15 @@ import {
 import { Test } from "@nestjs/testing";
 import request from "supertest";
 
-import { AuthGuard } from "../../src/auth/auth.guard";
+import type { AuthTokenRow, SessionRow } from "@data-pulse-2/db/schema";
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
 import { RolesGuard } from "../../src/auth/roles.guard";
 import { TenantContextGuard } from "../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../src/context/types";
 import { ZodValidationPipe } from "../../src/common/zod-validation.pipe";
 import { GlobalExceptionFilter } from "../../src/common/exception.filter";
+import { SessionRepository } from "../../src/auth/session.repository";
+import { AuthTokenRepository } from "../../src/auth/auth-token.repository";
 
 import { StoresController } from "../../src/stores/stores.controller";
 import { StoresService } from "../../src/stores/stores.service";
@@ -188,7 +191,7 @@ beforeAll(async () => {
       { provide: StoresService, useValue: svc },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(auth)
+    .overrideGuard(DashboardAuthGuard).useValue(auth)
     .overrideGuard(TenantContextGuard).useValue(tenant)
     .overrideGuard(RolesGuard).useValue(roles)
     .compile();
@@ -569,5 +572,93 @@ describe("DELETE /api/v1/stores/:store_id", () => {
     const res = await http().delete(`/api/v1/stores/${NOT_A_UUID}`);
     expect(res.status).toBe(400);
     expect(svc.lastSoftDeleteArgs).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scope regression: pos_operator bearer must be rejected by DashboardAuthGuard
+// ---------------------------------------------------------------------------
+// This block uses the REAL DashboardAuthGuard (not a scripted double) with
+// fake repositories so that the scope-filtering logic is actually exercised.
+// TenantContextGuard is still scripted — we only need to prove the guard
+// rejects before the route handler is reached.
+// ---------------------------------------------------------------------------
+
+describe("stores route — DashboardAuthGuard scope regression", () => {
+  const REGRESSION_TENANT_ID = "0e000000-0000-7000-8000-000000000099";
+  const REGRESSION_TOKEN_ID  = "0e000000-0000-7000-8000-000000000077";
+  const REGRESSION_USER_ID   = "0e000000-0000-7000-8000-000000000088";
+
+  let posApp: INestApplication;
+  let posTokens: { findActiveByRawToken: jest.Mock };
+
+  beforeAll(async () => {
+    const posSessions = {
+      findActiveById: jest.fn<Promise<SessionRow | null>, [string]>().mockResolvedValue(null),
+    };
+    posTokens = {
+      findActiveByRawToken: jest.fn<Promise<AuthTokenRow | null>, [string]>(),
+    };
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [StoresController],
+      providers: [
+        { provide: StoresService,         useValue: svc },
+        { provide: SessionRepository,     useValue: posSessions },
+        { provide: AuthTokenRepository,   useValue: posTokens },
+        DashboardAuthGuard,
+      ],
+    })
+      .overrideGuard(TenantContextGuard).useValue(tenant)
+      .overrideGuard(RolesGuard).useValue(roles)
+      .compile();
+
+    posApp = moduleRef.createNestApplication({ bufferLogs: true });
+    posApp.useGlobalFilters(new GlobalExceptionFilter());
+    await posApp.init();
+  });
+
+  afterAll(async () => {
+    if (posApp) await posApp.close();
+  });
+
+  it("REG-1: pos_operator bearer token → 401 on GET /api/v1/stores", async () => {
+    posTokens.findActiveByRawToken.mockResolvedValue({
+      id: REGRESSION_TOKEN_ID,
+      tenantId: REGRESSION_TENANT_ID,
+      userId: REGRESSION_USER_ID,
+      scope: "pos_operator",
+      expiresAt: new Date(Date.now() + 86_400_000),
+      revokedAt: null,
+    } as unknown as AuthTokenRow);
+
+    const res = await request(posApp.getHttpServer())
+      .get("/api/v1/stores")
+      .set("Authorization", "Bearer pos-operator-device-token");
+
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({
+      error: { code: "unauthorized" },
+    });
+  });
+
+  it("REG-2: pos bearer token → 401 on GET /api/v1/stores", async () => {
+    posTokens.findActiveByRawToken.mockResolvedValue({
+      id: REGRESSION_TOKEN_ID,
+      tenantId: REGRESSION_TENANT_ID,
+      userId: null,
+      scope: "pos",
+      expiresAt: new Date(Date.now() + 86_400_000),
+      revokedAt: null,
+    } as unknown as AuthTokenRow);
+
+    const res = await request(posApp.getHttpServer())
+      .get("/api/v1/stores")
+      .set("Authorization", "Bearer pos-device-token");
+
+    expect(res.status).toBe(401);
+    expect(res.body).toMatchObject({
+      error: { code: "unauthorized" },
+    });
   });
 });

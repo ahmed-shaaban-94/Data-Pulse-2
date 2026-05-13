@@ -44,7 +44,8 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { AuthGuard, type AuthedRequest } from "../auth/auth.guard";
+import type { AuthedRequest } from "../auth/auth.guard";
+import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import { Auditable } from "../audit/auditable.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import {
@@ -59,7 +60,7 @@ import {
 } from "./dto";
 
 @Controller("api/v1/context")
-@UseGuards(AuthGuard)
+@UseGuards(DashboardAuthGuard)
 export class ContextController {
   constructor(private readonly contextService: ContextService) {}
 

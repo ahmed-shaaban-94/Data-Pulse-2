@@ -48,6 +48,7 @@ import {
 
 import { AuthController } from "./auth.controller";
 import { AuthGuard } from "./auth.guard";
+import { DashboardAuthGuard } from "./dashboard-auth.guard";
 import { AuthService } from "./auth.service";
 import { AuthTokenRepository } from "./auth-token.repository";
 import {
@@ -158,6 +159,7 @@ class AlwaysAllowRedis implements RedisLike {
       inject: [REDIS_CLIENT],
     },
     AuthGuard,
+    DashboardAuthGuard,
     {
       provide: AuthService,
       useFactory: (
@@ -182,6 +184,7 @@ class AlwaysAllowRedis implements RedisLike {
   exports: [
     AuthService,
     AuthGuard,
+    DashboardAuthGuard,
     SessionRepository,
     AuthTokenRepository,
     // PG_POOL is exported so downstream modules (ContextModule, future
