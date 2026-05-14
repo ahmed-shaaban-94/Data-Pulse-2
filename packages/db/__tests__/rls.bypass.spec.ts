@@ -165,3 +165,24 @@ describe("RLS bypass probe — app role with wrong tenant context", () => {
     }
   });
 });
+
+describe("RLS bypass probe — app role attributes (G-5)", () => {
+  it("app_test role has rolbypassrls = false (G-5)", async () => {
+    if (maybeSkip()) return;
+
+    // Query pg_catalog.pg_roles as the superuser (admin pool).
+    // rolbypassrls = false means the role is subject to RLS policies —
+    // a role with rolbypassrls = true would silently skip all RLS checks
+    // even without superuser privileges, invalidating the G-1..G-3 probes.
+    const result = await env!.admin.query<{
+      rolname: string;
+      rolbypassrls: boolean;
+    }>(
+      "SELECT rolname, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = $1",
+      [APP_ROLE_NAME],
+    );
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.rolbypassrls).toBe(false);
+  });
+});
