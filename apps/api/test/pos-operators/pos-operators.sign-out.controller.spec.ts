@@ -58,6 +58,7 @@ import {
 
 const TENANT_ID = "0c000000-0000-4000-8000-000000000001";
 const STORE_ID = "0c000000-0000-4000-8000-00000000aa01";
+const STORE_ID_B = "0c000000-0000-4000-8000-00000000aa02";
 
 const ADMIN_ROLE_ID = "0c000000-0000-4000-8000-00000000bb01";
 
@@ -122,6 +123,7 @@ async function seedSession(opts: {
   scope?: string;
   revokedAt?: Date | null;
   expiresAt?: Date;
+  storeId?: string;
 }): Promise<string> {
   if (!pool) throw new Error("pool not initialized");
   const id = opts.id ?? newId();
@@ -146,7 +148,7 @@ async function seedSession(opts: {
       TENANT_ID,
       opts.userId,
       deviceId,
-      STORE_ID,
+      opts.storeId ?? STORE_ID,
       scope,
       expiresAt,
       opts.revokedAt ?? null,
@@ -172,6 +174,10 @@ beforeAll(async () => {
     await pool.query(
       `INSERT INTO stores (id, tenant_id, code, name) VALUES ($1, $2, 'STA', 'Store A')`,
       [STORE_ID, TENANT_ID],
+    );
+    await pool.query(
+      `INSERT INTO stores (id, tenant_id, code, name) VALUES ($1, $2, 'STB', 'Store B')`,
+      [STORE_ID_B, TENANT_ID],
     );
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES
@@ -493,4 +499,34 @@ describe("POST /api/pos/v1/operators/sign-out (body validation → 400)", () => 
       expectErrorEnvelope(res.body, "validation_error");
     });
   }
+});
+
+// -----------------------------------------------------------------------
+// Cross-store behavior (same user, different store) — documents intent
+// -----------------------------------------------------------------------
+
+describe("POST /api/pos/v1/operators/sign-out (same-user cross-store)", () => {
+  it("same user can revoke a session bound to a different store (design: no branch_id in body)", async () => {
+    if (maybeSkip()) return;
+    // The sign-out body carries only `session_id` — no branch attestation.
+    // A session seeded against STORE_ID_B is owned by the same user, so
+    // `user_id = $2` in the UPDATE matches and the revocation succeeds.
+    // This is intentional: re-attestation via branch_id is out-of-scope for
+    // this slice (see CODX-POS-1 P2 tracking item).
+    const sessionId = await seedSession({ userId: ADMIN_USER_ID, storeId: STORE_ID_B });
+
+    const res = await http()
+      .post("/api/pos/v1/operators/sign-out")
+      .set("Authorization", "Bearer jwt-admin")
+      .send({ session_id: sessionId });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ kind: "signed_out" });
+
+    const r = await pool!.query<{ revoked_at: Date | null }>(
+      `SELECT revoked_at FROM auth_tokens WHERE id = $1`,
+      [sessionId],
+    );
+    expect(r.rows[0]!.revoked_at).not.toBeNull();
+  });
 });
