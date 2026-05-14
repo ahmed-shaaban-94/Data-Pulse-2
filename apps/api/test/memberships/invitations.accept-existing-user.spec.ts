@@ -29,6 +29,7 @@ import { Pool } from "pg";
 
 import { hashPassword, generateRawToken, hashToken } from "@data-pulse-2/auth";
 import { AuthModule, PG_POOL, REDIS_CLIENT } from "../../src/auth/auth.module";
+import { AuthService } from "../../src/auth/auth.service";
 import { EMAIL_JOB_ENQUEUER } from "../../src/auth/email-job.enqueuer";
 import { ContextModule } from "../../src/context/context.module";
 import { MembershipsModule } from "../../src/memberships/memberships.module";
@@ -76,6 +77,7 @@ const STORE_A2    = "b7000000-7000-4000-8000-000000000007";
 let env: PgTestEnv | null = null;
 let pool: Pool | null = null;
 let service: InvitationsService | null = null;
+let authService: AuthService | null = null;
 let dockerSkipped = false;
 
 const mockEmailEnqueuer = {
@@ -142,6 +144,7 @@ beforeAll(async () => {
       .compile();
 
     service = moduleRef.get(InvitationsService);
+    authService = moduleRef.get(AuthService);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -529,5 +532,76 @@ describe("acceptInvitationExistingUser — second call same token", () => {
     await expect(
       service!.acceptInvitationExistingUser(rawToken),
     ).rejects.toThrow(BadRequestException);
+  });
+});
+
+// ===== SC-6 Stopwatch — invite → accept → sign-in < 5 min ====================
+//
+// SC-6 (sc-verification.md §SC-6):
+//   "A new tenant admin can invite a user, assign a role, choose a store-access
+//    policy, and have the user complete sign-in in under 5 minutes from invite send."
+//
+// This is a regression guard, not a performance benchmark. The 5-minute ceiling
+// is the outer-bound threshold from the spec; well-architected code running
+// against a local Testcontainers Postgres completes the entire flow in
+// milliseconds. The stopwatch catches runaway blocking, accidental network calls,
+// or infinite retry loops introduced by future changes.
+//
+// Shape A: performance.now() wraps the full service-layer sequence.
+// Shape B (clock injection into production code) was evaluated and rejected —
+// it would require production-source changes that violate the "test-first, no
+// prod-change" constraint for this slice.
+
+describe("SC-6 stopwatch — invite → accept → sign-in completes in under 5 minutes", () => {
+  afterEach(cleanInvitationsAndMemberships);
+
+  it("full invite→accept→signin flow finishes well within the 5-minute ceiling (SC-6)", async () => {
+    if (maybeSkip()) return;
+
+    // Build the owner's resolved context (the tenant admin who sends the invite).
+    const ownerCtx = {
+      userId: OWNER_ID,
+      tenantId: ALPHA_ID,
+      storeId: null as string | null,
+      isPlatformAdmin: false,
+      source: "session" as const,
+    };
+
+    // Ensure the enqueuer mock captures only this test's call.
+    mockEmailEnqueuer.enqueueInvitation.mockClear();
+
+    // ── Step 1 / Step 2 / Step 3 are measured as a single wall-clock sequence ──
+    const start = performance.now();
+
+    // Step 1: tenant admin invites the pre-existing user.
+    await service!.invite(ownerCtx, {
+      email: INVITEE_EMAIL,
+      role_code: "owner",
+      store_access_kind: "all",
+    });
+
+    // Retrieve the raw token the service handed to the email enqueuer.
+    const rawToken = mockEmailEnqueuer.enqueueInvitation.mock.calls.at(-1)?.[0] as
+      | { rawToken: string }
+      | undefined;
+    if (!rawToken) {
+      throw new Error("enqueueInvitation was not called — invite() did not emit a token");
+    }
+
+    // Step 2: invited user (already has an account) accepts the invitation.
+    await service!.acceptInvitationExistingUser(rawToken.rawToken);
+
+    // Step 3: invited user signs in with their existing credentials.
+    await authService!.signIn({ email: INVITEE_EMAIL, password: INVITEE_PASS });
+
+    const elapsed = performance.now() - start;
+
+    // eslint-disable-next-line no-console
+    console.log(`SC-6 invite→accept→signin stopwatch: ${elapsed.toFixed(2)} ms`);
+
+    // The spec ceiling is 5 minutes (300 000 ms). Any well-functioning
+    // implementation completes in under a second; 5 min is the outer bound
+    // that catches catastrophic regressions (blocking calls, retry storms, etc.).
+    expect(elapsed).toBeLessThan(5 * 60 * 1000);
   });
 });
