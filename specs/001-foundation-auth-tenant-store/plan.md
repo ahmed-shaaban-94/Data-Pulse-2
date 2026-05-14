@@ -373,6 +373,12 @@ Re-checked after Phase 1 artifacts were drafted under the TypeScript stack:
 
 **Default applied**: integrate Zod via `nestjs-zod` (or a lightweight Zod ValidationPipe). Class-validator is not used.
 
+### PQ-9 — Audit log retention policy
+
+**Context**: SC-7 requires a "documented retention period" for audit log rows; no period was specified in the spec. T311 was blocked pending this decision.
+
+**Default applied**: 365 days from `audit_events.occurred_at`; mark-only action via a future `retention_marked_at timestamptz null` column; implementation ships in a separate approved PR. Full rationale and future implementation contract in [`audit-retention-decision.md`](audit-retention-decision.md).
+
 ---
 
 ## 10. Definition of Done (this plan)
