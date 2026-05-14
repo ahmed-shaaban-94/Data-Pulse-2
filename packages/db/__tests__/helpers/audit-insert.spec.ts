@@ -25,7 +25,7 @@ import {
 import type { NewAuditEventRow } from "../../src/schema";
 import type { RunCtxFn } from "../../src/helpers/audit-insert";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -266,7 +266,7 @@ describe("insertAuditEvent — Testcontainers (real RLS)", () => {
   beforeAll(async () => {
     try {
       env = await startPgEnv();
-      await applyUpAndCreateAppRole(env);
+      await applyAllUpAndCreateAppRole(env);
       // Seed a tenant for the tenant-path test (admin pool bypasses RLS for setup)
       await env.admin.query(
         `INSERT INTO tenants (id, slug, name) VALUES ($1, 'audit-insert-tc', 'AI TC Tenant')

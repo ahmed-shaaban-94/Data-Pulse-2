@@ -33,6 +33,14 @@ export const auditEvents = pgTable("audit_events", {
   targetId: uuid("target_id"),
   metadata: jsonb("metadata").notNull().default({}),
   requestId: uuid("request_id"),
+  /**
+   * T311 — lifecycle marker set by the retention sweep worker.
+   * NULL = row has not yet been evaluated by the sweep.
+   * Non-null = sweep marked this row as past the documented retention window
+   * (365 days from occurred_at). No audit fact columns are altered by the sweep.
+   * Only the retention worker path may set this column.
+   */
+  retentionMarkedAt: timestamp("retention_marked_at", { withTimezone: true }),
 });
 
 export type AuditEventRow = typeof auditEvents.$inferSelect;
