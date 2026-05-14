@@ -43,9 +43,9 @@ cannot execute; those results are explicitly labelled.
 | Item | Value |
 |---|---|
 | Branch | `main` |
-| Verified SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
-| Expected SHA in task brief | `361fff3` (`Merge pull request #151 from ahmed-shaaban-94/claude/t308-constitution-signoff`) |
-| Delta | One commit (`bb473c3`) is a bug fix committed on top of `361fff3`. The fix tightens single-use-token rejection in `AuthGuard` — this is directly load-bearing for SC-1 and SC-4. All criteria are evaluated against `bb473c3`. |
+| Verified SHA | `b1757ac` (`Merge pull request #161 from ahmed-shaaban-94/claude/pos-signout-ownership-hardening`) |
+| Original T309 SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
+| Update note | This document was incrementally updated on 2026-05-14 to reflect commits merged to `main` after T309. The update adds: T310 performance spec now on disk (SC-5 note); T205 and T206 test files now on disk (SC-3, SC-4, SC-9 gap notes). It does not re-verify criteria whose confirmation requires CI. |
 
 ---
 
@@ -55,13 +55,13 @@ cannot execute; those results are explicitly labelled.
 |---|---|---|---|---|
 | SC-1 | Cross-tenant isolation | **Partial** | Whole-API cross-tenant sweep (T203) missing. Testcontainers tests unrunnable locally (Docker absent). | T203: implement cross-tenant sweep suite in CI. |
 | SC-2 | Cross-store isolation | **Partial** | Whole-API cross-store sweep (T204) missing. Several D-class Testcontainers tests blocked locally. | T204: implement cross-store sweep suite in CI. |
-| SC-3 | Authorization coverage | **Partial** | Default-deny (T206), frontend-bypass (T205) test files missing on disk. Some endpoint families lack all four required test variants locally-confirmed. | Add T205, T206 test files; run CI to confirm Testcontainers-backed suites pass. |
-| SC-4 | Server-only authorization | **Partial** | `apps/api/test/authz/frontend-bypass.spec.ts` (T205) absent on disk; no executable manual probe documented in this repo. Single-use token rejection (`bb473c3`) strengthens the bearer path. | Author T205 and add a curl-style probe script; promote to verified once T205 passes in CI. |
-| SC-5 | Context resolution p95 ≤ 200 ms | **Needs measurement** | `apps/api/test/performance/context-resolution.spec.ts` (T310) absent on disk. No p95 measurement exists in any artifact. | T310: author performance spec; run in CI with a warm Postgres and assert p95. |
+| SC-3 | Authorization coverage | **Partial** | `apps/api/test/authz/default-deny.spec.ts` (T206) and `apps/api/test/authz/frontend-bypass.spec.ts` (T205) **now exist on disk** (2026-05-14). Not yet CI-confirmed. Whole-API sweep (T203) still missing. | Run T205, T206 in CI; implement T203 cross-tenant sweep. |
+| SC-4 | Server-only authorization | **Partial** | `apps/api/test/authz/frontend-bypass.spec.ts` (T205) **now exists on disk** (2026-05-14). Proves body/header/query fields cannot elevate role. Not yet CI-confirmed. No standalone curl-style probe exists. | Run T205 in CI; add curl-style probe script. Promote to verified once CI green. |
+| SC-5 | Context resolution p95 ≤ 200 ms | **Needs measurement** | `apps/api/test/performance/context-resolution.spec.ts` (T310) **now exists on disk** (merged `b1757ac`). Soft-skips when Docker is absent. No CI-measured p95 exists yet. | T310: run in CI with a warm Postgres; capture and assert p95 ≤ 200 ms. |
 | SC-6 | Onboarding clarity | **Partial** | End-to-end invite → accept → sign-in integration tests (`invitations.accept-existing-user.spec.ts`, `invitations.accept-lookup.spec.ts`) exist but fail locally due to Docker; `quickstart.md` documents the flow. Five-minute stopwatch not wired in a test. | Run Testcontainers invite flow in CI; add a stopwatch assertion per tasks.md T170 acceptance. |
 | SC-7 | Auditability | **Partial** | Audit capture, fan-out worker, query API, insert-only, and redaction tests all exist. **T311 (retention policy)** is explicitly deferred; retention period is undocumented. Several Testcontainers-backed audit tests cannot run locally. | Unblock T311 design decision; then implement retention sweep and wire its test. |
 | SC-8 | Reusability for POS | **Partial** | `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` does **not exist** on disk. `apps/api/test/pos-seam/walkthrough.spec.ts` (T264) does not exist. `apps/api/test/pos-namespace/reserved-404.spec.ts` (T263) does not exist. Foundation data model, `auth_tokens.device_id`, idempotency platform, and `/api/pos/v1/*` namespace reservation are implemented. | Author T265 walkthrough document and T264 walkthrough test; author T263 reserved-namespace test. |
-| SC-9 | No frontend-only gates | **Partial** | Per-PR constitution checklist exists in `.github/pull_request_template.md`; no merged PR has been flagged with a frontend-gate violation. `apps/api/test/authz/default-deny.spec.ts` (T206) is absent. The custom ESLint rule `tools/eslint-rules/no-unscoped-tenant-query.js` (T208) is absent. | Author T206, T208; verify no PR checklist violations across merged PRs. |
+| SC-9 | No frontend-only gates | **Partial** | Per-PR constitution checklist exists; no frontend-gate violations in merged PRs. `apps/api/test/authz/default-deny.spec.ts` (T206) **now exists on disk** (2026-05-14). ESLint rule `tools/eslint-rules/no-unscoped-tenant-query.js` (T208) still absent. | Run T206 in CI; implement T208. |
 
 ---
 
@@ -159,17 +159,20 @@ correctly; whole-API sweep and RLS bypass probe are missing.
 
 **Gaps:**
 
-- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — absent on disk. The
-  "unannotated endpoint without `@Public()` fails closed" guarantee has no
-  dedicated test. This is a non-trivial gap for SC-3.
+- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — **now exists on disk** (2026-05-14).
+  Parametrizes over all principal variants (session, token, platform-admin via context,
+  platform-admin via DB fallback, platform-scoped token, POS token, unauthenticated) and
+  proves ALL receive `ForbiddenException` when no route metadata is present. Also proves
+  `isPlatformAdmin` and `findRoleCodeForUserInTenant` are never called (step 1 fires first).
+  Not yet CI-confirmed.
 - The whole-API authorization sweep (T203) being absent means the four-variant
   matrix is not exhaustively confirmed for every endpoint.
 - Some I-class (strict DTO) per-endpoint tests are missing (I-2..I-8 per
   `tenant-isolation-matrix.md §13`).
 
 **Status: Partial.** Individually tested endpoints demonstrate the required
-variants, but there is no machine-verified exhaustive sweep, and the
-default-deny test file is absent.
+variants; T206 (default-deny) is now on disk but unconfirmed in CI; T203
+(whole-API sweep) is still missing.
 
 ---
 
@@ -194,15 +197,17 @@ default-deny test file is absent.
 
 **Gaps:**
 
-- `apps/api/test/authz/frontend-bypass.spec.ts` (**T205**) — absent on disk.
-  The spec requires a test where a `store_staff` user crafts a tenant-admin
-  request and is rejected by `RolesGuard` specifically (not by tenant-context).
+- `apps/api/test/authz/frontend-bypass.spec.ts` (**T205**) — **now exists on disk** (2026-05-14).
+  Proves that `request.body.*`, `request.headers["x-role"]` / `x-is-platform-admin` /
+  `x-tenant-id`, and `request.query.*` cannot elevate a `store_staff` principal to
+  bypass an owner/tenant_admin gate. Includes positive control tests confirming
+  legitimate upgrade paths (context-set `isPlatformAdmin=true`, actual owner in membership)
+  still work. Not yet CI-confirmed.
 - No standalone curl-style probe script or documented manual probe exists in
   the repo.
 
-**Status: Partial.** The architecture is server-side enforced and the fix in
-`bb473c3` demonstrates active hardening. The missing T205 test means the
-formal verification for this criterion is incomplete.
+**Status: Partial.** Architecture is server-side enforced; T205 is now on disk
+but unconfirmed in CI. A curl-style probe script is still absent.
 
 ---
 
@@ -214,14 +219,16 @@ formal verification for this criterion is incomplete.
 > excluding business logic).
 
 **Evidence found:**
-- No performance measurement script or test exists on disk.
-- `apps/api/test/performance/context-resolution.spec.ts` (**T310**) is absent.
-- No p95 timing captured in any CI run, plan document, or commit message.
+- `apps/api/test/performance/context-resolution.spec.ts` (**T310**) **now exists on disk** (merged `b1757ac`).
+  - Runs 200 measured iterations of `TenantContextGuard.resolve` after 20 warmup iterations.
+  - Uses a real non-superuser `app_test` pool so RLS predicates execute.
+  - Asserts p95 ≤ 200 ms.
+  - Soft-skips (emits a warning and returns without failing) when Docker/Testcontainers is unavailable (controlled by `MIGRATION_TEST_ALLOW_SKIP=1`).
+- No CI-captured p95 measurement exists yet; the test must pass in CI with a warm Postgres instance.
 
-**Status: Needs measurement.** This criterion cannot be evaluated without an
-actual p95 measurement against a running system. The architectural intent
-(Postgres SoT + Redis read-through cache for sessions, server-side guard chain)
-is compatible with meeting the target, but no measurement exists.
+**Status: Needs measurement.** The test file is authored and correctly structured.
+The criterion cannot be claimed as verified until the test actually executes and
+passes against a running Postgres in CI.
 
 ---
 
@@ -357,18 +364,16 @@ demonstrates…" is the success criterion. This criterion is **not verified** un
 
 **Gaps:**
 
-- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — absent on disk. The
-  formal machine-checked guarantee that unannotated endpoints fail closed is
-  missing.
-- `tools/eslint-rules/no-unscoped-tenant-query.js` (**T208**) — absent on disk.
-  The lint-time guard preventing un-scoped Drizzle queries (which is a form of
-  backend bypassing) is not yet implemented.
-- Absence of T208 means the "no unscoped query" guarantee is currently enforced
-  only by code review, not by CI.
+- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — **now exists on disk** (2026-05-14).
+  Proves that `RolesGuard` throws `ForbiddenException` for every principal variant
+  when no route metadata is present (step 1 fires before any identity check).
+  Not yet CI-confirmed.
+- `tools/eslint-rules/no-unscoped-tenant-query.js` (**T208**) — still absent on disk.
+  The lint-time guard preventing un-scoped Drizzle queries is not yet implemented.
+  The "no unscoped query" guarantee remains enforced by code review only.
 
 **Status: Partial.** Process controls (PR template, architecture) provide a
-reasonable foundation. T206 and T208 provide the automated machine verification
-required for full confidence.
+reasonable foundation. T206 is on disk but unconfirmed in CI; T208 is still absent.
 
 ---
 
@@ -381,10 +386,10 @@ In priority order:
 | **T265** | Author `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` | SC-8 documented |
 | **T264 / T263** | Author POS-seam walkthrough test and reserved-404 test; author IdempotencyKeyStore test (T260) | SC-8 fully verified |
 | **T203 / T204** | Implement whole-API cross-tenant and cross-store sweep tests | SC-1, SC-2 verifiable at 100% |
-| **T205 / T206** | Frontend-bypass probe test and default-deny test | SC-3, SC-4, SC-9 machine-verified |
+| ~~**T205 / T206**~~ | ~~Frontend-bypass probe test and default-deny test~~ | Both files now on disk (2026-05-14). **Remaining**: run in CI and confirm green. |
 | **T208** | Custom ESLint rule for unscoped Drizzle queries | SC-9 CI-enforced |
 | **T311** | Audit log retention policy — declare window, implement BullMQ sweep | SC-7 fully verified |
-| **T310** | Performance measurement script for context resolution p95 | SC-5 verified |
+| **T310** | Run `apps/api/test/performance/context-resolution.spec.ts` in CI; capture p95 ≤ 200 ms | SC-5 verified |
 | **T207** | RLS bypass probe (raw-SQL test with Testcontainers) | SC-1 DB-layer verified |
 
 ---
