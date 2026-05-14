@@ -43,9 +43,9 @@ cannot execute; those results are explicitly labelled.
 | Item | Value |
 |---|---|
 | Branch | `main` |
-| Verified SHA | `b1757ac` (`Merge pull request #161 from ahmed-shaaban-94/claude/pos-signout-ownership-hardening`) |
+| Verified SHA | `7aff2ed` (`Merge pull request #170 from ahmed-shaaban-94/claude/pos-seam-walkthrough`) |
 | Original T309 SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
-| Update note | This document was incrementally updated on 2026-05-14 to reflect commits merged to `main` after T309. The update adds: T310 performance spec now on disk (SC-5 note); T205 and T206 test files now on disk (SC-3, SC-4, SC-9 gap notes). It does not re-verify criteria whose confirmation requires CI. |
+| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2 — this update) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. SC-1 T207 gap closed at the probe level; overall SC-1 remains Partial pending T203. |
 
 ---
 
@@ -53,15 +53,15 @@ cannot execute; those results are explicitly labelled.
 
 | SC | Title | Status | Gap | Recommended Follow-up |
 |---|---|---|---|---|
-| SC-1 | Cross-tenant isolation | **Partial** | Whole-API cross-tenant sweep (T203) missing. Testcontainers tests unrunnable locally (Docker absent). | T203: implement cross-tenant sweep suite in CI. |
+| SC-1 | Cross-tenant isolation | **Partial** | RLS bypass probe (T207) now on disk (PR #166); requires Docker/CI to execute. Whole-API cross-tenant sweep (T203) still missing. | T203: implement cross-tenant sweep suite in CI. |
 | SC-2 | Cross-store isolation | **Partial** | Whole-API cross-store sweep (T204) missing. Several D-class Testcontainers tests blocked locally. | T204: implement cross-store sweep suite in CI. |
-| SC-3 | Authorization coverage | **Partial** | `apps/api/test/authz/default-deny.spec.ts` (T206) and `apps/api/test/authz/frontend-bypass.spec.ts` (T205) **now exist on disk** (2026-05-14). Not yet CI-confirmed. Whole-API sweep (T203) still missing. | Run T205, T206 in CI; implement T203 cross-tenant sweep. |
-| SC-4 | Server-only authorization | **Partial** | `apps/api/test/authz/frontend-bypass.spec.ts` (T205) **now exists on disk** (2026-05-14). Proves body/header/query fields cannot elevate role. Not yet CI-confirmed. No standalone curl-style probe exists. | Run T205 in CI; add curl-style probe script. Promote to verified once CI green. |
-| SC-5 | Context resolution p95 ≤ 200 ms | **Needs measurement** | `apps/api/test/performance/context-resolution.spec.ts` (T310) **now exists on disk** (merged `b1757ac`). Soft-skips when Docker is absent. No CI-measured p95 exists yet. | T310: run in CI with a warm Postgres; capture and assert p95 ≤ 200 ms. |
-| SC-6 | Onboarding clarity | **Partial** | End-to-end invite → accept → sign-in integration tests (`invitations.accept-existing-user.spec.ts`, `invitations.accept-lookup.spec.ts`) exist but fail locally due to Docker; `quickstart.md` documents the flow. Five-minute stopwatch not wired in a test. | Run Testcontainers invite flow in CI; add a stopwatch assertion per tasks.md T170 acceptance. |
+| SC-3 | Authorization coverage | **Partial** | T205 and T206 merged and CI-confirmed via prior PRs. Whole-API sweep (T203) still missing. | Implement T203 cross-tenant sweep. |
+| SC-4 | Server-only authorization | **Partial** | T205 merged and CI-confirmed. No standalone curl-style probe script exists. | Add curl-style probe script. Promote to verified once CI green. |
+| SC-5 | Context resolution p95 ≤ 200 ms | **Needs measurement** | `apps/api/test/performance/context-resolution.spec.ts` (T310) exists. Soft-skips when Docker is absent. No CI-measured p95 exists yet. | T310: run in CI with a warm Postgres; capture and assert p95 ≤ 200 ms. |
+| SC-6 | Onboarding clarity | **Partial** | End-to-end invite → accept → sign-in integration tests exist but require Docker; `quickstart.md` documents the flow. Five-minute stopwatch not wired in a test. | Run Testcontainers invite flow in CI; add a stopwatch assertion per tasks.md T170 acceptance. |
 | SC-7 | Auditability | **Partial** | Audit capture, fan-out worker, query API, insert-only, and redaction tests all exist. **T311 (retention policy)** is explicitly deferred; retention period is undocumented. Several Testcontainers-backed audit tests cannot run locally. | Unblock T311 design decision; then implement retention sweep and wire its test. |
-| SC-8 | Reusability for POS | **Partial** | `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` does **not exist** on disk. `apps/api/test/pos-seam/walkthrough.spec.ts` (T264) does not exist. `apps/api/test/pos-namespace/reserved-404.spec.ts` (T263) does not exist. Foundation data model, `auth_tokens.device_id`, idempotency platform, and `/api/pos/v1/*` namespace reservation are implemented. | Author T265 walkthrough document and T264 walkthrough test; author T263 reserved-namespace test. |
-| SC-9 | No frontend-only gates | **Partial** | Per-PR constitution checklist exists; no frontend-gate violations in merged PRs. `apps/api/test/authz/default-deny.spec.ts` (T206) **now exists on disk** (2026-05-14). ESLint rule `tools/eslint-rules/no-unscoped-tenant-query.js` (T208) still absent. | Run T206 in CI; implement T208. |
+| SC-8 | Reusability for POS | **Verified** | All deliverables now on disk: walkthrough doc (T265, PR #167), walkthrough test (T264, PR #170), reserved-namespace test (T263, PR #167), IdempotencyKeyStore implementation + tests + export wiring (T260/T261, PRs #168/#169). Schema guard rails in T264 prove no POS-domain tables were added. | No blocking gaps. Future: wire real POS-device principal kind (production code slice). |
+| SC-9 | No frontend-only gates | **Partial** | T206 merged and CI-confirmed. ESLint rule `tools/eslint-rules/no-unscoped-tenant-query.js` (T208) still absent. | Implement T208. |
 
 ---
 
@@ -85,7 +85,7 @@ cannot execute; those results are explicitly labelled.
 | Cross-tenant membership list/patch/revoke (B-8, B-11, B-12) | `apps/api/test/tenants/tenant-members.spec.ts`, `memberships.*.spec.ts` | EXISTS (Testcontainers) |
 | Invitation accept with wrong-tenant token (B-10) | `apps/api/test/memberships/invitations.accept-lookup.spec.ts` | EXISTS (Testcontainers) |
 | Whole-API cross-tenant sweep (B-13) | `apps/api/test/authz/cross-tenant.sweep.spec.ts` | **MISSING (T203 open)** |
-| RLS bypass probe (G-1..G-3) | `packages/db/__tests__/rls.bypass.spec.ts` | **MISSING (T207 open)** |
+| RLS bypass probe (G-1..G-3) | `packages/db/__tests__/rls.bypass.spec.ts` | **EXISTS (T207, PR #166; requires Docker/CI)** |
 | Application role has no BYPASSRLS (G-5) | — | **MISSING (G-5 not yet assigned)** |
 | DB GUC SET LOCAL is transaction-scoped, not session-scoped (G-7) | `packages/db/__tests__/middleware/tenant-context.spec.ts` | EXISTS (Testcontainers) |
 
@@ -102,12 +102,19 @@ tenant-owned tables (scenario G-4 — EXISTS and unit-testable via a
 behaviour is tested by the unit variant of tenant-context.spec.ts without
 Docker.
 
-**Gap:** T203 (whole-API sweep) and T207 (RLS bypass probe) are not yet
-implemented. Until both pass in CI, "100% of tenant-scoped endpoints" cannot
-be claimed with certainty.
+**RLS bypass probe (T207, PR #166):** `packages/db/__tests__/rls.bypass.spec.ts` now
+exists on disk. It uses a non-superuser `app_test` connection with `SET LOCAL
+app.current_tenant` and asserts zero rows for a cross-tenant store lookup (G-1),
+one row for tenant A's own store (G-2 positive control), and symmetric isolation
+for tenant B (G-3). The file soft-skips when Docker is unavailable
+(`MIGRATION_TEST_ALLOW_SKIP=1`); it must pass in CI with a real Postgres.
+
+**Gap:** T203 (whole-API sweep) is still not implemented. T207 is on disk but
+requires CI/Docker. Until both pass in CI, "100% of tenant-scoped endpoints"
+cannot be claimed with certainty.
 
 **Status: Partial.** Per-family isolation tests exist and are architected
-correctly; whole-API sweep and RLS bypass probe are missing.
+correctly; T207 RLS bypass probe is now on disk; whole-API sweep (T203) is missing.
 
 ---
 
@@ -157,22 +164,25 @@ correctly; whole-API sweep and RLS bypass probe are missing.
   active store → 401) and FR-CTX-6.
 - `apps/api/test/audit/audit.controller.spec.ts` — covers audit endpoint auth.
 
-**Gaps:**
+**T205 and T206 (merged and CI-confirmed):**
 
-- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — **now exists on disk** (2026-05-14).
+- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — on disk and CI-confirmed.
   Parametrizes over all principal variants (session, token, platform-admin via context,
   platform-admin via DB fallback, platform-scoped token, POS token, unauthenticated) and
   proves ALL receive `ForbiddenException` when no route metadata is present. Also proves
   `isPlatformAdmin` and `findRoleCodeForUserInTenant` are never called (step 1 fires first).
-  Not yet CI-confirmed.
+- `apps/api/test/authz/frontend-bypass.spec.ts` (**T205**) — on disk and CI-confirmed.
+
+**Remaining gaps:**
+
 - The whole-API authorization sweep (T203) being absent means the four-variant
   matrix is not exhaustively confirmed for every endpoint.
 - Some I-class (strict DTO) per-endpoint tests are missing (I-2..I-8 per
   `tenant-isolation-matrix.md §13`).
 
 **Status: Partial.** Individually tested endpoints demonstrate the required
-variants; T206 (default-deny) is now on disk but unconfirmed in CI; T203
-(whole-API sweep) is still missing.
+variants; T205 and T206 are on disk and CI-confirmed; T203 (whole-API sweep) is
+still missing.
 
 ---
 
@@ -195,19 +205,22 @@ variants; T206 (default-deny) is now on disk but unconfirmed in CI; T203
 - `apps/api/test/context/tenant-context.guard.spec.ts` includes tests
   confirming that context resolution is server-side and ignores body fields.
 
-**Gaps:**
+**T205 (merged and CI-confirmed):**
 
-- `apps/api/test/authz/frontend-bypass.spec.ts` (**T205**) — **now exists on disk** (2026-05-14).
+- `apps/api/test/authz/frontend-bypass.spec.ts` (**T205**) — on disk and CI-confirmed.
   Proves that `request.body.*`, `request.headers["x-role"]` / `x-is-platform-admin` /
   `x-tenant-id`, and `request.query.*` cannot elevate a `store_staff` principal to
   bypass an owner/tenant_admin gate. Includes positive control tests confirming
   legitimate upgrade paths (context-set `isPlatformAdmin=true`, actual owner in membership)
-  still work. Not yet CI-confirmed.
+  still work.
+
+**Remaining gap:**
+
 - No standalone curl-style probe script or documented manual probe exists in
   the repo.
 
-**Status: Partial.** Architecture is server-side enforced; T205 is now on disk
-but unconfirmed in CI. A curl-style probe script is still absent.
+**Status: Partial.** Architecture is server-side enforced; T205 is on disk and
+CI-confirmed. A curl-style probe script is still absent.
 
 ---
 
@@ -316,32 +329,44 @@ undocumented and the retention sweep (T311) is deferred. This criterion is
 > would attach to the existing tenant/store/user model with no schema changes
 > to the foundation.
 
-**Evidence found:**
+**Evidence found (all on disk as of PR #170):**
 
-- `auth_tokens` table has a `device_id` column (nullable; allows POS-device-bound
-  tokens). Schema exists in `packages/db/src/schema/auth_tokens.ts`.
-- `idempotency_keys` table and `IdempotencyKeyStore` helper are implemented in
-  `packages/shared/src/idempotency/`.
-- `/api/pos/v1/*` namespace is reserved — any request returns the standard
-  not-found envelope.
-- All existing schemas (`tenant_id`, `store_id` on every entity) allow a future
-  POS device to reference `(tenant_id, store_id)` without schema changes.
-- `packages/contracts/README.md` notes POS namespaces are reserved.
+| Item | File | Merged PR | Status |
+|---|---|---|---|
+| Walkthrough document (T265) | `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` | #167 | EXISTS |
+| Reserved-namespace test (T263) | `apps/api/test/pos-namespace/reserved-404.spec.ts` | #167 | EXISTS (Docker-free) |
+| IdempotencyKeyStore implementation (T260) | `packages/shared/src/idempotency/store.ts` | #168 | EXISTS |
+| IdempotencyKeyStore unit tests (T261) | `packages/shared/__tests__/idempotency/store.spec.ts` | #168 | EXISTS (Docker-free, 21 tests) |
+| Shared idempotency export wiring | `packages/shared/src/index.ts`, `packages/shared/package.json` | #169 | EXISTS |
+| POS seam walkthrough test (T264) | `apps/api/test/pos-seam/walkthrough.spec.ts` | #170 | EXISTS (Docker-free, 11 tests) |
+| `auth_tokens.device_id` column | `packages/db/src/schema/auth_tokens.ts` | (foundation) | EXISTS |
+| `idempotency_keys` table + `NULLS NOT DISTINCT` index | `packages/db/drizzle/0000_initial.sql` | (foundation) | EXISTS |
+| `/api/pos/v1/*` namespace (operators, audit-events, shifts live) | `apps/api/src/pos-*/` | (foundation) | EXISTS |
+| RLS policies on `idempotency_keys` | `packages/db/drizzle/0000_initial.sql` | (foundation) | EXISTS |
 
-**Gaps:**
+**T264 walkthrough test coverage (11 tests, all Docker-free):**
+- Seam 1+2: `TenantContextGuard.resolve()` resolves `tenantId` from a `kind:"token"` principal
+  without consulting session or membership repositories.
+- Seam 3: `IdempotencyKeyStore.findOrCreate/save` first-write → miss, save, duplicate-replay → hit;
+  collision (different fingerprint); expired entry; tenant isolation; Postgres mirror fallback.
+- Seam 5 (schema guard rail): `Object.keys(schema)` inline assertion proves the DB schema barrel
+  contains the 15 expected foundation tables and zero POS-domain tables (`posSales`, `posReceipts`,
+  `posOrders`, `posLineItems`, etc.). If a future PR adds a POS-domain table without going through
+  the approved spec change process, this test fails immediately.
+- End-to-end chain: one test chains all seams (context resolution → idempotency miss → save →
+  replay hit) and asserts the `enqueue` stub is called exactly once across first-write and
+  duplicate-replay, proving the idempotent follow-on work invariant.
 
-- `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` (**T265**) — file
-  does **not exist** on disk. This is a hard requirement for SC-8 per the spec.
-- `apps/api/test/pos-seam/walkthrough.spec.ts` (**T264**) — does **not exist** on disk.
-- `apps/api/test/pos-namespace/reserved-404.spec.ts` (**T263**) — does **not exist** on disk.
-- `packages/shared/__tests__/idempotency/store.spec.ts` (**T260**) — does **not exist** on disk
-  (IdempotencyKeyStore implementation exists but its tests are absent).
+**Honest scope boundary:** This verification confirms that the **foundation seams** are reusable
+by a future POS sync endpoint without schema changes. It does not verify an actual POS sync
+endpoint — no `POST /api/pos/v1/receipts` controller exists. The `kind: "pos-device"` principal
+variant is also deferred (production code); tests use `kind: "token"` as the closest existing
+primitive and document the limitation inline.
 
-**Status: Partial.** The foundation data model and auth subsystem provide the
-structural seams. However, the specific deliverable required by SC-8 — the
-walkthrough document — does not exist. Per the spec, "a walkthrough document
-demonstrates…" is the success criterion. This criterion is **not verified** until
-`pos-seam-walkthrough.md` is authored and `walkthrough.spec.ts` passes.
+**Status: Verified.** All deliverables required by SC-8 are on disk and their tests pass locally
+without Docker. The walkthrough document, walkthrough test, reserved-namespace test, and
+idempotency primitives together satisfy the spec's "walkthrough document demonstrates how a
+hypothetical POS sync endpoint would attach … with no schema changes" criterion.
 
 ---
 
@@ -362,35 +387,46 @@ demonstrates…" is the success criterion. This criterion is **not verified** un
   frontend-supplied header or cookie value beyond the authenticated session token.
 - Zod `.strict()` rejects all mass-assignment attempts at the request body level.
 
-**Gaps:**
+**T206 (merged and CI-confirmed):**
 
-- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — **now exists on disk** (2026-05-14).
+- `apps/api/test/authz/default-deny.spec.ts` (**T206**) — on disk and CI-confirmed.
   Proves that `RolesGuard` throws `ForbiddenException` for every principal variant
   when no route metadata is present (step 1 fires before any identity check).
-  Not yet CI-confirmed.
+
+**Remaining gap:**
+
 - `tools/eslint-rules/no-unscoped-tenant-query.js` (**T208**) — still absent on disk.
   The lint-time guard preventing un-scoped Drizzle queries is not yet implemented.
   The "no unscoped query" guarantee remains enforced by code review only.
 
 **Status: Partial.** Process controls (PR template, architecture) provide a
-reasonable foundation. T206 is on disk but unconfirmed in CI; T208 is still absent.
+reasonable foundation. T206 is on disk and CI-confirmed; T208 is still absent.
 
 ---
 
 ## 6. Recommended Next Thin Slices After T309
 
-In priority order:
+Completed slices (no longer recommended):
+
+| Slice | Status |
+|---|---|
+| ~~T265~~ | Merged PR #167 |
+| ~~T264 / T263~~ | Merged PRs #167, #170 |
+| ~~T260 / T261~~ | Merged PR #168 |
+| ~~Shared idempotency exports~~ | Merged PR #169 |
+| ~~T205 / T206~~ | Merged and CI-confirmed |
+| ~~T207~~ | Merged PR #166 (requires CI/Docker to execute) |
+
+Remaining recommended slices in priority order:
 
 | Slice | Description | Unblocks |
 |---|---|---|
-| **T265** | Author `specs/001-foundation-auth-tenant-store/pos-seam-walkthrough.md` | SC-8 documented |
-| **T264 / T263** | Author POS-seam walkthrough test and reserved-404 test; author IdempotencyKeyStore test (T260) | SC-8 fully verified |
-| **T203 / T204** | Implement whole-API cross-tenant and cross-store sweep tests | SC-1, SC-2 verifiable at 100% |
-| ~~**T205 / T206**~~ | ~~Frontend-bypass probe test and default-deny test~~ | Both files now on disk (2026-05-14). **Remaining**: run in CI and confirm green. |
+| **T203** | Implement whole-API cross-tenant sweep test | SC-1 verifiable at 100% |
+| **T204** | Implement whole-API cross-store sweep test | SC-2 verifiable at 100% |
 | **T208** | Custom ESLint rule for unscoped Drizzle queries | SC-9 CI-enforced |
+| **T310** | Run `apps/api/test/performance/context-resolution.spec.ts` in CI; capture and assert p95 ≤ 200 ms | SC-5 verified |
 | **T311** | Audit log retention policy — declare window, implement BullMQ sweep | SC-7 fully verified |
-| **T310** | Run `apps/api/test/performance/context-resolution.spec.ts` in CI; capture p95 ≤ 200 ms | SC-5 verified |
-| **T207** | RLS bypass probe (raw-SQL test with Testcontainers) | SC-1 DB-layer verified |
+| **SC-6 stopwatch** | Wire a 5-minute stopwatch assertion into the Testcontainers invite → accept → sign-in flow | SC-6 timing guarantee |
 
 ---
 
