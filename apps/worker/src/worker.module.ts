@@ -94,6 +94,17 @@ import {
   DrizzleAuditDbAdapter,
   NoOpAuditDbAdapter,
 } from "./audit/drizzle-audit-db.adapter";
+import {
+  AuditRetentionProcessor,
+  AUDIT_RETENTION_REPO,
+  type AuditRetentionRepository,
+} from "./audit/audit-retention.processor";
+import {
+  DrizzleAuditRetentionRepository,
+  NoOpAuditRetentionRepository,
+} from "./audit/drizzle-audit-retention.repository";
+import { AuditRetentionWorker } from "./audit/audit-retention.worker";
+import { AuditRetentionScheduler } from "./audit/audit-retention.scheduler";
 
 /**
  * Real BullMQ-backed factory. Constructs a `bullmq.Worker` that
@@ -278,6 +289,22 @@ export function auditDbProviderFactory(wrapper: AuditDbPool): AuditDbLike {
   return new DrizzleAuditDbAdapter(pool);
 }
 
+/**
+ * Factory for the `AUDIT_RETENTION_REPO` provider (T311 Layer B).
+ *
+ * Mirrors `auditDbProviderFactory`: delegates to the NoOp implementation
+ * on the safe no-DB path, and to the Drizzle implementation when a real
+ * pool is available. The pool lifecycle remains on `AuditDbPool`.
+ */
+export function auditRetentionRepoProviderFactory(
+  wrapper: AuditDbPool,
+): AuditRetentionRepository {
+  if (wrapper.pool === null) {
+    return new NoOpAuditRetentionRepository();
+  }
+  return new DrizzleAuditRetentionRepository(wrapper.pool);
+}
+
 /** DI token for the `AuditDbPool` Nest-managed wrapper. */
 export const PG_POOL = "PG_POOL";
 
@@ -318,7 +345,34 @@ export const PG_POOL = "PG_POOL";
     },
     AuditFanoutProcessor,
     AuditWorker,
+
+    // ── Audit retention pipeline (T311 Layer B) ───────────────────────
+    //
+    // AuditRetentionProcessor has a second constructor param (clock: () => Date)
+    // with a runtime default. NestJS reflects it as `Function` and tries to
+    // inject it; we bypass that by constructing the processor explicitly so the
+    // TypeScript default value is used in production.
+    {
+      provide: AUDIT_RETENTION_REPO,
+      useFactory: auditRetentionRepoProviderFactory,
+      inject: [AuditDbPool],
+    },
+    {
+      provide: AuditRetentionProcessor,
+      useFactory: (repo: AuditRetentionRepository) =>
+        new AuditRetentionProcessor(repo),
+      inject: [AUDIT_RETENTION_REPO],
+    },
+    AuditRetentionWorker,
+    AuditRetentionScheduler,
   ],
-  exports: [EmailWorker, EmailProcessor, AuditWorker, AuditFanoutProcessor],
+  exports: [
+    EmailWorker,
+    EmailProcessor,
+    AuditWorker,
+    AuditFanoutProcessor,
+    AuditRetentionWorker,
+    AuditRetentionProcessor,
+  ],
 })
 export class WorkerModule {}

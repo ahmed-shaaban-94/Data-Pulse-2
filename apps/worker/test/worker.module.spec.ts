@@ -31,6 +31,7 @@ import {
   workerFactoryProviderFactory,
   pgPoolProviderFactory,
   auditDbProviderFactory,
+  auditRetentionRepoProviderFactory,
   WorkerModule,
 } from "../src/worker.module";
 import { EmailWorker } from "../src/email/email.worker";
@@ -39,6 +40,13 @@ import {
   DrizzleAuditDbAdapter,
   NoOpAuditDbAdapter,
 } from "../src/audit/drizzle-audit-db.adapter";
+import {
+  DrizzleAuditRetentionRepository,
+  NoOpAuditRetentionRepository,
+} from "../src/audit/drizzle-audit-retention.repository";
+import { AuditRetentionProcessor } from "../src/audit/audit-retention.processor";
+import { AuditRetentionWorker } from "../src/audit/audit-retention.worker";
+import { AuditRetentionScheduler } from "../src/audit/audit-retention.scheduler";
 import { DEFAULT_WORKER_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 const ORIGINAL_NODE_ENV = process.env["NODE_ENV"];
@@ -397,5 +405,122 @@ describe("auditDbProviderFactory — adapter selection", () => {
     // No `adapter.close()` exists — only the wrapper owns end().
     await wrapper.onModuleDestroy();
     expect(endCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T311 — auditRetentionRepoProviderFactory
+// ---------------------------------------------------------------------------
+
+describe("auditRetentionRepoProviderFactory — repo selection", () => {
+  it("returns NoOpAuditRetentionRepository when wrapper.pool is null (safe path)", () => {
+    const wrapper = new AuditDbPool(null);
+    const repo = auditRetentionRepoProviderFactory(wrapper);
+    expect(repo).toBeInstanceOf(NoOpAuditRetentionRepository);
+  });
+
+  it("returns DrizzleAuditRetentionRepository when wrapper.pool is non-null", async () => {
+    process.env["DATABASE_URL"] = FAKE_DB_URL;
+    const wrapper = pgPoolProviderFactory();
+    const repo = auditRetentionRepoProviderFactory(wrapper);
+    expect(repo).toBeInstanceOf(DrizzleAuditRetentionRepository);
+    await wrapper.onModuleDestroy();
+  });
+
+  it("does not take pool ownership — wrapper still owns lifecycle", async () => {
+    let endCalls = 0;
+    const fakePool = {
+      end: async (): Promise<void> => { endCalls += 1; },
+    } as unknown as Pool;
+    const wrapper = new AuditDbPool(fakePool);
+    auditRetentionRepoProviderFactory(wrapper);
+    await wrapper.onModuleDestroy();
+    expect(endCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T311 — WorkerModule Nest DI graph (audit retention providers)
+// ---------------------------------------------------------------------------
+
+describe("WorkerModule — AuditRetentionProcessor resolves (dev / no-Redis / no-DB path)", () => {
+  it("resolves AuditRetentionProcessor without booting Redis or Postgres", async () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REDIS_URL"];
+    delete process.env["DATABASE_URL"];
+    const moduleRef = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+
+    const processor = moduleRef.get(AuditRetentionProcessor);
+    expect(processor).toBeInstanceOf(AuditRetentionProcessor);
+    await moduleRef.close();
+  });
+});
+
+describe("WorkerModule — AuditRetentionWorker resolves (dev / no-Redis / no-DB path)", () => {
+  it("resolves AuditRetentionWorker without booting Redis, BullMQ, or Postgres", async () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REDIS_URL"];
+    delete process.env["DATABASE_URL"];
+    const moduleRef = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+
+    const retentionWorker = moduleRef.get(AuditRetentionWorker);
+    expect(retentionWorker).toBeInstanceOf(AuditRetentionWorker);
+    expect(() => retentionWorker.start()).not.toThrow();
+    await retentionWorker.close();
+    await moduleRef.close();
+  });
+});
+
+describe("WorkerModule — AuditRetentionScheduler resolves (dev / no-Redis / no-DB path)", () => {
+  it("resolves AuditRetentionScheduler without booting Redis", async () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REDIS_URL"];
+    delete process.env["DATABASE_URL"];
+    const moduleRef = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+
+    const scheduler = moduleRef.get(AuditRetentionScheduler);
+    expect(scheduler).toBeInstanceOf(AuditRetentionScheduler);
+    await moduleRef.close();
+  });
+});
+
+describe("WorkerModule — AUDIT_RETENTION_REPO resolves via DI graph", () => {
+  it("resolves to NoOpAuditRetentionRepository in the safe no-DB path", async () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REDIS_URL"];
+    delete process.env["DATABASE_URL"];
+    const moduleRef = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+
+    // The processor holds the repo injected via AUDIT_RETENTION_REPO.
+    // Validate via the processor's concrete repo type by resolving the
+    // factory directly on the module's AuditDbPool instance.
+    const wrapper = moduleRef.get(AuditDbPool);
+    expect(wrapper.pool).toBeNull();
+    const repo = auditRetentionRepoProviderFactory(wrapper);
+    expect(repo).toBeInstanceOf(NoOpAuditRetentionRepository);
+    await moduleRef.close();
+  });
+
+  it("resolves to DrizzleAuditRetentionRepository when DATABASE_URL is set", async () => {
+    delete process.env["NODE_ENV"];
+    delete process.env["REDIS_URL"];
+    process.env["DATABASE_URL"] = FAKE_DB_URL;
+    const moduleRef = await Test.createTestingModule({
+      imports: [WorkerModule],
+    }).compile();
+
+    const wrapper = moduleRef.get(AuditDbPool);
+    expect(wrapper.pool).not.toBeNull();
+    const repo = auditRetentionRepoProviderFactory(wrapper);
+    expect(repo).toBeInstanceOf(DrizzleAuditRetentionRepository);
+    await moduleRef.close();
   });
 });
