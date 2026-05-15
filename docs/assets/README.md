@@ -12,6 +12,26 @@ architecture documentation.
 | `architecture-isometric.svg` | Isometric architecture visual used in `docs/ARCHITECTURE.md`. |
 | `icons/*.svg` | Small reusable icons for platform capabilities and package areas. |
 
+## Brand assets
+
+Product-vision and brand-identity imagery. These are raster PNGs representing
+the Retail Tower OS external product brand — they are **not** architecture
+diagrams or feature screenshots.
+
+| Path | Purpose |
+| --- | --- |
+| `brand/retail-tower-os-hero-exterior.png` | Approved Retail Tower OS exterior hero — product-vision image. |
+| `brand/retail-tower-os-command-room.png` | Approved Retail Tower OS interior command-room — operations-vision image. |
+
+See [`docs/brand/retail-tower-os.md`](../brand/retail-tower-os.md) for the full brand identity record,
+scope notes, and usage guidelines.
+
+> **PNG exception**: Brand imagery may be raster PNG when it is approved
+> product-vision artwork that cannot be represented as SVG. Architecture
+> diagrams and capability icons should remain SVG where possible for
+> lightweight, reviewable documentation. Brand imagery is not the same
+> as implementation architecture diagrams.
+
 ## Style
 
 - Use restrained enterprise SaaS colors: deep navy, slate, blue, teal, amber,
