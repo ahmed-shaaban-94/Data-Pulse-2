@@ -117,6 +117,8 @@ describe("data-pulse-migrate CLI", () => {
     expect(r.stdout).toMatch(/up: applied 0003_session_active_store_tenant_invariant/);
     expect(r.stdout).toMatch(/up: applying 0004_audit_retention_marker/);
     expect(r.stdout).toMatch(/up: applied 0004_audit_retention_marker/);
+    expect(r.stdout).toMatch(/up: applying 0005_audit_retention_privileges/);
+    expect(r.stdout).toMatch(/up: applied 0005_audit_retention_privileges/);
 
     const ledger = await env.admin.query<{ id: string }>(
       "SELECT id FROM _drizzle_migrations ORDER BY id ASC",
@@ -127,6 +129,7 @@ describe("data-pulse-migrate CLI", () => {
       "0002_shifts",
       "0003_session_active_store_tenant_invariant",
       "0004_audit_retention_marker",
+      "0005_audit_retention_privileges",
     ]);
 
     const tables = await env.admin.query<{ count: string }>(`
@@ -144,19 +147,20 @@ describe("data-pulse-migrate CLI", () => {
     const ledger = await env.admin.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM _drizzle_migrations",
     );
-    expect(ledger.rows[0]?.count).toBe("5");
+    expect(ledger.rows[0]?.count).toBe("6");
   });
 
-  it("status reports applied=5, pending=0", async () => {
+  it("status reports applied=6, pending=0", async () => {
     if (!env) throw new Error("env not initialized");
     const r = await runCli(["status"], { DATABASE_URL: env.adminUri });
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/status: 5 applied, 0 pending/);
+    expect(r.stdout).toMatch(/status: 6 applied, 0 pending/);
     expect(r.stdout).toMatch(/applied  0000_initial/);
     expect(r.stdout).toMatch(/applied  0001_pos_operator_identity/);
     expect(r.stdout).toMatch(/applied  0002_shifts/);
     expect(r.stdout).toMatch(/applied  0003_session_active_store_tenant_invariant/);
     expect(r.stdout).toMatch(/applied  0004_audit_retention_marker/);
+    expect(r.stdout).toMatch(/applied  0005_audit_retention_privileges/);
   });
 
   it(
@@ -164,12 +168,11 @@ describe("data-pulse-migrate CLI", () => {
     async () => {
       if (!env) throw new Error("env not initialized");
       // Runner.down rolls back exactly one migration per call (the most
-      // recent applied). With 5 migrations applied, the first down rolls
-      // back 0004_audit_retention_marker, leaving 0000, 0001, 0002, and
-      // 0003 in the ledger.
+      // recent applied). With 6 migrations applied, the first down rolls
+      // back 0005_audit_retention_privileges, leaving 0000–0004 in the ledger.
       const r = await runCli(["down"], { DATABASE_URL: env.adminUri });
       expect(r.code).toBe(0);
-      expect(r.stdout).toMatch(/down: rolled back 0004_audit_retention_marker/);
+      expect(r.stdout).toMatch(/down: rolled back 0005_audit_retention_privileges/);
 
       const ledger = await env.admin.query<{ id: string }>(
         "SELECT id FROM _drizzle_migrations ORDER BY id ASC",
@@ -179,18 +182,20 @@ describe("data-pulse-migrate CLI", () => {
         "0001_pos_operator_identity",
         "0002_shifts",
         "0003_session_active_store_tenant_invariant",
+        "0004_audit_retention_marker",
       ]);
 
-      // retention_marked_at column is gone after 0004 rollback...
+      // retention_marked_at column is still present — 0005 only revoked
+      // privilege grants, so rolling it back does not touch the column.
       const column = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'audit_events'
           AND column_name = 'retention_marked_at'
       `);
-      expect(column.rows[0]?.count).toBe("0");
+      expect(column.rows[0]?.count).toBe("1");
 
-      // ...but the 0003 trigger, shifts, and foundation tables are still here.
+      // The 0003 trigger, shifts, and foundation tables are still here.
       const trigger = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM pg_trigger
         WHERE tgname = 'sessions_active_store_tenant_check'
@@ -209,7 +214,7 @@ describe("data-pulse-migrate CLI", () => {
     if (!env) throw new Error("env not initialized");
     const r = await runCli(["up"], { DATABASE_URL: env.adminUri });
     expect(r.code).toBe(0);
-    expect(r.stdout).toMatch(/up: applying 0004_audit_retention_marker/);
+    expect(r.stdout).toMatch(/up: applying 0005_audit_retention_privileges/);
     const column = await env.admin.query<{ count: string }>(`
       SELECT COUNT(*)::text AS count FROM information_schema.columns
       WHERE table_schema = 'public'
@@ -239,34 +244,39 @@ describe("data-pulse-migrate CLI", () => {
 
   it("down repeatedly fully unwinds the chain", async () => {
     if (!env) throw new Error("env not initialized");
-    // First down: rolls back 0004 (most recent after the previous up restored it).
+    // First down: rolls back 0005 (most recent after the previous up restored it).
     const first = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(first.code).toBe(0);
-    expect(first.stdout).toMatch(/down: rolled back 0004_audit_retention_marker/);
+    expect(first.stdout).toMatch(/down: rolled back 0005_audit_retention_privileges/);
 
-    // Second down: rolls back 0003.
+    // Second down: rolls back 0004.
     const second = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(second.code).toBe(0);
-    expect(second.stdout).toMatch(/down: rolled back 0003_session_active_store_tenant_invariant/);
+    expect(second.stdout).toMatch(/down: rolled back 0004_audit_retention_marker/);
 
-    // Third down: rolls back 0002.
+    // Third down: rolls back 0003.
     const third = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(third.code).toBe(0);
-    expect(third.stdout).toMatch(/down: rolled back 0002_shifts/);
+    expect(third.stdout).toMatch(/down: rolled back 0003_session_active_store_tenant_invariant/);
 
-    // Fourth down: rolls back 0001.
+    // Fourth down: rolls back 0002.
     const fourth = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(fourth.code).toBe(0);
-    expect(fourth.stdout).toMatch(/down: rolled back 0001_pos_operator_identity/);
+    expect(fourth.stdout).toMatch(/down: rolled back 0002_shifts/);
 
-    // Fifth down: rolls back 0000.
+    // Fifth down: rolls back 0001.
     const fifth = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(fifth.code).toBe(0);
-    expect(fifth.stdout).toMatch(/down: rolled back 0000_initial/);
+    expect(fifth.stdout).toMatch(/down: rolled back 0001_pos_operator_identity/);
 
-    // Sixth down: nothing left.
+    // Sixth down: rolls back 0000.
     const sixth = await runCli(["down"], { DATABASE_URL: env.adminUri });
     expect(sixth.code).toBe(0);
-    expect(sixth.stdout).toMatch(/down: nothing to roll back/);
+    expect(sixth.stdout).toMatch(/down: rolled back 0000_initial/);
+
+    // Seventh down: nothing left.
+    const seventh = await runCli(["down"], { DATABASE_URL: env.adminUri });
+    expect(seventh.code).toBe(0);
+    expect(seventh.stdout).toMatch(/down: nothing to roll back/);
   });
 });
