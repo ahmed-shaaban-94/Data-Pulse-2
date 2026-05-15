@@ -12,6 +12,10 @@ template, so changes should stay small, reviewed, and testable.
    before changing behavior.
 3. Confirm whether the change touches tenant isolation, backend authority,
    contracts, workers, observability, or migrations.
+4. For project rules and architectural decisions, see
+   [.specify/memory/constitution.md](.specify/memory/constitution.md). The
+   `.specify/` directory holds governance artifacts — Constitution, architecture
+   impact rules, and decision records. These are not product runtime code.
 
 ## Local Setup
 

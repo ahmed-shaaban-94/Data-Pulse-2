@@ -75,7 +75,7 @@ flowchart LR
 | `packages/db` | Drizzle schema, explicit SQL migrations, tenant helpers, and migration CLI. |
 | `packages/shared` | Shared Zod helpers, error envelopes, logging, observability, IDs, and queue configuration. |
 | `specs/001-foundation-auth-tenant-store` | Active foundation feature artifacts: spec, plan, research, data model, contracts, quickstart, and tasks. |
-| `specs/002-pos-operator-identity` | POS operator identity specification and contracts. |
+| `specs/002-pos-operator-identity` | POS operator identity specification and contract-planning artifacts. Specification only — the POS application is a separate repository. |
 | `docs` | Architecture, documentation index, and presentation assets. |
 
 ## What This Repo Owns
@@ -156,16 +156,25 @@ pnpm --filter @data-pulse-2/worker start
 During development, package-level `start:dev` scripts compile in watch mode
 where available.
 
+### Verify Startup
+
+After starting the API, check the terminal output for a pino log line
+confirming the server is listening (default port `3000`). No unauthenticated
+health endpoint is exposed — a clean startup log is the expected signal. For
+a full behavior walkthrough, see the
+[foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md).
+
 ## Documentation
 
-- [Documentation index](docs/README.md)
+The [documentation index](docs/README.md) is the main hub, with audience-based
+navigation for product, engineering, security, and integration reviewers.
+
+Key references:
+
 - [Architecture](docs/ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
-- [Foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md)
-- [Foundation data model](specs/001-foundation-auth-tenant-store/data-model.md)
 - [Contracts package](packages/contracts/README.md)
-- [Pull request template](.github/pull_request_template.md)
 
 ## Development Agreement
 

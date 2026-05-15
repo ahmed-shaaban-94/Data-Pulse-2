@@ -16,6 +16,14 @@ without re-spec'ing here.
   - Contracts: [specs/001-foundation-auth-tenant-store/contracts/](specs/001-foundation-auth-tenant-store/contracts/)
   - Quickstart: [specs/001-foundation-auth-tenant-store/quickstart.md](specs/001-foundation-auth-tenant-store/quickstart.md)
   - <!-- SPECKIT END -->
+- **Specification artifact**: `002-pos-operator-identity` — contract planning and
+  identity model for POS operator authentication. This is a specification and
+  contract-planning artifact only. The POS application itself is a separate
+  repository; POS integrates exclusively through the documented API contracts in
+  `packages/contracts/openapi/` and must never access the SaaS database directly.
+  - Spec: [specs/002-pos-operator-identity/spec.md](specs/002-pos-operator-identity/spec.md)
+  - Research: [specs/002-pos-operator-identity/research.md](specs/002-pos-operator-identity/research.md)
+  - Contracts: [specs/002-pos-operator-identity/contracts/](specs/002-pos-operator-identity/contracts/)
 
 ## Constitution at a glance (v3.0.0)
 
@@ -77,6 +85,6 @@ admin/dashboard frontend (UI is its own feature), workers, and infrastructure.
 
 ## Stack defaults (per current plan)
 
-**TypeScript-first** (backend only in this feature). Node.js 20 LTS · TypeScript 5.x (strict) · NestJS 10+ (api + worker) · Drizzle ORM with explicit SQL migrations · PostgreSQL 16+ · Redis 7+ · BullMQ · pnpm workspaces · Zod (validation) · OpenAPI 3.1 (contracts of record) · Jest + Supertest + Testcontainers · pino + OpenTelemetry · argon2id (`argon2` npm) · opaque revocable bearer tokens for API/POS, httpOnly cookie sessions for dashboard humans · UUIDv7 (UUIDv4 fallback).
+**TypeScript-first** (backend only in this feature). Node.js 20 LTS · TypeScript 5.x (strict) · NestJS 11 (api + worker) · Drizzle ORM with explicit SQL migrations · PostgreSQL 16+ · Redis 7+ · BullMQ · pnpm workspaces · Zod (validation) · OpenAPI 3.1 (contracts of record) · Jest + Supertest + Testcontainers · pino + OpenTelemetry · argon2id (`argon2` npm) · opaque revocable bearer tokens for API/POS, httpOnly cookie sessions for dashboard humans · UUIDv7 (UUIDv4 fallback).
 
 **Dashboard / web frontend is deferred to a separate feature** and is not chosen or scaffolded by this foundation feature. The OpenAPI contracts produced here are the only guarantee the dashboard needs. Defaults are revisable via `/speckit-clarify`.
