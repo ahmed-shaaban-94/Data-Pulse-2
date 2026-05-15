@@ -43,9 +43,9 @@ cannot execute; those results are explicitly labelled.
 | Item | Value |
 |---|---|
 | Branch | `main` |
-| Verified SHA | `ffbae27` (`Merge pull request #183 from ahmed-shaaban-94/claude/t311-audit-retention-db-hardening`) |
+| Verified SHA | `15453b8` (`Merge pull request #184 from ahmed-shaaban-94/claude/sc7-audit-retention-verification`) |
 | Original T309 SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
-| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. Updated again on 2026-05-15 (pass 4) to reflect PR #181 (G-5: assert app_test role has no BYPASSRLS) and PR #182 (T176 D-5: kind='specific' users not auto-granted new stores). Also reflects T311 DB-layer privilege hardening: migration 0005_audit_retention_privileges.sql (column-scoped GRANT UPDATE (retention_marked_at) to audit_retention_worker role) + audit-retention.invariant.spec.ts on disk. SC-1 G-5 gap closed. SC-2 D-5 gap closed. SC-7 hardening artifacts now complete on disk. Updated again on 2026-05-15 (pass 5 — this update) to reflect PR #183 (T311 DB-layer privilege hardening merged). Docker-enabled CI passed after migration CLI expectation fix; audit-retention.invariant.spec.ts executed green in the db-integration job. SC-7 promoted from Partial to Verified. |
+| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. Updated again on 2026-05-15 (pass 4) to reflect PR #181 (G-5: assert app_test role has no BYPASSRLS) and PR #182 (T176 D-5: kind='specific' users not auto-granted new stores). Also reflects T311 DB-layer privilege hardening: migration 0005_audit_retention_privileges.sql (column-scoped GRANT UPDATE (retention_marked_at) to audit_retention_worker role) + audit-retention.invariant.spec.ts on disk. SC-1 G-5 gap closed. SC-2 D-5 gap closed. SC-7 hardening artifacts now complete on disk. Updated again on 2026-05-15 (pass 5) to reflect PR #183 (T311 DB-layer privilege hardening merged). Docker-enabled CI passed after migration CLI expectation fix; audit-retention.invariant.spec.ts executed green in the db-integration job. SC-7 promoted from Partial to Verified. **Updated again on 2026-05-15 (pass 6 — this update)**: Docker-enabled CI run `25904295672` on SHA `15453b8` passed both `fast` and `db-integration` jobs. The `db-integration` job executed all Testcontainers-backed suites green, including `cross-tenant.sweep.spec.ts` (T203), `cross-store.sweep.spec.ts` (T204), `rls.bypass.spec.ts` (T207 + G-5), `access-on-new-store.spec.ts` (D-5 / T176), `frontend-bypass.spec.ts` (T205), `default-deny.spec.ts` (T206), `invitations.create.spec.ts`, `invitations.accept-existing-user.spec.ts` (which also reported the SC-6 stopwatch at `41.16 ms`), and `invitations.accept-lookup.spec.ts`. Totals: db 179/179 PASS; api 1706/1713 PASS (7 todo); worker 280/280 PASS; shared 135/135 PASS; auth 31/31 PASS. SC-1, SC-3, and SC-6 promoted from Partial to Verified. SC-2 remains Partial because D-6 / T177 (revoked store access invalidates cached authz within bound — `apps/api/test/memberships/revoke-cache.spec.ts`) is still not on disk; T204 and D-5 are now CI-confirmed. |
 
 ---
 
@@ -53,12 +53,12 @@ cannot execute; those results are explicitly labelled.
 
 | SC | Title | Status | Gap | Recommended Follow-up |
 |---|---|---|---|---|
-| SC-1 | Cross-tenant isolation | **Partial** | T203 sweep on disk (PR #172); T207 probe on disk (PR #166); both require Docker/CI to execute. G-5 now closed (PR #181 — `rolbypassrls = false` assertion in rls.bypass.spec.ts). | Confirm T203 + T207 in CI with Docker. |
-| SC-2 | Cross-store isolation | **Partial** | T204 sweep on disk (PR #173); requires Docker/CI. D-5 now closed (PR #182 — kind='specific' user not auto-granted new store). D-6 (revoked access invalidates cache) still missing. | Confirm T204 in CI. Implement D-6 test (T177). |
-| SC-3 | Authorization coverage | **Partial** | T203 + T204 sweeps on disk (PRs #172, #173); T205 + T206 CI-confirmed. Four-variant matrix coverage is strong but not independently executable locally (Docker required). | Confirm T203/T204 sweep results in CI against all endpoint families. |
+| SC-1 | Cross-tenant isolation | **Verified** | No blocking gaps. T203, T207, and G-5 all CI-confirmed in run `25904295672` on SHA `15453b8`. | No blocking gaps. |
+| SC-2 | Cross-store isolation | **Partial** | T204 and D-5 (T176) CI-confirmed in run `25904295672`. Only D-6 / T177 remains: revoked store access invalidates cached authz within bound. `apps/api/test/memberships/revoke-cache.spec.ts` is still not on disk. | Implement T177 / D-6 revoke-cache.spec.ts. |
+| SC-3 | Authorization coverage | **Verified** | No blocking gaps. Authorization matrix CI-confirmed via T203 + T204 + T205 + T206 in run `25904295672`. | No blocking gaps. |
 | SC-4 | Server-only authorization | **Verified** | T205 (automated frontend-bypass test) CI-confirmed; PR #175 adds documented manual probe. All requirements met. | No blocking gaps. |
 | SC-5 | Context resolution p95 ≤ 200 ms | **Verified** | CI evidence: p95 = 7.0 ms ≤ 200 ms threshold (T310). | No blocking gaps. |
-| SC-6 | Onboarding clarity | **Partial** | Stopwatch test now on disk (PR #176). Testcontainers invite → accept → sign-in tests still require Docker/CI to confirm. | Confirm Testcontainers invite-flow + stopwatch passes in CI. |
+| SC-6 | Onboarding clarity | **Verified** | No blocking gaps. Invite → accept → sign-in stopwatch CI-confirmed at `41.16 ms` in run `25904295672` (logged inline by `invitations.accept-existing-user.spec.ts`); `invitations.create`, `invitations.accept-existing-user`, and `invitations.accept-lookup` all PASS in the same run. | No blocking gaps. |
 | SC-7 | Auditability | **Verified** | All retention artifacts shipped and CI-confirmed: 365-day window (PR #177); `retention_marked_at` column + migration + processor (PR #178); daily BullMQ scheduler + module wiring (PR #179); DB-layer column-scoped `GRANT UPDATE (retention_marked_at)` (migration 0005, PR #183); `audit-retention.invariant.spec.ts` (9 tests) executed green in Docker-enabled CI (PR #183). | No blocking gaps. |
 | SC-8 | Reusability for POS | **Verified** | All deliverables on disk: walkthrough doc (T265, PR #167), walkthrough test (T264, PR #170), reserved-namespace test (T263, PR #167), IdempotencyKeyStore implementation + tests + export wiring (T260/T261, PRs #168/#169). Schema guard rails in T264 prove no POS-domain tables were added. | No blocking gaps. Future: wire real POS-device principal kind (production code slice). |
 | SC-9 | No frontend-only gates | **Verified** | T208 no-unscoped-tenant-query ESLint guard on disk (PR #174); T206 default-deny CI-confirmed; PR template checklist present throughout all PRs. | No blocking gaps. |
@@ -117,9 +117,17 @@ includes a describe block (lines 169–188) asserting `rolbypassrls = false` for
 the `app_test` role. This closes the G-5 gap. Until T203 and T207 pass in CI
 with Docker, "100% of tenant-scoped endpoints" cannot be claimed with certainty.
 
-**Status: Partial.** Per-family isolation tests exist; T207 RLS bypass probe
-and T203 whole-API cross-tenant sweep are now on disk; G-5 is closed by PR #181.
-Full confirmation requires Docker/CI.
+**CI evidence — pass 6:** CI run `25904295672` on SHA `15453b8`
+(2026-05-15) executed `apps/api/test/authz/cross-tenant.sweep.spec.ts`
+(T203) and `packages/db/__tests__/rls.bypass.spec.ts` (T207 + G-5 invariant)
+green in the `db-integration` Docker-enabled job. The `app_test` non-superuser
+role bypass-probe and the whole-API cross-tenant authorization sweep both
+PASS. All per-family isolation tests and Testcontainers-backed RLS suites
+that previously could not execute locally are now confirmed passing in CI.
+
+**Status: Verified.** Per-family isolation tests, T203 whole-API cross-tenant
+sweep, T207 RLS bypass probe, and G-5 (`rolbypassrls = false`) invariant are
+all CI-confirmed on SHA `15453b8`. No blocking gaps.
 
 ---
 
@@ -151,8 +159,15 @@ now exists on disk and asserts that a `kind='specific'` membership user is NOT
 automatically granted access to a newly created store (T176, FR-ACCESS-3). Requires
 Docker/CI to execute.
 
-**Status: Partial.** T204 whole-API sweep is now on disk; D-5 is now on disk (PR #182).
-D-6 remains unimplemented. Docker/CI required for all Testcontainers-backed tests.
+**CI evidence — pass 6:** CI run `25904295672` on SHA `15453b8`
+(2026-05-15) executed `apps/api/test/authz/cross-store.sweep.spec.ts`
+(T204) and `apps/api/test/memberships/access-on-new-store.spec.ts`
+(D-5 / T176) green in the `db-integration` Docker-enabled job. T204 and D-5
+are now CI-confirmed.
+
+**Status: Partial.** T204 and D-5 are CI-confirmed; D-6 / T177
+(`apps/api/test/memberships/revoke-cache.spec.ts`) remains the only
+outstanding SC-2 gap — the test file is still not on disk.
 
 ---
 
@@ -197,8 +212,14 @@ D-6 remains unimplemented. Docker/CI required for all Testcontainers-backed test
 - The sweeps (T203, T204) require Docker/Testcontainers; the four-variant matrix
   cannot be confirmed as passing for all endpoints without CI.
 
-**Status: Partial.** The four-variant coverage is strongly supported by T203,
-T204, T205, T206 — all on disk. Full confirmation requires Docker/CI execution.
+**CI evidence — pass 6:** CI run `25904295672` on SHA `15453b8`
+(2026-05-15) executed T203, T204, T205, and T206 green in the
+`db-integration` Docker-enabled job. The four-variant authorization matrix
+(unauthenticated, wrong-tenant, wrong-store, insufficient-role) is now
+CI-confirmed across all relevant endpoint families.
+
+**Status: Verified.** Authorization matrix CI-confirmed via T203 + T204 +
+T205 + T206 on SHA `15453b8`. No blocking gaps.
 
 ---
 
@@ -300,8 +321,17 @@ of SC-4 are met.
 - The stopwatch test and the Testcontainers-backed invitation flow tests require
   Docker/CI to execute. They cannot be confirmed as passing in this environment.
 
-**Status: Partial.** Flow is documented and individually tested; the stopwatch
-assertion is now on disk (PR #176); Testcontainers-backed validation requires CI.
+**CI evidence — pass 6:** CI run `25904295672` on SHA `15453b8`
+(2026-05-15) executed the Testcontainers-backed invitation suite green in
+the `db-integration` Docker-enabled job: `invitations.create.spec.ts`,
+`invitations.accept-existing-user.spec.ts`, and
+`invitations.accept-lookup.spec.ts` all PASS. The SC-6 stopwatch assertion
+(embedded in `invitations.accept-existing-user.spec.ts`) reported
+`SC-6 invite→accept→signin stopwatch: 41.16 ms` in the CI log — well under
+the spec's 5-minute target.
+
+**Status: Verified.** Invite → accept → sign-in stopwatch CI-confirmed at
+`41.16 ms` on SHA `15453b8`. No blocking gaps.
 
 ---
 
@@ -508,14 +538,16 @@ Completed slices (no longer recommended):
 | ~~T176 / D-5~~ | Merged PR #182 (kind='specific' user not auto-granted new store) |
 | ~~T311 DB-layer GRANT + invariant test~~ | Merged PR #183 (migration 0005 + audit-retention.invariant.spec.ts; CI-confirmed) |
 | ~~SC-7 CI confirmation~~ | CI-confirmed: audit-retention.invariant.spec.ts (9 tests) passed in Docker-enabled CI (PR #183) |
+| ~~SC-1 CI confirmation~~ | CI-confirmed: T203 cross-tenant sweep + T207 RLS bypass probe + G-5 invariant passed in CI run `25904295672` on SHA `15453b8` |
+| ~~SC-2 T204 / D-5 CI confirmation~~ | CI-confirmed: T204 cross-store sweep + D-5 access-on-new-store passed in CI run `25904295672` on SHA `15453b8` |
+| ~~SC-3 CI confirmation~~ | CI-confirmed: T203 + T204 + T205 + T206 four-variant matrix passed in CI run `25904295672` on SHA `15453b8` |
+| ~~SC-6 CI confirmation~~ | CI-confirmed: invite → accept → sign-in stopwatch reported `41.16 ms` in CI run `25904295672` on SHA `15453b8` |
 
 Remaining recommended slices in priority order:
 
 | Slice | Description | Unblocks |
 |---|---|---|
-| **SC-6 CI confirmation** | Confirm Testcontainers invite → accept → sign-in + stopwatch test passes in CI | SC-6 Verified |
-| **SC-1 / SC-2 CI confirmation** | Confirm T203 + T204 sweeps + T207 RLS probe pass in CI with Docker | SC-1, SC-2 Verified |
-| **D-6** | Revoked store access invalidates cache (T177 FR-ACCESS-4) | SC-2 completeness |
+| **D-6** | Revoked store access invalidates cache (T177 FR-ACCESS-4) — `apps/api/test/memberships/revoke-cache.spec.ts` | SC-2 Verified (final remaining Foundation gap) |
 
 ---
 
@@ -559,6 +591,29 @@ variants) confirms the application layer and unit coverage.
 The Testcontainers-backed tests (DB-layer RLS, isolation, migration, auth
 repository, invitation flows, audit repository, store/tenant controllers) require
 Docker and must be confirmed in CI (see `.github/workflows/ci.yml`).
+
+### CI confirmation — pass 6 (2026-05-15)
+
+CI run `25904295672` on SHA `15453b8` (push event, workflow `CI`) passed
+both jobs:
+
+| Job | Status | Suites / Tests |
+|---|---|---|
+| `fast` (build + Docker-free tests) | success | `worker` 15 suites / 280 tests; `shared` 8 / 135; `auth` 2 / 31 |
+| `db-integration` (Testcontainers + RLS + migrations) | success | `packages/db` 13 suites / 179 tests; `apps/api` 99 suites / 1706 passed + 7 todo (1713 total) |
+
+The `db-integration` job executed every Testcontainers-backed suite that
+was previously labelled "Docker required" green, including the authorization
+sweeps (T203, T204), RLS bypass probe (T207 + G-5), default-deny (T206),
+frontend-bypass (T205), `access-on-new-store` (D-5 / T176), and the full
+invitation flow (`invitations.create`, `invitations.accept-existing-user`,
+`invitations.accept-lookup`). The SC-6 stopwatch logged `41.16 ms`.
+
+**This CI evidence supersedes the earlier "Docker unavailable locally"
+caveats for SC-1, SC-2 (excluding D-6), SC-3, and SC-6.** D-6 / T177
+(`apps/api/test/memberships/revoke-cache.spec.ts`) was not part of this CI
+run because the file is still not on disk; it remains the sole outstanding
+Foundation verification gap.
 
 ---
 
