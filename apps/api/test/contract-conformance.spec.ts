@@ -2192,7 +2192,7 @@ beforeAll(async () => {
       { provide: InvitationsService, useValue: new FakeMembershipsInvitationsService() },
     ],
   })
-    .overrideGuard(AuthGuard).useValue(new MembershipsScriptedAuthGuard())
+    .overrideGuard(DashboardAuthGuard).useValue(new MembershipsScriptedAuthGuard())
     .overrideGuard(TenantContextGuard).useValue(new MembershipsScriptedTenantContextGuard())
     .overrideGuard(RolesGuard).useValue(new MembershipsScriptedRolesGuard())
     .compile();
