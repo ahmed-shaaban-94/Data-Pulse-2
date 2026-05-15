@@ -16,6 +16,8 @@ separate future feature, and POS applications live in separate repositories.
 
 ![Data Pulse platform hero](docs/assets/hero-data-pulse.svg)
 
+---
+
 ## Why Data Pulse
 
 Retail data systems become expensive when tenant boundaries, store ownership,
@@ -24,20 +26,20 @@ Pulse makes those platform rules explicit from the start.
 
 | Capability | What it protects |
 | --- | --- |
-| ![Tenant isolation](docs/assets/icons/tenant-isolation.svg) Tenant isolation | Tenant and store context are first-class at the API, database, and test layers. |
-| ![Contracts](docs/assets/icons/contracts.svg) Contract-first APIs | OpenAPI 3.1 contracts are the integration source of truth, not generated side effects. |
-| ![Audit](docs/assets/icons/audit.svg) Auditability | Security-sensitive workflows preserve actor, tenant, operation, outcome, and correlation context. |
-| ![Workers](docs/assets/icons/worker.svg) Worker-owned async jobs | Email, fanout, retries, and future scheduled work live outside request handlers. |
-| ![Observability](docs/assets/icons/observability.svg) Operational visibility | Request IDs, structured logging, and OpenTelemetry primitives are built into the platform layer. |
-| ![Database](docs/assets/icons/database.svg) Durable source of truth | PostgreSQL remains authoritative; Redis-backed state is disposable coordination. |
+| <img src="docs/assets/icons/tenant-isolation.svg" width="24" alt="Tenant isolation"> Tenant isolation | Tenant and store context are first-class at the API, database, and test layers. |
+| <img src="docs/assets/icons/contracts.svg" width="24" alt="Contracts"> Contract-first APIs | OpenAPI 3.1 contracts are the integration source of truth, not generated side effects. |
+| <img src="docs/assets/icons/audit.svg" width="24" alt="Audit"> Auditability | Security-sensitive workflows preserve actor, tenant, operation, outcome, and correlation context. |
+| <img src="docs/assets/icons/worker.svg" width="24" alt="Workers"> Worker-owned async jobs | Email, fanout, retries, and future scheduled work live outside request handlers. |
+| <img src="docs/assets/icons/observability.svg" width="24" alt="Observability"> Operational visibility | Request IDs, structured logging, and OpenTelemetry primitives are built into the platform layer. |
+| <img src="docs/assets/icons/database.svg" width="24" alt="Database"> Durable source of truth | PostgreSQL remains authoritative; Redis-backed state is disposable coordination. |
+
+---
 
 ## Platform Shape
 
 Data Pulse is a pnpm workspace with two deployable services and four internal
 packages. The API owns synchronous HTTP behavior; the worker owns asynchronous
 processing; PostgreSQL owns durable state; Redis coordinates queues.
-
-![Data Pulse architecture](docs/assets/architecture-isometric.svg)
 
 ```mermaid
 flowchart LR
@@ -63,6 +65,8 @@ flowchart LR
   worker -- consume jobs --> redis
   worker --> shared
 ```
+
+---
 
 ## Repository Map
 
@@ -94,6 +98,8 @@ flowchart LR
 - Legacy `Data-Pulse` code as source material. The legacy repo is reference
   only and must be re-specified before anything is rebuilt here.
 
+---
+
 ## Tech Stack
 
 | Layer | Stack |
@@ -104,6 +110,8 @@ flowchart LR
 | Jobs | Redis 7, BullMQ |
 | Observability | pino, OpenTelemetry SDK, HTTP/Postgres/Redis instrumentation |
 | Testing | Jest, ts-jest, Supertest, Testcontainers PostgreSQL |
+
+---
 
 ## Getting Started
 
@@ -164,6 +172,8 @@ health endpoint is exposed — a clean startup log is the expected signal. For
 a full behavior walkthrough, see the
 [foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md).
 
+---
+
 ## Documentation
 
 The [documentation index](docs/README.md) is the main hub, with audience-based
@@ -176,12 +186,16 @@ Key references:
 - [Security](SECURITY.md)
 - [Contracts package](packages/contracts/README.md)
 
+---
+
 ## Development Agreement
 
 Data Pulse follows the active Constitution and Spec Kit workflow. Start from
 the current spec, keep changes thin, preserve tenant isolation, and do not
 change dependency manifests, lockfiles, SQL migrations, or database schema
 without explicit approval.
+
+---
 
 ## License
 
