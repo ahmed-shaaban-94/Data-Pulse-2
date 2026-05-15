@@ -25,6 +25,17 @@ security review, and integration planning.
 | [Foundation data model](../specs/001-foundation-auth-tenant-store/data-model.md) | Active feature entities and relationships. |
 | [Contracts README](../specs/001-foundation-auth-tenant-store/contracts/README.md) | Feature-level contract documentation. |
 
+## Governance and Project Rules
+
+Project governance artifacts live in `.specify/` — they are process and
+decision records, not product runtime code.
+
+| Artifact | Purpose |
+| --- | --- |
+| [Constitution](../.specify/memory/constitution.md) | Binding architectural and operating principles for the entire repo (v3.0.0). |
+| [Architecture impact rule](../.specify/memory/architecture-impact.md) | Pre-flight discipline for architecture-affecting changes. |
+| [Decisions](../.specify/memory/decisions/) | Architecture decision records for significant cross-cutting choices. |
+
 ## Visual System
 
 The README and architecture docs use GitHub-renderable SVG and Mermaid:
