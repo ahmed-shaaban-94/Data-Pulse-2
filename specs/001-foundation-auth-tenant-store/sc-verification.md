@@ -43,9 +43,9 @@ cannot execute; those results are explicitly labelled.
 | Item | Value |
 |---|---|
 | Branch | `main` |
-| Verified SHA | `15453b8` (`Merge pull request #184 from ahmed-shaaban-94/claude/sc7-audit-retention-verification`) |
+| Verified SHA | `602ae5c` (`Merge pull request #186 from ahmed-shaaban-94/claude/t177-d6-revoke-cache`) |
 | Original T309 SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
-| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. Updated again on 2026-05-15 (pass 4) to reflect PR #181 (G-5: assert app_test role has no BYPASSRLS) and PR #182 (T176 D-5: kind='specific' users not auto-granted new stores). Also reflects T311 DB-layer privilege hardening: migration 0005_audit_retention_privileges.sql (column-scoped GRANT UPDATE (retention_marked_at) to audit_retention_worker role) + audit-retention.invariant.spec.ts on disk. SC-1 G-5 gap closed. SC-2 D-5 gap closed. SC-7 hardening artifacts now complete on disk. Updated again on 2026-05-15 (pass 5) to reflect PR #183 (T311 DB-layer privilege hardening merged). Docker-enabled CI passed after migration CLI expectation fix; audit-retention.invariant.spec.ts executed green in the db-integration job. SC-7 promoted from Partial to Verified. **Updated again on 2026-05-15 (pass 6 — this update)**: Docker-enabled CI run `25904295672` on SHA `15453b8` passed both `fast` and `db-integration` jobs. The `db-integration` job executed all Testcontainers-backed suites green, including `cross-tenant.sweep.spec.ts` (T203), `cross-store.sweep.spec.ts` (T204), `rls.bypass.spec.ts` (T207 + G-5), `access-on-new-store.spec.ts` (D-5 / T176), `frontend-bypass.spec.ts` (T205), `default-deny.spec.ts` (T206), `invitations.create.spec.ts`, `invitations.accept-existing-user.spec.ts` (which also reported the SC-6 stopwatch at `41.16 ms`), and `invitations.accept-lookup.spec.ts`. Totals: db 179/179 PASS; api 1706/1713 PASS (7 todo); worker 280/280 PASS; shared 135/135 PASS; auth 31/31 PASS. SC-1, SC-3, and SC-6 promoted from Partial to Verified. SC-2 remains Partial because D-6 / T177 (revoked store access invalidates cached authz within bound — `apps/api/test/memberships/revoke-cache.spec.ts`) is still not on disk; T204 and D-5 are now CI-confirmed. |
+| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. Updated again on 2026-05-15 (pass 4) to reflect PR #181 (G-5: assert app_test role has no BYPASSRLS) and PR #182 (T176 D-5: kind='specific' users not auto-granted new stores). Also reflects T311 DB-layer privilege hardening: migration 0005_audit_retention_privileges.sql (column-scoped GRANT UPDATE (retention_marked_at) to audit_retention_worker role) + audit-retention.invariant.spec.ts on disk. SC-1 G-5 gap closed. SC-2 D-5 gap closed. SC-7 hardening artifacts now complete on disk. Updated again on 2026-05-15 (pass 5) to reflect PR #183 (T311 DB-layer privilege hardening merged). Docker-enabled CI passed after migration CLI expectation fix; audit-retention.invariant.spec.ts executed green in the db-integration job. SC-7 promoted from Partial to Verified. **Updated again on 2026-05-15 (pass 6 — this update)**: Docker-enabled CI run `25904295672` on SHA `15453b8` passed both `fast` and `db-integration` jobs. The `db-integration` job executed all Testcontainers-backed suites green, including `cross-tenant.sweep.spec.ts` (T203), `cross-store.sweep.spec.ts` (T204), `rls.bypass.spec.ts` (T207 + G-5), `access-on-new-store.spec.ts` (D-5 / T176), `frontend-bypass.spec.ts` (T205), `default-deny.spec.ts` (T206), `invitations.create.spec.ts`, `invitations.accept-existing-user.spec.ts` (which also reported the SC-6 stopwatch at `41.16 ms`), and `invitations.accept-lookup.spec.ts`. Totals: db 179/179 PASS; api 1706/1713 PASS (7 todo); worker 280/280 PASS; shared 135/135 PASS; auth 31/31 PASS. SC-1, SC-3, and SC-6 promoted from Partial to Verified. SC-2 remains Partial because D-6 / T177 (revoked store access invalidates cached authz within bound — `apps/api/test/memberships/revoke-cache.spec.ts`) is still not on disk; T204 and D-5 are now CI-confirmed. **Updated again on 2026-05-15 (pass 7 — this update)**: PR #186 merged at SHA `602ae5c`. T177 / D-6 `apps/api/test/memberships/revoke-cache.spec.ts` (6 tests covering R-1 baseline + R-2 full membership revoke + R-3 baseline + R-4 PATCH-removes-one-store + R-5 documented-bound contract + R-6 revoke-scope safety) executed green in CI run `25908097813`. The `db-integration` job logged `PASS test/memberships/revoke-cache.spec.ts`; api test totals advanced to 100 suites / 1712 PASS + 7 todo (1719 total). SC-2 promoted from Partial to Verified. **All nine Success Criteria SC-1 … SC-9 are now Verified — Foundation milestone complete.** |
 
 ---
 
@@ -54,7 +54,7 @@ cannot execute; those results are explicitly labelled.
 | SC | Title | Status | Gap | Recommended Follow-up |
 |---|---|---|---|---|
 | SC-1 | Cross-tenant isolation | **Verified** | No blocking gaps. T203, T207, and G-5 all CI-confirmed in run `25904295672` on SHA `15453b8`. | No blocking gaps. |
-| SC-2 | Cross-store isolation | **Partial** | T204 and D-5 (T176) CI-confirmed in run `25904295672`. Only D-6 / T177 remains: revoked store access invalidates cached authz within bound. `apps/api/test/memberships/revoke-cache.spec.ts` is still not on disk. | Implement T177 / D-6 revoke-cache.spec.ts. |
+| SC-2 | Cross-store isolation | **Verified** | No blocking gaps. T204, D-5 (T176), and D-6 (T177) all CI-confirmed: T204 + D-5 in run `25904295672`; T177 / D-6 `revoke-cache.spec.ts` (6 tests) in run `25908097813` on SHA `602ae5c`. | No blocking gaps. |
 | SC-3 | Authorization coverage | **Verified** | No blocking gaps. Authorization matrix CI-confirmed via T203 + T204 + T205 + T206 in run `25904295672`. | No blocking gaps. |
 | SC-4 | Server-only authorization | **Verified** | T205 (automated frontend-bypass test) CI-confirmed; PR #175 adds documented manual probe. All requirements met. | No blocking gaps. |
 | SC-5 | Context resolution p95 ≤ 200 ms | **Verified** | CI evidence: p95 = 7.0 ms ≤ 200 ms threshold (T310). | No blocking gaps. |
@@ -165,9 +165,45 @@ Docker/CI to execute.
 (D-5 / T176) green in the `db-integration` Docker-enabled job. T204 and D-5
 are now CI-confirmed.
 
-**Status: Partial.** T204 and D-5 are CI-confirmed; D-6 / T177
-(`apps/api/test/memberships/revoke-cache.spec.ts`) remains the only
-outstanding SC-2 gap — the test file is still not on disk.
+**CI evidence — pass 7 (T177 / D-6):** PR #186 merged on 2026-05-15 at
+SHA `602ae5c`. CI run `25908097813` executed
+`apps/api/test/memberships/revoke-cache.spec.ts` green in the
+`db-integration` Docker-enabled job. The spec covers six scenarios:
+
+- **R-1** — `kind='specific'` user with explicit `store_access` grant for
+  S1 → `GET /api/v1/stores/{S1}` returns `200` (positive baseline).
+- **R-2 — D-6 core (full membership revoke)** — after
+  `DELETE /api/v1/memberships/{id}` returns `204`, the same user's next
+  `GET /api/v1/stores/{S1}` on the same NestJS app instance returns `404`
+  (no in-process cache survives the revoke; FR-ISO-4 envelope preserved).
+- **R-3** — `kind='specific'` user with grants for S1 and S2 → `GET
+  /api/v1/stores/{S1}` returns `200` (positive baseline).
+- **R-4 — D-6 precise (PATCH removes one store)** — after `PATCH
+  /api/v1/memberships/{id}` with `{ store_access_kind: "specific",
+  store_ids: [S2] }` (membership stays active; only the S1 grant is
+  dropped), the next `GET /api/v1/stores/{S1}` returns `404`; the surviving
+  S2 grant still returns `200`.
+- **R-5 — documented-bound contract** — pins `NEXT_REQUEST_BOUND_MS = 0`
+  so any future PR introducing an authz cache must update this constant
+  (and supply an invalidation hook), forcing review.
+- **R-6 — revoke-scope safety** — revoking TARGET's membership does not
+  leak into BYSTANDER's independent `store_access` row for the same
+  store; a regression broadening the revoke SQL would fail this fence.
+
+**Documented bound for FR-ACCESS-4:** the authz path through
+`MembershipRepository.canAccessStore`
+(`apps/api/src/context/membership.repository.ts:204`) queries Postgres on
+every request. There is no in-memory cache, no Redis read-through, and no
+per-process memoization above the database. The bound is therefore
+**"next request" (zero in-process cache)**, upper-bounded by FR-AUTH-6
+(`≤ 5 minutes`) only if a future authz cache layer is added above
+`MembershipRepository` — at which point the cache MUST have an
+invalidation hook on revoke + PATCH and the R-5 constant MUST be updated.
+
+**Status: Verified.** T204, D-5 (T176), and D-6 (T177) are all
+CI-confirmed; the four-row D-6 invariant (membership revoke, partial PATCH
+removal, scope safety, documented bound) is pinned by
+`apps/api/test/memberships/revoke-cache.spec.ts`. No blocking gaps.
 
 ---
 
@@ -542,12 +578,11 @@ Completed slices (no longer recommended):
 | ~~SC-2 T204 / D-5 CI confirmation~~ | CI-confirmed: T204 cross-store sweep + D-5 access-on-new-store passed in CI run `25904295672` on SHA `15453b8` |
 | ~~SC-3 CI confirmation~~ | CI-confirmed: T203 + T204 + T205 + T206 four-variant matrix passed in CI run `25904295672` on SHA `15453b8` |
 | ~~SC-6 CI confirmation~~ | CI-confirmed: invite → accept → sign-in stopwatch reported `41.16 ms` in CI run `25904295672` on SHA `15453b8` |
+| ~~T177 / D-6~~ | Merged PR #186 (`apps/api/test/memberships/revoke-cache.spec.ts`, 6 scenarios); CI-confirmed in run `25908097813` on SHA `602ae5c` |
+| ~~SC-2 final CI confirmation~~ | CI-confirmed: D-6 revoke-cache passed in CI run `25908097813`; SC-2 promoted to Verified |
 
-Remaining recommended slices in priority order:
-
-| Slice | Description | Unblocks |
-|---|---|---|
-| **D-6** | Revoked store access invalidates cache (T177 FR-ACCESS-4) — `apps/api/test/memberships/revoke-cache.spec.ts` | SC-2 Verified (final remaining Foundation gap) |
+**No remaining recommended slices.** All nine Success Criteria are Verified
+and the Foundation verification milestone is complete.
 
 ---
 
@@ -610,10 +645,52 @@ invitation flow (`invitations.create`, `invitations.accept-existing-user`,
 `invitations.accept-lookup`). The SC-6 stopwatch logged `41.16 ms`.
 
 **This CI evidence supersedes the earlier "Docker unavailable locally"
-caveats for SC-1, SC-2 (excluding D-6), SC-3, and SC-6.** D-6 / T177
-(`apps/api/test/memberships/revoke-cache.spec.ts`) was not part of this CI
-run because the file is still not on disk; it remains the sole outstanding
-Foundation verification gap.
+caveats for SC-1, SC-2 (excluding D-6), SC-3, and SC-6.** D-6 / T177 was
+addressed by a follow-on PR — see pass 7 below.
+
+### CI confirmation — pass 7 (2026-05-15) — T177 / D-6
+
+PR #186 merged at SHA `602ae5c`. CI run `25908097813` on
+`claude/t177-d6-revoke-cache` (the head-ref that became `602ae5c`) passed
+all checks:
+
+| Check | Status | Duration |
+|---|---|---|
+| `fast` (build + Docker-free tests) | success | 54s |
+| `db-integration` (Testcontainers + RLS + migrations) | success | 4m7s |
+| `codecov/patch` | success | 1s |
+
+The `db-integration` job logged
+`PASS test/memberships/revoke-cache.spec.ts` and reported new totals for
+the `apps/api` suite: **100 suites / 1712 passed + 7 todo (1719 total)** —
+one more suite and six more tests than before (R-1 through R-4 and R-6
+executed against a live Postgres container; R-5 executed everywhere). The
+`packages/db` (13 / 179), `apps/worker` (15 / 280), `packages/shared`
+(8 / 135), and `packages/auth` (2 / 31) totals were unchanged.
+
+**SC-2 is now Verified.** All nine Success Criteria are Verified.
+
+---
+
+## 9. Foundation Verification — Complete
+
+As of 2026-05-15, SHA `602ae5c`, every Success Criterion declared in
+`spec.md §8` is **Verified** with explicit CI evidence:
+
+| SC | Title | Status | Final CI evidence |
+|---|---|---|---|
+| SC-1 | Cross-tenant isolation | Verified | Run `25904295672`: T203 + T207 + G-5 |
+| SC-2 | Cross-store isolation | Verified | Runs `25904295672` + `25908097813`: T204 + D-5 + D-6 |
+| SC-3 | Authorization coverage | Verified | Run `25904295672`: T203 + T204 + T205 + T206 |
+| SC-4 | Server-only authorization | Verified | T205 CI-confirmed + manual probe doc (PR #175) |
+| SC-5 | Context resolution p95 ≤ 200 ms | Verified | T310 measured p95 = 7.0 ms |
+| SC-6 | Onboarding clarity | Verified | Run `25904295672`: stopwatch = 41.16 ms |
+| SC-7 | Auditability | Verified | PR #183 retention chain + 9-test privilege invariant |
+| SC-8 | Reusability for POS | Verified | T263 + T264 + T265 + idempotency primitives |
+| SC-9 | No frontend-only gates | Verified | T206 + T208 + PR template |
+
+The Foundation milestone (feature 001-foundation-auth-tenant-store) is
+complete. Subsequent features may now build on this contract surface.
 
 ---
 

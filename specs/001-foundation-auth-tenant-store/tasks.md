@@ -207,7 +207,7 @@
 - [ ] T174 [US4] Implement `MembershipsController` + `MembershipsService` in `apps/api/src/memberships/`
 - [ ] T175 [US4] [P] Test invariant I-3 (StoreAccess.tenant matches Membership.tenant) at DB layer via composite FK rejection in `packages/db/__tests__/store-access.invariant.spec.ts`
 - [ ] T176 [US4] [P] Test `FR-ACCESS-3` (new store automatically accessible to "all stores" users; not to "specific" users) in `apps/api/test/memberships/access-on-new-store.spec.ts`
-- [ ] T177 [US4] [P] Test `FR-ACCESS-4` (revoking access invalidates cached authz within bound) in `apps/api/test/memberships/revoke-cache.spec.ts`
+- [x] T177 [US4] [P] Test `FR-ACCESS-4` (revoking access invalidates cached authz within bound) in `apps/api/test/memberships/revoke-cache.spec.ts`
 - [ ] T178 [US4] [P] Test that accepting an invitation never grants access to other tenants (FR-TEN-2 / scenario 5.8) in `apps/api/test/memberships/invite-tenant-scoped.spec.ts`
 - [ ] T179 [US4] Test invite-email enqueued via `EmailQueueProducer` on invitation creation (no real email sent in test) in `apps/api/test/memberships/invitations.email-enqueue.spec.ts`
 
