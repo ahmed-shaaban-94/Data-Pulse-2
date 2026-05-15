@@ -25,6 +25,9 @@ export const DOWN_SQL_PATH = resolve(DRIZZLE_DIR, "0000_initial.down.sql");
 export const APP_ROLE_NAME = "app_test";
 export const APP_ROLE_PASSWORD = "app_test";
 
+export const RETENTION_WORKER_ROLE = "audit_retention_worker";
+export const RETENTION_WORKER_PASSWORD = "retention_test";
+
 export interface PgTestEnv {
   container: StartedPostgreSqlContainer;
   /** Pool connected as the database superuser (Testcontainers default). */
@@ -35,6 +38,10 @@ export interface PgTestEnv {
   downSql: string;
   /** Connection URI for the superuser (suitable for child-process tests). */
   adminUri: string;
+  /** Host exposed by the container (reused to build additional role URIs). */
+  host: string;
+  /** Mapped port exposed by the container. */
+  port: number;
 }
 
 export async function startPgEnv(): Promise<PgTestEnv> {
@@ -58,7 +65,7 @@ export async function startPgEnv(): Promise<PgTestEnv> {
   const appUri = `postgres://${APP_ROLE_NAME}:${APP_ROLE_PASSWORD}@${host}:${port}/test`;
   const app = new Pool({ connectionString: appUri });
 
-  return { container, admin, app, upSql, downSql, adminUri };
+  return { container, admin, app, upSql, downSql, adminUri, host, port };
 }
 
 /**
@@ -97,6 +104,29 @@ export async function ensureAppRole(env: PgTestEnv): Promise<void> {
     GRANT USAGE, SELECT
     ON ALL SEQUENCES IN SCHEMA public TO ${APP_ROLE_NAME}
   `);
+  // Narrow audit_events back to INSERT + SELECT only.  The broad grant above
+  // includes UPDATE and DELETE which would let the app_test role pass
+  // privilege checks that the invariant test expects to fail.  This revoke
+  // runs AFTER the broad grant so it is not clobbered by a later re-grant.
+  await env.admin.query(`
+    REVOKE UPDATE, DELETE ON audit_events FROM ${APP_ROLE_NAME}
+  `);
+}
+
+/**
+ * Promote the `audit_retention_worker` role (created by migration 0005) to
+ * LOGIN with a known test password, then return a connected Pool.  The role
+ * must already exist — call this after `applyAllUpAndCreateAppRole`.
+ *
+ * The returned pool is NOT part of PgTestEnv; tests that need it call this
+ * helper explicitly, keeping it out of tests that don't care about it.
+ */
+export async function createRetentionWorkerPool(env: PgTestEnv): Promise<Pool> {
+  await env.admin.query(
+    `ALTER ROLE ${RETENTION_WORKER_ROLE} WITH LOGIN PASSWORD '${RETENTION_WORKER_PASSWORD}'`,
+  );
+  const uri = `postgres://${RETENTION_WORKER_ROLE}:${RETENTION_WORKER_PASSWORD}@${env.host}:${env.port}/test`;
+  return new Pool({ connectionString: uri });
 }
 
 export async function stopPgEnv(env: PgTestEnv): Promise<void> {

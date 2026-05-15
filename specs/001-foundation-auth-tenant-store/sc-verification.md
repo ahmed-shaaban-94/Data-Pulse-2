@@ -43,9 +43,9 @@ cannot execute; those results are explicitly labelled.
 | Item | Value |
 |---|---|
 | Branch | `main` |
-| Verified SHA | `8e93f12` (`Merge pull request #179 from ahmed-shaaban-94/claude/t311-layer-b-retention-worker`) |
+| Verified SHA | `8b5c986` (`Merge pull request #182 from ahmed-shaaban-94/claude/d5-specific-store-access-test`) |
 | Original T309 SHA | `bb473c3` (`fix(auth): reject single-use tokens from bearer auth`) |
-| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3 — this update) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. |
+| Update note | This document was incrementally updated on 2026-05-14 (pass 1) to reflect T310, T205, T206 merges. It was updated again on 2026-05-14 (pass 2) to reflect PRs #166–#170: T207 RLS bypass probe (PR #166); T263 reserved-namespace test + T265 walkthrough doc (PR #167); T260/T261 IdempotencyKeyStore implementation + tests (PR #168); shared idempotency export wiring (PR #169); T264 POS seam walkthrough test (PR #170). SC-8 promoted from Partial to Verified. It was updated again on 2026-05-14 (pass 3) to reflect PRs #172–#179: T203 cross-tenant authorization sweep (PR #172); T204 cross-store authorization sweep (PR #173); T208 no-unscoped-tenant-query ESLint guard (PR #174); SC-4 manual frontend-bypass probe doc (PR #175); SC-6 invite-accept-signin stopwatch test (PR #176); T311 audit retention decision (PR #177); T311 Layer A retention schema + processor + unit tests (PR #178); T311 Layer B BullMQ wiring (PR #179). SC-4, SC-5, SC-9 promoted to Verified. SC-7 substantially progressed. Updated again on 2026-05-15 (pass 4 — this update) to reflect PR #181 (G-5: assert app_test role has no BYPASSRLS) and PR #182 (T176 D-5: kind='specific' users not auto-granted new stores). Also reflects T311 DB-layer privilege hardening: migration 0005_audit_retention_privileges.sql (column-scoped GRANT UPDATE (retention_marked_at) to audit_retention_worker role) + audit-retention.invariant.spec.ts on disk. SC-1 G-5 gap closed. SC-2 D-5 gap closed. SC-7 hardening artifacts now complete on disk. |
 
 ---
 
@@ -53,13 +53,13 @@ cannot execute; those results are explicitly labelled.
 
 | SC | Title | Status | Gap | Recommended Follow-up |
 |---|---|---|---|---|
-| SC-1 | Cross-tenant isolation | **Partial** | T203 sweep on disk (PR #172); T207 probe on disk (PR #166); both require Docker/CI to execute. G-5 (assert app role has no BYPASSRLS) still missing. | G-5: add probe asserting the app role holds no BYPASSRLS. Confirm T203 + T207 in CI with Docker. |
-| SC-2 | Cross-store isolation | **Partial** | T204 sweep on disk (PR #173); requires Docker/CI. D-5 (`kind='specific'` user not auto-granted new store) and D-6 (revoked access invalidates cache) still missing. | Confirm T204 in CI. Implement D-5 and D-6 tests. |
+| SC-1 | Cross-tenant isolation | **Partial** | T203 sweep on disk (PR #172); T207 probe on disk (PR #166); both require Docker/CI to execute. G-5 now closed (PR #181 — `rolbypassrls = false` assertion in rls.bypass.spec.ts). | Confirm T203 + T207 in CI with Docker. |
+| SC-2 | Cross-store isolation | **Partial** | T204 sweep on disk (PR #173); requires Docker/CI. D-5 now closed (PR #182 — kind='specific' user not auto-granted new store). D-6 (revoked access invalidates cache) still missing. | Confirm T204 in CI. Implement D-6 test (T177). |
 | SC-3 | Authorization coverage | **Partial** | T203 + T204 sweeps on disk (PRs #172, #173); T205 + T206 CI-confirmed. Four-variant matrix coverage is strong but not independently executable locally (Docker required). | Confirm T203/T204 sweep results in CI against all endpoint families. |
 | SC-4 | Server-only authorization | **Verified** | T205 (automated frontend-bypass test) CI-confirmed; PR #175 adds documented manual probe. All requirements met. | No blocking gaps. |
 | SC-5 | Context resolution p95 ≤ 200 ms | **Verified** | CI evidence: p95 = 7.0 ms ≤ 200 ms threshold (T310). | No blocking gaps. |
 | SC-6 | Onboarding clarity | **Partial** | Stopwatch test now on disk (PR #176). Testcontainers invite → accept → sign-in tests still require Docker/CI to confirm. | Confirm Testcontainers invite-flow + stopwatch passes in CI. |
-| SC-7 | Auditability | **Partial** | Retention window documented (365 days, PR #177); `retention_marked_at` column + migration + processor on disk (PR #178); daily BullMQ scheduler + worker + module wiring on disk (PR #179). DB-layer column-scoped `GRANT UPDATE (retention_marked_at)` and its invariant test remain as hardening follow-up. | Ship column-scoped DB GRANT and invariant test (`packages/db/__tests__/audit-retention.invariant.spec.ts`) in a follow-up PR. |
+| SC-7 | Auditability | **Partial** | Retention window documented (365 days, PR #177); `retention_marked_at` column + migration + processor on disk (PR #178); daily BullMQ scheduler + worker + module wiring on disk (PR #179). DB-layer column-scoped `GRANT UPDATE (retention_marked_at)` (migration 0005) + `audit-retention.invariant.spec.ts` (9 tests) now on disk. All hardening artifacts shipped; Docker/CI required to confirm invariant test executes green. | Confirm `audit-retention.invariant.spec.ts` passes in CI with Docker. No further hardening gaps. |
 | SC-8 | Reusability for POS | **Verified** | All deliverables on disk: walkthrough doc (T265, PR #167), walkthrough test (T264, PR #170), reserved-namespace test (T263, PR #167), IdempotencyKeyStore implementation + tests + export wiring (T260/T261, PRs #168/#169). Schema guard rails in T264 prove no POS-domain tables were added. | No blocking gaps. Future: wire real POS-device principal kind (production code slice). |
 | SC-9 | No frontend-only gates | **Verified** | T208 no-unscoped-tenant-query ESLint guard on disk (PR #174); T206 default-deny CI-confirmed; PR template checklist present throughout all PRs. | No blocking gaps. |
 
@@ -86,7 +86,7 @@ cannot execute; those results are explicitly labelled.
 | Invitation accept with wrong-tenant token (B-10) | `apps/api/test/memberships/invitations.accept-lookup.spec.ts` | EXISTS (Testcontainers) |
 | Whole-API cross-tenant sweep (B-13) | `apps/api/test/authz/cross-tenant.sweep.spec.ts` | **EXISTS (T203, PR #172; requires Docker/CI)** |
 | RLS bypass probe (G-1..G-3) | `packages/db/__tests__/rls.bypass.spec.ts` | **EXISTS (T207, PR #166; requires Docker/CI)** |
-| Application role has no BYPASSRLS (G-5) | — | **MISSING (G-5 not yet assigned)** |
+| Application role has no BYPASSRLS (G-5) | `packages/db/__tests__/rls.bypass.spec.ts` (describe block at line 169) | **EXISTS (PR #181; requires Docker/CI)** |
 | DB GUC SET LOCAL is transaction-scoped, not session-scoped (G-7) | `packages/db/__tests__/middleware/tenant-context.spec.ts` | EXISTS (Testcontainers) |
 
 **Local test run result (2026-05-13):**
@@ -112,12 +112,14 @@ Docker is unavailable; must pass in CI.
 exists on disk — whole-API cross-tenant authorization sweep. Requires
 Docker/Testcontainers to execute; must pass in CI.
 
-**Remaining gap:** G-5 (asserting the application role holds no BYPASSRLS) is
-still not implemented. Until T203 and T207 pass in CI and G-5 is addressed,
-"100% of tenant-scoped endpoints" cannot be claimed with certainty.
+**G-5 closed (PR #181):** `packages/db/__tests__/rls.bypass.spec.ts` now
+includes a describe block (lines 169–188) asserting `rolbypassrls = false` for
+the `app_test` role. This closes the G-5 gap. Until T203 and T207 pass in CI
+with Docker, "100% of tenant-scoped endpoints" cannot be claimed with certainty.
 
 **Status: Partial.** Per-family isolation tests exist; T207 RLS bypass probe
-and T203 whole-API cross-tenant sweep are now on disk; G-5 is still missing.
+and T203 whole-API cross-tenant sweep are now on disk; G-5 is closed by PR #181.
+Full confirmation requires Docker/CI.
 
 ---
 
@@ -137,15 +139,20 @@ and T203 whole-API cross-tenant sweep are now on disk; G-5 is still missing.
 | Store-code uniqueness within tenant (T135) | `apps/api/test/stores/code.invariant.spec.ts` | EXISTS (Testcontainers) |
 | No cross-tenant store reassignment (T137) | `apps/api/test/stores/no-reassign.spec.ts` | EXISTS (Testcontainers) |
 | Whole-API cross-store sweep (D-8) | `apps/api/test/authz/cross-store.sweep.spec.ts` | **EXISTS (T204, PR #173; requires Docker/CI)** |
-| `kind='specific'` user + new store not auto-granted (D-5) | — | **MISSING (T176 open)** |
+| `kind='specific'` user + new store not auto-granted (D-5) | `apps/api/test/memberships/access-on-new-store.spec.ts` | **EXISTS (T176, PR #182; requires Docker/CI)** |
 | Revoked store access invalidates cache (D-6) | — | **MISSING (T177 open)** |
 
 **T204 (PR #173):** `apps/api/test/authz/cross-store.sweep.spec.ts` now exists
 on disk — whole-API cross-store authorization sweep. Requires Docker/Testcontainers
 to execute; must pass in CI.
 
-**Status: Partial.** T204 whole-API sweep is now on disk; Docker still required.
-D-5 and D-6 remain unimplemented.
+**D-5 closed (PR #182):** `apps/api/test/memberships/access-on-new-store.spec.ts`
+now exists on disk and asserts that a `kind='specific'` membership user is NOT
+automatically granted access to a newly created store (T176, FR-ACCESS-3). Requires
+Docker/CI to execute.
+
+**Status: Partial.** T204 whole-API sweep is now on disk; D-5 is now on disk (PR #182).
+D-6 remains unimplemented. Docker/CI required for all Testcontainers-backed tests.
 
 ---
 
@@ -350,22 +357,30 @@ assertion is now on disk (PR #176); Testcontainers-backed validation requires CI
 - **Daily scheduler**: `AuditRetentionScheduler.onModuleInit` registers a BullMQ
   `upsertJobScheduler` with a 24 h repeat interval.
 
-**Remaining hardening gaps (deferred follow-up PR):**
+**T311 DB-layer hardening (this slice):**
 
-- **DB-layer column-scoped GRANT**: The worker role does not yet hold an explicit
-  `GRANT UPDATE (retention_marked_at) ON audit_events TO <worker_role>`. Immutability
-  of audit facts is currently enforced at the processor/repository abstraction layer
-  only, not at the Postgres privilege layer.
-- **DB-layer invariant test**: `packages/db/__tests__/audit-retention.invariant.spec.ts`
-  (asserting API role cannot UPDATE `retention_marked_at`; worker role can; no role
-  can DELETE `audit_events` rows) is not yet implemented.
+| Item | File | Status |
+|---|---|---|
+| Migration 0005 — creates `audit_retention_worker` role + column-scoped GRANT | `packages/db/drizzle/0005_audit_retention_privileges.sql` | **EXISTS (on disk)** |
+| Migration 0005 rollback | `packages/db/drizzle/0005_audit_retention_privileges.down.sql` | **EXISTS (on disk)** |
+| DB privilege invariant test (9 tests) | `packages/db/__tests__/audit-retention.invariant.spec.ts` | **EXISTS (on disk; soft-skips without Docker)** |
 
-**Status: Partial.** Audit capture, fan-out, query API, and retention sweep are all
-implemented and tested at the unit level. The documented 365-day retention window
-exists; the sweep marks eligible rows and the daily scheduler fires it. The DB-layer
-column-scoped GRANT and its invariant test are documented hardening follow-ups that
-do not block the core auditability guarantee but must ship before the criterion can
-be declared Verified.
+**Invariant coverage (9 tests in `audit-retention.invariant.spec.ts`):**
+
+- I-APP-1: `app_test` role cannot UPDATE `retention_marked_at`
+- I-WORKER-1: `audit_retention_worker` role CAN UPDATE `retention_marked_at` (positive control)
+- I-WORKER-2: `audit_retention_worker` cannot UPDATE `action`
+- I-WORKER-3: `audit_retention_worker` cannot UPDATE `metadata`
+- I-WORKER-4: `audit_retention_worker` cannot UPDATE `occurred_at`
+- I-WORKER-5: `audit_retention_worker` cannot UPDATE `tenant_id`
+- I-WORKER-6: `audit_retention_worker` cannot UPDATE `store_id`
+- I-DEL-1: `app_test` role cannot DELETE `audit_events` rows
+- I-DEL-2: `audit_retention_worker` role cannot DELETE `audit_events` rows
+
+**Status: Partial.** All hardening artifacts now on disk. The column-scoped GRANT
+is in migration 0005; the invariant test covers both the positive UPDATE path and
+all prohibited operations. Docker/CI required to confirm invariant test executes
+green — cannot be declared Verified until that CI run passes.
 
 ---
 
@@ -474,17 +489,18 @@ Completed slices (no longer recommended):
 | ~~T311 Layer A (schema + processor)~~ | Merged PR #178 |
 | ~~T311 Layer B (BullMQ wiring)~~ | Merged PR #179 |
 | ~~T310 (SC-5 measurement)~~ | CI-confirmed: p95 = 7.0 ms |
+| ~~G-5 probe~~ | Merged PR #181 (rolbypassrls = false assertion in rls.bypass.spec.ts) |
+| ~~T176 / D-5~~ | Merged PR #182 (kind='specific' user not auto-granted new store) |
+| ~~T311 DB-layer GRANT + invariant test~~ | On disk (migration 0005 + audit-retention.invariant.spec.ts, this slice) |
 
 Remaining recommended slices in priority order:
 
 | Slice | Description | Unblocks |
 |---|---|---|
-| **G-5 probe** | Assert that the app Postgres role holds no BYPASSRLS attribute | SC-1 gap G-5 |
-| **T311 DB-layer GRANT** | Add column-scoped `GRANT UPDATE (retention_marked_at)` for the worker role + migration | SC-7 fully verified |
-| **T311 invariant test** | `packages/db/__tests__/audit-retention.invariant.spec.ts` asserting API role cannot UPDATE `retention_marked_at`; worker role can; no role can DELETE `audit_events` rows | SC-7 fully verified |
+| **SC-7 CI confirmation** | Confirm `audit-retention.invariant.spec.ts` (9 tests) passes in CI with Docker | SC-7 Verified |
 | **SC-6 CI confirmation** | Confirm Testcontainers invite → accept → sign-in + stopwatch test passes in CI | SC-6 verified |
 | **SC-1 / SC-2 CI confirmation** | Confirm T203 + T204 sweeps + T207 RLS probe pass in CI with Docker | SC-1, SC-2 verified |
-| **D-5 / D-6** | `kind='specific'` user not auto-granted new store; revoked access invalidates cache | SC-2 completeness |
+| **D-6** | Revoked store access invalidates cache (T177 FR-ACCESS-4) | SC-2 completeness |
 
 ---
 
@@ -515,7 +531,7 @@ No whitespace errors (blank run — docs-only file).
 |---|---|---|---|
 | `packages/auth` | 2/2 pass | 31/31 pass | No Docker dependency |
 | `packages/shared` | 7/7 pass | 114/114 pass | No Docker dependency |
-| `packages/db` | 2/9 pass | 70/148 pass | **7 suites fail** — all `Container start failed: Could not find a working container runtime strategy`; Testcontainers tests require Docker |
+| `packages/db` | 8/13 pass | 118/179 pass | **5 suites fail** — all `Container start failed: Could not find a working container runtime strategy`; Testcontainers tests require Docker. +1 suite: `audit-retention.invariant.spec.ts` (9 tests, soft-skips). |
 | `apps/api` | 68/89 pass | 1258/1621 pass | **21 suites fail** — all same Docker/Testcontainers error; `.unit.spec.ts` variants all pass |
 | `apps/worker` | 15/15 pass | 280/280 pass | No Docker dependency (ioredis-mock); includes T311 retention tests from PRs #178 and #179 |
 
