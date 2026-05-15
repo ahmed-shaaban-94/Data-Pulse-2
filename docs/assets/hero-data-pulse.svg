@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title desc">
   <title id="title">Data Pulse platform hero</title>
   <desc id="desc">Enterprise SaaS hero showing tenant-safe retail data flowing through API, workers, contracts, PostgreSQL, and Redis.</desc>
   <defs>
@@ -24,7 +24,6 @@
     </filter>
     <style>
       .eyebrow { font: 700 15px Arial, sans-serif; letter-spacing: 2px; fill: #67e8f9; }
-      .title { font: 800 58px Arial, sans-serif; fill: #ffffff; }
       .copy { font: 500 21px Arial, sans-serif; fill: #cbd5e1; }
       .chip { font: 700 13px Arial, sans-serif; fill: #dbeafe; }
       .nodeTitle { font: 800 18px Arial, sans-serif; fill: #ffffff; }
@@ -32,16 +31,15 @@
       .line { stroke: #67e8f9; stroke-width: 3; stroke-linecap: round; fill: none; opacity: 0.7; }
     </style>
   </defs>
-  <rect width="1280" height="520" fill="url(#bg)"/>
-  <path d="M0 410 C190 350 300 440 468 372 C665 292 810 360 992 294 C1122 247 1200 250 1280 224 L1280 520 L0 520 Z" fill="#0f766e" opacity="0.18"/>
-  <path d="M0 456 C238 400 330 486 520 428 C710 370 820 430 1018 356 C1132 314 1215 316 1280 294 L1280 520 L0 520 Z" fill="#2563eb" opacity="0.16"/>
+  <rect width="1280" height="420" fill="url(#bg)"/>
+  <path d="M0 410 C190 350 300 440 468 372 C665 292 810 360 992 294 C1122 247 1200 250 1280 224 L1280 420 L0 420 Z" fill="#0f766e" opacity="0.18"/>
+  <path d="M0 456 C238 400 330 486 520 428 C710 370 820 430 1018 356 C1132 314 1215 316 1280 294 L1280 420 L0 420 Z" fill="#2563eb" opacity="0.16"/>
 
   <g transform="translate(76 92)">
     <text class="eyebrow" x="0" y="0">MULTI-TENANT RETAIL SAAS FOUNDATION</text>
-    <text class="title" x="0" y="72">Data Pulse</text>
-    <text class="copy" x="0" y="118">Secure API, worker, contract, and data primitives for</text>
-    <text class="copy" x="0" y="150">tenant-safe retail operations at SaaS scale.</text>
-    <g transform="translate(0 204)">
+    <text class="copy" x="0" y="46">Secure API, worker, contract, and data primitives for</text>
+    <text class="copy" x="0" y="78">tenant-safe retail operations at SaaS scale.</text>
+    <g transform="translate(0 128)">
       <rect width="140" height="38" rx="19" fill="#ffffff" opacity="0.1" stroke="#38bdf8" stroke-opacity="0.45"/>
       <text class="chip" x="22" y="25">Tenant-safe</text>
       <rect x="158" width="152" height="38" rx="19" fill="#ffffff" opacity="0.1" stroke="#38bdf8" stroke-opacity="0.45"/>

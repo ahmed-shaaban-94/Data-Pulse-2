@@ -16,6 +16,8 @@ separate future feature, and POS applications live in separate repositories.
 
 ![Data Pulse platform hero](docs/assets/hero-data-pulse.svg)
 
+![](docs/assets/pulse-signature.svg)
+
 ---
 
 ## Why Data Pulse

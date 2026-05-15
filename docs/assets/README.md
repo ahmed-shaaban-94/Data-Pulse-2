@@ -8,6 +8,7 @@ architecture documentation.
 | Path | Purpose |
 | --- | --- |
 | `hero-data-pulse.svg` | Primary README hero for the Data Pulse platform story. |
+| `pulse-signature.svg` | Platform identity waveform used as a subtle visual throughline in the README. |
 | `architecture-isometric.svg` | Isometric architecture visual used in `docs/ARCHITECTURE.md`. |
 | `icons/*.svg` | Small reusable icons for platform capabilities and package areas. |
 
