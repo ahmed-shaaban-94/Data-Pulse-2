@@ -1,0 +1,7 @@
+{
+  "ai": "claude",
+  "ai_skills": true,
+  "context_file": "CLAUDE.md",
+  "integration": "claude",
+  "script": "ps"
+}

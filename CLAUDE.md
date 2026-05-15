@@ -24,6 +24,13 @@ without re-spec'ing here.
   - Spec: [specs/002-pos-operator-identity/spec.md](specs/002-pos-operator-identity/spec.md)
   - Research: [specs/002-pos-operator-identity/research.md](specs/002-pos-operator-identity/research.md)
   - Contracts: [specs/002-pos-operator-identity/contracts/](specs/002-pos-operator-identity/contracts/)
+- **Specification artifact**: `003-catalog-foundation` — catalog source-of-truth
+  model (Global Product Index, Tenant Catalog, Store Override, Product Aliases,
+  Price History, Unknown Item Workflow) plus the future SaleLine Snapshot
+  obligation. Specification and planning artifact only — no implementation,
+  schema, migrations, or OpenAPI contracts authored yet.
+  - Spec: [specs/003-catalog-foundation/spec.md](specs/003-catalog-foundation/spec.md)
+  - Plan: [specs/003-catalog-foundation/plan.md](specs/003-catalog-foundation/plan.md)
 
 ## Constitution at a glance (v3.0.0)
 
