@@ -12,16 +12,17 @@
  *   4.  store_ids with store from another tenant → 400
  *   5.  store_access_kind="specific" + store_ids omitted → 400 (Zod)
  *   6.  store_ids provided while existing kind is "all" (no explicit kind) → 400
- *   7.  invalid role_code → 400
- *   8.  update role only: leaves store access unchanged
- *   9.  update store access only: leaves role unchanged
- *   10. store_staff caller → 403
- *   11. cross-tenant membership_id → 404
- *   12. already-revoked membership → 404
- *   13. empty body → 400
- *   14. unauthenticated → 401
- *   15. no active tenant → 401
- *   16. non-UUID membership_id → 400
+ *   7.  store_ids=[] while existing kind is "specific" (no explicit kind) → 400
+ *   8.  invalid role_code → 400
+ *   9.  update role only: leaves store access unchanged
+ *   10. update store access only: leaves role unchanged
+ *   11. store_staff caller → 403
+ *   12. cross-tenant membership_id → 404
+ *   13. already-revoked membership → 404
+ *   14. empty body → 400
+ *   15. unauthenticated → 401
+ *   16. no active tenant → 401
+ *   17. non-UUID membership_id → 400
  */
 import "reflect-metadata";
 
@@ -437,6 +438,20 @@ describe("PATCH /api/v1/memberships/:membership_id — input validation", () => 
       .set("Cookie", cookie)
       .send({ store_ids: [STORE_A1] })
       .expect(400);
+  });
+
+  it("store_ids=[] while existing kind is 'specific' and no explicit kind change → 400", async () => {
+    if (maybeSkip()) return;
+    await resetTargetSpecific([STORE_A1, STORE_A2]);
+    const cookie = await signInWithTenant(OWNER_EMAIL, OWNER_PASS, ALPHA_ID);
+    await http()
+      .patch(`/api/v1/memberships/${MEM_TARGET}`)
+      .set("Cookie", cookie)
+      .send({ store_ids: [] })
+      .expect(400);
+
+    const dbStores = await getStoreAccessRows(MEM_TARGET);
+    expect(dbStores.sort()).toEqual([STORE_A1, STORE_A2].sort());
   });
 });
 

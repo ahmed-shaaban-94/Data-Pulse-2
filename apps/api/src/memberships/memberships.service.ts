@@ -128,6 +128,10 @@ export class MembershipsService {
       // Step 4: validate store_ids belong to active tenant
       const effectiveKind = dto.store_access_kind ?? existing.storeAccessKind;
       const storeIds = dto.store_ids;
+      const isStoreAccessUpdate = dto.store_access_kind === "specific" || storeIds !== undefined;
+      if (effectiveKind === "specific" && isStoreAccessUpdate && (!storeIds || storeIds.length === 0)) {
+        throw new BadRequestException("store_ids must be non-empty when store_access_kind is 'specific'");
+      }
       if (effectiveKind === "specific" && storeIds && storeIds.length > 0) {
         const invalid = await this.memberships.findInvalidStoreIds(client, tenantId, storeIds);
         if (invalid.length > 0) {

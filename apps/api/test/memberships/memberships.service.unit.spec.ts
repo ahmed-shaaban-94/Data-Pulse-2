@@ -377,36 +377,56 @@ describe("MembershipsService.update — store_ids validation", () => {
     expect(repo.update).toHaveBeenCalledTimes(1);
   });
 
-  it("U5c: effectiveKind='specific' with empty store_ids → findInvalidStoreIds NOT called", async () => {
-    // length === 0 short-circuits the validation branch entirely.
+  it("U5c: effectiveKind='specific' with empty store_ids → BadRequestException", async () => {
     const { service, repo } = buildService();
     repo.findActive.mockResolvedValue(makeExistingMembership({ storeAccessKind: "specific" }));
-    repo.update.mockResolvedValue(makeMembershipDetail({ storeAccessKind: "specific" }));
     const ctx = makeCtx();
 
-    await service.update(ctx, MEMBERSHIP_ID, {
-      store_access_kind: "specific",
-      store_ids: [],
-    } as MembershipUpdateDto);
+    const err = await service
+      .update(ctx, MEMBERSHIP_ID, {
+        store_access_kind: "specific",
+        store_ids: [],
+      } as MembershipUpdateDto)
+      .catch((e: unknown) => e);
 
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).message).toContain("store_ids must be non-empty");
     expect(repo.findInvalidStoreIds).not.toHaveBeenCalled();
-    expect(repo.update).toHaveBeenCalledTimes(1);
+    expect(repo.update).not.toHaveBeenCalled();
   });
 
-  it("U5d: effectiveKind='specific' with undefined store_ids → findInvalidStoreIds NOT called", async () => {
-    // store_ids is undefined → branch skipped (falsy).
+  it("U5d: store_access_kind='specific' with undefined store_ids → BadRequestException", async () => {
     const { service, repo } = buildService();
     repo.findActive.mockResolvedValue(makeExistingMembership({ storeAccessKind: "specific" }));
-    repo.update.mockResolvedValue(makeMembershipDetail({ storeAccessKind: "specific" }));
     const ctx = makeCtx();
 
-    await service.update(ctx, MEMBERSHIP_ID, {
-      store_access_kind: "specific",
-    } as MembershipUpdateDto);
+    const err = await service
+      .update(ctx, MEMBERSHIP_ID, {
+        store_access_kind: "specific",
+      } as MembershipUpdateDto)
+      .catch((e: unknown) => e);
 
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).message).toContain("store_ids must be non-empty");
     expect(repo.findInvalidStoreIds).not.toHaveBeenCalled();
-    const params = repo.update.mock.calls[0]![2];
-    expect(params.storeIds).toBeUndefined();
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("U5e: store_ids-only empty array with existing kind='specific' → BadRequestException", async () => {
+    const { service, repo } = buildService();
+    repo.findActive.mockResolvedValue(makeExistingMembership({ storeAccessKind: "specific" }));
+    const ctx = makeCtx();
+
+    const err = await service
+      .update(ctx, MEMBERSHIP_ID, {
+        store_ids: [],
+      } as MembershipUpdateDto)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).message).toContain("store_ids must be non-empty");
+    expect(repo.findInvalidStoreIds).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
   });
 });
 

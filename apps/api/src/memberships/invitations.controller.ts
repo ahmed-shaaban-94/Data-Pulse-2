@@ -8,7 +8,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
-import { AuthGuard } from "../auth/auth.guard";
+import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import { TenantContextGuard } from "../context/tenant-context.guard";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
@@ -18,7 +18,7 @@ import { InvitationCreateSchema, type InvitationCreateDto } from "./invitation.d
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 
 @Controller("api/v1/memberships")
-@UseGuards(AuthGuard, TenantContextGuard)
+@UseGuards(DashboardAuthGuard, TenantContextGuard)
 export class InvitationsController {
   constructor(private readonly invitationsService: InvitationsService) {}
 
