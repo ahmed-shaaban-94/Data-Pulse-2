@@ -66,6 +66,7 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException,
@@ -77,6 +78,11 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import type { Principal } from "../auth/auth.guard";
 import { PG_POOL } from "../auth/auth.module";
 import { SessionRepository } from "../auth/session.repository";
+import {
+  recordCrossTenantRejection,
+  recordTenantContextFailure,
+} from "../observability/metrics/api.metrics";
+import { recordDbRlsContextFailure } from "../observability/metrics/db.metrics";
 import { MembershipRepository } from "./membership.repository";
 import type { ResolvedContext, TenantContextRequest } from "./types";
 
@@ -106,9 +112,23 @@ export class TenantContextGuard implements CanActivate {
     const principal = request.principal;
     if (!principal) throw unauthorized();
 
-    const resolved = await this.resolve(principal);
-    request.context = resolved;
-    return true;
+    try {
+      const resolved = await this.resolve(principal);
+      request.context = resolved;
+      return true;
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        // Cross-tenant or cross-store rejection: the session's active
+        // tenant/store context was established but the membership or store
+        // access check failed. Both signals increment together per
+        // signals.md §1 note: "both increment together for the same incident."
+        // No tenant/store IDs in labels (FR-B-006).
+        const route = routeTemplate(execCtx);
+        recordCrossTenantRejection({ route });
+        recordTenantContextFailure({ reason: "cross_tenant" });
+      }
+      throw err;
+    }
   }
 
   /**
@@ -244,11 +264,52 @@ export class TenantContextGuard implements CanActivate {
     // `false` for every real tenant; access is granted via the
     // `is_platform_admin = 'true'` OR-branch. Passing null would set the
     // GUC to "" which throws `invalid input syntax for type uuid: ""`.
-    return runWithTenantContext(
-      this.pool,
-      { tenantId: "00000000-0000-0000-0000-000000000000", isPlatformAdmin: true },
-      (client) => work(client),
-    );
+    //
+    // `return await` (not bare `return`) so that promise rejections are
+    // caught by the try-catch below. Without `await`, a rejected promise
+    // propagates after the try frame has exited.
+    try {
+      return await runWithTenantContext(
+        this.pool,
+        { tenantId: "00000000-0000-0000-0000-000000000000", isPlatformAdmin: true },
+        (client) => work(client),
+      );
+    } catch (err) {
+      // Application-level rejections (NotFoundException, UnauthorizedException)
+      // originate from the work function and are not DB/RLS bootstrap failures.
+      // Only non-HttpException errors indicate a real DB-layer failure:
+      // connection refused, GUC cast error, pool exhaustion, etc. (T476).
+      if (!(err instanceof HttpException)) {
+        recordDbRlsContextFailure();
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+ * Extract the route template from an ExecutionContext using NestJS
+ * decorator metadata. Returns the controller + handler path in the form
+ * `/api/v1/tenants/:id/members`, or `"unknown"` when metadata is absent
+ * (e.g., in unit tests with stub controllers).
+ *
+ * Uses `route` template (not rendered URL) per signals.md §6: rendered
+ * paths carry tenant/store IDs which are forbidden as metric labels
+ * (FR-B-006). The template `/:id` is safe; the value `/:uuid` is not.
+ */
+function routeTemplate(execCtx: ExecutionContext): string {
+  try {
+    // `reflect-metadata` is loaded by NestJS at bootstrap; Reflect.getMetadata
+    // is available in all NestJS guard/interceptor call sites.
+    const controllerPath =
+      (Reflect.getMetadata("path", execCtx.getClass()) as string | undefined) ?? "";
+    const handlerPath =
+      (Reflect.getMetadata("path", execCtx.getHandler()) as string | undefined) ?? "";
+    const joined = `/${controllerPath}/${handlerPath}`.replace(/\/+/g, "/");
+    // Trim trailing slash so "/api/v1/tenants/" becomes "/api/v1/tenants".
+    return joined.replace(/\/$/, "") || "unknown";
+  } catch {
+    return "unknown";
   }
 }
 
