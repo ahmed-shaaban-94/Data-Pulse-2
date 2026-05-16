@@ -28,6 +28,12 @@ import { LoggingInterceptor } from "../../src/common/logging.interceptor";
 
 jest.mock("@data-pulse-2/shared", () => ({
   withRequestContext: jest.fn((logger: unknown) => logger),
+  // T474: LoggingInterceptor now reads the active OTel trace-id to populate
+  // `correlation_id`, falling back to the supplied request_id. The unit
+  // suite stays Docker-free / OTel-free, so the helper is stubbed to
+  // return its fallback verbatim — the interceptor's behavior is
+  // unchanged from the unit's perspective.
+  getCorrelationId: jest.fn((fallback: string) => fallback),
 }));
 
 // Import AFTER mock registration so the mock is in place
