@@ -186,4 +186,21 @@ describe("AuditQuerySchema", () => {
       expect(parsed).toEqual({ limit: 50 });
     });
   });
+
+  describe("limit — numeric form", () => {
+    it("accepts limit as a JS number (not just string)", () => {
+      // Covers the `typeof value === "number"` branch in limitField transform.
+      const parsed = AuditQuerySchema.parse({ limit: 10 });
+      expect(parsed.limit).toBe(10);
+    });
+  });
+
+  describe("cursor — empty decoded payload", () => {
+    it("rejects a base64url string that decodes to empty bytes", () => {
+      // "A" in base64url decodes to 0 bytes (incomplete group), so
+      // Buffer.from("A","base64url").toString("utf8") === "".
+      // This triggers the `if (decoded.length === 0)` branch in decodeCursor.
+      expect(() => AuditQuerySchema.parse({ cursor: "A" })).toThrow();
+    });
+  });
 });

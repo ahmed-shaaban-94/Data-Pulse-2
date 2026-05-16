@@ -21,7 +21,7 @@ import { UnauthorizedException } from "@nestjs/common";
 import type { ExecutionContext } from "@nestjs/common";
 import type { AuthTokenRow, SessionRow } from "@data-pulse-2/db/schema";
 
-import { SESSION_COOKIE_NAME } from "../../src/auth/auth.guard";
+import { AuthGuard, SESSION_COOKIE_NAME } from "../../src/auth/auth.guard";
 import type { SessionRepository } from "../../src/auth/session.repository";
 import type { AuthTokenRepository } from "../../src/auth/auth-token.repository";
 import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
@@ -217,5 +217,26 @@ describe("DashboardAuthGuard — inner AuthGuard failure", () => {
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
+  });
+});
+
+// ===========================================================================
+// DAG6 — !principal defensive branch (line 34 in dashboard-auth.guard.ts)
+// ===========================================================================
+
+describe("DashboardAuthGuard — !principal defensive check", () => {
+  it("DAG6: super.canActivate resolves but principal is not set → UnauthorizedException", async () => {
+    const { guard } = buildGuard();
+
+    // Spy on AuthGuard.prototype.canActivate so it resolves true without
+    // populating request.principal, exercising the !principal defensive check.
+    const spy = jest.spyOn(AuthGuard.prototype, "canActivate").mockResolvedValueOnce(true);
+
+    const req: Record<string, unknown> = { headers: {}, cookies: {} };
+    await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+
+    spy.mockRestore();
   });
 });

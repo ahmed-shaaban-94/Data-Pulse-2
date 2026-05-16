@@ -671,3 +671,22 @@ describe("POST /api/v1/auth/email/verify/confirm", () => {
     expect(svc.lastConfirmEmailVerificationArgs).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// B5.0 — requestEmailVerification !principal defensive branch
+// ---------------------------------------------------------------------------
+
+describe("POST /api/v1/auth/email/verify/request — !principal defensive branch", () => {
+  it("B5.0: guard succeeds but principal is undefined → 401 (defensive guard)", async () => {
+    // ScriptedAuthGuard sets req.principal = this.principal. Setting
+    // principal to undefined makes canActivate succeed while leaving
+    // req.principal unset, exercising the !principal branch in the handler.
+    guard.principal = undefined as unknown as Principal;
+
+    const res = await http().post("/api/v1/auth/email/verify/request");
+
+    expect(res.status).toBe(401);
+    expectErrorEnvelope(res.body, "unauthorized");
+    expect(svc.lastRequestEmailVerificationArgs).toBeNull();
+  });
+});
