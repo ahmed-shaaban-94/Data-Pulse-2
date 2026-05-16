@@ -642,3 +642,21 @@ describe("AuthService audit fire-and-forget", () => {
     await new Promise((r) => setTimeout(r, 10));
   });
 });
+
+// ---------------------------------------------------------------------------
+// NoOpRateLimiter — covers the internal checkAndConsume method
+// ---------------------------------------------------------------------------
+
+describe("AuthService — NoOpRateLimiter (internal fallback)", () => {
+  it("NoOpRateLimiter.checkAndConsume returns { allowed: true }", async () => {
+    // When no rateLimiter is provided in opts, AuthService constructs a
+    // NoOpRateLimiter. Access it via bracket notation (TypeScript private
+    // is compile-time only) and verify the fallback behaviour.
+    const { service } = buildService();
+    const rateLimiter = (service as unknown as Record<string, unknown>)["rateLimiter"] as {
+      checkAndConsume(key: string): Promise<{ allowed: boolean }>;
+    };
+    const result = await rateLimiter.checkAndConsume("test-key");
+    expect(result).toEqual({ allowed: true });
+  });
+});

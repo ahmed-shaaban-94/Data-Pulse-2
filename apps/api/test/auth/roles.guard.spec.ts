@@ -654,4 +654,44 @@ describe("RolesGuard", () => {
     );
     expect(memberships.isPlatformAdminCalls).toEqual([USER_ID]);
   });
+
+  it("context.tenantId is null (platform-scoped context) → forbidden (active tenant required)", async () => {
+    // Covers the `?? null` right branch in resolveTenantId when
+    // request.context is defined but tenantId is null (platform-admin
+    // context without a tenant selected).
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner"],
+      tenantFrom: "context",
+      platformAdminOnly: false,
+      denyAs: 404,
+    };
+    memberships.platformAdmin = false;
+    const req = buildRequest({
+      principal: sessionPrincipal(),
+      context: resolved({ tenantId: null }),
+    });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(memberships.findRoleCalls).toEqual([]);
+  });
+
+  it("param-mode with empty param key (tenantFrom='param:') → forbidden (wiring bug path)", async () => {
+    // Covers the `if (paramKey.length === 0) return null` branch in
+    // resolveTenantId when tenantFrom has a colon but no key after it.
+    const { guard, reflector, memberships } = buildGuard();
+    reflector.metadata = {
+      any: ["owner"],
+      tenantFrom: "param:" as unknown as RolesMetadata["tenantFrom"],
+      platformAdminOnly: false,
+      denyAs: 404,
+    };
+    memberships.platformAdmin = false;
+    const req = buildRequest({ principal: sessionPrincipal() });
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(memberships.findRoleCalls).toEqual([]);
+  });
 });
