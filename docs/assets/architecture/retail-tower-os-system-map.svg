@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" width="900" height="560" fill="none" font-family="system-ui, ui-sans-serif, sans-serif" font-size="12">
+  <title>Retail Tower OS — System Map</title>
+  <desc>Platform topology showing clients, API gateway, packages, PostgreSQL, Redis, and worker runtime.</desc>
+
+  <!-- background -->
+  <rect width="900" height="560" fill="#0D1117"/>
+
+  <!-- ── CLIENTS zone ─────────────────────────────────────────────────── -->
+  <rect x="20" y="20" width="560" height="90" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
+  <text x="36" y="42" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">CLIENTS</text>
+
+  <!-- Dashboard future -->
+  <rect x="36" y="52" width="160" height="44" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="116" y="72" fill="#E6EDF3" font-size="11" text-anchor="middle">Dashboard clients</text>
+  <text x="116" y="87" fill="#8B949E" font-size="9.5" text-anchor="middle" font-style="italic">future feature</text>
+
+  <!-- API consumers -->
+  <rect x="214" y="52" width="150" height="44" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="289" y="72" fill="#E6EDF3" font-size="11" text-anchor="middle">API consumers</text>
+  <text x="289" y="87" fill="#8B949E" font-size="9.5" text-anchor="middle">direct API callers</text>
+
+  <!-- POS clients – external, dashed border -->
+  <rect x="620" y="20" width="260" height="90" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.25" stroke-dasharray="5,3"/>
+  <text x="636" y="42" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">POS CLIENTS</text>
+  <rect x="636" y="52" width="228" height="44" rx="4" fill="#1C2128" stroke="#8B949E" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="750" y="72" fill="#E6EDF3" font-size="11" text-anchor="middle">POS applications</text>
+  <text x="750" y="87" fill="#8B949E" font-size="9.5" text-anchor="middle" font-style="italic">external repository</text>
+
+  <!-- arrows: clients → api -->
+  <!-- dashboard → api -->
+  <line x1="116" y1="96" x2="116" y2="148" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+  <!-- api consumers → api -->
+  <line x1="289" y1="96" x2="289" y2="148" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+  <!-- POS → api (dashed authenticated contract) -->
+  <line x1="750" y1="110" x2="750" y2="130" stroke="#8B949E" stroke-width="1.25" stroke-dasharray="5,3"/>
+  <line x1="750" y1="130" x2="560" y2="170" stroke="#8B949E" stroke-width="1.25" stroke-dasharray="5,3" marker-end="url(#arrow-dim)"/>
+  <text x="680" y="125" fill="#8B949E" font-size="9" text-anchor="middle">authenticated contracts</text>
+
+  <!-- ── apps/api zone ──────────────────────────────────────────────────── -->
+  <rect x="20" y="148" width="860" height="130" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.5"/>
+  <text x="36" y="170" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">COMMAND GATEWAY — apps/api</text>
+
+  <!-- api core box -->
+  <rect x="36" y="178" width="180" height="84" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="126" y="200" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">apps/api</text>
+  <text x="126" y="216" fill="#8B949E" font-size="9.5" text-anchor="middle">NestJS HTTP API</text>
+  <text x="126" y="230" fill="#8B949E" font-size="9.5" text-anchor="middle">auth · context · validation</text>
+  <text x="126" y="244" fill="#8B949E" font-size="9.5" text-anchor="middle">logging · exception envelopes</text>
+
+  <!-- packages -->
+  <rect x="240" y="178" width="140" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="310" y="196" fill="#E6EDF3" font-size="11" text-anchor="middle">packages/contracts</text>
+  <text x="310" y="210" fill="#8B949E" font-size="9.5" text-anchor="middle">OpenAPI 3.1 source</text>
+
+  <rect x="396" y="178" width="130" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="461" y="196" fill="#E6EDF3" font-size="11" text-anchor="middle">packages/auth</text>
+  <text x="461" y="210" fill="#8B949E" font-size="9.5" text-anchor="middle">passwords · tokens</text>
+
+  <rect x="240" y="226" width="130" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="305" y="244" fill="#E6EDF3" font-size="11" text-anchor="middle">packages/db</text>
+  <text x="305" y="258" fill="#8B949E" font-size="9.5" text-anchor="middle">schema · migrations</text>
+
+  <rect x="396" y="226" width="130" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="461" y="244" fill="#E6EDF3" font-size="11" text-anchor="middle">packages/shared</text>
+  <text x="461" y="258" fill="#8B949E" font-size="9.5" text-anchor="middle">errors · logs · queues</text>
+
+  <!-- api → packages arrows -->
+  <line x1="216" y1="197" x2="240" y2="197" stroke="#C8A24A" stroke-width="1" marker-end="url(#arrow-gold)"/>
+  <line x1="216" y1="220" x2="240" y2="245" stroke="#C8A24A" stroke-width="1" marker-end="url(#arrow-gold)"/>
+  <line x1="380" y1="197" x2="396" y2="197" stroke="#C8A24A" stroke-width="1" marker-end="url(#arrow-gold)"/>
+  <line x1="380" y1="245" x2="396" y2="245" stroke="#C8A24A" stroke-width="1" marker-end="url(#arrow-gold)"/>
+
+  <!-- ── data stores zone ───────────────────────────────────────────────── -->
+  <!-- PostgreSQL -->
+  <rect x="20" y="320" width="260" height="100" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
+  <text x="36" y="342" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">SYSTEM OF RECORD</text>
+  <ellipse cx="150" cy="382" rx="80" ry="22" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <rect x="70" y="360" width="160" height="22" fill="#1C2128"/>
+  <ellipse cx="150" cy="360" rx="80" ry="22" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="150" y="365" fill="#E6EDF3" font-size="11" text-anchor="middle">PostgreSQL 16</text>
+  <text x="150" y="395" fill="#8B949E" font-size="9.5" text-anchor="middle">system of record · RLS</text>
+  <text x="150" y="408" fill="#8B949E" font-size="9" text-anchor="middle" font-style="italic">durable domain truth</text>
+
+  <!-- Redis -->
+  <rect x="320" y="320" width="240" height="100" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
+  <text x="336" y="342" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">QUEUE COORDINATION</text>
+  <ellipse cx="440" cy="382" rx="72" ry="20" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <rect x="368" y="362" width="144" height="20" fill="#1C2128"/>
+  <ellipse cx="440" cy="362" rx="72" ry="20" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="440" y="367" fill="#E6EDF3" font-size="11" text-anchor="middle">Redis 7 · BullMQ</text>
+  <text x="440" y="394" fill="#8B949E" font-size="9.5" text-anchor="middle">runtime coordination only</text>
+  <text x="440" y="408" fill="#8B949E" font-size="9" text-anchor="middle" font-style="italic">not durable domain truth</text>
+
+  <!-- apps/worker -->
+  <rect x="600" y="320" width="280" height="100" rx="6" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
+  <text x="616" y="342" fill="#C8A24A" font-size="10" font-weight="600" letter-spacing="1">ASYNC RUNTIME</text>
+  <rect x="616" y="352" width="248" height="54" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="1"/>
+  <text x="740" y="374" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">apps/worker</text>
+  <text x="740" y="390" fill="#8B949E" font-size="9.5" text-anchor="middle">NestJS standalone · BullMQ consumer</text>
+  <text x="740" y="404" fill="#8B949E" font-size="9.5" text-anchor="middle">tenantId in every job payload</text>
+
+  <!-- flow arrows: api → postgres -->
+  <line x1="126" y1="278" x2="126" y2="320" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+  <text x="134" y="303" fill="#22D6F6" font-size="9">tenant-scoped reads/writes</text>
+
+  <!-- api → redis (enqueue) -->
+  <line x1="216" y1="248" x2="380" y2="362" stroke="#22D6F6" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrow-cyan)"/>
+  <text x="290" y="318" fill="#22D6F6" font-size="9" text-anchor="middle">enqueue jobs</text>
+
+  <!-- redis → worker (consume) -->
+  <line x1="560" y1="380" x2="600" y2="380" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+  <text x="582" y="373" fill="#22D6F6" font-size="9" text-anchor="middle">consume</text>
+
+  <!-- worker → shared packages (uses) -->
+  <line x1="740" y1="320" x2="461" y2="278" stroke="#C8A24A" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gold)"/>
+  <text x="620" y="296" fill="#C8A24A" font-size="9" text-anchor="middle">uses shared</text>
+
+  <!-- legend -->
+  <rect x="20" y="448" width="860" height="92" rx="6" fill="#161B22" stroke="#30363D" stroke-width="1"/>
+  <text x="36" y="468" fill="#8B949E" font-size="10" font-weight="600" letter-spacing="1">LEGEND</text>
+  <line x1="36" y1="484" x2="76" y2="484" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+  <text x="82" y="488" fill="#8B949E" font-size="10">Data / request flow</text>
+  <line x1="200" y1="484" x2="240" y2="484" stroke="#C8A24A" stroke-width="1.25" marker-end="url(#arrow-gold)"/>
+  <text x="246" y="488" fill="#8B949E" font-size="10">Package dependency</text>
+  <line x1="380" y1="484" x2="420" y2="484" stroke="#8B949E" stroke-width="1.25" stroke-dasharray="5,3" marker-end="url(#arrow-dim)"/>
+  <text x="426" y="488" fill="#8B949E" font-size="10">External / authenticated contract</text>
+  <text x="36" y="510" fill="#8B949E" font-size="9.5">POS applications are an external repository. They integrate exclusively through authenticated OpenAPI contracts.</text>
+  <text x="36" y="526" fill="#8B949E" font-size="9.5">Dashboard clients are a future feature. This repository does not contain dashboard UI implementation.</text>
+
+  <!-- arrowhead markers -->
+  <defs>
+    <marker id="arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#22D6F6"/>
+    </marker>
+    <marker id="arrow-gold" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#C8A24A"/>
+    </marker>
+    <marker id="arrow-dim" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8B949E"/>
+    </marker>
+  </defs>
+</svg>
