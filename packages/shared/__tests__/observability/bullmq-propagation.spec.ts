@@ -19,6 +19,10 @@ import {
   injectTraceContext,
   extractTraceContext,
   createTestTracerProvider,
+  context as bpContext,
+  propagation as bpPropagation,
+  trace as bpTrace,
+  ROOT_CONTEXT as bpRootContext,
   type TraceCarrier,
 } from "../../src/observability/bullmq-propagation";
 
@@ -302,5 +306,30 @@ describe("createTestTracerProvider", () => {
     } finally {
       await handle.teardown();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-exported OTel API singletons (line 44 coverage)
+// ---------------------------------------------------------------------------
+
+describe("re-exported OTel API singletons", () => {
+  it("context re-export has active() and with()", () => {
+    expect(typeof bpContext.active).toBe("function");
+    expect(typeof bpContext.with).toBe("function");
+  });
+
+  it("propagation re-export has inject() and extract()", () => {
+    expect(typeof bpPropagation.inject).toBe("function");
+    expect(typeof bpPropagation.extract).toBe("function");
+  });
+
+  it("trace re-export has getTracer() and getActiveSpan()", () => {
+    expect(typeof bpTrace.getTracer).toBe("function");
+    expect(typeof bpTrace.getActiveSpan).toBe("function");
+  });
+
+  it("ROOT_CONTEXT re-export is the OTel root context sentinel", () => {
+    expect(bpRootContext).toBe(ROOT_CONTEXT);
   });
 });

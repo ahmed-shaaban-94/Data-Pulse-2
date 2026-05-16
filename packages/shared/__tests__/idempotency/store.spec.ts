@@ -21,7 +21,7 @@ import {
   type PgMirrorReader,
   type IdempotencyEntry,
   type StoredResult,
-} from "../../src/idempotency/store";
+} from "../../src/idempotency";
 
 // ---------------------------------------------------------------------------
 // In-memory fakes
