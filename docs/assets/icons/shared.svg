@@ -1,9 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
-  <title id="title">Shared utilities icon</title>
-  <desc id="desc">Shared package nodes icon.</desc>
-  <rect width="96" height="96" rx="20" fill="#f1f5f9"/>
-  <circle cx="30" cy="32" r="12" fill="#2563eb"/>
-  <circle cx="66" cy="32" r="12" fill="#0f766e"/>
-  <circle cx="48" cy="66" r="12" fill="#f59e0b"/>
-  <path d="M41 35h14M36 43l8 13M60 43l-8 13" stroke="#334155" stroke-width="4" stroke-linecap="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" aria-labelledby="title desc" role="img" viewBox="0 0 96 96"><title id="title">Shared utilities icon</title><desc id="desc">Shared package nodes icon.</desc><rect width="96" height="96" fill="#f1f5f9" rx="20"/><circle cx="30" cy="32" r="12" fill="#2563eb"/><circle cx="66" cy="32" r="12" fill="#0f766e"/><circle cx="48" cy="66" r="12" fill="#f59e0b"/><path stroke="#334155" stroke-linecap="round" stroke-width="4" d="M41 35h14M36 43l8 13M60 43l-8 13"/></svg>
