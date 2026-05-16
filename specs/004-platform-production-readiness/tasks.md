@@ -157,10 +157,10 @@ These tasks create JS files **outside `apps/**` and `packages/**`**. They
 introduce **zero** `package.json` changes. Operators run via Docker image.
 
 - [ ] **T425** [P2] [Track A] Author `loadtests/k6/smoke.js` — one auth + tenant-context flow at minimal RPS (~5 RPS for 30s); must complete without errors; no latency gating.
-- [ ] **T426** [P2] [Track A] Author `loadtests/k6/baseline.js` — all six candidate flows (auth login, auth refresh, GET `/v1/tenants/me`, GET `/v1/memberships`, membership invite+accept, role grant/revoke) at expected production load for 5–15 min; emits p95/p99/error-rate thresholds defined per release.
+- [ ] **T426** [P2] [Track A] Author `loadtests/k6/baseline.js` — all six candidate flows (auth signin, auth refresh, GET `/api/v1/context/me`, GET `/api/v1/tenants/{tenant_id}/members`, membership invite+accept, role update/revoke) at expected production load for 5–15 min; emits p95/p99/error-rate thresholds defined per release. Concrete paths live in plan §3.1.3.
 - [ ] **T427** [P2] [Track A] Author `loadtests/k6/stress.js` — same six flows ramped to breakpoint; on-demand only; produces a breakpoint report, not a release gate.
 - [ ] **T428** [P2] [Track A] Author `loadtests/k6/regression.js` — replays baseline against a stored prior baseline JSON; fails if any tracked metric exceeds the regression delta budget from T424.
-- [ ] **T429** [P2] [Track A] Author `loadtests/k6/lib/auth.js` — shared helper that exchanges synthetic-tenant credentials for tokens via the real `POST /v1/auth/login` path; MUST NOT bypass `AuthGuard`, `TenantContextGuard`, or `RolesGuard` (FR-A-010).
+- [ ] **T429** [P2] [Track A] Author `loadtests/k6/lib/auth.js` — shared helper that exchanges synthetic-tenant credentials for tokens via the real `POST /api/v1/auth/signin` path (OpenAPI `operationId: signIn`); MUST NOT bypass `AuthGuard`, `TenantContextGuard`, or `RolesGuard` (FR-A-010).
 - [ ] **T430** [P2] [Track A] Author `loadtests/k6/lib/tenants.js` — shared helper that establishes tenant/store context for a synthetic tenant; exercises ≥3 concurrent tenants per run (FR-A-009).
 - [ ] **T431** [P2] [Track A] Author `loadtests/k6/fixtures/synthetic-tenants.md` — documentation-only description of expected tenant/store/member row counts for the load env; **no fixture data files in this repo** (operator-side concern).
 
@@ -255,8 +255,9 @@ parallel with, or after P4.
 
 > **All implementation tasks are `[GATED]`.** Builds on the existing
 > `packages/shared/src/idempotency/store.ts::IdempotencyKeyStore`. First
-> endpoint: **`POST /v1/memberships/invitations`**. Rollout is narrow —
-> **NEVER global** (FR-D-007, plan §3.4.5). May overlap with P4.
+> endpoint: **`POST /api/v1/memberships/invite`** (OpenAPI `operationId:
+> createInvitation`). Rollout is narrow — **NEVER global** (FR-D-007,
+> plan §3.4.5). May overlap with P4.
 
 ### 8.1 Design / documentation tasks
 
@@ -264,7 +265,7 @@ parallel with, or after P4.
 - [ ] **T501** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, document the `425 Too Early` response (Q1, spec §1.5): non-blocking, no cross-tenant/cross-store leak, retryable. Reference the uniform error envelope (Constitution §III). Include the `Retry-After`-style header recommendation from research §3 (remaining marker TTL or 2s clamped).
 - [ ] **T502** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, document the in-progress marker design (research §3): Redis `SET NX EX 60` default TTL, per-endpoint override, atomic creation, best-effort cleanup on response.
 - [ ] **T503** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, document the replay retention window (research §2 recommendation: **72 hours**) and how it relates to the existing 24h default in `IdempotencyKeyStore`.
-- [ ] **T504** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, confirm first-endpoint selection: **`POST /v1/memberships/invitations`**, with rationale per research §2 (retry-safe by design, low blast radius, audit-emitting code path validates no double-emission, no POS dependency).
+- [ ] **T504** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, confirm first-endpoint selection: **`POST /api/v1/memberships/invite`** (OpenAPI `operationId: createInvitation`), with rationale per research §2 (retry-safe by design, low blast radius, audit-emitting code path validates no double-emission, no POS dependency).
 - [ ] **T505** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, document the per-method decorator API design (research §10): `@Idempotent('required'|'optional', { replayTtlSec?, inflightTtlSec? })`; opt-in only; no global registration.
 - [ ] **T506** [P5] [Track D] [P] In `docs/idempotency/strategy.md`, document client-side retry guidance: 425 is retryable, 409 is terminal (payload mismatch is a client bug), expired key behaves as new request, missing key follows per-endpoint OpenAPI policy.
 
@@ -285,7 +286,7 @@ parallel with, or after P4.
 - [ ] **T520** [P5] [Track D] [GATED] Author NestJS interceptor `apps/api/src/idempotency/idempotency.interceptor.ts` implementing the flow from plan §3.4.3 (route check → header check → fingerprint → in-progress marker → store lookup → handler → save).
 - [ ] **T521** [P5] [Track D] [GATED] Author `@Idempotent(...)` decorator at `apps/api/src/idempotency/idempotent.decorator.ts` per research §10; opt-in only; route-level registration.
 - [ ] **T522** [P5] [Track D] [GATED] Add in-progress marker support to the idempotency module (Redis `SET NX EX 60`; reuse existing Redis connection from `IdempotencyKeyStore`); no schema change required.
-- [ ] **T523** [P5] [Track D] [GATED] Update `POST /v1/memberships/invitations` controller to use `@Idempotent('required')` per plan §3.4.5; emit the three observability counters.
+- [ ] **T523** [P5] [Track D] [GATED] Update `POST /api/v1/memberships/invite` controller (OpenAPI `operationId: createInvitation`) to use `@Idempotent('required')` per plan §3.4.5; emit the three observability counters.
 - [ ] **T524** [P5] [Track D] [GATED] Update OpenAPI contract at `packages/contracts/openapi/foundation/memberships.yaml` (or equivalent) to declare `x-idempotency: required` on the invitation endpoint (FR-D-008). This is the **only OpenAPI contract change** required by this slice.
 - [ ] **T525** [P5] [Track D] [GATED] Update `IdempotencyKeyStore` default TTL from 24h to 72h via runtime config — no code constant change; reuse `defaultTtlMs` option (research §2).
 
@@ -435,7 +436,7 @@ Subsequent event types are separate per-event slices.
 - [ ] **T650** [P9] Confirm no task in this `tasks.md` touches catalog schema. `grep -ri "catalog" specs/004-platform-production-readiness/tasks.md` returns only references to the parallelism contract / non-goals (no schema/contract/code references).
 - [ ] **T651** [P9] [P] Confirm no task touches catalog OpenAPI contracts. `grep "packages/contracts/openapi/catalog" specs/004-platform-production-readiness/tasks.md` returns no matches.
 - [ ] **T652** [P9] [P] Confirm no task introduces catalog implementation. No `apps/api/src/modules/catalog/**` or `packages/db/src/schema/catalog/**` reference in any task description.
-- [ ] **T653** [P9] [P] Confirm Track D's first endpoint is a **foundation** endpoint (`POST /v1/memberships/invitations`), NOT a catalog endpoint — T504 records the choice.
+- [ ] **T653** [P9] [P] Confirm Track D's first endpoint is a **foundation** endpoint (`POST /api/v1/memberships/invite`, OpenAPI `operationId: createInvitation`), NOT a catalog endpoint — T504 records the choice.
 - [ ] **T654** [P9] [P] Confirm Track C's first event type is `audit.event.created` (foundation pipeline), NOT a catalog event — T541 records the choice.
 - [ ] **T655** [P9] [P] Confirm no scope creep into POS implementation, dashboard UI, billing, reports, analytics, dbt, ClickHouse, Dagster, or deployment infrastructure. Grep for those terms in `tasks.md`; only references in non-goals / out-of-scope sections.
 - [ ] **T656** [P9] [P] Confirm Constitution Principle alignment in §1.1 of this file is internally consistent with plan §9.
@@ -455,7 +456,7 @@ ready as a planning / specification artifact.
 | **A — k6 Load Testing** | P2 | T420–T437 | Docker image `grafana/k6`; foundation endpoints only; synthetic tenants ≥3; regression delta `+10% p95 / +20% p99 / +0.5pp error` (research §1) |
 | **B — Observability** | P3 (docs), P4 (instrumentation) | T440–T483 | OTel Collector OTLP/gRPC + Prometheus scrape; slow-query 500ms; redaction matrix at `.specify/memory/redaction-matrix.md`; no `tenant_id`/`store_id`/`user_id` as metric label |
 | **C — Outbox** | P6 (design), P7 (impl) | T540–T600 | `audit.event.created` first event; `FOR UPDATE SKIP LOCKED`; retention 90d processed / 365d failed; right-to-erasure overrides |
-| **D — Idempotency** | P5 | T500–T534 | `POST /v1/memberships/invitations` first endpoint; `425 Too Early` for in-progress; 72h replay retention; 60s marker TTL; NestJS interceptor + `@Idempotent` decorator |
+| **D — Idempotency** | P5 | T500–T534 | `POST /api/v1/memberships/invite` first endpoint (OpenAPI `operationId: createInvitation`); `425 Too Early` for in-progress; 72h replay retention; 60s marker TTL; NestJS interceptor + `@Idempotent` decorator |
 | **E — SDK Generation** | P8 | T620–T642 | `openapi-typescript` + `openapi-fetch`; downstream-repo generation; NO `packages/sdk` first slice; drift detection in downstream CI |
 
 ---
@@ -593,7 +594,7 @@ sequence from plan §8:
 | 1 | P2 — k6 first slice | T420–T437 | `test(load): add k6 smoke/baseline scripts without package changes` |
 | 2 | P3 — observability docs + redaction matrix | T440–T454 | `docs(observability): add redaction matrix and signal catalogue` |
 | 3 | P4 — observability instrumentation `[GATED]` | T460–T483 | `feat(observability): instrument API/DB/worker signals + redaction` |
-| 4 | P5 — idempotency design + first endpoint `[GATED]` | T500–T534 | `feat(idempotency): wrap memberships/invitations with @Idempotent` |
+| 4 | P5 — idempotency design + first endpoint `[GATED]` | T500–T534 | `feat(idempotency): wrap memberships/invite with @Idempotent` |
 | 5 | P6 — outbox design validation | T540–T556 | `docs(outbox): lifecycle, retention, drainer design` |
 | 6 | P7 — outbox first slice `[GATED]` | T560–T600 | `feat(outbox): introduce outbox table + audit.event.created consumer` |
 | 7 | P8 — SDK research close-out | T620–T634 | `docs(sdk): lock openapi-typescript + openapi-fetch strategy + downstream handoff` |

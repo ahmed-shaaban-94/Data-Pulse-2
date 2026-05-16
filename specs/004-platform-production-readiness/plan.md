@@ -140,12 +140,12 @@ Per spec §6.2:
 
 | # | Flow | Where it lives (existing in 001) | Why measure |
 |---|---|---|---|
-| 1 | `POST /v1/auth/login` | Foundation auth | Establishes baseline auth latency under load. |
-| 2 | `POST /v1/auth/refresh` | Foundation auth | Token refresh is the most common authenticated call. |
-| 3 | `GET /v1/tenants/me` | Foundation tenant context | Tenant context establishment is on every authenticated request. |
-| 4 | `GET /v1/memberships` | Foundation memberships | Tenant-scoped read with RLS. |
-| 5 | `POST /v1/memberships/invitations` + `POST /v1/memberships/accept` | Foundation membership mutations | Audit-heavy write path (also stresses audit fan-out). |
-| 6 | `POST /v1/memberships/{id}/role` (or equivalent role grant/revoke) | Foundation governance | Audit-heavy governance path. |
+| 1 | `POST /api/v1/auth/signin` | Foundation auth | Establishes baseline auth latency under load. |
+| 2 | `POST /api/v1/auth/refresh` | Foundation auth | Token refresh is the most common authenticated call. |
+| 3 | `GET /api/v1/context/me` | Foundation tenant context | Tenant context establishment is on every authenticated request. |
+| 4 | `GET /api/v1/tenants/{tenant_id}/members` | Foundation memberships | Tenant-scoped read with RLS. |
+| 5 | `POST /api/v1/memberships/invite` + `POST /api/v1/invitations/accept` | Foundation membership mutations | Audit-heavy write path (also stresses audit fan-out). |
+| 6 | `PATCH /api/v1/memberships/{membership_id}` (role/store-access update) and `DELETE /api/v1/memberships/{membership_id}` (revoke) | Foundation governance | Audit-heavy governance path. |
 
 Catalog (003) endpoints are **excluded** from first-slice load tests per the
 parallelism contract (§6) — they aren't implemented yet.
@@ -440,14 +440,15 @@ Request lands at interceptor
 
 #### 3.4.5 Rollout — narrow, never global (FR-D-007, §9.3)
 
-- **First slice endpoint**: `POST /v1/memberships/invitations` (recommended).
+- **First slice endpoint**: `POST /api/v1/memberships/invite` (recommended;
+  OpenAPI `operationId: createInvitation`).
   Reasons: retry-safe by design (creating an invitation is naturally
   idempotent if you have an external client key), low blast radius (no
   money, no inventory), already covered by 001 contract tests, and POS
   doesn't depend on it.
-- Alternative first slice: `POST /v1/auth/refresh` — but tokens have their
-  own retry semantics, so memberships is the cleaner choice.
-- **Not** first slice: `POST /v1/auth/login` (security-sensitive),
+- Alternative first slice: `POST /api/v1/auth/refresh` — but tokens have
+  their own retry semantics, so memberships is the cleaner choice.
+- **Not** first slice: `POST /api/v1/auth/signin` (security-sensitive),
   audit-emitting governance routes (audit double-emission risk), any
   catalog/inventory/sales route (doesn't exist yet).
 - Expansion to additional endpoints is per-endpoint and requires explicit
@@ -550,7 +551,7 @@ recommendations to lock during `/speckit-tasks` or the first per-track PR:
 | # | Topic | Recommended direction | Status |
 |---|---|---|---|
 | 4.1 | Replay retention window | **72 hours** | Recommended in [research §2](./research.md) |
-| 4.2 | First idempotency target endpoint | `POST /v1/memberships/invitations` | Recommended in [research §2](./research.md) |
+| 4.2 | First idempotency target endpoint | `POST /api/v1/memberships/invite` (OpenAPI `operationId: createInvitation`) | Recommended in [research §2](./research.md) |
 | 4.3 | In-progress marker TTL | **60 seconds** default, per-endpoint override | Recommended in [research §3](./research.md) |
 | 4.4 | First SDK output location | **Downstream repo (dashboard or POS)** — not `packages/sdk`, not this repo | Recommended in [research §5](./research.md) |
 | 4.5 | Drift-detection mechanism | **Downstream-repo CI** for first slice; in-repo CI deferred | Recommended in [research §6](./research.md) |

@@ -24,7 +24,7 @@ at the per-track first-slice PR
 | # | Topic | Recommendation |
 |---|---|---|
 | 1 | Load-testing tool | **k6 via Docker image** (`grafana/k6`) — external CLI fallback. **No** in-repo Node-based load tool. |
-| 2 | Idempotency replay retention window + first target endpoint | **72 hours** replay TTL; first endpoint **`POST /v1/memberships/invitations`**. |
+| 2 | Idempotency replay retention window + first target endpoint | **72 hours** replay TTL; first endpoint **`POST /api/v1/memberships/invite`** (OpenAPI `operationId: createInvitation`). |
 | 3 | In-progress marker TTL for `425 Too Early` | **60 seconds** default; per-endpoint override. |
 | 4 | Observability vendor & exporter | **OpenTelemetry Collector (OTLP/gRPC)** as the primary exporter; Prometheus scrape adapter for early Grafana dashboards. Managed vendor deferred. |
 | 5 | SDK generator + initial output location | **`openapi-typescript` + `openapi-fetch`** (locked by Q3); generate in a **downstream repo** (dashboard or POS), not `packages/sdk`. |
@@ -108,7 +108,7 @@ alternative.
 
 ### Decision
 - **Replay retention window: 72 hours**.
-- **First target endpoint: `POST /v1/memberships/invitations`**.
+- **First target endpoint: `POST /api/v1/memberships/invite`** (OpenAPI `operationId: createInvitation`).
 
 ### Rationale (replay window)
 - `IdempotencyKeyStore` defaults to **24h** today; that's enough for
@@ -124,7 +124,7 @@ alternative.
   PII are subject to right-to-erasure regardless.
 
 ### Rationale (first endpoint)
-- `POST /v1/memberships/invitations` is retry-safe by design: creating an
+- `POST /api/v1/memberships/invite` is retry-safe by design: creating an
   invitation has no money side effect, low blast radius, and clear
   business semantics ("the same invitation was meant to be sent twice — it
   is the same invitation").
@@ -140,8 +140,8 @@ alternative.
 
 | Endpoint | Why it was considered | Why not first |
 |---|---|---|
-| `POST /v1/auth/refresh` | Highest-volume mutating call | Tokens have their own retry semantics (jti); idempotency layer would shadow them |
-| `POST /v1/auth/login` | Common operation | Security-sensitive (rate-limited differently); coupling idempotency replay to login is dangerous |
+| `POST /api/v1/auth/refresh` | Highest-volume mutating call | Tokens have their own retry semantics (jti); idempotency layer would shadow them |
+| `POST /api/v1/auth/signin` | Common operation | Security-sensitive (rate-limited differently); coupling idempotency replay to signin is dangerous |
 | Role-grant / role-revoke | Audit-heavy | Higher blast radius if replay misbehaves — defer until first-endpoint patterns are validated |
 | Any catalog endpoint | High future volume | Catalog isn't implemented yet; would violate plan §6 parallelism contract |
 
@@ -153,7 +153,7 @@ alternative.
   review.
 
 ### Deferred
-- Second-endpoint selection (likely `POST /v1/memberships/accept` or a
+- Second-endpoint selection (likely `POST /api/v1/invitations/accept` or a
   store-attach mutation) — locked at the second-endpoint PR.
 - Whether the replay window is per-endpoint configurable — deferred until
   there's a documented reason (e.g., a long-running webhook integration).
