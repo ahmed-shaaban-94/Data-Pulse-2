@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- security: layered shield / secure core -->
+  <path d="M12 2 L20 5.5 V11.5 C20 16 16.5 19.5 12 22 C7.5 19.5 4 16 4 11.5 V5.5 Z"/>
+  <path d="M12 6 L17 8.25 V11.75 C17 14.5 14.75 16.75 12 18 C9.25 16.75 7 14.5 7 11.75 V8.25 Z" stroke="#22D6F6" stroke-width="1.5"/>
+</svg>

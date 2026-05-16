@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- store-network: connected stores / branch map -->
+  <circle cx="12" cy="12" r="2.5"/>
+  <circle cx="4" cy="6" r="1.75" stroke="#22D6F6" stroke-width="1.5"/>
+  <circle cx="20" cy="6" r="1.75" stroke="#22D6F6" stroke-width="1.5"/>
+  <circle cx="4" cy="18" r="1.75" stroke="#22D6F6" stroke-width="1.5"/>
+  <circle cx="20" cy="18" r="1.75" stroke="#22D6F6" stroke-width="1.5"/>
+  <line x1="5.5" y1="7" x2="10" y2="10.5"/>
+  <line x1="18.5" y1="7" x2="14" y2="10.5"/>
+  <line x1="5.5" y1="17" x2="10" y2="13.5"/>
+  <line x1="18.5" y1="17" x2="14" y2="13.5"/>
+</svg>

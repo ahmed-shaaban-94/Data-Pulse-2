@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- access-control: shield with keyhole -->
+  <path d="M12 2 L20 5.5 V11.5 C20 16 16.5 19.5 12 22 C7.5 19.5 4 16 4 11.5 V5.5 Z"/>
+  <circle cx="12" cy="11" r="2" stroke="#22D6F6" stroke-width="1.5"/>
+  <line x1="12" y1="13" x2="12" y2="16"/>
+</svg>
