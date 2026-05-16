@@ -43,7 +43,7 @@ landscape — communicating authority, visibility, and architectural solidity.
 
 ## Visual Direction
 
-**Premium Watchtower Enterprise**
+**Premium Fortress Watchtower / Premium Watchtower Enterprise**
 
 Deep, authoritative tones. Structured geometry. A visual language of
 command, control, and clarity — not decoration. Assets should convey
@@ -85,12 +85,39 @@ operate *from* it.
 
 ## Approved Imagery
 
-These images represent product identity and operational vision.
+These are product-vision brand assets. They represent the external product
+identity of Retail Tower OS and are intended for use in README/product
+vision, docs, pitch materials, and future landing page. They do **not**
+imply that a dashboard frontend, POS application, or production operations
+UI is implemented in this repository.
 
-| File | Description |
-| --- | --- |
-| `docs/assets/brand/retail-tower-os-hero-exterior.png` | Exterior command tower hero — primary product-vision image. Represents the platform as an elevated, fortified command structure. |
-| `docs/assets/brand/retail-tower-os-command-room.png` | Interior command-room / operations-vision image. Represents the operator experience: visibility, authority, and control across all branches. |
+### Exterior Hero
+
+![Retail Tower OS Exterior Hero](../assets/brand/exterior/retail-tower-os-exterior-hero.png)
+
+Fortified retail command tower illuminated at dusk, overlooking a connected
+branch network. The canonical exterior product-vision image.
+
+**Use for:** project hero, product vision, pitch cover, future landing page,
+brand introduction.
+
+### Interior Command View
+
+![Retail Tower OS Interior Command View](../assets/brand/interior/retail-tower-os-interior-command-view.png)
+
+Leadership perspective from inside the command tower — operator at the command
+desk with a panoramic view of the live branch network below.
+
+**Use for:** command center vision, operations view, dashboard vision,
+enterprise presentation.
+
+---
+
+## Icon System
+
+A companion SVG icon set lives at `docs/assets/brand/icons/`. See
+[`docs/brand/icon-system.md`](icon-system.md) for style rules, color tokens,
+the full approved icon list, and usage guidelines.
 
 ---
 
@@ -109,6 +136,8 @@ These images represent product identity and operational vision.
   repository — the POS app is a separate repository that integrates
   through the OpenAPI contracts in `packages/contracts/openapi/`.
 - It does **not** imply that production operations UI is shipped today.
+- The icon SVGs are brand and docs assets only — they do not replace
+  OpenAPI contracts or implementation architecture diagrams.
 
 A future decision to rename the repository, packages, or API titles to
 match the Retail Tower OS brand will be made explicitly and tracked as
@@ -122,7 +151,7 @@ a separate approved change.
   investor materials, sales assets, and external documentation.
 - Do **not** use "RTO" as an abbreviation without prior brand approval.
 - Do **not** place brand imagery next to UI screenshots that are not yet
-  implemented — the exterior and command-room visuals are vision assets,
+  implemented — the exterior and interior visuals are vision assets,
   not feature screenshots.
 - Do **not** alter or crop the approved images without explicit approval.
 - Brand assets live in `docs/assets/brand/`. Do not copy them into

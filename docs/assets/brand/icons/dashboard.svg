@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- dashboard: control panel / metrics -->
+  <rect x="2" y="4" width="20" height="14" rx="1.5"/>
+  <line x1="2" y1="9" x2="22" y2="9"/>
+  <line x1="9" y1="9" x2="9" y2="18"/>
+  <rect x="4" y="11" width="3" height="5" rx="0.5" stroke="#22D6F6" stroke-width="1.5"/>
+  <polyline points="11,16 13.5,13 16,15 18.5,11" stroke="#22D6F6" stroke-width="1.5"/>
+  <line x1="8" y1="21" x2="16" y2="21"/>
+  <line x1="12" y1="18" x2="12" y2="21"/>
+</svg>

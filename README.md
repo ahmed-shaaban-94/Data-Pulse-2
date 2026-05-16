@@ -20,6 +20,31 @@ separate future feature, and POS applications live in separate repositories.
 
 ---
 
+## Retail Tower OS
+
+**Retail Tower OS** is the external product identity for this platform — the
+command layer for multi-branch retail operations. Data-Pulse-2 is the
+backend-first implementation codename. No repository names, package names,
+OpenAPI titles, or deployment configuration have been changed.
+
+![Retail Tower OS — The command tower for modern retail](docs/assets/brand/exterior/retail-tower-os-exterior-hero.png)
+
+> The command tower for modern retail. Control every branch from one secure core.
+
+This platform stands behind every branch: multi-tenant architecture, catalog
+authority, POS connectivity, access control, and audit provenance — all unified
+under one secure operating core.
+
+This image represents **product vision**. It does not imply that a dashboard
+frontend, POS application, or production operations UI is implemented in this
+repository. The POS application is a separate repository that integrates through
+the OpenAPI contracts in `packages/contracts/openapi/`.
+
+See [`docs/brand/retail-tower-os.md`](docs/brand/retail-tower-os.md) for the
+full brand identity record, approved imagery, scope notes, and usage guidelines.
+
+---
+
 ## Why Data Pulse
 
 Retail data systems become expensive when tenant boundaries, store ownership,

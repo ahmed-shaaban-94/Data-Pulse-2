@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- inventory: stacked boxes / stock levels -->
+  <rect x="3" y="13" width="8" height="8" rx="1"/>
+  <rect x="13" y="13" width="8" height="8" rx="1"/>
+  <rect x="8" y="4" width="8" height="8" rx="1"/>
+  <line x1="8" y1="8" x2="16" y2="8" stroke="#22D6F6" stroke-width="1.5"/>
+</svg>

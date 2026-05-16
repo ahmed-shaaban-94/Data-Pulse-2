@@ -14,23 +14,52 @@ architecture documentation.
 
 ## Brand assets
 
-Product-vision and brand-identity imagery. These are raster PNGs representing
-the Retail Tower OS external product brand — they are **not** architecture
-diagrams or feature screenshots.
+Product-vision and brand-identity imagery for **Retail Tower OS** — the
+external product brand. These assets are for README/product vision, docs,
+pitch materials, and future landing page use. They are **not** architecture
+diagrams or feature screenshots, and they do **not** imply that a dashboard
+frontend, POS application, or production operations UI is implemented in
+this repository.
 
-| Path | Purpose |
-| --- | --- |
-| `brand/retail-tower-os-hero-exterior.png` | Approved Retail Tower OS exterior hero — product-vision image. |
-| `brand/retail-tower-os-command-room.png` | Approved Retail Tower OS interior command-room — operations-vision image. |
+### Product vision imagery (v2 — canonical)
 
-See [`docs/brand/retail-tower-os.md`](../brand/retail-tower-os.md) for the full brand identity record,
-scope notes, and usage guidelines.
+Large raster PNGs representing the Retail Tower OS visual identity.
+
+| Path | Classification | Purpose |
+| --- | --- | --- |
+| `brand/exterior/retail-tower-os-exterior-hero.png` | **Exterior Hero** | Fortified retail command tower over connected branch network. Use for project hero, pitch cover, landing page. |
+| `brand/interior/retail-tower-os-interior-command-view.png` | **Interior Command View** | Leadership command room overlooking the branch network. Use for command center vision, operations, enterprise presentation. |
 
 > **PNG exception**: Brand imagery may be raster PNG when it is approved
 > product-vision artwork that cannot be represented as SVG. Architecture
 > diagrams and capability icons should remain SVG where possible for
 > lightweight, reviewable documentation. Brand imagery is not the same
 > as implementation architecture diagrams.
+
+### Brand icons
+
+SVG line icons representing Retail Tower OS capability areas. Human-reviewable,
+stroke-based, 24×24 viewBox. Intended for docs, pitch, identity, and future
+landing page use — not for import into application source code.
+
+| Path | Purpose |
+| --- | --- |
+| `brand/icons/branch-ops.svg` | Branch operations / command flow |
+| `brand/icons/access-control.svg` | Access gate / tenant-scoped identity |
+| `brand/icons/catalog.svg` | Product catalog / global product index |
+| `brand/icons/inventory.svg` | Stock levels / inventory management |
+| `brand/icons/pos-core.svg` | POS terminal / connectivity core |
+| `brand/icons/store-network.svg` | Connected stores / branch network |
+| `brand/icons/integrations.svg` | API connection / external integrations |
+| `brand/icons/audit-compliance.svg` | Audit trail / compliance provenance |
+| `brand/icons/dashboard.svg` | Control panel / operations metrics vision |
+| `brand/icons/security.svg` | Secure core / multi-layer security |
+
+See [`docs/brand/icon-system.md`](../brand/icon-system.md) for the full style
+specification, color tokens, authoring rules, and usage guidelines.
+
+See [`docs/brand/retail-tower-os.md`](../brand/retail-tower-os.md) for the
+complete brand identity record, scope notes, and usage guidelines.
 
 ## Style
 

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <!-- audit-compliance: shield with check / audit trail -->
+  <path d="M12 2 L20 5.5 V11.5 C20 16 16.5 19.5 12 22 C7.5 19.5 4 16 4 11.5 V5.5 Z"/>
+  <polyline points="8.5,12 11,14.5 15.5,9.5" stroke="#22D6F6" stroke-width="1.75"/>
+</svg>
