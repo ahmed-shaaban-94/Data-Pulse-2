@@ -1,8 +1,8 @@
 # Data Pulse Architecture
 
-Data Pulse is a backend-first TypeScript monorepo for a multi-tenant SaaS
-foundation. The repository owns the API, worker runtime, contracts, database
-schema, and shared platform primitives. Dashboard UI work is deferred to a
+Data Pulse (`Data-Pulse-2`) is the backend-first implementation of **Retail Tower OS** — the
+command layer for multi-branch retail operations. This repository owns the API, worker runtime,
+contracts, database schema, and shared platform primitives. Dashboard UI work is deferred to a
 separate feature, and POS applications remain external repositories.
 
 ![Data Pulse architecture](assets/architecture-isometric.svg)
@@ -149,6 +149,77 @@ sequenceDiagram
   request DB context middleware rather than ad hoc SQL filtering.
 - Cross-tenant and cross-store tests are required for behavior that touches
   tenant-owned data.
+
+## Catalog Source-of-Truth Layers
+
+The catalog model follows a four-layer authority hierarchy. Each layer is owned
+by a distinct actor and may override the layer above it for its scope.
+
+```mermaid
+flowchart TD
+  gpi["Global Product Index<br/>platform authority<br/><i>canonical product definitions</i>"]
+  tc["Tenant Catalog<br/>ownership group truth<br/><i>per-tenant product selection and pricing</i>"]
+  so["Store Override<br/>branch truth<br/><i>per-store price and availability adjustments</i>"]
+  sl["SaleLine Snapshot<br/>invoice truth<br/><i>immutable at transaction time</i>"]
+
+  gpi -->|propagated to| tc
+  tc -->|overridden at| so
+  so -->|captured in| sl
+
+  gpi -. "spec/003-catalog-foundation" .-> gpi
+```
+
+Layer ownership rules:
+
+| Layer | Owner | Can override | Immutable after |
+| --- | --- | --- | --- |
+| Global Product Index | Platform admin | — | Product deactivation |
+| Tenant Catalog | Tenant admin | GPI defaults | — |
+| Store Override | Store manager | Tenant price/availability | — |
+| SaleLine Snapshot | System (at sale time) | — | Commit |
+
+Historical sale facts must not be silently rewritten by catalog changes.
+A SaleLine Snapshot carries the price and product description as they were
+at transaction time, not as they are today.
+
+## Tenant Boundary and Data Ownership
+
+Every piece of domain data is owned by exactly one tenant. Tenant context is
+established at the API boundary and propagated through every subsequent
+database access, worker job, and audit record.
+
+```mermaid
+flowchart LR
+  subgraph tenantA["Tenant A"]
+    storeA1["Store A-1"]
+    storeA2["Store A-2"]
+    membersA["Members / Roles"]
+  end
+
+  subgraph tenantB["Tenant B"]
+    storeB1["Store B-1"]
+    membersB["Members / Roles"]
+  end
+
+  api["apps/api<br/>resolves tenant context<br/>from session / token"]
+  pg[("PostgreSQL<br/>RLS enforced")]
+  worker["apps/worker<br/>carries tenantId<br/>in every job payload"]
+
+  api --> pg
+  api -->|tenantId in job| worker
+  worker --> pg
+
+  tenantA -. RLS row filter .-> pg
+  tenantB -. RLS row filter .-> pg
+```
+
+Isolation rules:
+
+- Runtime DB role must not bypass RLS.
+- Cross-tenant access returns a safe 404 — never a permission error that leaks
+  tenant existence.
+- Workers establish tenant context before any DB access.
+- Audit records carry `tenantId`, `storeId`, `actorId`, and `correlationId`.
 
 ## Deployment View
 

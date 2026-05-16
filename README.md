@@ -1,4 +1,4 @@
-# Data Pulse
+# Retail Tower OS
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-2563eb.svg)](.nvmrc)
@@ -6,52 +6,52 @@
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6.svg)](tsconfig.base.json)
 [![NestJS](https://img.shields.io/badge/NestJS-11-e0234e.svg)](apps/api)
 
-Data Pulse is the secure multi-tenant SaaS foundation for retail operations.
-This repository, `Data-Pulse-2`, contains the backend platform layer: API,
-workers, database schema, contract packages, and shared primitives that future
-dashboard and POS experiences build on.
-
-The current product slice is intentionally backend-first. The dashboard UI is a
-separate future feature, and POS applications live in separate repositories.
-
-![Data Pulse platform hero](docs/assets/hero-data-pulse.svg)
-
-![](docs/assets/pulse-signature.svg)
-
----
-
-## Retail Tower OS
-
-**Retail Tower OS** is the external product identity for this platform — the
-command layer for multi-branch retail operations. Data-Pulse-2 is the
-backend-first implementation codename. No repository names, package names,
-OpenAPI titles, or deployment configuration have been changed.
-
 ![Retail Tower OS — The command tower for modern retail](docs/assets/brand/exterior/retail-tower-os-exterior-hero.png)
 
 > The command tower for modern retail. Control every branch from one secure core.
 
-This platform stands behind every branch: multi-tenant architecture, catalog
-authority, POS connectivity, access control, and audit provenance — all unified
-under one secure operating core.
+**Retail Tower OS** is the external product identity for this platform. The implementation
+repository is `Data-Pulse-2` — the backend-first codename. No repository names, package names,
+OpenAPI titles, or deployment configuration have been changed.
 
-This image represents **product vision**. It does not imply that a dashboard
-frontend, POS application, or production operations UI is implemented in this
-repository. The POS application is a separate repository that integrates through
-the OpenAPI contracts in `packages/contracts/openapi/`.
+This image represents **product vision**. It does not imply that a dashboard frontend, POS
+application, or production operations UI is implemented in this repository. The POS application
+is a separate repository that integrates through the OpenAPI contracts in
+`packages/contracts/openapi/`.
 
-See [`docs/brand/retail-tower-os.md`](docs/brand/retail-tower-os.md) for the
-full brand identity record, approved imagery, scope notes, and usage guidelines.
+See [`docs/brand/retail-tower-os.md`](docs/brand/retail-tower-os.md) for the full brand
+identity record, approved imagery, scope notes, and usage guidelines.
 
 ---
 
-## Why Data Pulse
+## What Retail Tower OS Controls
 
-Retail data systems become expensive when tenant boundaries, store ownership,
-audit trails, and POS integration contracts are treated as afterthoughts. Data
-Pulse makes those platform rules explicit from the start.
+The platform that stands behind every branch — multi-tenant architecture, catalog authority,
+POS connectivity, access control, and audit provenance unified under one secure operating core.
 
-| Capability | What it protects |
+| Capability | Platform scope |
+| --- | --- |
+| <img src="docs/assets/brand/icons/branch-ops.svg" width="24" alt="Branch operations"> Branch operations | Multi-tenant isolation and store hierarchy managed from a single command core. |
+| <img src="docs/assets/brand/icons/catalog.svg" width="24" alt="Catalog authority"> Catalog authority | Global product index propagated through tenant and store layers with store-level override. |
+| <img src="docs/assets/brand/icons/store-network.svg" width="24" alt="Store network"> Store network | Connected branch context carried at every API, database, and job boundary. |
+| <img src="docs/assets/brand/icons/access-control.svg" width="24" alt="Access control"> Access control | Role-based identity for operators and staff, scoped to tenant and store. |
+| <img src="docs/assets/brand/icons/integrations.svg" width="24" alt="POS connectivity"> POS connectivity | The API gateway POS applications connect to through authenticated, versioned contracts. |
+| <img src="docs/assets/brand/icons/audit-compliance.svg" width="24" alt="Audit provenance"> Audit provenance | Every mutation is traceable; sale facts are immutable once committed. |
+| <img src="docs/assets/brand/icons/security.svg" width="24" alt="Secure core"> Secure core | Multi-layer security — tenant RLS, token auth, and audit trail — built in from the start. |
+
+> This table describes **platform scope and product vision**, not a list of implemented UI
+> features. The POS application is a separate repository. Dashboard UI is a separate future
+> feature.
+
+---
+
+## Platform Guarantees
+
+Retail data systems become expensive when tenant boundaries, store ownership, audit trails, and
+POS integration contracts are treated as afterthoughts. This platform makes those rules explicit
+from the start.
+
+| Guarantee | What it enforces |
 | --- | --- |
 | <img src="docs/assets/icons/tenant-isolation.svg" width="24" alt="Tenant isolation"> Tenant isolation | Tenant and store context are first-class at the API, database, and test layers. |
 | <img src="docs/assets/icons/contracts.svg" width="24" alt="Contracts"> Contract-first APIs | OpenAPI 3.1 contracts are the integration source of truth, not generated side effects. |
@@ -64,9 +64,9 @@ Pulse makes those platform rules explicit from the start.
 
 ## Platform Shape
 
-Data Pulse is a pnpm workspace with two deployable services and four internal
-packages. The API owns synchronous HTTP behavior; the worker owns asynchronous
-processing; PostgreSQL owns durable state; Redis coordinates queues.
+`Data-Pulse-2` is a pnpm workspace with two deployable services and four internal packages.
+The API owns synchronous HTTP behavior; the worker owns asynchronous processing; PostgreSQL
+owns durable state; Redis coordinates queues.
 
 ```mermaid
 flowchart LR
@@ -217,7 +217,7 @@ Key references:
 
 ## Development Agreement
 
-Data Pulse follows the active Constitution and Spec Kit workflow. Start from
+This platform follows the active Constitution and Spec Kit workflow. Start from
 the current spec, keep changes thin, preserve tenant isolation, and do not
 change dependency manifests, lockfiles, SQL migrations, or database schema
 without explicit approval.
