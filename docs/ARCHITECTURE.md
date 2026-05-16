@@ -22,6 +22,13 @@ contract of record.
 
 ## System Shape
 
+> **Visual map** — presentation-grade platform topology.
+
+![Retail Tower OS System Map](assets/architecture/retail-tower-os-system-map.svg)
+
+> **Reviewable Mermaid source** — technical diagram kept for diffability and
+> tooling compatibility.
+
 ```mermaid
 flowchart TB
   subgraph clients["Clients and consumers"]
@@ -101,6 +108,13 @@ Boundary rules:
 - SQL migrations under `packages/db/drizzle` are versioned review artifacts.
 
 ## API Request Flow
+
+> **Visual map** — request pipeline through the guard chain to service layer
+> and response.
+
+![Retail Tower OS Request Flow](assets/architecture/retail-tower-os-request-flow.svg)
+
+> **Reviewable Mermaid source** — technical sequence diagram.
 
 ```mermaid
 sequenceDiagram
@@ -183,6 +197,13 @@ A SaleLine Snapshot carries the price and product description as they were
 at transaction time, not as they are today.
 
 ## Tenant Boundary and Data Ownership
+
+> **Visual map** — tenant isolation zones, RLS boundary, and tenantId
+> propagation through API and worker.
+
+![Retail Tower OS Tenant Boundary](assets/architecture/retail-tower-os-tenant-boundary.svg)
+
+> **Reviewable Mermaid source** — technical diagram.
 
 Every piece of domain data is owned by exactly one tenant. Tenant context is
 established at the API boundary and propagated through every subsequent

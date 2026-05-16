@@ -12,6 +12,28 @@ architecture documentation.
 | `architecture-isometric.svg` | Isometric architecture visual used in `docs/ARCHITECTURE.md`. |
 | `icons/*.svg` | Small reusable icons for platform capabilities and package areas. |
 
+## Architecture visuals
+
+Presentation-grade SVG maps of the Retail Tower OS platform architecture.
+These use the Retail Tower OS visual identity (midnight navy, muted gold,
+ice-cyan) to make the architecture immediately readable in a product or
+engineering context.
+
+The Mermaid diagrams in `docs/ARCHITECTURE.md` remain the **reviewable
+technical source** — diffable, tooling-compatible, and authoritative. The
+SVGs below are the **presentation layer** placed alongside each Mermaid
+section for visual clarity.
+
+| Path | Purpose |
+| --- | --- |
+| `architecture/retail-tower-os-system-map.svg` | Full platform topology — clients, API gateway, packages, PostgreSQL, Redis, worker. |
+| `architecture/retail-tower-os-request-flow.svg` | Request pipeline — AuthGuard → TenantContextGuard → RolesGuard → service → DB/RLS → audit → response. |
+| `architecture/retail-tower-os-tenant-boundary.svg` | Tenant isolation — Tenant A / B zones, RLS boundary, worker tenantId propagation. |
+
+> These are architecture documentation assets, not UI screenshots or
+> feature implementations. The POS application is a separate repository.
+> Dashboard UI is a separate future feature.
+
 ## Brand assets
 
 Product-vision and brand-identity imagery for **Retail Tower OS** — the
