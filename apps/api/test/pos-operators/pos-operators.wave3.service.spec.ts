@@ -9,6 +9,8 @@ import "reflect-metadata";
 
 import type { Pool } from "pg";
 
+import { hashToken } from "@data-pulse-2/auth";
+
 import { PosOperatorsService } from "../../src/pos-operators/pos-operators.service";
 import { DeviceRepository } from "../../src/pos-operators/device.repository";
 import type { ClerkVerifier } from "../../src/pos-operators/clerk-verifier";
@@ -225,6 +227,23 @@ describe("PosOperatorsService.roster", () => {
     // Cashier fetch (query 4) must NOT have been called.
     expect(pool.query).toHaveBeenCalledTimes(3);
   });
+
+  it("returns 'refused' when user is found but soft-deleted (deleted_at set)", async () => {
+    // Covers line 412: `if (userRow.deleted_at !== null) return { kind: "refused" }`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [{ ...VALID_USER_ROW, deleted_at: new Date("2026-01-01") }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-7");
+    expect(r).toEqual({ kind: "refused" });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -299,6 +318,187 @@ describe("PosOperatorsService.takeoverConfirm", () => {
     expect(r).toEqual({ kind: "refused" });
   });
 
+  it("returns 'refused' when user lookup returns null (user_unmapped)", async () => {
+    // Covers line 449: `if (!userRow) return { kind: "refused", reason: "user_unmapped" }`
+    const pool = makePool();
+    programPoolQueries(pool, [[]]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-user-null");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when user is soft-deleted (user_disabled)", async () => {
+    // Covers line 450: `if (userRow.deleted_at !== null) return { kind: "refused" }`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [{ ...VALID_USER_ROW, deleted_at: new Date("2026-01-01") }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-user-deleted");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when membership lookup returns null (membership_missing)", async () => {
+    // Covers line 458: `if (!membership) return { kind: "refused" }`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [], // membership → null
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-memb-null");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when membership is revoked (membership_revoked)", async () => {
+    // Covers line 459: `if (membership.revoked_at !== null || membership.deleted_at !== null)`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, revoked_at: new Date("2026-01-01") }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-memb-revoked");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when role_code is ineligible (role_ineligible)", async () => {
+    // Covers line 462: `if (!ELIGIBLE_INTERNAL_ROLES.has(membership.role_code))`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, role_code: "store_staff" }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-ineligible");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when store_access_kind is specific and store not in access set", async () => {
+    // Covers the `if (!ok) return { kind: "refused" }` inside store_access_kind === "specific"
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [{ ...MANAGER_MEMBERSHIP_ROW, store_access_kind: "specific" }],
+      [], // storeIsInAccessSet returns no rows
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-store-denied");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when idempotency INSERT conflicts and SELECT finds different operator (conflict type)", async () => {
+    // Covers line 900: `if (!existing.request_hash.equals(requestHashBuf))`
+    // INSERT returns [] (ON CONFLICT DO NOTHING), SELECT returns a row with a different hash.
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
+      // upsertTakeoverIdempotencyKey INSERT → conflict (0 rows returned)
+      [],
+      // SELECT existing row → different request_hash
+      [{ request_hash: Buffer.from("different-operator-hash"), response_body: null }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-ik-conflict");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when idempotency INSERT conflicts and SELECT returns nothing (race: fresh path)", async () => {
+    // Covers line 895: `if (!existing)` after INSERT conflict + SELECT returns no rows.
+    // The race path returns { type: "fresh" }, so the flow continues to revokeActiveSession
+    // which finds nothing → refused.
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
+      // upsertTakeoverIdempotencyKey INSERT → conflict
+      [],
+      // SELECT existing row → nothing (race: row deleted between conflict and read)
+      [],
+      // revokeActiveOperatorSession → no session to revoke
+      [],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-ik-race");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when idempotency INSERT conflicts and SELECT finds same operator with null session_id (concurrent fresh)", async () => {
+    // Covers line 907: `if (!sessionId)` when SELECT returns a row whose request_hash
+    // matches (same operator) but response_body.session_id is null (concurrent confirm
+    // hasn't written the session yet). Returns { type: "fresh" } again.
+    const pool = makePool();
+    const operatorHash = hashToken(OPERATOR_CLERK_SUB);
+    programPoolQueries(pool, [
+      [VALID_USER_ROW],
+      [MANAGER_MEMBERSHIP_ROW],
+      // upsertTakeoverIdempotencyKey INSERT → conflict
+      [],
+      // SELECT existing row → same operator hash, session_id not yet written
+      [{ request_hash: operatorHash, response_body: { session_id: null } }],
+      // revokeActiveOperatorSession → no session to revoke
+      [],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(ACTIVE_DEVICE),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.takeoverConfirm("jwt", VALID_BODY, "rid-ik-concurrent");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
   it("returns signed_in on happy path and revokes prior session", async () => {
     const pool = makePool();
     programPoolQueries(pool, [
@@ -367,6 +567,23 @@ describe("PosOperatorsService.activeSession", () => {
     );
 
     const r = await svc.activeSession("jwt", ACTIVE_SESSION_QUERY, "rid-2");
+    expect(r).toEqual({ kind: "refused" });
+  });
+
+  it("returns 'refused' when requester user is soft-deleted", async () => {
+    // Covers line 588: `if (requesterRow.deleted_at !== null) return { kind: "refused" }`
+    const pool = makePool();
+    programPoolQueries(pool, [
+      [{ ...VALID_USER_ROW, deleted_at: new Date("2026-01-01") }],
+    ]);
+    const svc = new PosOperatorsService(
+      pool as unknown as Pool,
+      makeVerifier(),
+      makeDeviceRepo(),
+      SILENT_LOGGER,
+    );
+
+    const r = await svc.activeSession("jwt", ACTIVE_SESSION_QUERY, "rid-deleted");
     expect(r).toEqual({ kind: "refused" });
   });
 
