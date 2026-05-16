@@ -45,6 +45,19 @@ POS connectivity, access control, and audit provenance unified under one secure 
 
 ---
 
+## Architecture at a Glance
+
+![Retail Tower OS System Map](docs/assets/architecture/retail-tower-os-system-map.svg)
+
+Retail Tower OS is implemented here as the `Data-Pulse-2` backend platform: a NestJS API,
+BullMQ worker runtime, OpenAPI contracts, PostgreSQL source of truth, Redis coordination,
+and shared platform packages.
+
+See [Architecture](docs/ARCHITECTURE.md) for request flow, tenant boundaries, worker flow,
+and catalog source-of-truth layers.
+
+---
+
 ## Platform Guarantees
 
 Retail data systems become expensive when tenant boundaries, store ownership, audit trails, and
