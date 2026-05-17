@@ -134,6 +134,7 @@ export async function claimBatch(
   pool: Pool,
   batchSize = 50,
 ): Promise<ClaimedOutboxEvent[]> {
+  assertPositiveBatchSize(batchSize);
   return runWithTenantContext(
     pool,
     { tenantId: null, isPlatformAdmin: true },
@@ -141,6 +142,25 @@ export async function claimBatch(
       return _claimBatchOnClient(client, batchSize);
     },
   );
+}
+
+/**
+ * Validate `batchSize` at the function boundary.
+ *
+ * Postgres's `LIMIT` rejects non-positive integers and `LIMIT NaN` is a
+ * parse error, but failing fast with a clear JS error is much more
+ * debuggable than a downstream `invalid input syntax` message that
+ * surfaces inside the claim CTE under a wrapped runWithTenantContext.
+ *
+ * Throwing `RangeError` (a built-in) makes the cause obvious without
+ * adding a new error class to the public surface for a guard-rail.
+ */
+function assertPositiveBatchSize(batchSize: number): void {
+  if (!Number.isInteger(batchSize) || batchSize <= 0) {
+    throw new RangeError(
+      `claimBatch: batchSize must be a positive integer, got ${String(batchSize)}.`,
+    );
+  }
 }
 
 /**

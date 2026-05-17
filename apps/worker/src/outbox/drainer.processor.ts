@@ -118,6 +118,15 @@ export class DrainerProcessor {
     this.pollIntervalMs = deps.options?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.batchSize = deps.options?.batchSize ?? DEFAULT_BATCH_SIZE;
     this.claimFn = deps.claimFn ?? claimBatch;
+
+    // Fail loud at construction rather than spinning a poll loop with a
+    // nonsensical interval (which silently breaks throughput) or claim size
+    // (which causes the claim CTE to reject `LIMIT <invalid>` at runtime,
+    // logging on every tick). Both must be positive integers; `setInterval`
+    // also requires a finite positive number, so a NaN/Infinity here would
+    // produce subtly wrong scheduling.
+    assertPositiveInteger("pollIntervalMs", this.pollIntervalMs);
+    assertPositiveInteger("batchSize", this.batchSize);
   }
 
   /**
@@ -295,13 +304,31 @@ export class DrainerProcessor {
   // Logging (structured, pino-compatible, no PII / no payload)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Emit a structured error line. ONLY safe, redacted fields are written:
+   *   - `level`, `component`, `message`  — operator-controlled
+   *   - `errorName`                       — the error class name
+   *                                         (e.g. `OutboxStateTransitionError`)
+   *
+   * `err.message` and `err.stack` are intentionally OMITTED. Postgres and
+   * many other libraries embed row values, parameter contents, and other
+   * sensitive runtime data in their error messages (e.g. the `payload`
+   * JSONB or a tenant UUID surface in `invalid input syntax for type uuid:
+   * "<value>"`). Stack traces additionally leak file paths and call-graph
+   * shape. Constitution §VII forbids both in structured logs.
+   *
+   * The `message` argument is constructed by the caller and MUST itself
+   * be safe (event_id and event_type are non-PII by design). If a caller
+   * ever needs the underlying exception for debugging, route it through
+   * the OTel/error-reporting boundary (which has its own redaction policy)
+   * rather than stderr.
+   */
   private logError(message: string, err: unknown): void {
     const line = JSON.stringify({
       level: "error",
       component: "outbox.drainer",
       message,
-      error: err instanceof Error ? err.message : String(err),
-      errorName: err instanceof Error ? err.name : "UnknownError",
+      errorName: err instanceof Error ? (err.name || "Error") : "UnknownError",
     });
     process.stderr.write(line + "\n");
   }
@@ -313,5 +340,24 @@ export class DrainerProcessor {
       return err.name || "Error";
     }
     return "UnknownError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal: input validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert that a numeric drainer-config field is a finite positive integer.
+ * `setInterval` accepts NaN / Infinity / 0 without obvious failure (it
+ * coerces to 1ms or hangs), and `LIMIT <non-positive>` in the claim CTE
+ * either rejects at parse time or returns no rows — both produce silently
+ * broken drainers. Fail loud at construction instead.
+ */
+function assertPositiveInteger(field: string, value: number): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `DrainerProcessor: ${field} must be a positive integer, got ${String(value)}.`,
+    );
   }
 }

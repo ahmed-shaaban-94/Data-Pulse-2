@@ -101,44 +101,50 @@ describe("auditJobEnqueuerFactory — legacy path unchanged", () => {
 // ---------------------------------------------------------------------------
 // Layer B — Integration: real Postgres + outbox INSERT
 // ---------------------------------------------------------------------------
-
-const TENANT_A = "0aa00000-0000-7000-8000-000000000001";
-
-let env: PgTestEnv | null = null;
-let dockerSkipped = false;
-
-beforeAll(async () => {
-  try {
-    env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
-    await env.admin.query(
-      `INSERT INTO tenants (id, slug, name) VALUES ($1, 'outbox-enqueuer-test', 'Outbox Enqueuer Test')`,
-      [TENANT_A],
-    );
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
-      console.warn(`\n[outbox-audit-enqueuer.spec] Docker NOT AVAILABLE: ${msg}\n`);
-      dockerSkipped = true;
-      return;
-    }
-    throw new Error(`Container start failed: ${msg}`);
-  }
-}, 180_000);
-
-afterAll(async () => {
-  if (env) await stopPgEnv(env);
-}, 60_000);
-
-function maybeSkip(): boolean {
-  if (dockerSkipped) {
-    console.warn("[outbox-audit-enqueuer.spec] skipping (Docker unavailable)");
-    return true;
-  }
-  return false;
-}
+//
+// Testcontainers lifecycle is SCOPED to this describe block so the Layer A
+// unit tests above never trigger a Docker container start. Running
+// `jest --testPathPattern=...` against only Layer A (or running this file
+// on a Docker-less machine when MIGRATION_TEST_ALLOW_SKIP=1) avoids ~3-5s
+// of pointless container boot/teardown.
 
 describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
+  const TENANT_A = "0aa00000-0000-7000-8000-000000000001";
+
+  let env: PgTestEnv | null = null;
+  let dockerSkipped = false;
+
+  function maybeSkip(): boolean {
+    if (dockerSkipped) {
+      console.warn("[outbox-audit-enqueuer.spec] skipping (Docker unavailable)");
+      return true;
+    }
+    return false;
+  }
+
+  beforeAll(async () => {
+    try {
+      env = await startPgEnv();
+      await applyAllUpAndCreateAppRole(env);
+      await env.admin.query(
+        `INSERT INTO tenants (id, slug, name) VALUES ($1, 'outbox-enqueuer-test', 'Outbox Enqueuer Test')`,
+        [TENANT_A],
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
+        console.warn(`\n[outbox-audit-enqueuer.spec] Docker NOT AVAILABLE: ${msg}\n`);
+        dockerSkipped = true;
+        return;
+      }
+      throw new Error(`Container start failed: ${msg}`);
+    }
+  }, 180_000);
+
+  afterAll(async () => {
+    if (env) await stopPgEnv(env);
+  }, 60_000);
+
   it("inserts an audit.event.created row with the payload preserved (tenant-scoped)", async () => {
     if (maybeSkip()) return;
 
@@ -170,6 +176,13 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
 
     await enqueuer.enqueue(payload);
 
+    // Filter on BOTH tenant_id and correlation_id (== REQUEST_UUID): the
+    // tenant_id alone is not deterministic — earlier tests in this file
+    // (or future ones) can insert rows for the same tenant, and
+    // `ORDER BY created_at DESC LIMIT 1` would silently surface the wrong
+    // one if another row landed first. Targeting the unique
+    // (tenant, correlation_id) pair pins the assertion to THIS test's
+    // insertion.
     const rows = await env!.admin.query<{
       event_id: string;
       tenant_id: string;
@@ -184,9 +197,8 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
               delivery_state, attempts, correlation_id
          FROM outbox_events
         WHERE tenant_id = $1
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [TENANT_A],
+          AND correlation_id = $2`,
+      [TENANT_A, REQUEST_UUID],
     );
 
     expect(rows.rows).toHaveLength(1);
