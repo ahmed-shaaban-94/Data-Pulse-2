@@ -58,6 +58,7 @@ import {
   NoOpEmailJobEnqueuer,
 } from "./email-job.enqueuer";
 import { EmailQueueProducer } from "./email-queue.producer";
+import { IoredisIdempotencyAdapter } from "./ioredis-idempotency-adapter";
 import { RateLimiter, type RedisLike } from "./rate-limit";
 import { SessionRepository } from "./session.repository";
 
@@ -157,9 +158,11 @@ export class AlwaysAllowRedis implements RedisLike {
       useFactory: (): RedisLike => {
         const url = process.env["REDIS_URL"];
         if (!url) return new AlwaysAllowRedis();
-        // Real ioredis client — satisfies both RateLimiter's RedisLike surface
-        // and IdempotencyModule's get/set/del surface.
-        return new Redis(url) as unknown as RedisLike;
+        // Wrap the real ioredis client in IoredisIdempotencyAdapter, which
+        // translates the options-object set() and pexpireNx() calls used by
+        // IdempotencyModule and RateLimiter into ioredis's variadic-string form.
+        const client = new Redis(url);
+        return new IoredisIdempotencyAdapter(client);
       },
     },
     {
