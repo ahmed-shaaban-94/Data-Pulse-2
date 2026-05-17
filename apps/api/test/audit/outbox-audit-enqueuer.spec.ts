@@ -27,7 +27,10 @@ import {
   AuditQueueProducer,
   type AuditQueueLike,
 } from "../../src/audit/audit-queue.producer";
+import { Pool } from "pg";
 import {
+  APP_ROLE_NAME,
+  APP_ROLE_PASSWORD,
   applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
@@ -390,37 +393,68 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     expect(checkRows.rows).toHaveLength(0);
   });
 
-  it("FC-2: app-role INSERT with NO tenant context (no GUC, not platform admin) is rejected by RLS", async () => {
+  it("FC-2: app-role INSERT with NO tenant context (virgin connection, not platform admin) is rejected by RLS", async () => {
     if (maybeSkip()) return;
 
     const FC2_REQUEST_UUID = "00000000-0000-7000-8000-00000000c012";
 
-    // No `app.current_tenant` set, platform-admin explicitly false.
-    // `current_setting('app.current_tenant', true)` returns NULL when unset
-    // (the `true` flag suppresses the missing-GUC error); the cast to uuid
-    // makes the equality predicate fail-closed, and the platform-admin
-    // branch is FALSE. The INSERT WITH CHECK has no passing branch.
-    const pgErr = await runRlsRejectAttempt(env!.app, async (client) => {
-      await client.query(
-        `SELECT set_config('app.is_platform_admin', 'false', true)`,
-      );
-      await client.query(
-        `INSERT INTO outbox_events
-           (event_id, tenant_id, event_type, payload, delivery_state,
-            attempts, correlation_id)
-         VALUES ($1, $2, 'audit.event.created', '{"fc":2}'::jsonb,
-                 'pending', 0, $3)`,
-        [
-          "00000000-0000-4000-8000-00000000fc02",
-          TENANT_A,
-          FC2_REQUEST_UUID,
-        ],
-      );
+    // No `app.current_tenant` set in this connection's session.
+    // `current_setting('app.current_tenant', true)` returns NULL when the
+    // parameter has NEVER been touched in the session (the `true` flag
+    // suppresses the missing-GUC error). With NULL, `NULL::uuid` is NULL,
+    // `tenant_id = NULL` is NULL, the platform-admin branch is FALSE,
+    // and the WITH CHECK predicate fails closed → SQLSTATE 42501.
+    //
+    // Why a fresh single-use Pool (not env.app):
+    //   The shared `env.app` pool's clients are reused across tests. FC-1
+    //   touches `app.current_tenant` via `set_config(..., true)`. Even
+    //   after ROLLBACK, Postgres leaves user-defined GUCs in a "touched
+    //   but empty" state on that client — `current_setting('app.current_tenant', true)`
+    //   then returns `''` (empty string), not NULL, and the RLS predicate
+    //   raises SQLSTATE 22P02 (invalid_text_representation for
+    //   `''::uuid`) BEFORE the RLS WITH CHECK rejection can fire. That
+    //   would be testing the wrong failure mode.
+    //
+    //   A brand-new Pool yields a brand-new connection that has never seen
+    //   `app.current_tenant`, so `current_setting` legitimately returns
+    //   NULL and the test exercises the intended fail-closed path. The
+    //   pool is ended at the end of the test so no connection leaks.
+    const freshPool = new Pool({
+      connectionString:
+        `postgres://${APP_ROLE_NAME}:${APP_ROLE_PASSWORD}` +
+        `@${env!.host}:${env!.port}/test`,
     });
 
-    expect(pgErr).not.toBeNull();
-    expect(pgErr!.code).toBe("42501");
-    expect(pgErr!.message).toMatch(/row.level security|policy|permission denied/i);
+    try {
+      const pgErr = await runRlsRejectAttempt(freshPool, async (client) => {
+        // Do NOT touch `app.current_tenant` — leaving the GUC truly unset
+        // is the whole point of FC-2. We explicitly set the platform-admin
+        // GUC to 'false' so the second branch of the RLS predicate is
+        // unambiguously FALSE rather than NULL (defence in depth — the
+        // assertion below relies on a deterministic 42501).
+        await client.query(
+          `SELECT set_config('app.is_platform_admin', 'false', true)`,
+        );
+        await client.query(
+          `INSERT INTO outbox_events
+             (event_id, tenant_id, event_type, payload, delivery_state,
+              attempts, correlation_id)
+           VALUES ($1, $2, 'audit.event.created', '{"fc":2}'::jsonb,
+                   'pending', 0, $3)`,
+          [
+            "00000000-0000-4000-8000-00000000fc02",
+            TENANT_A,
+            FC2_REQUEST_UUID,
+          ],
+        );
+      });
+
+      expect(pgErr).not.toBeNull();
+      expect(pgErr!.code).toBe("42501");
+      expect(pgErr!.message).toMatch(/row.level security|policy|permission denied/i);
+    } finally {
+      await freshPool.end();
+    }
   });
 });
 
