@@ -1,0 +1,284 @@
+/**
+ * T465 — Worker / queue / Redis signal-presence test.
+ *
+ * Verifies that every worker-side metric defined in
+ * `docs/observability/signals.md` §3 is:
+ *   1. Registered in the `ALLOWED_METRIC_LABELS` closed allowlist
+ *      (`packages/shared/src/observability/metrics-labels.ts`).
+ *   2. Label-policy compliant (no forbidden labels; all labels in
+ *      allowlist).
+ *   3. Exposed via a typed emission helper that can be called without
+ *      throwing — for the seven emit-now signals.
+ *   4. For the three Track C outbox placeholders: registered as
+ *      definitions only; no emission helper expected (plan §6).
+ *
+ * Scope: in-process module-load assertions. No live Redis, no live
+ * BullMQ, no Testcontainers, no Nest app, no SDK boot — pure module
+ * import + helper invocation. The OTel Meter returned by
+ * `getMeter("worker")` is a no-op until a MetricReader is registered;
+ * helpers call through to it safely.
+ *
+ * The full `/metrics` HTTP scrape (T483 worker subset) is deferred to a
+ * separate package-gated slice — it requires `@opentelemetry/sdk-metrics`
+ * + `@opentelemetry/exporter-prometheus`, which this slice is not
+ * authorised to add.
+ *
+ * Constitution §VII / FR-B-003 / FR-B-006 / T465.
+ */
+import {
+  ALLOWED_METRIC_LABELS,
+  FORBIDDEN_METRIC_LABELS,
+  validateMetricLabels,
+} from "@data-pulse-2/shared";
+import {
+  WORKER_METRIC_NAMES,
+  WORKER_OUTBOX_METRIC_NAMES,
+  WORKER_QUEUE_NAMES,
+  WORKER_JOB_NAMES,
+  WORKER_ERROR_CLASSES,
+  recordQueueDeadLetter,
+  recordQueueFailed,
+  recordQueueRetry,
+  recordRedisCommandDuration,
+  recordWorkerJobDuration,
+  recordWorkerProcessingFailure,
+  sanitizeErrorClass,
+} from "../../src/observability/metrics/worker.metrics";
+
+// ---------------------------------------------------------------------------
+// 1. Signal-name registry: every worker metric is in ALLOWED_METRIC_LABELS
+// ---------------------------------------------------------------------------
+
+describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LABELS", () => {
+  for (const name of WORKER_METRIC_NAMES) {
+    it(`registers "${name}"`, () => {
+      expect(ALLOWED_METRIC_LABELS[name]).toBeDefined();
+    });
+  }
+
+  it("WORKER_METRIC_NAMES covers the seven documented emit-now worker signals", () => {
+    const expected = [
+      "redis_command_duration_seconds",
+      "queue_lag_seconds",
+      "queue_failed_total",
+      "queue_dead_letter_total",
+      "queue_retry_total",
+      "worker_job_duration_seconds",
+      "worker_processing_failure_total",
+    ];
+    expect([...WORKER_METRIC_NAMES].sort()).toEqual([...expected].sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2. Track C outbox placeholders: registered as definitions only
+// ---------------------------------------------------------------------------
+
+describe("T465 — outbox placeholders: registered but not yet emitted", () => {
+  for (const name of WORKER_OUTBOX_METRIC_NAMES) {
+    it(`outbox placeholder "${name}" is registered in ALLOWED_METRIC_LABELS`, () => {
+      expect(ALLOWED_METRIC_LABELS[name]).toBeDefined();
+    });
+  }
+
+  it("WORKER_OUTBOX_METRIC_NAMES covers all three documented outbox signals (signals.md §3.4)", () => {
+    const expected = [
+      "outbox_pending_total",
+      "outbox_dead_letter_total",
+      "outbox_drain_duration_seconds",
+    ];
+    expect([...WORKER_OUTBOX_METRIC_NAMES].sort()).toEqual([...expected].sort());
+  });
+
+  it("outbox placeholder names are disjoint from emit-now worker names", () => {
+    const intersect = WORKER_OUTBOX_METRIC_NAMES.filter((n) =>
+      (WORKER_METRIC_NAMES as readonly string[]).includes(n),
+    );
+    expect(intersect).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. Label policy: every registered label obeys the allowlist
+// ---------------------------------------------------------------------------
+
+describe("T465 — label policy: every worker metric's labels pass validateMetricLabels", () => {
+  const allNames = [...WORKER_METRIC_NAMES, ...WORKER_OUTBOX_METRIC_NAMES] as const;
+
+  for (const name of allNames) {
+    const allowed = ALLOWED_METRIC_LABELS[name] ?? [];
+
+    it(`"${name}" passes with its full allowed label set`, () => {
+      expect(validateMetricLabels(name, allowed)).toBeNull();
+    });
+
+    it(`"${name}" passes with an empty label set (subset is allowed)`, () => {
+      expect(validateMetricLabels(name, [])).toBeNull();
+    });
+
+    it(`"${name}" rejects tenant_id (FR-B-006)`, () => {
+      const result = validateMetricLabels(name, ["tenant_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+
+    it(`"${name}" rejects store_id (FR-B-006)`, () => {
+      const result = validateMetricLabels(name, ["store_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+
+    it(`"${name}" rejects user_id (FR-B-006)`, () => {
+      const result = validateMetricLabels(name, ["user_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+
+    it(`"${name}" rejects actor_id (FR-B-006)`, () => {
+      const result = validateMetricLabels(name, ["actor_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+
+    it(`"${name}" rejects job_id (unbounded — plan §8)`, () => {
+      const result = validateMetricLabels(name, ["job_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+
+    it(`"${name}" rejects correlation_id (unbounded — plan §8)`, () => {
+      const result = validateMetricLabels(name, ["correlation_id"]);
+      expect(result?.kind).toBe("forbidden_label");
+    });
+  }
+
+  it("no worker metric's allowed labels intersect FORBIDDEN_METRIC_LABELS", () => {
+    const offenders: Array<{ metric: string; label: string }> = [];
+    for (const name of allNames) {
+      const allowed = ALLOWED_METRIC_LABELS[name] ?? [];
+      for (const label of allowed) {
+        if (FORBIDDEN_METRIC_LABELS.has(label)) {
+          offenders.push({ metric: name, label });
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. Bounded enums (queue_name / job_name / error_class)
+// ---------------------------------------------------------------------------
+
+describe("T465 — bounded enums: queue, job_name, and error_class are documented", () => {
+  it("WORKER_QUEUE_NAMES contains the five plan §7 queues", () => {
+    const expected = [
+      "email",
+      "audit-fanout",
+      "audit-retention",
+      "session-revoke",
+      "soft-delete-sweep",
+    ];
+    expect([...WORKER_QUEUE_NAMES].sort()).toEqual([...expected].sort());
+  });
+
+  it("WORKER_JOB_NAMES mirrors WORKER_QUEUE_NAMES 1:1 (plan §7)", () => {
+    expect([...WORKER_JOB_NAMES].sort()).toEqual([...WORKER_QUEUE_NAMES].sort());
+  });
+
+  it("WORKER_ERROR_CLASSES contains the plan §7.1 allowlist (including UnknownError catch-all)", () => {
+    const expected = [
+      "TenantContextMissingError",
+      "ZodValidationError",
+      "PostgresUniqueViolation",
+      "RedisConnectionError",
+      "Timeout",
+      "UnknownError",
+    ];
+    expect([...WORKER_ERROR_CLASSES].sort()).toEqual([...expected].sort());
+  });
+
+  it("WORKER_ERROR_CLASSES includes the UnknownError catch-all (plan §7.1)", () => {
+    expect((WORKER_ERROR_CLASSES as readonly string[]).includes("UnknownError")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. sanitizeErrorClass — closed-allowlist coercion (plan §7.1)
+// ---------------------------------------------------------------------------
+
+describe("T465 — sanitizeErrorClass: closed-allowlist coercion (plan §7.1)", () => {
+  for (const cls of WORKER_ERROR_CLASSES) {
+    it(`passes the allowed class "${cls}" through unchanged`, () => {
+      expect(sanitizeErrorClass(cls)).toBe(cls);
+    });
+  }
+
+  it("coerces an unknown class name to UnknownError", () => {
+    expect(sanitizeErrorClass("SomeNeverDeclaredError")).toBe("UnknownError");
+  });
+
+  it("coerces undefined to UnknownError", () => {
+    expect(sanitizeErrorClass(undefined)).toBe("UnknownError");
+  });
+
+  it("coerces null to UnknownError", () => {
+    expect(sanitizeErrorClass(null)).toBe("UnknownError");
+  });
+
+  it("coerces a non-string (defensive) to UnknownError", () => {
+    // Caller is expected to pass `err.constructor.name` (always a string),
+    // but the sanitizer must be robust to a malformed input rather than
+    // throw — a metric emit site must never crash worker job processing.
+    expect(sanitizeErrorClass(42 as unknown as string)).toBe("UnknownError");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Helpers are callable — no throw, no SDK required
+// ---------------------------------------------------------------------------
+
+describe("T465 — emission helpers: callable without a live MetricReader", () => {
+  it("recordRedisCommandDuration does not throw for common Redis verbs", () => {
+    for (const command of ["get", "set", "del", "hget", "hset"]) {
+      expect(() =>
+        recordRedisCommandDuration({ command }, 0.001),
+      ).not.toThrow();
+    }
+  });
+
+  it("recordQueueFailed does not throw for each queue × allowed error_class", () => {
+    for (const queue of WORKER_QUEUE_NAMES) {
+      for (const error_class of WORKER_ERROR_CLASSES) {
+        expect(() =>
+          recordQueueFailed({ queue, error_class }),
+        ).not.toThrow();
+      }
+    }
+  });
+
+  it("recordQueueDeadLetter does not throw for each queue", () => {
+    for (const queue of WORKER_QUEUE_NAMES) {
+      expect(() => recordQueueDeadLetter({ queue })).not.toThrow();
+    }
+  });
+
+  it("recordQueueRetry does not throw for each queue", () => {
+    for (const queue of WORKER_QUEUE_NAMES) {
+      expect(() => recordQueueRetry({ queue })).not.toThrow();
+    }
+  });
+
+  it("recordWorkerJobDuration does not throw for each job_name", () => {
+    for (const job_name of WORKER_JOB_NAMES) {
+      expect(() =>
+        recordWorkerJobDuration({ job_name }, 0.05),
+      ).not.toThrow();
+    }
+  });
+
+  it("recordWorkerProcessingFailure does not throw for each job_name × allowed error_class", () => {
+    for (const job_name of WORKER_JOB_NAMES) {
+      for (const error_class of WORKER_ERROR_CLASSES) {
+        expect(() =>
+          recordWorkerProcessingFailure({ job_name, error_class }),
+        ).not.toThrow();
+      }
+    }
+  });
+});
