@@ -1,0 +1,161 @@
+/**
+ * T580 — Outbox producer helper `emit(...)`.
+ *
+ * Inserts one `outbox_events` row inside the CALLER'S transaction.
+ * The row is written atomically with the business state change:
+ * if the caller's transaction rolls back, the event row is never committed.
+ *
+ * The caller is responsible for:
+ *   1. Opening a transaction on the supplied `PoolClient`.
+ *   2. Setting tenant-context GUCs (`app.current_tenant`, `app.is_platform_admin`)
+ *      before calling `emit` — the INSERT must pass RLS WITH CHECK.
+ *   3. Committing or rolling back — `emit` does NOT manage the transaction.
+ *
+ * For callers that don't already hold an open transaction, the sibling
+ * helper `emitInNewTransaction` wraps `runWithTenantContext` + `emit` for
+ * convenience (e.g., the audit emitter interceptor which fires post-response).
+ *
+ * Event type registry
+ * -------------------
+ * Only `audit.event.created` is currently a registered type (FR-C-007).
+ * New event types require a separate approval PR per T541. The `OUTBOX_EVENT_TYPES`
+ * constant is the single source of truth for approved types.
+ *
+ * Redaction obligation
+ * --------------------
+ * The `payload` is never logged in full (Constitution XIV, FR-C-008).
+ * Callers must NOT log the emitted row or its payload — structured pino
+ * redaction at the transport boundary is the enforcement mechanism.
+ *
+ * UUID generation
+ * ---------------
+ * Uses `crypto.randomUUID()` (Node 14.17+ built-in) — UUIDv4. UUIDv7
+ * (time-ordered) is the production preference per the schema docs, but
+ * the `packages/db` package has no dependency on the `uuid` npm package
+ * (which lives in `@data-pulse-2/shared`). UUIDv4 is structurally
+ * identical to UUIDv7 for correctness purposes; the schema accepts both.
+ * A future refactor can swap this to UUIDv7 when the dependency is added.
+ */
+import { randomUUID } from "node:crypto";
+import type { PoolClient, Pool } from "pg";
+import { runWithTenantContext, type TenantContext } from "../middleware/tenant-context";
+
+// ---------------------------------------------------------------------------
+// Event-type registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Approved outbox event types. Adding a new type requires a separate PR per T541.
+ * The first (and currently only) type is `audit.event.created` (FR-C-007).
+ */
+export const OUTBOX_EVENT_TYPES = {
+  AUDIT_EVENT_CREATED: "audit.event.created",
+} as const;
+
+export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
+
+// ---------------------------------------------------------------------------
+// Emit input shape
+// ---------------------------------------------------------------------------
+
+/**
+ * The data a producer must supply to emit an outbox event.
+ * Server-stamped fields (`event_id`, `created_at`, `updated_at`, `occurred_at`
+ * default, `delivery_state` default, `attempts` default) are NOT in this shape.
+ */
+export interface OutboxEmitInput {
+  /** Registry-controlled event type. Must be one of `OUTBOX_EVENT_TYPES`. */
+  readonly eventType: OutboxEventType;
+  /** Tenant that owns the event. Must match the active tenant context. */
+  readonly tenantId: string;
+  /** Store scope; null for tenant-level events. */
+  readonly storeId?: string | null;
+  /** Event-type-specific body. Never logged in full. */
+  readonly payload: Record<string, unknown>;
+  /** Optional correlation id from the originating request or job. */
+  readonly correlationId?: string | null;
+  /**
+   * Optional business event timestamp (UTC). Defaults to `now()` in the DB
+   * when omitted, which is the correct value in the majority of cases.
+   */
+  readonly occurredAt?: Date | null;
+}
+
+// ---------------------------------------------------------------------------
+// emit — in-transaction helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert one `outbox_events` row using the CALLER'S already-open `PoolClient`.
+ *
+ * The client must already be inside a transaction with the appropriate tenant
+ * GUCs set (`app.current_tenant` = `input.tenantId`, `app.is_platform_admin`
+ * per the caller's context). The INSERT will fail RLS WITH CHECK if the tenant
+ * context does not match the row's `tenant_id`.
+ *
+ * Returns the generated `event_id` (UUIDv4; see file header for the v7 note)
+ * for the caller to log or surface for correlation.
+ */
+export async function emit(
+  client: PoolClient,
+  input: OutboxEmitInput,
+): Promise<string> {
+  const eventId = randomUUID();
+
+  // SQL DEFAULT (now()) only applies when the column is OMITTED from the
+  // INSERT column list — passing an explicit NULL would violate the NOT NULL
+  // constraint. Use COALESCE($7::timestamptz, now()) so callers can pass null
+  // and still get the DB-side default.
+  await client.query(
+    `INSERT INTO outbox_events
+       (event_id, tenant_id, store_id, event_type, payload,
+        delivery_state, attempts, correlation_id, occurred_at)
+     VALUES
+       ($1, $2, $3, $4, $5::jsonb,
+        'pending', 0, $6, COALESCE($7::timestamptz, now()))`,
+    [
+      eventId,
+      input.tenantId,
+      input.storeId ?? null,
+      input.eventType,
+      JSON.stringify(input.payload),
+      input.correlationId ?? null,
+      input.occurredAt ?? null,
+    ],
+  );
+
+  return eventId;
+}
+
+// ---------------------------------------------------------------------------
+// emitInNewTransaction — convenience helper for post-response callers
+// ---------------------------------------------------------------------------
+
+/**
+ * Emit an outbox event in a fresh transaction.
+ *
+ * Opens a new connection from `pool`, sets tenant-context GUCs via
+ * `runWithTenantContext`, inserts the row, and commits.
+ *
+ * Use this from callers that are NOT already inside a business-state-change
+ * transaction (e.g., the audit interceptor which fires post-response).
+ *
+ * NOTE: Because this opens a separate transaction, the event is NOT atomic
+ * with the business write. If the business write already committed and this
+ * helper throws, the event is lost. For true transactional atomicity, callers
+ * should use `emit(client, ...)` inside the same transaction.
+ *
+ * The audit interceptor uses this pattern, accepting the best-effort
+ * semantics; the existing BullMQ-direct path had the same limitation.
+ *
+ * Returns the generated `event_id`.
+ */
+export async function emitInNewTransaction(
+  pool: Pool,
+  ctx: TenantContext,
+  input: OutboxEmitInput,
+): Promise<string> {
+  return runWithTenantContext(pool, ctx, async (client) => {
+    return emit(client, input);
+  });
+}

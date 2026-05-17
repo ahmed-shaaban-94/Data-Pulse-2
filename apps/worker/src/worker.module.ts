@@ -105,6 +105,7 @@ import {
 } from "./audit/drizzle-audit-retention.repository";
 import { AuditRetentionWorker } from "./audit/audit-retention.worker";
 import { AuditRetentionScheduler } from "./audit/audit-retention.scheduler";
+import { OutboxModule } from "./outbox/outbox.module";
 
 /**
  * Real BullMQ-backed factory. Constructs a `bullmq.Worker` that
@@ -309,6 +310,7 @@ export function auditRetentionRepoProviderFactory(
 export const PG_POOL = "PG_POOL";
 
 @Module({
+  imports: [OutboxModule],
   providers: [
     // ── Email pipeline (existing) ─────────────────────────────────────
     {
