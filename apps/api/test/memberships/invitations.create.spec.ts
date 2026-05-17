@@ -24,6 +24,8 @@
  */
 import "reflect-metadata";
 
+import { randomUUID } from "node:crypto";
+
 import { hashPassword } from "@data-pulse-2/auth";
 import { INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
@@ -207,6 +209,17 @@ function http() {
   return request(app.getHttpServer());
 }
 
+/**
+ * Generate a unique per-call Idempotency-Key satisfying the
+ * IdempotencyInterceptor regex (16–128 printable ASCII, no whitespace).
+ * A UUIDv4 is 36 characters and fits cleanly. Each call returns a new value
+ * so tests that issue multiple POSTs (e.g. the 409 duplicate-pending test)
+ * do not accidentally trigger replay semantics.
+ */
+function idemKey(): string {
+  return randomUUID();
+}
+
 function maybeSkip(): boolean {
   if (dockerSkipped) {
     // eslint-disable-next-line no-console
@@ -264,6 +277,7 @@ describe("POST /api/v1/memberships/invite — happy path (all)", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "invitee@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -281,6 +295,7 @@ describe("POST /api/v1/memberships/invite — happy path (all)", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "enqueue@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -304,6 +319,7 @@ describe("POST /api/v1/memberships/invite — happy path (specific)", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({
         email: "specific@example.com",
         role_code: "owner",
@@ -329,6 +345,7 @@ describe("POST /api/v1/memberships/invite — token security", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "notoken@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -343,6 +360,7 @@ describe("POST /api/v1/memberships/invite — token security", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "dbtoken@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -366,6 +384,7 @@ describe("POST /api/v1/memberships/invite — email normalisation", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "  Normalized@Example.COM  ", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -401,6 +420,7 @@ describe("POST /api/v1/memberships/invite — stale invite auto-expiry", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "stale@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -423,10 +443,13 @@ describe("POST /api/v1/memberships/invite — duplicate pending invite", () => {
   it("returns 409 when a non-expired pending invite already exists", async () => {
     if (maybeSkip()) return;
     const cookie = await signInWithTenant(OWNER_EMAIL, OWNER_PASS, ALPHA_ID);
-    // First invite succeeds
+    // First invite succeeds. Use a fresh key per request so the second
+    // call exercises the domain-level duplicate-pending path (409 from
+    // InvitationsService), not the idempotency replay/conflict path.
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "duplicate@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(201);
 
@@ -434,6 +457,7 @@ describe("POST /api/v1/memberships/invite — duplicate pending invite", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "duplicate@example.com", role_code: "owner", store_access_kind: "all" })
       .expect(409);
   });
@@ -448,6 +472,7 @@ describe("POST /api/v1/memberships/invite — role validation", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "x@example.com", role_code: "no_such_role", store_access_kind: "all" })
       .expect(400);
   });
@@ -458,6 +483,7 @@ describe("POST /api/v1/memberships/invite — role validation", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "x@example.com", role_code: "platform_admin", store_access_kind: "all" })
       .expect(400);
   });
@@ -472,6 +498,7 @@ describe("POST /api/v1/memberships/invite — Zod validation", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "x@example.com", role_code: "owner", store_access_kind: "specific" })
       .expect(400);
   });
@@ -482,6 +509,7 @@ describe("POST /api/v1/memberships/invite — Zod validation", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({
         email: "x@example.com",
         role_code: "owner",
@@ -497,6 +525,7 @@ describe("POST /api/v1/memberships/invite — Zod validation", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "not-an-email", role_code: "owner", store_access_kind: "all" })
       .expect(400);
   });
@@ -511,6 +540,7 @@ describe("POST /api/v1/memberships/invite — cross-tenant store_ids", () => {
     await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({
         email: "x@example.com",
         role_code: "owner",
@@ -574,6 +604,7 @@ describe("POST /api/v1/memberships/invite — tenant_admin caller", () => {
     const res = await http()
       .post("/api/v1/memberships/invite")
       .set("Cookie", cookie)
+      .set("Idempotency-Key", idemKey())
       .send({ email: "invited-by-admin@example.com", role_code: "store_staff", store_access_kind: "all" })
       .expect(201);
 
