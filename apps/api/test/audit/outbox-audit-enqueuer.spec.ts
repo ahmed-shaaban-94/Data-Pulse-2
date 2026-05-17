@@ -150,6 +150,12 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     // SETUP (seeding the tenants row) and ASSERTIONS (reading rows back
     // unconstrained by RLS), but never to drive the SUT.
     const enqueuer = new OutboxAuditEnqueuer(env!.app);
+    // `request_id` must be a valid UUID — the OutboxAuditEnqueuer threads
+    // it through as `correlationId`, and `outbox_events.correlation_id` is
+    // a `uuid` column. A non-UUID value (e.g. "req-corr-0001") would fail
+    // the INSERT with `invalid input syntax for type uuid` regardless of
+    // RLS / pool choice.
+    const REQUEST_UUID = "00000000-0000-7000-8000-00000000c001";
     const payload: AuditJobPayload = {
       actor_user_id: "00000000-0000-7000-8000-000000000010",
       actor_label:   null,
@@ -158,7 +164,7 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
       action:        "context.switch.tenant",
       target_type:   "tenant",
       target_id:     "00000000-0000-7000-8000-000000000020",
-      request_id:    "req-corr-0001",
+      request_id:    REQUEST_UUID,
       metadata:      null,
     };
 
@@ -189,7 +195,7 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     expect(row.event_type).toBe("audit.event.created");
     expect(row.delivery_state).toBe("pending");
     expect(row.attempts).toBe(0);
-    expect(row.correlation_id).toBe("req-corr-0001");
+    expect(row.correlation_id).toBe(REQUEST_UUID);
     expect(row.payload).toMatchObject({
       actor_user_id: payload.actor_user_id,
       tenant_id: payload.tenant_id,
@@ -206,6 +212,9 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     // under the app role. The platform-admin GUC the enqueuer sets is what
     // makes the INSERT pass RLS WITH CHECK on the platform-scoped row.
     const enqueuer = new OutboxAuditEnqueuer(env!.app);
+    // Same UUID-column constraint: request_id flows into correlation_id and
+    // must be a real UUID.
+    const PLATFORM_REQUEST_UUID = "00000000-0000-7000-8000-00000000c002";
     const payload: AuditJobPayload = {
       actor_user_id: null,
       actor_label:   "platform-admin",
@@ -214,7 +223,7 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
       action:        "platform.tenant.created",
       target_type:   null,
       target_id:     null,
-      request_id:    "platform-req-0001",
+      request_id:    PLATFORM_REQUEST_UUID,
       metadata:      null,
     };
 
@@ -223,7 +232,8 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     const rows = await env!.admin.query<{ tenant_id: string; event_type: string }>(
       `SELECT tenant_id, event_type
          FROM outbox_events
-        WHERE correlation_id = 'platform-req-0001'`,
+        WHERE correlation_id = $1`,
+      [PLATFORM_REQUEST_UUID],
     );
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]!.tenant_id).toBe(NIL_UUID);
