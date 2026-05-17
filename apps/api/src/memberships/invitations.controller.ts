@@ -16,6 +16,7 @@ import type { TenantContextRequest } from "../context/types";
 import { InvitationsService } from "./invitations.service";
 import { InvitationCreateSchema, type InvitationCreateDto } from "./invitation.dto";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { Idempotent } from "../idempotency/idempotent.decorator";
 
 @Controller("api/v1/memberships")
 @UseGuards(DashboardAuthGuard, TenantContextGuard)
@@ -26,6 +27,7 @@ export class InvitationsController {
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin", { denyAs: 403 })
+  @Idempotent("required")
   async invite(
     @Req() request: TenantContextRequest,
     @Body(new ZodValidationPipe(InvitationCreateSchema)) dto: InvitationCreateDto,

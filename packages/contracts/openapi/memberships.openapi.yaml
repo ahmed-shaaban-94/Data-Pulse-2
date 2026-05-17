@@ -12,6 +12,21 @@ paths:
     post:
       summary: Invite an email address to the active tenant.
       operationId: createInvitation
+      x-idempotency: required
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+            pattern: "^[\\x21-\\x7E]{16,128}$"
+          description: >
+            Client-generated opaque token (UUIDv7 recommended) that enables
+            safe retries. The same key with the same body replays the original
+            response. The same key with a different body returns 409.
+            Missing header returns 400 (policy: required).
       requestBody:
         required: true
         content:
@@ -21,16 +36,42 @@ paths:
       responses:
         "201":
           description: Invitation created; email queued.
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+              description: Present with value "true" when this response is a replay of an earlier successful request.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Invitation"
+        "400":
+          description: >
+            Bad request. Possible error codes:
+            - `validation_error` — invalid request body.
+            - `idempotency_key_required` — Idempotency-Key header is missing.
+            - `idempotency_key_malformed` — header value fails format validation.
         "401":
           description: No active tenant.
         "403":
           description: Insufficient role.
         "409":
-          description: A pending invitation already exists for that email in this tenant.
+          description: >
+            Conflict. Possible causes:
+            - A pending invitation already exists for that email in this tenant.
+            - The same Idempotency-Key was previously used with a different request body (error code `idempotency_key_conflict`).
+              This is a terminal client error — generate a new key.
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is still
+            being processed. Retry after the `Retry-After` interval with the
+            same key and body.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
   /api/v1/memberships/{membership_id}:
     parameters:
       - in: path

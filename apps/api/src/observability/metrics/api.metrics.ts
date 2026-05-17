@@ -81,6 +81,9 @@ assertMetricLabels("tenant_context_failure_total", ["reason"]);
 assertMetricLabels("validation_failure_total", ["route"]);
 assertMetricLabels("suspicious_login_total", ["reason"]);
 assertMetricLabels("cross_tenant_rejection_total", ["route"]);
+assertMetricLabels("idempotency_replay_total", ["route"]);
+assertMetricLabels("idempotency_conflict_total", ["route"]);
+assertMetricLabels("idempotency_in_progress_total", ["route"]);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -120,6 +123,18 @@ const _suspiciousLogin: Counter = meter.createCounter("suspicious_login_total", 
 const _crossTenantRejection: Counter = meter.createCounter(
   "cross_tenant_rejection_total",
   { description: "Cross-tenant access rejections by route." },
+);
+const _idempotencyReplay: Counter = meter.createCounter(
+  "idempotency_replay_total",
+  { description: "Idempotent replay responses by route." },
+);
+const _idempotencyConflict: Counter = meter.createCounter(
+  "idempotency_conflict_total",
+  { description: "Idempotency key conflicts (409) by route." },
+);
+const _idempotencyInProgress: Counter = meter.createCounter(
+  "idempotency_in_progress_total",
+  { description: "In-flight idempotency collisions (425) by route." },
 );
 
 // ---------------------------------------------------------------------------
@@ -161,6 +176,10 @@ export interface SuspiciousLoginAttrs {
 }
 
 export interface CrossTenantRejectionAttrs {
+  route: string;
+}
+
+export interface IdempotencyRouteAttrs {
   route: string;
 }
 
@@ -233,6 +252,30 @@ export function recordCrossTenantRejection(attrs: CrossTenantRejectionAttrs): vo
   _crossTenantRejection.add(1, attrs as unknown as Attributes);
 }
 
+/**
+ * Increment idempotency_replay_total.
+ * Emission site: IdempotencyInterceptor replay short-circuit path.
+ */
+export function recordIdempotencyReplay(attrs: IdempotencyRouteAttrs): void {
+  _idempotencyReplay.add(1, attrs as unknown as Attributes);
+}
+
+/**
+ * Increment idempotency_conflict_total.
+ * Emission site: IdempotencyInterceptor 409 conflict path.
+ */
+export function recordIdempotencyConflict(attrs: IdempotencyRouteAttrs): void {
+  _idempotencyConflict.add(1, attrs as unknown as Attributes);
+}
+
+/**
+ * Increment idempotency_in_progress_total.
+ * Emission site: IdempotencyInterceptor 425 in-progress path.
+ */
+export function recordIdempotencyInProgress(attrs: IdempotencyRouteAttrs): void {
+  _idempotencyInProgress.add(1, attrs as unknown as Attributes);
+}
+
 // ---------------------------------------------------------------------------
 // Signal-name registry — used by T460 signal-presence tests
 // ---------------------------------------------------------------------------
@@ -253,6 +296,9 @@ export const API_METRIC_NAMES = [
   "validation_failure_total",
   "suspicious_login_total",
   "cross_tenant_rejection_total",
+  "idempotency_replay_total",
+  "idempotency_conflict_total",
+  "idempotency_in_progress_total",
 ] as const satisfies readonly string[];
 
 export type ApiMetricName = (typeof API_METRIC_NAMES)[number];

@@ -37,6 +37,7 @@
 import { Module } from "@nestjs/common";
 import { Queue, type JobsOptions } from "bullmq";
 import { Pool } from "pg";
+import Redis from "ioredis";
 
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
@@ -102,11 +103,19 @@ export function emailJobEnqueuerFactory(): EmailJobEnqueuer {
 }
 
 /**
- * Stub Redis used until a real client is wired. Every `incr` returns 1
- * so rate-limit decisions always come back "allowed". Production MUST
- * override this provider; the class name is intentionally loud.
+ * Stub Redis used when `REDIS_URL` is absent (local dev / CI without Redis).
+ *
+ * Rate-limit surface: `incr` always returns 1 so limits never trigger.
+ *
+ * Idempotency surface: `get` always returns null, `set` always returns null
+ * (NX "fails"), `del` is a no-op. This means idempotency storage is disabled
+ * in no-Redis environments — every request is treated as fresh. That is the
+ * safe behaviour: better to re-execute than to replay stale data from memory.
+ *
+ * Production MUST override this with a real ioredis client; the class name is
+ * intentionally loud.
  */
-class AlwaysAllowRedis implements RedisLike {
+export class AlwaysAllowRedis implements RedisLike {
   async incr(_key: string): Promise<number> {
     return 1;
   }
@@ -115,6 +124,15 @@ class AlwaysAllowRedis implements RedisLike {
   }
   async pttl(_key: string): Promise<number> {
     return -1;
+  }
+  async get(_key: string): Promise<string | null> {
+    return null;
+  }
+  async set(_key: string, _value: string, _opts: { px: number } | { nx: true; ex: number }): Promise<"OK" | null> {
+    return null;
+  }
+  async del(_key: string): Promise<number> {
+    return 0;
   }
 }
 
@@ -136,7 +154,13 @@ class AlwaysAllowRedis implements RedisLike {
     },
     {
       provide: REDIS_CLIENT,
-      useFactory: (): RedisLike => new AlwaysAllowRedis(),
+      useFactory: (): RedisLike => {
+        const url = process.env["REDIS_URL"];
+        if (!url) return new AlwaysAllowRedis();
+        // Real ioredis client — satisfies both RateLimiter's RedisLike surface
+        // and IdempotencyModule's get/set/del surface.
+        return new Redis(url) as unknown as RedisLike;
+      },
     },
     {
       provide: EMAIL_JOB_ENQUEUER,
@@ -194,6 +218,10 @@ class AlwaysAllowRedis implements RedisLike {
     // EMAIL_JOB_ENQUEUER is exported so downstream modules (MembershipsModule)
     // can inject the enqueuer for invitation jobs without re-wiring it.
     EMAIL_JOB_ENQUEUER,
+    // REDIS_CLIENT is exported so IdempotencyModule can reuse the single Redis
+    // client (real ioredis when REDIS_URL is set, AlwaysAllowRedis stub otherwise)
+    // rather than creating a second connection.
+    REDIS_CLIENT,
   ],
 })
 export class AuthModule {}

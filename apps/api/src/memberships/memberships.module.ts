@@ -9,9 +9,10 @@ import { MembershipsService } from "./memberships.service";
 import { InvitationsController } from "./invitations.controller";
 import { InvitationsRepository } from "./invitations.repository";
 import { InvitationsService } from "./invitations.service";
+import { IdempotencyModule } from "../idempotency/idempotency.module";
 
 @Module({
-  imports: [AuthModule, ContextModule],
+  imports: [AuthModule, ContextModule, IdempotencyModule],
   controllers: [MembershipsController, InvitationsController],
   providers: [
     MembershipsRepository,

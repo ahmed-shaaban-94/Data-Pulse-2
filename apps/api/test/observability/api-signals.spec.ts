@@ -51,7 +51,7 @@ describe("T460 — signal presence: every API metric is in ALLOWED_METRIC_LABELS
     });
   }
 
-  it("API_METRIC_NAMES covers all nine documented API signals", () => {
+  it("API_METRIC_NAMES covers all documented API signals (nine base + three idempotency)", () => {
     const expected = [
       "http_request_count",
       "http_request_duration_seconds",
@@ -62,6 +62,10 @@ describe("T460 — signal presence: every API metric is in ALLOWED_METRIC_LABELS
       "validation_failure_total",
       "suspicious_login_total",
       "cross_tenant_rejection_total",
+      // Track D idempotency signals (T517/T523)
+      "idempotency_replay_total",
+      "idempotency_conflict_total",
+      "idempotency_in_progress_total",
     ];
     expect([...API_METRIC_NAMES].sort()).toEqual([...expected].sort());
   });
