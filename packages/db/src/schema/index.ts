@@ -12,3 +12,4 @@ export * from "./invitations";
 export * from "./audit_events";
 export * from "./idempotency_keys";
 export * from "./shifts";
+export * from "./outbox_events";
