@@ -54,10 +54,42 @@ import {
   type PgTestEnv,
 } from "../_helpers/postgres-container";
 
+/**
+ * Test stub for the REDIS_CLIENT provider.
+ *
+ * Must satisfy three surfaces consumed by the production module graph:
+ *   1. RateLimiter (`incr`, `pexpireNx`, `pttl`) — original surface.
+ *   2. IdempotencyKeyStore (`get`, `set` with `{ px }`) — replay storage.
+ *   3. InProgressMarker (`set` with `{ nx, ex }`, `del`) — in-flight marker.
+ *
+ * The marker calls `redis.set(...)` unconditionally; if `set` is missing the
+ * interceptor throws `TypeError: this.redis.set is not a function` and the
+ * GlobalExceptionFilter returns 500. Mirrors the production AlwaysAllowRedis
+ * in `apps/api/src/auth/auth.module.ts` so the test exercises the same shape
+ * the real stack would see in a no-Redis environment: `get` returns null
+ * (no replay possible), `set` returns null (NX "fails" → marker.trySet
+ * reports the slot as taken, false), `del` is a no-op.
+ *
+ * Returning null from `set` means `marker.trySet` returns false — i.e. every
+ * request appears "in-flight to someone else" and the interceptor returns 425.
+ * That would still break the spec, so for this test stub we return "OK" to
+ * grant the marker slot to every caller (single-threaded request flow, no
+ * actual concurrency to protect against). This matches the spec's intent:
+ * exercise the route's domain behaviour, not the idempotency replay layer.
+ */
 class AlwaysAllowRedis implements RedisLike {
   async incr(): Promise<number> { return 1; }
   async pexpireNx(): Promise<number> { return 1; }
   async pttl(): Promise<number> { return -1; }
+  async get(_key: string): Promise<string | null> { return null; }
+  async set(
+    _key: string,
+    _value: string,
+    _opts: { px: number } | { nx: true; ex: number },
+  ): Promise<"OK" | null> {
+    return "OK";
+  }
+  async del(_key: string): Promise<number> { return 0; }
 }
 
 // ---- Fixture IDs -----------------------------------------------------------
