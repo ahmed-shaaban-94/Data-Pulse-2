@@ -122,13 +122,53 @@ Logs follow the redaction matrix; payloads are never logged in full ([lifecycle.
 
 ---
 
-## 6. Empirical findings (T550–T552 spike outputs)
+## 6. Spike findings (T550–T552)
 
-> **Not yet run.** Per [tasks.md §9.2](../../specs/004-platform-production-readiness/tasks.md), the spike tasks (T550–T552) are gated and the spike branch is **NOT** merged to main. This section will be filled in when the spike PR records empirical findings against a Testcontainer-backed DB and the spike branch lands.
->
-> Expected measurements to record here:
-> - Claim throughput at the default poll interval (1s) and batch size (50).
-> - Tail latency from row insert to consumer dispatch.
-> - Behavior under N concurrent drainer replicas (lock contention or absence thereof under SKIP LOCKED).
-> - Behavior with a large `failed` backlog (do the backoff windows admit too many rows at once?).
-> - Whether 1s poll interval is acceptable end-to-end or needs to be tightened.
+**Branch**: `spike/004-p6-outbox-drainer-validation` (DO NOT MERGE per tasks.md).
+**Date**: 2026-05-17. Full measurements in `spikes/004-outbox-drainer-validation/findings.md`.
+**Constitution refs**: Section V (Async Work Belongs in Workers), Section VII (Observable Systems),
+Section XIV (PII & Data Lifecycle Discipline).
+
+### T550 -- SKIP LOCKED concurrency (Constitution Section V)
+
+Two concurrent drainer loops each claiming batches of 10 from 200 pending
+rows produced zero overlap: drainer A claimed 100 rows, drainer B claimed
+100 rows, intersection empty. Wall time ~1 285 ms. A 4-drainer / 2-event
+run confirmed SKIP LOCKED returns immediately (non-blocking) when all
+eligible rows are locked -- the two drainers that found nothing exited in
+~47 ms total with no blocking, no deadlock, no advisory lock pressure.
+
+**Evidence supports the horizontal-scaling claim in Section 1.2 above.**
+
+### T551 -- Retry lifecycle and backoff (Constitution Section V)
+
+The `attempts` counter advanced from 0 to 3 across 3 claim cycles on a
+single event. `next_attempt_at` deltas were strictly increasing (114 ms,
+209 ms with a compressed test schedule). Final status was `processed` with
+`attempts=3`. The `last_error` field held only the sanitized error class
+name (`TransientError`), never the raw exception message.
+
+**Spike confirms `attempts` must be incremented at claim time (inside the
+claim CTE), not in the failure handler. The production drainer (T570/T571)
+must follow this pattern.**
+
+### T552 -- Dead-letter and PII redaction (Constitution Section VII, Section XIV)
+
+A poison event (consumer always throws `IntentionalError`) reached
+`dead_lettered` after exactly 8 attempts. `processed_at` was set.
+7 pending-retry transitions all had strictly increasing `next_attempt_at`.
+8 pino log lines were captured; neither `pii-canary@example.test` nor
+`hunter2` appeared in any log line. The canary values were confirmed present
+in the `payload` DB column -- the redaction was applied at the logger
+boundary as required by Constitution Section XIV and FR-C-008.
+
+**The "never log payload" principle (Section VII) holds: pino redact.paths
+catches structured field keys AND the spike code itself never emitted the
+payload or any PII-suspect field.**
+
+### Recommendation
+
+Proceed to P7 implementation as designed. The SKIP LOCKED + claim-update
+pattern is production-ready for the first outbox slice. See
+`spikes/004-outbox-drainer-validation/findings.md` Section 4 for caveats
+(statement-timeout interaction, last_error persistence, column naming delta).
