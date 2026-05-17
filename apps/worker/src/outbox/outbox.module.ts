@@ -64,7 +64,8 @@ export const OUTBOX_AUDIT_QUEUE = "OUTBOX_AUDIT_QUEUE";
 /**
  * No-op BullMQ queue for dev/test environments without REDIS_URL.
  * Matches the `AuditQueueLike` interface so `AuditEventCreatedConsumer`
- * can be constructed normally.
+ * can be constructed normally. No shutdown is needed — there is no
+ * underlying connection to close.
  */
 export class NoOpAuditQueue implements AuditQueueLike {
   async add(_name: string, _data: unknown, _opts?: Record<string, unknown>): Promise<unknown> {
@@ -73,11 +74,69 @@ export class NoOpAuditQueue implements AuditQueueLike {
   }
 }
 
+// ---------------------------------------------------------------------------
+// OutboxAuditQueue — Nest-aware wrapper with lifecycle
+// ---------------------------------------------------------------------------
+
 /**
- * Factory for the OUTBOX_AUDIT_QUEUE provider.
- * Uses the same Redis URL guard as the API's `AuditEnqueuerModule`.
+ * Class-token wrapper around the underlying queue (real BullMQ `Queue` or
+ * `NoOpAuditQueue`) so Nest can fire `onModuleDestroy` on shutdown.
+ *
+ * Why a wrapper class
+ * -------------------
+ * Nest only invokes `onModuleDestroy` on providers whose resolved value is
+ * a class instance with that hook. A `useFactory` returning a raw `Queue`
+ * is opaque to Nest — `app.close()` would not call `queue.close()`, and on
+ * SIGTERM the worker process would hang on the open Redis connection until
+ * forced. Mirrors the `AuditDbPool` pattern in `worker.module.ts`.
+ *
+ * The NoOp path passes a null `closeFn` so `onModuleDestroy` is itself a
+ * no-op — there is no Redis connection to release.
  */
-export function outboxAuditQueueFactory(): AuditQueueLike {
+@Injectable()
+export class OutboxAuditQueue implements AuditQueueLike, OnModuleDestroy {
+  private destroyed = false;
+
+  constructor(
+    private readonly inner: AuditQueueLike,
+    private readonly closeFn: (() => Promise<void>) | null,
+  ) {}
+
+  async add(
+    name: string,
+    data: unknown,
+    opts?: Record<string, unknown>,
+  ): Promise<unknown> {
+    return this.inner.add(name, data, opts);
+  }
+
+  /**
+   * Nest lifecycle hook — fires on `app.close()` from `main.ts`.
+   *
+   * Idempotent: a second invocation is a no-op (the `destroyed` flag flips
+   * before awaiting `closeFn`, mirroring `AuditDbPool.onModuleDestroy`).
+   *
+   * For the real `Queue` path this calls `Queue.close()`, which drains the
+   * internal connection pool. For the NoOp path `closeFn` is null and this
+   * is a no-op.
+   */
+  async onModuleDestroy(): Promise<void> {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    if (this.closeFn !== null) {
+      await this.closeFn();
+    }
+  }
+}
+
+/**
+ * Factory for the OutboxAuditQueue / OUTBOX_AUDIT_QUEUE providers.
+ * Uses the same Redis URL guard as the API's `AuditEnqueuerModule`.
+ *
+ * Returns an `OutboxAuditQueue` (the lifecycle-aware wrapper) — never a
+ * raw `Queue` — so Nest's `onModuleDestroy` hook fires on shutdown.
+ */
+export function outboxAuditQueueFactory(): OutboxAuditQueue {
   const url = process.env["REDIS_URL"];
   if (!url) {
     if (process.env["NODE_ENV"] === "production") {
@@ -86,12 +145,13 @@ export function outboxAuditQueueFactory(): AuditQueueLike {
           "(audit consumer cannot enqueue without it).",
       );
     }
-    return new NoOpAuditQueue();
+    return new OutboxAuditQueue(new NoOpAuditQueue(), null);
   }
-  return new Queue(OUTBOX_AUDIT_QUEUE_NAME, {
+  const queue = new Queue(OUTBOX_AUDIT_QUEUE_NAME, {
     connection: { url },
     defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
   });
+  return new OutboxAuditQueue(queue, () => queue.close());
 }
 
 // ---------------------------------------------------------------------------
@@ -120,9 +180,19 @@ export class OutboxDrainerRunner implements OnModuleInit, OnModuleDestroy {
 // Module
 // ---------------------------------------------------------------------------
 
-const outboxAuditQueueProvider: Provider = {
-  provide: OUTBOX_AUDIT_QUEUE,
+// OutboxAuditQueue is registered as a CLASS-token provider so Nest tracks
+// it for lifecycle hooks (mirrors the `AuditDbPool` pattern in worker.module.ts).
+// The string token OUTBOX_AUDIT_QUEUE aliases the same instance via
+// useExisting, preserving a stable injection identifier for downstream
+// consumers (`AuditEventCreatedConsumer`).
+const outboxAuditQueueClassProvider: Provider = {
+  provide: OutboxAuditQueue,
   useFactory: outboxAuditQueueFactory,
+};
+
+const outboxAuditQueueTokenProvider: Provider = {
+  provide: OUTBOX_AUDIT_QUEUE,
+  useExisting: OutboxAuditQueue,
 };
 
 const outboxConsumerRegistryProvider: Provider = {
@@ -138,10 +208,12 @@ const outboxConsumerRegistryProvider: Provider = {
 @Module({
   imports: [],
   providers: [
-    outboxAuditQueueProvider,
+    outboxAuditQueueClassProvider,
+    outboxAuditQueueTokenProvider,
     outboxConsumerRegistryProvider,
   ],
   exports: [
+    OutboxAuditQueue,
     OUTBOX_AUDIT_QUEUE,
     OutboxConsumerRegistry,
   ],

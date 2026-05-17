@@ -142,7 +142,14 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
   it("inserts an audit.event.created row with the payload preserved (tenant-scoped)", async () => {
     if (maybeSkip()) return;
 
-    const enqueuer = new OutboxAuditEnqueuer(env!.admin);
+    // The SUT runs against `env.app` (the non-superuser `app_test` role).
+    // Using `env.admin` (superuser) would silently bypass RLS even when
+    // FORCE ROW LEVEL SECURITY is set, which would defeat the point of
+    // exercising the enqueuer against a real schema — the INSERT could
+    // succeed for the wrong reason. `env.admin` is still used below for
+    // SETUP (seeding the tenants row) and ASSERTIONS (reading rows back
+    // unconstrained by RLS), but never to drive the SUT.
+    const enqueuer = new OutboxAuditEnqueuer(env!.app);
     const payload: AuditJobPayload = {
       actor_user_id: "00000000-0000-7000-8000-000000000010",
       actor_label:   null,
@@ -195,7 +202,10 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     if (maybeSkip()) return;
 
     const NIL_UUID = "00000000-0000-0000-0000-000000000000";
-    const enqueuer = new OutboxAuditEnqueuer(env!.admin);
+    // Same RLS-realism contract as the tenant-scoped test above: SUT runs
+    // under the app role. The platform-admin GUC the enqueuer sets is what
+    // makes the INSERT pass RLS WITH CHECK on the platform-scoped row.
+    const enqueuer = new OutboxAuditEnqueuer(env!.app);
     const payload: AuditJobPayload = {
       actor_user_id: null,
       actor_label:   "platform-admin",

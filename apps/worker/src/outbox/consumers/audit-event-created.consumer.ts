@@ -86,6 +86,15 @@ export interface AuditQueueLike {
 export const OUTBOX_AUDIT_QUEUE_NAME = "audit";
 export const OUTBOX_AUDIT_JOB_NAME = "audit-fanout";
 
+/**
+ * The NIL UUID — sentinel for "platform-scoped" audit events at the outbox
+ * row level (the outbox_events table requires tenant_id NOT NULL, so platform
+ * events use NIL_UUID instead of NULL). The downstream `AuditFanoutProcessor`
+ * expects `tenant_id: string | null` and treats `null` as platform-scoped, so
+ * NIL_UUID is mapped back to `null` when enqueuing the BullMQ job.
+ */
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
 // ---------------------------------------------------------------------------
 // Consumer
 // ---------------------------------------------------------------------------
@@ -114,15 +123,30 @@ export class AuditEventCreatedConsumer implements OutboxConsumer<AuditEventCreat
       throw new Error(`AuditEventCreatedConsumer: malformed payload — ${detail}`);
     }
 
-    // Enqueue to the existing BullMQ "audit" queue so the unchanged
-    // AuditFanoutProcessor can persist to audit_events.
-    // No jobId — every audit event must produce a distinct row (FR-AUDIT-1).
+    // The OUTBOX ENVELOPE — not the payload — is the source of truth for
+    // tenant_id and store_id. The payload arrived as JSONB from whatever
+    // produced the outbox row, and a future producer bug (or a malicious
+    // call path that bypasses tenant-context guards) could set those fields
+    // to a different tenant than the one the row is scoped to. Honouring
+    // payload tenant_id over envelope tenant_id would let a row land in
+    // tenant A while writing the audit_events row for tenant B.
+    //
+    // We therefore:
+    //   - Override the BullMQ job's `tenant_id` with `event.tenant_id`,
+    //     mapping NIL_UUID back to null so the existing platform-scoped
+    //     contract is preserved (AuditFanoutProcessor reads `null` as
+    //     "platform-scoped").
+    //   - Override `store_id` with `event.store_id` unconditionally — the
+    //     envelope value is `string | null`, already the right shape.
+    //   - Carry `correlation_id` as `request_id` only when the payload
+    //     omits one (existing contract).
+    const authoritativeTenantId =
+      event.tenant_id === NIL_UUID ? null : event.tenant_id;
+
     await this.auditQueue.add(OUTBOX_AUDIT_JOB_NAME, {
       ...parsed.data,
-      // Carry the correlation_id from the outbox envelope as the request_id
-      // if the payload doesn't already have one. The AuditFanoutProcessor
-      // coerces non-UUID request_id values to null, so passing the UUID here
-      // is safe.
+      tenant_id:  authoritativeTenantId,
+      store_id:   event.store_id,
       request_id: parsed.data.request_id ?? event.correlation_id,
     });
   }

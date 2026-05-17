@@ -212,3 +212,125 @@ describe("AuditEventCreatedConsumer — registry surface (AC-6)", () => {
     expect(consumer.eventType).toBe("audit.event.created");
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-7: envelope tenant_id / store_id are authoritative
+// ---------------------------------------------------------------------------
+//
+// Constitution §III (Backend Authority & Data Integrity) + §XII
+// (Authorization & Object Safety) require that the server, not the caller,
+// decides which tenant/store an event belongs to. The outbox envelope is
+// the source of truth — the JSONB payload could be tampered with by any
+// past producer bug, so its tenant_id / store_id fields are NOT trusted.
+//
+// These tests prove a tampered payload cannot redirect an audit event:
+// when payload tenant_id != envelope tenant_id, the envelope wins.
+
+describe("AuditEventCreatedConsumer — envelope identifiers are authoritative (AC-7)", () => {
+  const ENVELOPE_TENANT = "00000000-0000-7000-8000-000000000aaa";
+  const PAYLOAD_TENANT  = "00000000-0000-7000-8000-000000000bbb"; // attacker's value
+  const ENVELOPE_STORE  = "00000000-0000-7000-8000-000000000ccc";
+  const PAYLOAD_STORE   = "00000000-0000-7000-8000-000000000ddd"; // attacker's value
+  const NIL_UUID        = "00000000-0000-0000-0000-000000000000";
+
+  it("AC-7a: payload tenant_id different from envelope.tenant_id → envelope wins", async () => {
+    const queue = new FakeQueue();
+    const consumer = new AuditEventCreatedConsumer(queue);
+
+    const taintedPayload: AuditEventCreatedPayload = {
+      ...validPayload,
+      tenant_id: PAYLOAD_TENANT, // attacker tries to redirect
+    };
+
+    await consumer.handle(
+      envelope(taintedPayload, { tenant_id: ENVELOPE_TENANT }) as OutboxEventEnvelope<AuditEventCreatedPayload>,
+    );
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["tenant_id"]).toBe(ENVELOPE_TENANT);
+    expect(data["tenant_id"]).not.toBe(PAYLOAD_TENANT);
+  });
+
+  it("AC-7b: payload store_id different from envelope.store_id → envelope wins", async () => {
+    const queue = new FakeQueue();
+    const consumer = new AuditEventCreatedConsumer(queue);
+
+    const taintedPayload: AuditEventCreatedPayload = {
+      ...validPayload,
+      store_id: PAYLOAD_STORE, // attacker tries to redirect to another branch
+    };
+
+    await consumer.handle(
+      envelope(taintedPayload, {
+        tenant_id: ENVELOPE_TENANT,
+        store_id: ENVELOPE_STORE,
+      }) as OutboxEventEnvelope<AuditEventCreatedPayload>,
+    );
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["store_id"]).toBe(ENVELOPE_STORE);
+    expect(data["store_id"]).not.toBe(PAYLOAD_STORE);
+  });
+
+  it("AC-7c: payload store_id present but envelope.store_id is null → envelope (null) wins", async () => {
+    const queue = new FakeQueue();
+    const consumer = new AuditEventCreatedConsumer(queue);
+
+    const taintedPayload: AuditEventCreatedPayload = {
+      ...validPayload,
+      store_id: PAYLOAD_STORE, // attacker tries to scope to a store the row is NOT for
+    };
+
+    await consumer.handle(
+      envelope(taintedPayload, {
+        tenant_id: ENVELOPE_TENANT,
+        store_id: null,
+      }) as OutboxEventEnvelope<AuditEventCreatedPayload>,
+    );
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["store_id"]).toBeNull();
+  });
+
+  it("AC-7d: envelope tenant_id is NIL_UUID (platform-scoped) → BullMQ tenant_id is null", async () => {
+    // Platform-scoped audit events use NIL_UUID at the outbox row level
+    // (because outbox_events.tenant_id is NOT NULL) but the existing
+    // AuditFanoutProcessor convention is `null` for "platform-scoped".
+    // The consumer must map NIL_UUID back to null when enqueuing.
+    const queue = new FakeQueue();
+    const consumer = new AuditEventCreatedConsumer(queue);
+
+    const platformScopedPayload: AuditEventCreatedPayload = {
+      ...validPayload,
+      tenant_id: null, // already null in this payload — confirms the conversion
+    };
+
+    await consumer.handle(
+      envelope(platformScopedPayload, { tenant_id: NIL_UUID }) as OutboxEventEnvelope<AuditEventCreatedPayload>,
+    );
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["tenant_id"]).toBeNull();
+  });
+
+  it("AC-7e: malicious payload tenant_id WITH envelope NIL_UUID → BullMQ tenant_id is still null", async () => {
+    // Defence in depth: even if a malicious producer stuffed a real tenant
+    // UUID into a platform-scoped row's payload, the envelope's NIL_UUID
+    // must still win and the BullMQ job's tenant_id must end up null.
+    const queue = new FakeQueue();
+    const consumer = new AuditEventCreatedConsumer(queue);
+
+    const taintedPlatformPayload: AuditEventCreatedPayload = {
+      ...validPayload,
+      tenant_id: PAYLOAD_TENANT, // attacker tries to make a platform event tenant-scoped
+    };
+
+    await consumer.handle(
+      envelope(taintedPlatformPayload, { tenant_id: NIL_UUID }) as OutboxEventEnvelope<AuditEventCreatedPayload>,
+    );
+
+    const data = queue.calls[0]!.data as Record<string, unknown>;
+    expect(data["tenant_id"]).toBeNull();
+    expect(data["tenant_id"]).not.toBe(PAYLOAD_TENANT);
+  });
+});

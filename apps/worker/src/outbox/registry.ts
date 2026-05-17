@@ -19,12 +19,21 @@ export class OutboxConsumerRegistry {
   private readonly consumers = new Map<string, OutboxConsumer<unknown>>();
 
   /**
-   * Register a consumer. A second registration for the same event type
-   * replaces the first (last-write-wins). In production, each event type
-   * should have exactly one consumer; the drainer module enforces this
-   * by construction.
+   * Register a consumer. Throws if a consumer is already registered for the
+   * same `eventType` — silent last-write-wins replacement masks wiring bugs
+   * (two modules each trying to own the same event type, a test forgetting
+   * to start from a fresh registry, etc.). The drainer module wires every
+   * consumer exactly once at boot; a second registration is always a bug.
    */
   register(consumer: OutboxConsumer<unknown>): void {
+    const existing = this.consumers.get(consumer.eventType);
+    if (existing) {
+      throw new Error(
+        `OutboxConsumerRegistry: duplicate registration for event_type="${consumer.eventType}" ` +
+          `(existing consumerId="${existing.consumerId}", new consumerId="${consumer.consumerId}"). ` +
+          `Each event type may have at most one consumer in Slice 1B.`,
+      );
+    }
     this.consumers.set(consumer.eventType, consumer);
   }
 

@@ -127,7 +127,22 @@ describe("T561a: consumer without tenant context fails RLS on DB writes", () => 
       [EV_BAD],
     );
     expect(r.rows[0]!.delivery_state).toBe("failed");
+
+    // The error MUST be a Postgres RLS / permission denial — not a generic
+    // failure that happens to land us in `failed`. Without this guard the
+    // test would also pass if e.g. a future schema change to `audit_events`
+    // added a NOT NULL column (SQLSTATE 23502), or a missing column
+    // produced a syntax error — neither would actually prove the
+    // tenant-context invariant the spec is named after.
+    //
+    // SQLSTATE 42501 (`insufficient_privilege`) is the code Postgres uses
+    // both for "permission denied for table" and for "new row violates
+    // row-level security policy" — exactly the two outcomes a missing
+    // tenant context can produce on this INSERT.
     expect(consumerError).not.toBeNull();
+    const pgErr = consumerError as Error & { code?: string };
+    expect(pgErr.code).toBe("42501");
+    expect(pgErr.message).toMatch(/row.level security|policy|permission denied/i);
   });
 });
 

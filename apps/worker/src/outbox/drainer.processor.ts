@@ -103,6 +103,14 @@ export class DrainerProcessor {
   private readonly claimFn: (pool: Pool, batchSize: number) => Promise<ClaimedOutboxEvent[]>;
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  /**
+   * Set to `true` for the duration of an in-progress `tick()` invocation
+   * started by the poll-loop timer. When the interval fires while a previous
+   * tick is still running we SKIP the new tick rather than start a concurrent
+   * one. Calls to `tick()` made directly (e.g. from tests) are NOT gated by
+   * this flag — only the timer-driven loop respects it.
+   */
+  private inFlight = false;
 
   constructor(deps: DrainerDependencies) {
     this.pool = deps.pool;
@@ -114,14 +122,35 @@ export class DrainerProcessor {
 
   /**
    * Start the poll loop. Idempotent: a second `start()` is a no-op.
+   *
+   * Concurrency
+   * -----------
+   * `setInterval` does not wait for the previous callback to finish before
+   * firing the next one. Under load — where a single tick takes longer than
+   * `pollIntervalMs` — that would let two ticks run concurrently, doubling
+   * up on claim queries and racing on row state. The `inFlight` guard makes
+   * the loop strictly sequential: a missed tick is skipped, never queued.
+   * The next eligible tick fires at the next interval boundary after the
+   * in-progress one finishes.
    */
   start(): void {
     if (this.running) return;
     this.running = true;
     this.timer = setInterval(() => {
-      void this.tick().catch((err: unknown) => {
-        this.logError("drainer.tick unhandled error", err);
-      });
+      if (this.inFlight) {
+        // Previous tick still running — skip this interval rather than
+        // overlap. Logging this would be noisy on slow ticks; instead the
+        // operator should watch the drainer's tick-duration histogram (T-future).
+        return;
+      }
+      this.inFlight = true;
+      this.tick()
+        .catch((err: unknown) => {
+          this.logError("drainer.tick unhandled error", err);
+        })
+        .finally(() => {
+          this.inFlight = false;
+        });
     }, this.pollIntervalMs);
   }
 

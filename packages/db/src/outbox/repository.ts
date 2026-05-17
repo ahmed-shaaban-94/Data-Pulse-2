@@ -43,6 +43,25 @@ import type { Pool, PoolClient } from "pg";
 import { runWithTenantContext } from "../middleware/tenant-context";
 
 // ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by the repository's state-transition functions when the precondition
+ * for the transition is violated — i.e. the target row is NOT in `claimed`
+ * state, the UPDATE matched zero (or more than one) rows, or the caller asked
+ * for a transition the budget forbids (e.g. `markFailed` with attempts >=
+ * `MAX_ATTEMPTS`).
+ *
+ * The drainer's safe-mark wrappers catch this, log the error class, and keep
+ * polling. The named class is so `Error.name === "OutboxStateTransitionError"`
+ * survives the drainer's `extractErrorClass(err)` redaction.
+ */
+export class OutboxStateTransitionError extends Error {
+  override readonly name = "OutboxStateTransitionError";
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -189,6 +208,15 @@ export async function _claimBatchOnClient(
 /**
  * Transition a claimed row to `delivered`. Sets `processed_at = now()`.
  *
+ * Strict mode (state-machine invariant)
+ * -------------------------------------
+ * The UPDATE matches only rows whose current `delivery_state = 'claimed'`.
+ * If the affected row count is not exactly 1, the function throws
+ * `OutboxStateTransitionError`. Reasons that could trigger this:
+ *   - someone else transitioned the row (delivered/failed/dead_lettered)
+ *   - the row was deleted (retention purge)
+ *   - the row never existed (caller programming error)
+ *
  * Executed under platform-admin context so the drainer can update any tenant's row.
  * `last_error` is NOT cleared — it retains the last-known failure class for audit
  * context (per Slice 1A schema intent).
@@ -198,14 +226,16 @@ export async function markDelivered(pool: Pool, eventId: string): Promise<void> 
     pool,
     { tenantId: null, isPlatformAdmin: true },
     async (client) => {
-      await client.query(
+      const res = await client.query(
         `UPDATE outbox_events
             SET delivery_state = 'delivered',
                 processed_at   = now(),
                 updated_at     = now()
-          WHERE event_id = $1`,
+          WHERE event_id = $1
+            AND delivery_state = 'claimed'`,
         [eventId],
       );
+      assertSingleRow(res.rowCount, "markDelivered", eventId);
     },
   );
 }
@@ -219,9 +249,15 @@ export async function markDelivered(pool: Pool, eventId: string): Promise<void> 
  * only — never the full exception string, never PII) and schedules `next_attempt_at`
  * per the backoff schedule.
  *
- * If `attempts` has reached `MAX_ATTEMPTS`, callers SHOULD call `markDeadLettered`
- * instead. This function does NOT enforce the budget — the caller (drainer) is
- * responsible for choosing between `markFailed` and `markDeadLettered`.
+ * Strict mode (state-machine invariants)
+ * --------------------------------------
+ * 1. Rejects `attempts >= MAX_ATTEMPTS` — the budget is exhausted at that
+ *    point and the caller MUST invoke `markDeadLettered` instead. Throwing
+ *    here is defence in depth in case the drainer's routing logic regresses.
+ * 2. The UPDATE matches only rows whose current `delivery_state = 'claimed'`.
+ *    Throws `OutboxStateTransitionError` if the affected row count is not
+ *    exactly 1 (someone else moved the row, retention purged it, or the
+ *    event_id never existed).
  */
 export async function markFailed(
   pool: Pool,
@@ -229,6 +265,13 @@ export async function markFailed(
   attempts: number,
   errorClass: string,
 ): Promise<void> {
+  if (attempts >= MAX_ATTEMPTS) {
+    throw new OutboxStateTransitionError(
+      `markFailed: attempts=${attempts} has reached MAX_ATTEMPTS=${MAX_ATTEMPTS}; ` +
+        `caller must invoke markDeadLettered. event_id=${eventId}`,
+    );
+  }
+
   const delayMs = nextAttemptDelayMs(attempts);
   const nextAttemptAt = new Date(Date.now() + delayMs);
 
@@ -236,15 +279,17 @@ export async function markFailed(
     pool,
     { tenantId: null, isPlatformAdmin: true },
     async (client) => {
-      await client.query(
+      const res = await client.query(
         `UPDATE outbox_events
             SET delivery_state  = 'failed',
                 last_error      = $2,
                 next_attempt_at = $3,
                 updated_at      = now()
-          WHERE event_id = $1`,
+          WHERE event_id = $1
+            AND delivery_state = 'claimed'`,
         [eventId, errorClass, nextAttemptAt.toISOString()],
       );
+      assertSingleRow(res.rowCount, "markFailed", eventId);
     },
   );
 }
@@ -255,6 +300,9 @@ export async function markFailed(
 
 /**
  * Transition a claimed row to `dead_lettered`. Sets `processed_at = now()`.
+ *
+ * Strict mode: matches only `delivery_state = 'claimed'`. Throws
+ * `OutboxStateTransitionError` if the row count is not exactly 1.
  *
  * Called when `attempts` reaches `MAX_ATTEMPTS` (8) — the retry budget is
  * exhausted. The row remains in the table for 365-day retention (lifecycle.md
@@ -269,15 +317,41 @@ export async function markDeadLettered(
     pool,
     { tenantId: null, isPlatformAdmin: true },
     async (client) => {
-      await client.query(
+      const res = await client.query(
         `UPDATE outbox_events
             SET delivery_state = 'dead_lettered',
                 last_error     = $2,
                 processed_at   = now(),
                 updated_at     = now()
-          WHERE event_id = $1`,
+          WHERE event_id = $1
+            AND delivery_state = 'claimed'`,
         [eventId, errorClass],
       );
+      assertSingleRow(res.rowCount, "markDeadLettered", eventId);
     },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Strict-mode invariant for the three state-transition functions: the UPDATE
+ * must have matched exactly one row. Zero rows means the precondition failed
+ * (row not in `claimed` state, deleted, or never existed). More than one is
+ * impossible because `event_id` is the PRIMARY KEY, but we still assert it
+ * defensively.
+ */
+function assertSingleRow(
+  rowCount: number | null,
+  op: "markDelivered" | "markFailed" | "markDeadLettered",
+  eventId: string,
+): void {
+  if (rowCount === 1) return;
+  throw new OutboxStateTransitionError(
+    `${op}: expected exactly 1 'claimed' row for event_id=${eventId}, ` +
+      `UPDATE affected ${rowCount ?? 0}. Row is not in 'claimed' state, ` +
+      `was deleted, or never existed.`,
   );
 }
