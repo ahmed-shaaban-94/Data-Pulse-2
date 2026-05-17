@@ -341,38 +341,37 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     const OTHER_TENANT = "00000000-0000-7000-8000-00000000beef";
     const FC1_REQUEST_UUID = "00000000-0000-7000-8000-00000000c011";
 
-    // Open an app-role connection, SET LOCAL the tenant context to TENANT_A,
-    // and attempt to INSERT a row claiming tenant_id = OTHER_TENANT.
-    // The outbox_events_tenant_isolation WITH CHECK predicate evaluates
+    // Open an app-role connection, set tenant context to TENANT_A via
+    // `set_config(..., true)` (the transaction-local form of SET LOCAL —
+    // `SET LOCAL <name> = $1` is a parse error because Postgres's SET
+    // does not accept parameter placeholders, and the function form is
+    // the standard workaround), then attempt to INSERT a row claiming
+    // tenant_id = OTHER_TENANT. The outbox_events_tenant_isolation
+    // WITH CHECK predicate evaluates
     //   tenant_id = current_setting('app.current_tenant')::uuid (FALSE here)
     //   OR current_setting('app.is_platform_admin') = 'true'  (FALSE here)
     // → Postgres raises SQLSTATE 42501 (insufficient_privilege / RLS).
-    const client = await env!.app.connect();
-    let pgErr: (Error & { code?: string }) | null = null;
-    try {
-      await client.query("BEGIN");
-      await client.query(`SET LOCAL app.current_tenant = $1`, [TENANT_A]);
-      await client.query(`SET LOCAL app.is_platform_admin = 'false'`);
-      try {
-        await client.query(
-          `INSERT INTO outbox_events
-             (event_id, tenant_id, event_type, payload, delivery_state,
-              attempts, correlation_id)
-           VALUES ($1, $2, 'audit.event.created', '{"fc":1}'::jsonb,
-                   'pending', 0, $3)`,
-          [
-            "00000000-0000-4000-8000-00000000fc01",
-            OTHER_TENANT,
-            FC1_REQUEST_UUID,
-          ],
-        );
-      } catch (err) {
-        pgErr = err as Error & { code?: string };
-      }
-      await client.query("ROLLBACK");
-    } finally {
-      client.release();
-    }
+    const pgErr = await runRlsRejectAttempt(env!.app, async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      await client.query(
+        `SELECT set_config('app.is_platform_admin', 'false', true)`,
+      );
+      await client.query(
+        `INSERT INTO outbox_events
+           (event_id, tenant_id, event_type, payload, delivery_state,
+            attempts, correlation_id)
+         VALUES ($1, $2, 'audit.event.created', '{"fc":1}'::jsonb,
+                 'pending', 0, $3)`,
+        [
+          "00000000-0000-4000-8000-00000000fc01",
+          OTHER_TENANT,
+          FC1_REQUEST_UUID,
+        ],
+      );
+    });
 
     expect(pgErr).not.toBeNull();
     // 42501 covers both "permission denied for table" and the
@@ -396,39 +395,84 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
 
     const FC2_REQUEST_UUID = "00000000-0000-7000-8000-00000000c012";
 
-    // No `SET LOCAL app.current_tenant` and platform-admin explicitly false.
+    // No `app.current_tenant` set, platform-admin explicitly false.
     // `current_setting('app.current_tenant', true)` returns NULL when unset
     // (the `true` flag suppresses the missing-GUC error); the cast to uuid
     // makes the equality predicate fail-closed, and the platform-admin
     // branch is FALSE. The INSERT WITH CHECK has no passing branch.
-    const client = await env!.app.connect();
-    let pgErr: (Error & { code?: string }) | null = null;
-    try {
-      await client.query("BEGIN");
-      await client.query(`SET LOCAL app.is_platform_admin = 'false'`);
-      try {
-        await client.query(
-          `INSERT INTO outbox_events
-             (event_id, tenant_id, event_type, payload, delivery_state,
-              attempts, correlation_id)
-           VALUES ($1, $2, 'audit.event.created', '{"fc":2}'::jsonb,
-                   'pending', 0, $3)`,
-          [
-            "00000000-0000-4000-8000-00000000fc02",
-            TENANT_A,
-            FC2_REQUEST_UUID,
-          ],
-        );
-      } catch (err) {
-        pgErr = err as Error & { code?: string };
-      }
-      await client.query("ROLLBACK");
-    } finally {
-      client.release();
-    }
+    const pgErr = await runRlsRejectAttempt(env!.app, async (client) => {
+      await client.query(
+        `SELECT set_config('app.is_platform_admin', 'false', true)`,
+      );
+      await client.query(
+        `INSERT INTO outbox_events
+           (event_id, tenant_id, event_type, payload, delivery_state,
+            attempts, correlation_id)
+         VALUES ($1, $2, 'audit.event.created', '{"fc":2}'::jsonb,
+                 'pending', 0, $3)`,
+        [
+          "00000000-0000-4000-8000-00000000fc02",
+          TENANT_A,
+          FC2_REQUEST_UUID,
+        ],
+      );
+    });
 
     expect(pgErr).not.toBeNull();
     expect(pgErr!.code).toBe("42501");
     expect(pgErr!.message).toMatch(/row.level security|policy|permission denied/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shared helper: run a transaction expected to fail RLS, leave the pooled
+// client in a clean state.
+// ---------------------------------------------------------------------------
+
+/**
+ * Run `work` inside a fresh transaction on a pooled `Pool` connection,
+ * capture and return any Error that the work throws, and ALWAYS roll back
+ * before releasing the client.
+ *
+ * The fail-closed tests deliberately provoke a Postgres error inside the
+ * transaction (an RLS WITH CHECK violation). Two transaction-cleanup
+ * pitfalls this helper avoids:
+ *
+ *   1. SET LOCAL parse error or set_config() failure short-circuits the
+ *      "happy path" cleanup → ROLLBACK would never run inline.
+ *   2. A Postgres error inside a transaction puts it in the "aborted"
+ *      state; releasing such a client back to the pool poisons the
+ *      next borrower (every subsequent query returns
+ *      `current transaction is aborted, commands ignored`).
+ *
+ * By placing ROLLBACK in `finally` (with its own swallowed-error guard
+ * so an already-aborted txn doesn't mask the original failure), the
+ * pooled client is guaranteed to come back idle.
+ */
+async function runRlsRejectAttempt(
+  pool: import("pg").Pool,
+  work: (client: import("pg").PoolClient) => Promise<void>,
+): Promise<(Error & { code?: string }) | null> {
+  const client = await pool.connect();
+  let captured: (Error & { code?: string }) | null = null;
+  try {
+    await client.query("BEGIN");
+    try {
+      await work(client);
+    } catch (err) {
+      captured = err as Error & { code?: string };
+    } finally {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // The transaction is already aborted from the captured failure,
+        // and Postgres tolerates ROLLBACK in that state — but if the
+        // connection itself died, swallow it. The captured `pgErr` is
+        // the original cause we want to surface.
+      }
+    }
+  } finally {
+    client.release();
+  }
+  return captured;
+}
