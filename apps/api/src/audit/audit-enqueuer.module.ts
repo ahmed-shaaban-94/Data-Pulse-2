@@ -71,6 +71,23 @@ export function auditJobEnqueuerFactory(
   return new AuditQueueProducer(queue);
 }
 
+/**
+ * Returns true when the outbox-backed audit path should be used in place of
+ * direct BullMQ enqueueing. Slice 1B ships the OutboxAuditEnqueuer class and
+ * this flag helper, but the live DI swap is intentionally deferred: doing it
+ * in this module would require importing AuthModule (the holder of PG_POOL),
+ * which would re-introduce the circular import this leaf module exists to
+ * avoid (see the module docstring). The live swap will land alongside Slice
+ * 1C's dead-letter admin endpoint, which already imports AuthModule for
+ * RolesGuard — that's the natural place to wire it without a new circular.
+ *
+ * The flag accepts the literal strings "1", "true", or "yes" (case-insensitive).
+ */
+export function isOutboxAuditEnabled(): boolean {
+  const raw = (process.env["OUTBOX_AUDIT_ENABLED"] ?? "").toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 const auditJobEnqueuerProvider: Provider = {
   provide: AUDIT_JOB_ENQUEUER,
   useFactory: auditJobEnqueuerFactory,

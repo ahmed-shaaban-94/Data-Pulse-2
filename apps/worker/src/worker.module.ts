@@ -105,6 +105,9 @@ import {
 } from "./audit/drizzle-audit-retention.repository";
 import { AuditRetentionWorker } from "./audit/audit-retention.worker";
 import { AuditRetentionScheduler } from "./audit/audit-retention.scheduler";
+import { OutboxModule, OutboxDrainerRunner } from "./outbox/outbox.module";
+import { OutboxConsumerRegistry } from "./outbox/registry";
+import { DrainerProcessor } from "./outbox/drainer.processor";
 
 /**
  * Real BullMQ-backed factory. Constructs a `bullmq.Worker` that
@@ -308,7 +311,56 @@ export function auditRetentionRepoProviderFactory(
 /** DI token for the `AuditDbPool` Nest-managed wrapper. */
 export const PG_POOL = "PG_POOL";
 
+/** DI token for the outbox `DrainerProcessor` (resolves to `null` on the no-DB path). */
+export const OUTBOX_DRAINER = "OUTBOX_DRAINER";
+
+/**
+ * Factory for the OUTBOX_DRAINER provider.
+ *
+ * Lives in `WorkerModule` (not `OutboxModule`) because it injects
+ * `AuditDbPool`, which is a `WorkerModule`-scoped provider. Nest provider
+ * scope flows downstream only: an imported child module cannot inject
+ * providers declared by the importer. Placing this factory here is the
+ * minimal-blast-radius fix for the cross-module DI graph.
+ *
+ * On the safe no-DB path (`wrapper.pool === null`) the factory returns
+ * `null`; `outboxDrainerRunnerProviderFactory` then constructs a no-op
+ * runner so `WorkerModule` still boots without booting Postgres.
+ */
+export function drainerProcessorProviderFactory(
+  wrapper: AuditDbPool,
+  registry: OutboxConsumerRegistry,
+): DrainerProcessor | null {
+  const pool = wrapper.pool;
+  if (pool === null) {
+    return null;
+  }
+  return new DrainerProcessor({ pool, registry });
+}
+
+/**
+ * Factory for the `OutboxDrainerRunner` provider.
+ *
+ * On the no-DB path the upstream factory returns `null` — we still need a
+ * runner instance so Nest can fire lifecycle hooks (and so other modules
+ * holding a reference don't blow up). The no-op shape mirrors the
+ * `DrainerProcessor` surface the runner actually touches.
+ */
+export function outboxDrainerRunnerProviderFactory(
+  drainer: DrainerProcessor | null,
+): OutboxDrainerRunner {
+  if (drainer === null) {
+    return new OutboxDrainerRunner({
+      start: () => { /* no-op: no pool available */ },
+      stop: () => { /* no-op */ },
+      tick: async () => { /* no-op */ },
+    } as unknown as DrainerProcessor);
+  }
+  return new OutboxDrainerRunner(drainer);
+}
+
 @Module({
+  imports: [OutboxModule],
   providers: [
     // ── Email pipeline (existing) ─────────────────────────────────────
     {
@@ -365,6 +417,25 @@ export const PG_POOL = "PG_POOL";
     },
     AuditRetentionWorker,
     AuditRetentionScheduler,
+
+    // ── Outbox drainer pipeline (T581) ────────────────────────────────
+    //
+    // The OUTBOX_DRAINER + OutboxDrainerRunner providers live here (not in
+    // OutboxModule) because they inject AuditDbPool, which is declared by
+    // this module. Nest provider scope flows downstream: a module imported
+    // by WorkerModule cannot inject providers from WorkerModule itself.
+    // OutboxModule still owns the pool-independent primitives
+    // (OUTBOX_AUDIT_QUEUE, OutboxConsumerRegistry).
+    {
+      provide: OUTBOX_DRAINER,
+      useFactory: drainerProcessorProviderFactory,
+      inject: [AuditDbPool, OutboxConsumerRegistry],
+    },
+    {
+      provide: OutboxDrainerRunner,
+      useFactory: outboxDrainerRunnerProviderFactory,
+      inject: [OUTBOX_DRAINER],
+    },
   ],
   exports: [
     EmailWorker,
@@ -373,6 +444,8 @@ export const PG_POOL = "PG_POOL";
     AuditFanoutProcessor,
     AuditRetentionWorker,
     AuditRetentionProcessor,
+    OUTBOX_DRAINER,
+    OutboxDrainerRunner,
   ],
 })
 export class WorkerModule {}

@@ -8,3 +8,4 @@ export * from "./observability/meter";
 export * from "./ids/uuid";
 export * from "./queues/queue.config";
 export * from "./idempotency";
+export * from "./outbox/consumer";

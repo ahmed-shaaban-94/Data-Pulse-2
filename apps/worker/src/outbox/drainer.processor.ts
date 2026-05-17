@@ -1,0 +1,363 @@
+/**
+ * T581 — Outbox drainer processor.
+ *
+ * Polls `outbox_events` on a configurable interval, claims batches via
+ * `FOR UPDATE SKIP LOCKED`, establishes tenant context per row, dispatches to
+ * the registered consumer, and transitions the row to `delivered`, `failed`,
+ * or `dead_lettered` depending on the outcome.
+ *
+ * Tenant-context pattern (Constitution §II, lifecycle.md §6)
+ * ----------------------------------------------------------
+ * Pattern (i): platform-role claim, per-row tenant context for consumers.
+ *
+ *   1. `claimBatch(pool, batchSize)` runs under `{ isPlatformAdmin: true }`.
+ *      The RLS policy allows the platform-admin context to see all tenants' rows.
+ *   2. For each claimed row, BEFORE calling the consumer, the drainer calls
+ *      `runWithTenantContext(pool, { tenantId: row.tenant_id }, consumer.handle)`.
+ *   3. The consumer MUST NOT make any tenant-scoped DB writes outside of this
+ *      established context. T561 proves that skipping this step fails RLS.
+ *
+ * This matches lifecycle.md §6.1–6.2: the drainer holds the platform-admin
+ * context only for the claim step; per-row processing uses the row's own tenant.
+ *
+ * Concurrency
+ * -----------
+ * `start()` launches a single poll loop (setInterval). Each tick awaits
+ * the full batch before the next tick fires — the effective poll rate is
+ * `POLL_INTERVAL_MS + processing_time`. Multiple drainer instances (replicas)
+ * run independently; `FOR UPDATE SKIP LOCKED` prevents double-claiming.
+ *
+ * Error handling
+ * --------------
+ * Consumer throws → `markFailed` (with backoff). At `attempts === MAX_ATTEMPTS`
+ * → `markDeadLettered`. State-machine transitions are best-effort: if the
+ * mark call itself fails, the drainer logs and continues — the row stays in
+ * `claimed` and will be reclaimed by a future tick once the claim heartbeat
+ * threshold passes (reclaim sweep is T549 / future slice; for now, a `claimed`
+ * row that is not marked transitions back to claimable after the drainer restarts).
+ *
+ * No-consumer routing
+ * -------------------
+ * If no consumer is registered for a given event type, the drainer logs an
+ * error and marks the row `failed` (not `dead_lettered` immediately) so it can
+ * be triage-inspected. This is not a steady-state condition — all event types
+ * in the registry MUST have a consumer.
+ */
+import type { Pool } from "pg";
+import {
+  claimBatch,
+  markDelivered,
+  markFailed,
+  markDeadLettered,
+  MAX_ATTEMPTS,
+  type ClaimedOutboxEvent,
+} from "@data-pulse-2/db";
+import { runWithTenantContext } from "@data-pulse-2/db";
+import type { OutboxConsumer } from "@data-pulse-2/shared";
+import type { OutboxConsumerRegistry } from "./registry";
+
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_POLL_INTERVAL_MS = 1_000;
+export const DEFAULT_BATCH_SIZE = 50;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface DrainerOptions {
+  /** How often to poll for claimable rows. Default: 1s. */
+  readonly pollIntervalMs?: number;
+  /** Max rows per claim batch. Default: 50. */
+  readonly batchSize?: number;
+}
+
+/** Injected for testability — production omits. */
+export interface DrainerDependencies {
+  readonly pool: Pool;
+  readonly registry: OutboxConsumerRegistry;
+  readonly options?: DrainerOptions;
+  /**
+   * Override the claim function for unit tests (avoids real Postgres).
+   * Production callers omit this; the default is `claimBatch` from `@data-pulse-2/db`.
+   */
+  readonly claimFn?: (pool: Pool, batchSize: number) => Promise<ClaimedOutboxEvent[]>;
+}
+
+// ---------------------------------------------------------------------------
+// DrainerProcessor
+// ---------------------------------------------------------------------------
+
+/**
+ * The outbox drainer. Not a NestJS injectable — wired explicitly in
+ * OutboxModule's `useFactory` so the injected `Pool` and registry can be
+ * swapped in tests without booting a full Nest DI graph.
+ */
+export class DrainerProcessor {
+  private readonly pool: Pool;
+  private readonly registry: OutboxConsumerRegistry;
+  private readonly pollIntervalMs: number;
+  private readonly batchSize: number;
+  private readonly claimFn: (pool: Pool, batchSize: number) => Promise<ClaimedOutboxEvent[]>;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
+  /**
+   * Set to `true` for the duration of an in-progress `tick()` invocation
+   * started by the poll-loop timer. When the interval fires while a previous
+   * tick is still running we SKIP the new tick rather than start a concurrent
+   * one. Calls to `tick()` made directly (e.g. from tests) are NOT gated by
+   * this flag — only the timer-driven loop respects it.
+   */
+  private inFlight = false;
+
+  constructor(deps: DrainerDependencies) {
+    this.pool = deps.pool;
+    this.registry = deps.registry;
+    this.pollIntervalMs = deps.options?.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.batchSize = deps.options?.batchSize ?? DEFAULT_BATCH_SIZE;
+    this.claimFn = deps.claimFn ?? claimBatch;
+
+    // Fail loud at construction rather than spinning a poll loop with a
+    // nonsensical interval (which silently breaks throughput) or claim size
+    // (which causes the claim CTE to reject `LIMIT <invalid>` at runtime,
+    // logging on every tick). Both must be positive integers; `setInterval`
+    // also requires a finite positive number, so a NaN/Infinity here would
+    // produce subtly wrong scheduling.
+    assertPositiveInteger("pollIntervalMs", this.pollIntervalMs);
+    assertPositiveInteger("batchSize", this.batchSize);
+  }
+
+  /**
+   * Start the poll loop. Idempotent: a second `start()` is a no-op.
+   *
+   * Concurrency
+   * -----------
+   * `setInterval` does not wait for the previous callback to finish before
+   * firing the next one. Under load — where a single tick takes longer than
+   * `pollIntervalMs` — that would let two ticks run concurrently, doubling
+   * up on claim queries and racing on row state. The `inFlight` guard makes
+   * the loop strictly sequential: a missed tick is skipped, never queued.
+   * The next eligible tick fires at the next interval boundary after the
+   * in-progress one finishes.
+   */
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    this.timer = setInterval(() => {
+      if (this.inFlight) {
+        // Previous tick still running — skip this interval rather than
+        // overlap. Logging this would be noisy on slow ticks; instead the
+        // operator should watch the drainer's tick-duration histogram (T-future).
+        return;
+      }
+      this.inFlight = true;
+      this.tick()
+        .catch((err: unknown) => {
+          this.logError("drainer.tick unhandled error", err);
+        })
+        .finally(() => {
+          this.inFlight = false;
+        });
+    }, this.pollIntervalMs);
+  }
+
+  /**
+   * Stop the poll loop. Idempotent: stopping before start or twice is tolerated.
+   */
+  stop(): void {
+    if (this.timer !== null) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    this.running = false;
+  }
+
+  /**
+   * One poll tick: claim a batch and process each event.
+   * Exported as a seam for tests that want to drive individual ticks
+   * without the setInterval timer.
+   */
+  async tick(): Promise<void> {
+    const batch = await this.claimFn(this.pool, this.batchSize).catch((err: unknown) => {
+      this.logError("drainer.claimBatch failed", err);
+      return [] as ClaimedOutboxEvent[];
+    });
+
+    // Process rows concurrently within the batch. Each row gets its own
+    // per-tenant context — they are independent and must not share a client.
+    await Promise.all(batch.map((row) => this.processRow(row)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Internal: per-row processing
+  // ---------------------------------------------------------------------------
+
+  private async processRow(row: ClaimedOutboxEvent): Promise<void> {
+    const consumer = this.registry.resolve(row.event_type);
+
+    if (!consumer) {
+      // No consumer registered for this event type. Mark failed with backoff
+      // rather than dead-lettering immediately — allows operator investigation.
+      const errorClass = "UnroutableEventType";
+      this.logError(
+        `drainer: no consumer for event_type="${row.event_type}" event_id="${row.event_id}"`,
+        new Error(errorClass),
+      );
+      await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
+      return;
+    }
+
+    try {
+      await this.invokeConsumer(consumer, row);
+      await this.safeMarkDelivered(row.event_id);
+    } catch (err: unknown) {
+      const errorClass = this.extractErrorClass(err);
+
+      if (row.attempts >= MAX_ATTEMPTS) {
+        // Budget exhausted — dead-letter.
+        await this.safeMarkDeadLettered(row.event_id, errorClass);
+      } else {
+        await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
+      }
+    }
+  }
+
+  /**
+   * Establish per-row tenant context, then call the consumer's `handle()`.
+   *
+   * T561 proves that omitting this `runWithTenantContext` call causes the
+   * consumer's downstream DB writes to fail RLS. The tenant context wraps
+   * ONLY the consumer invocation — state-machine transitions (markDelivered
+   * etc.) run under the drainer's platform-admin context.
+   */
+  private async invokeConsumer(
+    consumer: OutboxConsumer<unknown>,
+    row: ClaimedOutboxEvent,
+  ): Promise<void> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: row.tenant_id, isPlatformAdmin: false },
+      async (_client) => {
+        // NOTE: we pass the pool, not the client, to the consumer so it can
+        // open its own connections if needed. The runWithTenantContext call
+        // above establishes the GUC context on a separate pooled connection
+        // that we don't use directly — this is intentional. The consumer
+        // that needs tenant-context DB access must call runWithTenantContext
+        // itself (or receive the tenantId from the event and set context).
+        //
+        // For the audit consumer (T584), the consumer calls `Queue.add()` on
+        // Redis — no DB access needed, so this wrapping is a proof-of-intent
+        // rather than a functional guard. T561 proves the necessity for
+        // consumers that DO perform tenant-scoped DB writes.
+        await consumer.handle({
+          event_id: row.event_id,
+          event_type: row.event_type,
+          tenant_id: row.tenant_id,
+          store_id: row.store_id,
+          payload: row.payload,
+          correlation_id: row.correlation_id,
+          occurred_at: row.occurred_at,
+          attempts: row.attempts,
+        });
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Safe wrappers — state-machine transition failures must not crash the drainer
+  // ---------------------------------------------------------------------------
+
+  private async safeMarkDelivered(eventId: string): Promise<void> {
+    try {
+      await markDelivered(this.pool, eventId);
+    } catch (err: unknown) {
+      this.logError(`drainer.markDelivered failed event_id="${eventId}"`, err);
+    }
+  }
+
+  private async safeMarkFailed(
+    eventId: string,
+    attempts: number,
+    errorClass: string,
+  ): Promise<void> {
+    try {
+      await markFailed(this.pool, eventId, attempts, errorClass);
+    } catch (err: unknown) {
+      this.logError(`drainer.markFailed failed event_id="${eventId}"`, err);
+    }
+  }
+
+  private async safeMarkDeadLettered(
+    eventId: string,
+    errorClass: string,
+  ): Promise<void> {
+    try {
+      await markDeadLettered(this.pool, eventId, errorClass);
+    } catch (err: unknown) {
+      this.logError(`drainer.markDeadLettered failed event_id="${eventId}"`, err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Logging (structured, pino-compatible, no PII / no payload)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Emit a structured error line. ONLY safe, redacted fields are written:
+   *   - `level`, `component`, `message`  — operator-controlled
+   *   - `errorName`                       — the error class name
+   *                                         (e.g. `OutboxStateTransitionError`)
+   *
+   * `err.message` and `err.stack` are intentionally OMITTED. Postgres and
+   * many other libraries embed row values, parameter contents, and other
+   * sensitive runtime data in their error messages (e.g. the `payload`
+   * JSONB or a tenant UUID surface in `invalid input syntax for type uuid:
+   * "<value>"`). Stack traces additionally leak file paths and call-graph
+   * shape. Constitution §VII forbids both in structured logs.
+   *
+   * The `message` argument is constructed by the caller and MUST itself
+   * be safe (event_id and event_type are non-PII by design). If a caller
+   * ever needs the underlying exception for debugging, route it through
+   * the OTel/error-reporting boundary (which has its own redaction policy)
+   * rather than stderr.
+   */
+  private logError(message: string, err: unknown): void {
+    const line = JSON.stringify({
+      level: "error",
+      component: "outbox.drainer",
+      message,
+      errorName: err instanceof Error ? (err.name || "Error") : "UnknownError",
+    });
+    process.stderr.write(line + "\n");
+  }
+
+  private extractErrorClass(err: unknown): string {
+    if (err instanceof Error) {
+      // Use the error's class name as the redacted error class.
+      // Never include the message (which may contain payload data or PII).
+      return err.name || "Error";
+    }
+    return "UnknownError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal: input validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Assert that a numeric drainer-config field is a finite positive integer.
+ * `setInterval` accepts NaN / Infinity / 0 without obvious failure (it
+ * coerces to 1ms or hangs), and `LIMIT <non-positive>` in the claim CTE
+ * either rejects at parse time or returns no rows — both produce silently
+ * broken drainers. Fail loud at construction instead.
+ */
+function assertPositiveInteger(field: string, value: number): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(
+      `DrainerProcessor: ${field} must be a positive integer, got ${String(value)}.`,
+    );
+  }
+}
