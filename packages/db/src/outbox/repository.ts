@@ -25,11 +25,11 @@
  *   claimed  → dead_lettered (markDeadLettered, when attempts === 8)
  *
  * Backoff schedule (lifecycle.md §4.2):
- *   attempts=1 → (no wait; initial attempt just completed as failure — wait 30s for retry 2)
- *   attempts=2 → now() + 30s
- *   attempts=3 → now() + 2min
- *   attempts=4 → now() + 10min
- *   attempts=5..8 → now() + 1h (plateau)
+ *   attempts=1 → now() + 30s   (first failure, wait 30s before retry 2)
+ *   attempts=2 → now() + 2min  (wait 2min before retry 3)
+ *   attempts=3 → now() + 10min (wait 10min before retry 4)
+ *   attempts=4..7 → now() + 1h (plateau — wait 1h before each remaining retry)
+ *   attempts=8 → dead-letter   (budget exhausted; caller invokes markDeadLettered)
  *
  * Note: `attempts` is incremented AT CLAIM TIME. After the first claim,
  * `attempts=1`. If that attempt fails → `markFailed(attempts=1)` → wait 30s.
@@ -89,23 +89,27 @@ export type ClaimFn = (client: PoolClient, batchSize: number) => Promise<Claimed
 // ---------------------------------------------------------------------------
 
 /**
- * Compute `next_attempt_at` for a failed event given the current `attempts`
- * count (already incremented at claim time).
+ * Compute `next_attempt_at` delay (in ms) for a failed event, given the
+ * `attempts` count AFTER the just-completed claim/failure was recorded.
  *
- * attempts=1 → 30s (retry 2 is the second claim, happens after 30s)
- * attempts=2 → 30s (same semantics — first retry)
- * attempts=3 → 2min
- * attempts=4 → 10min
- * attempts=5..7 → 1h each
- * attempts=8 → undefined (caller should call markDeadLettered instead)
+ *   attempts ≤ 1 → 30s    (first failure — wait 30s before the second claim)
+ *   attempts = 2 → 2min   (wait before the third claim)
+ *   attempts = 3 → 10min  (wait before the fourth claim)
+ *   attempts ≥ 4 → 1h     (plateau — applies for retries 5, 6, 7)
+ *   attempts = 8 → caller MUST invoke markDeadLettered instead of markFailed
+ *                  (markFailed itself throws OutboxStateTransitionError when
+ *                  attempts ≥ MAX_ATTEMPTS).
+ *
+ * Locked by the `nextAttemptDelayMs backoff schedule (unit)` suite in
+ * `packages/db/__tests__/outbox/repository-runtime.spec.ts`.
  */
 export function nextAttemptDelayMs(attempts: number): number {
   // attempts is the count AFTER the current (failed) claim.
   // We use it to determine how long to wait before the NEXT attempt.
   if (attempts <= 1) return 30_000;          // wait 30s before attempt 2
-  if (attempts === 2) return 2 * 60_000;     // wait 2m before attempt 3
-  if (attempts === 3) return 10 * 60_000;    // wait 10m before attempt 4
-  return 60 * 60_000;                        // wait 1h for attempts 4..7 → plateau
+  if (attempts === 2) return 2 * 60_000;     // wait 2min before attempt 3
+  if (attempts === 3) return 10 * 60_000;    // wait 10min before attempt 4
+  return 60 * 60_000;                        // plateau — wait 1h for attempts 4..7
 }
 
 /** Max attempts before dead-lettering. */
@@ -165,9 +169,14 @@ function assertPositiveBatchSize(batchSize: number): void {
 
 /**
  * Internal: runs the claim CTE on an already-open, context-set `PoolClient`.
- * Exported as a seam for unit tests that supply their own faked client.
+ *
+ * Kept module-private — no consumer outside this file calls it. The
+ * previous `export` made it part of `packages/db`'s public surface and
+ * obligated us to maintain its signature for downstream callers; nothing
+ * actually used it. Unit tests of the claim CTE shape go through
+ * `claimBatch(pool, batchSize)` and rely on a real Pool (Testcontainers).
  */
-export async function _claimBatchOnClient(
+async function _claimBatchOnClient(
   client: PoolClient,
   batchSize: number,
 ): Promise<ClaimedOutboxEvent[]> {

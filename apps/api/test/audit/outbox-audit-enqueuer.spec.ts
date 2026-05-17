@@ -24,6 +24,10 @@ import {
 import { OutboxAuditEnqueuer } from "../../src/audit/outbox-audit-enqueuer";
 import { NoOpAuditJobEnqueuer } from "../../src/audit/audit-job.enqueuer";
 import {
+  AuditQueueProducer,
+  type AuditQueueLike,
+} from "../../src/audit/audit-queue.producer";
+import {
   applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
@@ -78,23 +82,90 @@ describe("isOutboxAuditEnabled — feature-flag parsing", () => {
   });
 });
 
-describe("auditJobEnqueuerFactory — legacy path unchanged", () => {
+describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
+    // Fresh copy each test so mutations are scoped per-spec.
     process.env = { ...originalEnv };
-    delete process.env["OUTBOX_AUDIT_ENABLED"];
+    delete process.env["OUTBOX_AUDIT_ENABLED"]; // factory is the legacy path
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  it("with OUTBOX_AUDIT_ENABLED unset + REDIS_URL unset + NODE_ENV=test → NoOp", () => {
+  /**
+   * Trivial fake matching `AuditQueueLike`. We never invoke `.add()` on it —
+   * the assertions only check the constructed enqueuer's class. Returning a
+   * fake-queue factory lets us hit the REDIS_URL-set branch without booting
+   * Redis or BullMQ.
+   */
+  function fakeQueueFactory(): { queueFactory: (url: string) => AuditQueueLike; urls: string[] } {
+    const urls: string[] = [];
+    const queueFactory = (url: string): AuditQueueLike => {
+      urls.push(url);
+      return { add: async () => null };
+    };
+    return { queueFactory, urls };
+  }
+
+  it("NODE_ENV=production + REDIS_URL unset → throws with stable operator-runbook message", () => {
+    process.env["NODE_ENV"] = "production";
+    delete process.env["REDIS_URL"];
+    expect(() => auditJobEnqueuerFactory()).toThrow(
+      /AuditModule: REDIS_URL is required in production/,
+    );
+  });
+
+  it("NODE_ENV=production + REDIS_URL set → AuditQueueProducer wired with the configured URL", () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["REDIS_URL"] = "redis://prod-host:6379";
+    const { queueFactory, urls } = fakeQueueFactory();
+
+    const enqueuer = auditJobEnqueuerFactory(queueFactory);
+
+    expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    expect(urls).toEqual(["redis://prod-host:6379"]);
+  });
+
+  it("NODE_ENV=test + REDIS_URL set → AuditQueueProducer (non-prod path with Redis configured)", () => {
+    process.env["NODE_ENV"] = "test";
+    process.env["REDIS_URL"] = "redis://test-host:6379";
+    const { queueFactory, urls } = fakeQueueFactory();
+
+    const enqueuer = auditJobEnqueuerFactory(queueFactory);
+
+    expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    expect(urls).toEqual(["redis://test-host:6379"]);
+  });
+
+  it("NODE_ENV=test + REDIS_URL unset → NoOpAuditJobEnqueuer (dev/test fallback)", () => {
     delete process.env["REDIS_URL"];
     process.env["NODE_ENV"] = "test";
     const enqueuer = auditJobEnqueuerFactory();
     expect(enqueuer).toBeInstanceOf(NoOpAuditJobEnqueuer);
+  });
+
+  it("NODE_ENV unset (≠ 'production') + REDIS_URL unset → NoOpAuditJobEnqueuer", () => {
+    // The production guard is a literal `=== 'production'` check, so any
+    // missing / arbitrary NODE_ENV value must fall into the dev branch.
+    delete process.env["REDIS_URL"];
+    delete process.env["NODE_ENV"];
+    const enqueuer = auditJobEnqueuerFactory();
+    expect(enqueuer).toBeInstanceOf(NoOpAuditJobEnqueuer);
+  });
+
+  it("queueFactory parameter is the test seam — invoked exactly once per call", () => {
+    process.env["NODE_ENV"] = "test";
+    process.env["REDIS_URL"] = "redis://localhost:6379";
+    const { queueFactory, urls } = fakeQueueFactory();
+
+    auditJobEnqueuerFactory(queueFactory);
+    auditJobEnqueuerFactory(queueFactory);
+
+    expect(urls).toHaveLength(2);
+    expect(urls.every((u) => u === "redis://localhost:6379")).toBe(true);
   });
 });
 
@@ -250,5 +321,114 @@ describe("OutboxAuditEnqueuer — writes a pending outbox_events row", () => {
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]!.tenant_id).toBe(NIL_UUID);
     expect(rows.rows[0]!.event_type).toBe("audit.event.created");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fail-closed integration coverage for the enqueuer's security boundary
+  // ---------------------------------------------------------------------------
+  //
+  // OutboxAuditEnqueuer derives its tenant context from `payload.tenant_id`
+  // and INSERTs an outbox row with the same `tenant_id`. The security
+  // boundary it RELIES ON — but does not itself enforce — is the RLS
+  // policy on `outbox_events`: tenant context and row.tenant_id must match
+  // (or the platform-admin GUC must be 'true'). These tests prove that
+  // boundary fails closed under the app role; without them the enqueuer's
+  // happy-path success could be masking a permissive RLS policy.
+
+  it("FC-1: app-role INSERT with mismatched tenant context vs row.tenant_id is rejected by RLS", async () => {
+    if (maybeSkip()) return;
+
+    const OTHER_TENANT = "00000000-0000-7000-8000-00000000beef";
+    const FC1_REQUEST_UUID = "00000000-0000-7000-8000-00000000c011";
+
+    // Open an app-role connection, SET LOCAL the tenant context to TENANT_A,
+    // and attempt to INSERT a row claiming tenant_id = OTHER_TENANT.
+    // The outbox_events_tenant_isolation WITH CHECK predicate evaluates
+    //   tenant_id = current_setting('app.current_tenant')::uuid (FALSE here)
+    //   OR current_setting('app.is_platform_admin') = 'true'  (FALSE here)
+    // → Postgres raises SQLSTATE 42501 (insufficient_privilege / RLS).
+    const client = await env!.app.connect();
+    let pgErr: (Error & { code?: string }) | null = null;
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.current_tenant = $1`, [TENANT_A]);
+      await client.query(`SET LOCAL app.is_platform_admin = 'false'`);
+      try {
+        await client.query(
+          `INSERT INTO outbox_events
+             (event_id, tenant_id, event_type, payload, delivery_state,
+              attempts, correlation_id)
+           VALUES ($1, $2, 'audit.event.created', '{"fc":1}'::jsonb,
+                   'pending', 0, $3)`,
+          [
+            "00000000-0000-4000-8000-00000000fc01",
+            OTHER_TENANT,
+            FC1_REQUEST_UUID,
+          ],
+        );
+      } catch (err) {
+        pgErr = err as Error & { code?: string };
+      }
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+
+    expect(pgErr).not.toBeNull();
+    // 42501 covers both "permission denied for table" and the
+    // "new row violates row-level security policy" message Postgres
+    // emits for WITH CHECK violations — the only outcomes this scenario
+    // can legitimately produce.
+    expect(pgErr!.code).toBe("42501");
+    expect(pgErr!.message).toMatch(/row.level security|policy|permission denied/i);
+
+    // Confirm the rollback was real: no row landed under the malicious
+    // correlation_id even though we wrote it inside the failed transaction.
+    const checkRows = await env!.admin.query(
+      `SELECT 1 FROM outbox_events WHERE correlation_id = $1`,
+      [FC1_REQUEST_UUID],
+    );
+    expect(checkRows.rows).toHaveLength(0);
+  });
+
+  it("FC-2: app-role INSERT with NO tenant context (no GUC, not platform admin) is rejected by RLS", async () => {
+    if (maybeSkip()) return;
+
+    const FC2_REQUEST_UUID = "00000000-0000-7000-8000-00000000c012";
+
+    // No `SET LOCAL app.current_tenant` and platform-admin explicitly false.
+    // `current_setting('app.current_tenant', true)` returns NULL when unset
+    // (the `true` flag suppresses the missing-GUC error); the cast to uuid
+    // makes the equality predicate fail-closed, and the platform-admin
+    // branch is FALSE. The INSERT WITH CHECK has no passing branch.
+    const client = await env!.app.connect();
+    let pgErr: (Error & { code?: string }) | null = null;
+    try {
+      await client.query("BEGIN");
+      await client.query(`SET LOCAL app.is_platform_admin = 'false'`);
+      try {
+        await client.query(
+          `INSERT INTO outbox_events
+             (event_id, tenant_id, event_type, payload, delivery_state,
+              attempts, correlation_id)
+           VALUES ($1, $2, 'audit.event.created', '{"fc":2}'::jsonb,
+                   'pending', 0, $3)`,
+          [
+            "00000000-0000-4000-8000-00000000fc02",
+            TENANT_A,
+            FC2_REQUEST_UUID,
+          ],
+        );
+      } catch (err) {
+        pgErr = err as Error & { code?: string };
+      }
+      await client.query("ROLLBACK");
+    } finally {
+      client.release();
+    }
+
+    expect(pgErr).not.toBeNull();
+    expect(pgErr!.code).toBe("42501");
+    expect(pgErr!.message).toMatch(/row.level security|policy|permission denied/i);
   });
 });

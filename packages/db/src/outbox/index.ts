@@ -29,7 +29,6 @@ export {
   markDelivered,
   markFailed,
   nextAttemptDelayMs,
-  _claimBatchOnClient,
 } from "./repository";
 export type {
   ClaimedOutboxEvent,
