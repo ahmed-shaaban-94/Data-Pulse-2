@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  review_details: true
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_filters:
+    - "!**/dist/**"
+    - "!**/node_modules/**"
+    - "!**/.next/**"
+    - "!**/coverage/**"
+    - "!**/*.log"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.svg"
+
+  path_instructions:
+    - path: "packages/db/**"
+      instructions: |
+        Data-Pulse-2 uses PostgreSQL Row-Level Security.
+        Focus on tenant isolation, migration safety, Testcontainers coverage, and runtime DB role privileges.
+        Flag any BYPASSRLS grant, unsafe cross-tenant read, destructive migration, missing tenant_id constraint, or test that claims RLS coverage without a real DB/Testcontainers path.
+
+    - path: "packages/db/drizzle/**"
+      instructions: |
+        Review SQL migrations carefully.
+        Migrations must be additive and zero-downtime unless explicitly stated.
+        Flag destructive DDL, missing indexes for expected access patterns, missing RLS enablement, missing rollback/down migration if the repo convention requires it, and any broad privilege grant.
+
+    - path: "apps/api/**"
+      instructions: |
+        Focus on NestJS guard boundaries, AuthGuard, TenantContextGuard, RolesGuard, OpenAPI consistency, and PII-safe logging.
+        Flag endpoints that bypass tenant/store context, weaken authorization, or introduce undocumented API behavior.
+
+    - path: "apps/worker/**"
+      instructions: |
+        Focus on async worker boundaries, BullMQ behavior, retry/dead-letter semantics, tenant context before DB access, and PII-safe logs.
+        For outbox work, flag any DB access before tenant context is established beyond reading/claiming the outbox row itself.
+
+    - path: "packages/shared/**"
+      instructions: |
+        Focus on shared primitives and public API stability.
+        Flag accidental public API leaks, high-cardinality metric labels, tenant_id/store_id/user_id/actor_id metric labels, and broad abstractions that should remain local to a package.
+
+    - path: "packages/contracts/openapi/**"
+      instructions: |
+        Treat OpenAPI as the source of truth.
+        Flag controller/contract drift, undocumented headers, undocumented status codes, and contract changes not mentioned in the PR body.
+
+    - path: "docs/outbox/**"
+      instructions: |
+        Check consistency with P6/P7 tasks.
+        Spike findings are evidence, not production implementation.
+        Flag any wording that implies spike code was merged or that runtime behavior exists before implementation.
+
+    - path: "docs/observability/**"
+      instructions: |
+        Check metric names, label cardinality, and redaction requirements.
+        Flag tenant_id, store_id, user_id, actor_id, email, raw URL, raw request body, or raw idempotency key as metric labels.
+
+    - path: "specs/004-platform-production-readiness/**"
+      instructions: |
+        Preserve the 004 scope boundary.
+        Flag catalog implementation, POS implementation, dashboard UI, billing, reports, analytics, dbt, ClickHouse, Dagster, deployment infrastructure, or package/lock/CI changes unless explicitly approved.
+
+chat:
+  auto_reply: true
