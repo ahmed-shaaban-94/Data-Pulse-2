@@ -54,7 +54,11 @@ jobs:
       - name: Build all workspaces
         run: pnpm -r run build
 
-      - name: Test @data-pulse-2/worker
+      - name: Test @data-pulse-2/worker (Docker-free suites)
+        # The Testcontainers-backed outbox suites
+        # (retry-budget / idempotent-consumer / tenant-context) are excluded
+        # by default in apps/worker/jest.config.cjs. They run in the
+        # db-integration job below with WORKER_INCLUDE_DB_TESTS=1.
         run: pnpm --filter @data-pulse-2/worker test
 
       - name: Test @data-pulse-2/shared
@@ -85,12 +89,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build workspaces required by db/api tests
+      - name: Build workspaces required by db/api/worker tests
         run: >-
           pnpm
           --filter @data-pulse-2/shared
           --filter @data-pulse-2/auth
           --filter @data-pulse-2/db
+          --filter @data-pulse-2/worker
           run build
 
       - name: Pre-pull postgres:16-alpine
@@ -98,6 +103,20 @@ jobs:
 
       - name: Test @data-pulse-2/db (migrations + Testcontainers)
         run: pnpm --filter @data-pulse-2/db test
+
+      - name: Test @data-pulse-2/worker (Testcontainers outbox suites)
+        # T561 / T562 / T563 — drainer-level retry budget, idempotent consumer,
+        # and tenant-context RLS proof. WORKER_INCLUDE_DB_TESTS=1 lifts the
+        # default `jest.config.cjs` exclusion of the three Testcontainers-
+        # backed outbox specs (which the fast job skips for lack of Docker).
+        # This step re-runs the full worker suite — the unit tier overlap
+        # with `fast` is a few seconds of duplicate work and is intentional:
+        # it keeps the CI yaml uniform and avoids a brittle regex inclusion
+        # filter on the CLI (regex escapes round-trip badly through pnpm /
+        # PowerShell / bash). The integration coverage is what matters here.
+        env:
+          WORKER_INCLUDE_DB_TESTS: "1"
+        run: pnpm --filter @data-pulse-2/worker test
 
       - name: Test @data-pulse-2/api (RLS + audit + auth suites)
         run: pnpm --filter @data-pulse-2/api test -- --coverage --coverageReporters=lcov --coverageReporters=text-summary

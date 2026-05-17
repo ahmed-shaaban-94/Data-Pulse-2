@@ -1,9 +1,36 @@
+/**
+ * Worker test config.
+ *
+ * Test segmentation (CI):
+ *   - `fast` job (no Docker): default — Testcontainers-backed outbox suites
+ *     are excluded via `testPathIgnorePatterns`. Set in jest config rather
+ *     than via CLI to avoid shell-escaping issues with regex backslashes
+ *     across Linux/Windows/pnpm boundaries.
+ *   - `db-integration` job (Docker available): set
+ *     `WORKER_INCLUDE_DB_TESTS=1` in the environment to clear the exclusion
+ *     so the integration outbox suites run.
+ *
+ * Locally:
+ *   - Default behaviour matches the `fast` job (no Docker required).
+ *   - To exercise the Testcontainers suites locally, run with
+ *     `WORKER_INCLUDE_DB_TESTS=1`.
+ */
+const includeDbBackedTests =
+  process.env.WORKER_INCLUDE_DB_TESTS === "1";
+
+const dockerOutboxSuites = includeDbBackedTests
+  ? []
+  : ["/outbox/retry-budget\\.spec\\.ts$",
+     "/outbox/idempotent-consumer\\.spec\\.ts$",
+     "/outbox/tenant-context\\.spec\\.ts$"];
+
 /** @type {import('jest').Config} */
 module.exports = {
   preset: "ts-jest",
   testEnvironment: "node",
   rootDir: ".",
   testMatch: ["**/test/**/*.spec.ts"],
+  testPathIgnorePatterns: ["/node_modules/", ...dockerOutboxSuites],
   moduleFileExtensions: ["ts", "js", "json"],
   // Mirrors apps/api/jest.config.cjs — see that file for why ts-jest is
   // pinned to this exact tsconfig with `isolatedModules: true`.
