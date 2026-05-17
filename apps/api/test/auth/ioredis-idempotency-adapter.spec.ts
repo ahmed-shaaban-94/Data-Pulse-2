@@ -224,11 +224,11 @@ describe("IoredisIdempotencyAdapter — single client instance", () => {
 // ===========================================================================
 
 /**
- * We mock ioredis entirely so `new Redis(url)` does not attempt a TCP connection.
- * This mirrors the `jest.mock("bullmq")` pattern in email-queue.wiring.spec.ts.
+ * We mock ioredis entirely so `new Redis(url)` inside `redisClientFactory`
+ * does not attempt a TCP connection. This mirrors the `jest.mock("bullmq")`
+ * pattern in email-queue.wiring.spec.ts.
  */
 jest.mock("ioredis", () => {
-  // eslint-disable-next-line @typescript-eslint/no-extraneous-class
   const MockRedis = jest.fn().mockImplementation(function () {
     return {
       get: jest.fn(),
@@ -242,7 +242,14 @@ jest.mock("ioredis", () => {
   return { default: MockRedis, __esModule: true };
 });
 
-describe("AuthModule REDIS_CLIENT factory — IoredisIdempotencyAdapter wiring", () => {
+// Import AFTER jest.mock so the factory's `new Redis(url)` resolves to the mock.
+import {
+  redisClientFactory,
+  AlwaysAllowRedis,
+} from "../../src/auth/auth.module";
+import { IoredisIdempotencyAdapter } from "../../src/auth/ioredis-idempotency-adapter";
+
+describe("redisClientFactory — REDIS_CLIENT provider wiring", () => {
   const ORIGINAL_REDIS_URL = process.env["REDIS_URL"];
 
   afterEach(() => {
@@ -253,30 +260,15 @@ describe("AuthModule REDIS_CLIENT factory — IoredisIdempotencyAdapter wiring",
     }
   });
 
-  it("ADAPTER-11: returns AlwaysAllowRedis when REDIS_URL is not set", async () => {
+  it("ADAPTER-11: returns AlwaysAllowRedis when REDIS_URL is not set", () => {
     delete process.env["REDIS_URL"];
-    // Import after mock is in place
-    const { AlwaysAllowRedis } = await import("../../src/auth/auth.module");
-    // Re-import to get a fresh factory invocation
-    const { REDIS_CLIENT: _, ...__ } = await import("../../src/auth/auth.module");
-    void _, __;
-    // Invoke the factory directly
-    const mod = await import("../../src/auth/auth.module");
-    // Access the factory by reconstructing it inline (same logic as auth.module.ts)
-    const url = process.env["REDIS_URL"];
-    const result = url ? null : new AlwaysAllowRedis();
+    const result = redisClientFactory();
     expect(result).toBeInstanceOf(AlwaysAllowRedis);
   });
 
-  it("ADAPTER-12: returns IoredisIdempotencyAdapter when REDIS_URL is set", async () => {
+  it("ADAPTER-12: returns IoredisIdempotencyAdapter (not raw Redis) when REDIS_URL is set", () => {
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    const { IoredisIdempotencyAdapter: Adapter } = await import(
-      "../../src/auth/ioredis-idempotency-adapter"
-    );
-    // The factory inlined: new Redis(url) → IoredisIdempotencyAdapter(client)
-    const Redis = (await import("ioredis")).default;
-    const client = new Redis("redis://localhost:6379");
-    const adapter = new Adapter(client as never);
-    expect(adapter).toBeInstanceOf(Adapter);
+    const result = redisClientFactory();
+    expect(result).toBeInstanceOf(IoredisIdempotencyAdapter);
   });
 });

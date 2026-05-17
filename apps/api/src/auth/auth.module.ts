@@ -65,6 +65,30 @@ import { SessionRepository } from "./session.repository";
 /** Name of the BullMQ queue both the producer and the (future) worker bind to. */
 export const EMAIL_QUEUE_NAME = "email";
 
+/**
+ * Factory for the `REDIS_CLIENT` provider. Extracted so a focused unit test
+ * can verify the factory returns an `IoredisIdempotencyAdapter` when
+ * `REDIS_URL` is set, mirroring the symmetric extraction of
+ * `emailJobEnqueuerFactory` for BullMQ wiring verification.
+ *
+ * Production wiring policy:
+ *   - `REDIS_URL` missing → return `AlwaysAllowRedis` stub (no-op; rate
+ *     limits never trigger; idempotency storage disabled).
+ *   - `REDIS_URL` set → wrap a real ioredis client in
+ *     `IoredisIdempotencyAdapter` so that the options-object set() calls
+ *     used by IdempotencyModule and the pexpireNx() call used by
+ *     RateLimiter are translated to ioredis's variadic-string form.
+ */
+export function redisClientFactory(): RedisLike {
+  const url = process.env["REDIS_URL"];
+  if (!url) return new AlwaysAllowRedis();
+  // Wrap the real ioredis client in IoredisIdempotencyAdapter, which
+  // translates the options-object set() and pexpireNx() calls used by
+  // IdempotencyModule and RateLimiter into ioredis's variadic-string form.
+  const client = new Redis(url);
+  return new IoredisIdempotencyAdapter(client);
+}
+
 export const PG_POOL = "PG_POOL";
 export const REDIS_CLIENT = "REDIS_CLIENT";
 
@@ -155,15 +179,7 @@ export class AlwaysAllowRedis implements RedisLike {
     },
     {
       provide: REDIS_CLIENT,
-      useFactory: (): RedisLike => {
-        const url = process.env["REDIS_URL"];
-        if (!url) return new AlwaysAllowRedis();
-        // Wrap the real ioredis client in IoredisIdempotencyAdapter, which
-        // translates the options-object set() and pexpireNx() calls used by
-        // IdempotencyModule and RateLimiter into ioredis's variadic-string form.
-        const client = new Redis(url);
-        return new IoredisIdempotencyAdapter(client);
-      },
+      useFactory: redisClientFactory,
     },
     {
       provide: EMAIL_JOB_ENQUEUER,
