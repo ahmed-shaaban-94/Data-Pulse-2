@@ -21,11 +21,17 @@
  * sink. Real production never passes anything; the defaults wire up
  * the real Nest factory and the real `process`.
  */
+
+// instrumentation MUST be first: registers the OTel MeterProvider before
+// any module that creates instruments at load time (worker.metrics.ts, etc.).
+import "./instrumentation";
+
 import {
   type INestApplicationContext,
   Logger,
 } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
+import { shutdownOtel } from "@data-pulse-2/shared";
 
 import { EmailWorker } from "./email/email.worker";
 import { AuditWorker } from "./audit/audit.worker";
@@ -90,6 +96,20 @@ export async function bootstrap(
   const proc: ProcessLike = deps.process ?? process;
   const stderr: StderrLike = deps.stderr ?? process.stderr;
 
+  // OTel SDK is already running (started by ./instrumentation, which is
+  // imported as the very first module in this file). Log the port/host so
+  // operators can confirm the scrape endpoint is up.
+  const metricsPort = Number(process.env["WORKER_METRICS_PORT"] ?? 9091);
+  const metricsHost = process.env["WORKER_METRICS_BIND_HOST"] ?? "127.0.0.1";
+
+  writeLine(stderr, {
+    level: "info",
+    component: "worker.bootstrap",
+    message: "metrics_listening",
+    metricsPort: String(metricsPort),
+    metricsHost,
+  });
+
   const app = await createContext();
   const emailWorker = app.get(EmailWorker);
   const auditWorker = app.get(AuditWorker);
@@ -122,6 +142,9 @@ export async function bootstrap(
         error: errMsg(err),
       });
     }
+    // Flush metrics and shut down the OTel SDK (including the Prometheus
+    // HTTP listener) before exiting.
+    await shutdownOtel();
     proc.exit(0);
   };
 

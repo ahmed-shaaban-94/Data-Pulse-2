@@ -1,3 +1,6 @@
+// instrumentation MUST be first: registers the OTel MeterProvider before
+// any module that creates instruments at load time (api.metrics.ts, etc.).
+import "./instrumentation";
 import "reflect-metadata";
 
 import { NestFactory } from "@nestjs/core";
@@ -14,6 +17,12 @@ import { ContextInterceptor } from "./context/context.interceptor";
 import { loadOpenApiContracts } from "./openapi/loader";
 
 async function bootstrap(): Promise<void> {
+  // OTel SDK is already running (started by ./instrumentation, which is
+  // imported as the very first module in this file). The PrometheusExporter
+  // listener is up on METRICS_PORT (default 9464) before any AppModule
+  // provider creates an OTel instrument, so all instruments resolve to live
+  // SDK counters/histograms rather than dead ProxyCounters.
+
   const rootLogger: Logger = createLogger({
     service: "api",
     level: process.env["LOG_LEVEL"] ?? "info",

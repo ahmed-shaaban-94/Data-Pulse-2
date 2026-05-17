@@ -220,6 +220,9 @@ importers:
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
+      '@opentelemetry/exporter-prometheus':
+        specifier: 0.216.0
+        version: 0.216.0(@opentelemetry/api@1.9.1)
       '@opentelemetry/exporter-trace-otlp-http':
         specifier: 0.216.0
         version: 0.216.0(@opentelemetry/api@1.9.1)
@@ -232,6 +235,9 @@ importers:
       '@opentelemetry/instrumentation-redis':
         specifier: 0.64.0
         version: 0.64.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-metrics':
+        specifier: 2.7.1
+        version: 2.7.1(@opentelemetry/api@1.9.1)
       '@opentelemetry/sdk-node':
         specifier: 0.216.0
         version: 0.216.0(@opentelemetry/api@1.9.1)
