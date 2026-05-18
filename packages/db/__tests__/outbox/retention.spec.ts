@@ -72,6 +72,11 @@ const EVENT_CLAIMED_OLD = "0bd40000-0000-4000-8000-000000000002";
 const EVENT_TOMBSTONED_FRESH = "0bd50000-0000-4000-8000-000000000001";
 const EVENT_TOMBSTONED_OLD = "0bd50000-0000-4000-8000-000000000002";
 
+// RT-6 cross-tenant RLS fixtures
+const TENANT_OTHER = "0bd00000-0000-7000-8000-000000000002";
+const EVENT_RT6_R_ELIGIBLE     = "0bd60000-0000-4000-8000-000000000001"; // belongs to TENANT_R; eligible (400d failed)
+const EVENT_RT6_OTHER_ELIGIBLE = "0bd60000-0000-4000-8000-000000000002"; // belongs to TENANT_OTHER; eligible (400d failed)
+
 // PII canary -- if this string ever appears in a retention query result the
 // test fails, proving the purge predicate does not need to read payload.
 const PII_CANARY = "pii-canary@example.test";
@@ -595,5 +600,124 @@ describe("outbox retention -- DELETE shape (RT-5)", () => {
     expect(r.rows).toHaveLength(2);
     const states = r.rows.map((row) => row.delivery_state).sort();
     expect(states).toEqual(["claimed", "pending"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 6: Cross-tenant RLS regression -- predicate respects tenant isolation
+// ---------------------------------------------------------------------------
+//
+// What this proves
+// ----------------
+// All preceding suites pin ELIGIBLE_SQL via `env.admin.query()`, which runs
+// as the Postgres superuser and BYPASSES RLS by definition. That asserts the
+// SQL SHAPE of the predicate but NOT that the production retention path
+// respects tenant isolation. The future `retention.processor.ts` (slice 1C-B)
+// will run as the non-superuser app role under a tenant GUC context, so the
+// predicate's behaviour MUST be re-asserted under that posture.
+//
+// This suite uses `env.app` (the non-superuser `app_test` role) inside a
+// transaction with `set_config('app.current_tenant', $1, true)` so the
+// outbox_events FORCE ROW LEVEL SECURITY policy is exercised. With the row
+// visibility predicate `current_setting('app.current_tenant', true)::uuid =
+// tenant_id`, a TENANT_R context MUST NOT see TENANT_OTHER's events even
+// though both are independently purge-eligible by the time-window predicate.
+//
+// Setup posture
+// -------------
+// RT-6 seeds its own fixtures in its `beforeAll` (rather than the top-level
+// `beforeAll`) because RT-5's DELETE runs between top-level setup and RT-6's
+// tests, and would wipe any pre-seeded eligible rows. Seeding here keeps the
+// fixture lifetime scoped to this suite.
+describe("outbox retention -- cross-tenant RLS regression (RT-6)", () => {
+  beforeAll(async () => {
+    if (dockerSkipped) return;
+
+    // Seed the second tenant. ON CONFLICT DO NOTHING so a re-run of the
+    // suite (or a future suite that also needs TENANT_OTHER) is safe.
+    await env!.admin.query(
+      `INSERT INTO tenants (id, slug, name)
+       VALUES ($1, 'outbox-retention-other', 'Outbox Retention Other Tenant')
+       ON CONFLICT (id) DO NOTHING`,
+      [TENANT_OTHER],
+    );
+
+    // One purge-eligible (failed, 400d) event per tenant. Both rows are
+    // unambiguously in the failed/dead_lettered 365d window. The retention
+    // predicate ON ITS OWN matches both rows; only RLS distinguishes them.
+    await seedEvent({
+      eventId: EVENT_RT6_R_ELIGIBLE,
+      tenantId: TENANT_R,
+      eventType: "test.non_audit",
+      deliveryState: "failed",
+      attempts: 3,
+      ageDays: 400,
+    });
+    await seedEvent({
+      eventId: EVENT_RT6_OTHER_ELIGIBLE,
+      tenantId: TENANT_OTHER,
+      eventType: "test.non_audit",
+      deliveryState: "failed",
+      attempts: 3,
+      ageDays: 400,
+    });
+  });
+
+  it("RT-6 excludes another tenant's purge-eligible rows under app-role RLS context", async () => {
+    if (maybeSkip()) return;
+
+    // Step 1: confirm via the superuser that both fixtures exist and would
+    // BOTH match the bare retention predicate when RLS is bypassed. This
+    // makes the RLS-enforced result below meaningful -- without this guard
+    // a regression in fixture seeding could silently pass the RLS check.
+    const adminPreflight = await env!.admin.query<{ event_id: string }>(
+      `${ELIGIBLE_SQL}
+         AND event_id IN ($1, $2)`,
+      [EVENT_RT6_R_ELIGIBLE, EVENT_RT6_OTHER_ELIGIBLE],
+    );
+    const adminIds = new Set(adminPreflight.rows.map((r) => r.event_id));
+    expect(adminIds).toEqual(new Set([EVENT_RT6_R_ELIGIBLE, EVENT_RT6_OTHER_ELIGIBLE]));
+
+    // Step 2: re-run the SAME predicate as the non-superuser app role under
+    // TENANT_R's GUC context. RLS must filter TENANT_OTHER's row out.
+    const client = await env!.app.connect();
+    try {
+      await client.query("BEGIN");
+      // set_config with `is_local = true` scopes the GUC to this transaction
+      // exactly like `SET LOCAL`, but allows parameter binding. The
+      // production retention processor will use the same pattern through
+      // its `runWithTenantContext` helper.
+      await client.query(
+        "SELECT set_config('app.current_tenant', $1, true)",
+        [TENANT_R],
+      );
+      // Defence in depth: explicitly disable the platform-admin OR-branch
+      // so we are genuinely testing tenant-id-based RLS filtering, not the
+      // platform-admin bypass path the drainer uses.
+      await client.query(
+        "SELECT set_config('app.is_platform_admin', 'false', true)",
+      );
+
+      const appResult = await client.query<{ event_id: string }>(
+        `${ELIGIBLE_SQL}
+           AND event_id IN ($1, $2)`,
+        [EVENT_RT6_R_ELIGIBLE, EVENT_RT6_OTHER_ELIGIBLE],
+      );
+      const appIds = new Set(appResult.rows.map((r) => r.event_id));
+
+      // Positive: TENANT_R's eligible row IS visible.
+      expect(appIds).toContain(EVENT_RT6_R_ELIGIBLE);
+      // Negative: TENANT_OTHER's eligible row is filtered out by RLS even
+      // though the time-window predicate matches it.
+      expect(appIds).not.toContain(EVENT_RT6_OTHER_ELIGIBLE);
+
+      await client.query("ROLLBACK");
+    } catch (err: unknown) {
+      // Ensure the pooled client is never returned in an aborted-tx state.
+      try { await client.query("ROLLBACK"); } catch { /* ignore */ }
+      throw err;
+    } finally {
+      client.release();
+    }
   });
 });
