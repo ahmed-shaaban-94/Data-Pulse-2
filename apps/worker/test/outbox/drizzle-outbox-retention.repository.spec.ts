@@ -19,7 +19,10 @@
  *       crosses the cutoff -- the SQL never reads payload.
  *  DR-5 batch boundary: with batchSize=1, a single purgeBatch call deletes
  *       exactly one row.
- *  DR-6 idempotency: a second purge with the same cutoffs returns 0.
+ *  DR-6 idempotency: a second purge with the same cutoffs returns 0
+ *       (asserted inline at the tail of DR-1 so the assertion is
+ *       structurally coupled to the post-purge state and cannot silently
+ *       pass against a fresh fixture).
  *  DR-7 app role / RLS path is exercised -- the repository's pool is the
  *       non-superuser `app_test` pool, and the SQL relies on the
  *       runWithTenantContext platform-admin OR-branch to cross tenants.
@@ -312,7 +315,7 @@ describe("DrizzleOutboxRetentionRepository -- batch boundary + idempotency (DR-5
 // survivors intact, tombstoned row goes through the time-based predicate.
 // ---------------------------------------------------------------------------
 describe("DrizzleOutboxRetentionRepository -- platform-admin cross-tenant sweep (DR-1..DR-4)", () => {
-  it("a full sweep deletes the remaining eligible rows from BOTH tenants (DR-1)", async () => {
+  it("a full sweep deletes the remaining eligible rows from BOTH tenants, and a second sweep returns 0 (DR-1 + DR-6)", async () => {
     if (maybeSkip()) return;
 
     // 2 eligible rows remain after DR-5 above (4 seeded - 2 deleted = 2).
@@ -334,6 +337,13 @@ describe("DrizzleOutboxRetentionRepository -- platform-admin cross-tenant sweep 
     // DR-4 piggy-backs: the tombstoned row crossed its 90d delivered cutoff
     // and the sweep purged it WITHOUT needing to read the payload.
     expect(remaining.has(EVENT_B_TOMBSTONED_OLD)).toBe(false);
+
+    // DR-6 (idempotency): re-running the sweep with the same cutoffs on the
+    // post-purge state returns 0. Kept inside this `it` rather than a
+    // separate state-dependent test so the assertion is self-contained --
+    // it can never silently pass against a fresh fixture.
+    const secondPurge = await repo.purgeBatch(cutoffs, 1000);
+    expect(secondPurge).toBe(0);
   });
 
   it("fresh rows from both tenants survive (DR-2)", async () => {
@@ -364,15 +374,8 @@ describe("DrizzleOutboxRetentionRepository -- platform-admin cross-tenant sweep 
   });
 });
 
-// ---------------------------------------------------------------------------
-// DR-6: idempotency -- a second sweep with the same cutoffs is a no-op
-// ---------------------------------------------------------------------------
-describe("DrizzleOutboxRetentionRepository -- idempotent re-run (DR-6)", () => {
-  it("re-running the sweep with the same cutoffs returns 0 (DR-6)", async () => {
-    if (maybeSkip()) return;
-    const repo = new DrizzleOutboxRetentionRepository(env!.app);
-    const cutoffs = computeRetentionCutoffs(new Date());
-    const purged = await repo.purgeBatch(cutoffs, 1000);
-    expect(purged).toBe(0);
-  });
-});
+// DR-6 is asserted inline at the tail of the DR-1 test (the second
+// purgeBatch call). Keeping idempotency in the same `it` as the initial
+// sweep means the assertion can never silently pass against a fresh
+// fixture -- it is structurally coupled to the post-purge state DR-1 just
+// produced.

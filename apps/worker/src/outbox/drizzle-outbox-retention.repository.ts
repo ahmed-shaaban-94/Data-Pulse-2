@@ -48,7 +48,7 @@ import { Injectable } from "@nestjs/common";
 import type { Pool } from "pg";
 import { runWithTenantContext } from "@data-pulse-2/db";
 import type { OutboxRetentionRepository } from "./retention.processor";
-import type { RetentionCutoffs } from "./retention.policy";
+import { AUDIT_EVENT_TYPE, type RetentionCutoffs } from "./retention.policy";
 
 /**
  * Pinned SQL. The three-branch predicate exactly matches the ELIGIBLE_SQL
@@ -60,6 +60,9 @@ import type { RetentionCutoffs } from "./retention.policy";
  *   $1 = deliveredCutoff (now - 90 days)
  *   $2 = failedCutoff    (now - 365 days)
  *   $3 = batchSize
+ *   $4 = audit event type sentinel (AUDIT_EVENT_TYPE -- bound, never
+ *        interpolated, so the predicate can never drift from the
+ *        single source of truth in retention.policy.ts).
  */
 const PURGE_BATCH_SQL = `
 DELETE FROM outbox_events
@@ -67,12 +70,12 @@ DELETE FROM outbox_events
    SELECT event_id
      FROM outbox_events
     WHERE (delivery_state = 'delivered'
-           AND event_type <> 'audit.event.created'
+           AND event_type <> $4
            AND processed_at < $1)
        OR (delivery_state IN ('failed', 'dead_lettered')
            AND COALESCE(processed_at, updated_at) < $2)
        OR (delivery_state = 'delivered'
-           AND event_type = 'audit.event.created'
+           AND event_type = $4
            AND processed_at < $2)
     ORDER BY occurred_at ASC
     FOR UPDATE SKIP LOCKED
@@ -98,7 +101,12 @@ export class DrizzleOutboxRetentionRepository implements OutboxRetentionReposito
       async (client) => {
         const result = await client.query<{ event_id: string }>(
           PURGE_BATCH_SQL,
-          [cutoffs.deliveredCutoff, cutoffs.failedCutoff, batchSize],
+          [
+            cutoffs.deliveredCutoff,
+            cutoffs.failedCutoff,
+            batchSize,
+            AUDIT_EVENT_TYPE,
+          ],
         );
         return result.rows.length;
       },

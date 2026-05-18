@@ -256,14 +256,35 @@ describe("OutboxRetentionProcessor -- job validation (P-9, P-10)", () => {
     expect(repo.calls).toHaveLength(0);
   });
 
-  it("non-object payload throws MalformedOutboxRetentionJobError (P-10)", async () => {
+  it("non-object payload throws MalformedOutboxRetentionJobError and never echoes PII (P-10)", async () => {
     const repo = new FakeOutboxRetentionRepository(0);
     const processor = new OutboxRetentionProcessor(repo, fixedClock());
 
-    // Pass a string (a non-object that Zod's `z.object().passthrough()` rejects).
-    await expect(
-      processor.process(OUTBOX_RETENTION_JOB_NAME, "not-an-object" as unknown),
-    ).rejects.toThrow(MalformedOutboxRetentionJobError);
+    // The Zod schema rejects non-object payloads. We embed a PII canary in
+    // the rejected payload to prove the error message NEVER echoes input
+    // data -- only the operator-authored, redacted error class metadata
+    // is allowed to escape (per the worker's PII-safe logging contract).
+    const PII_CANARY = "PII_CANARY";
+    let captured: unknown = null;
+    try {
+      // Pass a string with the canary embedded; Zod's
+      // `z.object().passthrough()` rejects non-objects regardless of
+      // content, so this exercises the rejection path with a payload that
+      // would leak if the implementation ever stringified the input.
+      await processor.process(
+        OUTBOX_RETENTION_JOB_NAME,
+        `not-an-object-${PII_CANARY}` as unknown,
+      );
+    } catch (err) {
+      captured = err;
+    }
+
+    // 1. The right error class fired.
+    expect(captured).toBeInstanceOf(MalformedOutboxRetentionJobError);
+    // 2. The error message is PII-safe -- the canary does NOT appear.
+    expect(String((captured as Error).message)).not.toContain(PII_CANARY);
+    // 3. The repo seam was never touched -- a malformed payload aborts
+    //    before any sweep work begins.
     expect(repo.calls).toHaveLength(0);
   });
 
