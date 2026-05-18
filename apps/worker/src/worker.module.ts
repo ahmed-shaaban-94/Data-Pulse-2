@@ -108,6 +108,17 @@ import { AuditRetentionScheduler } from "./audit/audit-retention.scheduler";
 import { OutboxModule, OutboxDrainerRunner } from "./outbox/outbox.module";
 import { OutboxConsumerRegistry } from "./outbox/registry";
 import { DrainerProcessor } from "./outbox/drainer.processor";
+import {
+  OutboxRetentionProcessor,
+  OUTBOX_RETENTION_REPO,
+  type OutboxRetentionRepository,
+} from "./outbox/retention.processor";
+import {
+  DrizzleOutboxRetentionRepository,
+  NoOpOutboxRetentionRepository,
+} from "./outbox/drizzle-outbox-retention.repository";
+import { OutboxRetentionWorker } from "./outbox/retention.worker";
+import { OutboxRetentionScheduler } from "./outbox/retention.scheduler";
 
 /**
  * Real BullMQ-backed factory. Constructs a `bullmq.Worker` that
@@ -308,6 +319,26 @@ export function auditRetentionRepoProviderFactory(
   return new DrizzleAuditRetentionRepository(wrapper.pool);
 }
 
+/**
+ * Factory for the `OUTBOX_RETENTION_REPO` provider (T590).
+ *
+ * Mirrors `auditRetentionRepoProviderFactory`. Reuses the existing
+ * `AuditDbPool` wrapper so no second Postgres pool is created -- the
+ * outbox retention sweep shares lifecycle with the audit pipeline. The
+ * Drizzle implementation issues its DELETEs under
+ * `runWithTenantContext({ tenantId: null, isPlatformAdmin: true })` so
+ * the platform-admin OR-branch of the outbox_events RLS policy covers
+ * every tenant in a single sweep.
+ */
+export function outboxRetentionRepoProviderFactory(
+  wrapper: AuditDbPool,
+): OutboxRetentionRepository {
+  if (wrapper.pool === null) {
+    return new NoOpOutboxRetentionRepository();
+  }
+  return new DrizzleOutboxRetentionRepository(wrapper.pool);
+}
+
 /** DI token for the `AuditDbPool` Nest-managed wrapper. */
 export const PG_POOL = "PG_POOL";
 
@@ -418,6 +449,32 @@ export function outboxDrainerRunnerProviderFactory(
     AuditRetentionWorker,
     AuditRetentionScheduler,
 
+    // ── Outbox retention pipeline (T590) ──────────────────────────────
+    //
+    // Mirrors the audit-retention quartet above. Shares the existing
+    // AuditDbPool wrapper so no second Postgres pool is created. The
+    // Drizzle repo issues platform-admin sweeps so a single daily run
+    // covers every tenant -- positive counterpart to the tenant-scoped
+    // RLS negative locked by retention.spec.ts suite RT-6.
+    //
+    // OutboxRetentionProcessor takes a `clock: () => Date` default param
+    // that NestJS reflects as `Function`; same factory pattern as the
+    // AuditRetentionProcessor binding above so the TypeScript default
+    // is preserved in production.
+    {
+      provide: OUTBOX_RETENTION_REPO,
+      useFactory: outboxRetentionRepoProviderFactory,
+      inject: [AuditDbPool],
+    },
+    {
+      provide: OutboxRetentionProcessor,
+      useFactory: (repo: OutboxRetentionRepository) =>
+        new OutboxRetentionProcessor(repo),
+      inject: [OUTBOX_RETENTION_REPO],
+    },
+    OutboxRetentionWorker,
+    OutboxRetentionScheduler,
+
     // ── Outbox drainer pipeline (T581) ────────────────────────────────
     //
     // The OUTBOX_DRAINER + OutboxDrainerRunner providers live here (not in
@@ -444,6 +501,8 @@ export function outboxDrainerRunnerProviderFactory(
     AuditFanoutProcessor,
     AuditRetentionWorker,
     AuditRetentionProcessor,
+    OutboxRetentionWorker,
+    OutboxRetentionProcessor,
     OUTBOX_DRAINER,
     OutboxDrainerRunner,
   ],
