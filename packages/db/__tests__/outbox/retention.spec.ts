@@ -55,6 +55,11 @@ const EVENT_DELIVERED_OLD = "0bd10000-0000-4000-8000-000000000002";
 const EVENT_FAILED_FRESH = "0bd20000-0000-4000-8000-000000000001";
 const EVENT_FAILED_OLD = "0bd20000-0000-4000-8000-000000000002";
 
+// Delivered audit.event.created -- inherits the 365-day window (FR-C-007)
+const EVENT_AUDIT_DELIVERED_FRESH = "0bd25000-0000-4000-8000-000000000001"; //   1 day -- NOT eligible
+const EVENT_AUDIT_DELIVERED_MID   = "0bd25000-0000-4000-8000-000000000002"; // 100 days -- NOT eligible (would be under 90d rule, but audit inherits 365d)
+const EVENT_AUDIT_DELIVERED_OLD   = "0bd25000-0000-4000-8000-000000000003"; // 400 days -- eligible
+
 // Dead-lettered events
 const EVENT_DL_FRESH = "0bd30000-0000-4000-8000-000000000001";
 const EVENT_DL_OLD = "0bd30000-0000-4000-8000-000000000002";
@@ -118,7 +123,13 @@ function maybeSkip(): boolean {
 async function seedEvent(opts: {
   eventId: string;
   tenantId: string;
-  eventType?: string;
+  /**
+   * REQUIRED. The retention predicate keys off `event_type` (audit-relevant
+   * events inherit the 365-day window even when delivered), so a defaulted
+   * value would silently route fixture rows into the wrong window class.
+   * Every call site MUST be explicit.
+   */
+  eventType: string;
   deliveryState: "pending" | "claimed" | "delivered" | "failed" | "dead_lettered";
   attempts?: number;
   payload?: Record<string, unknown>;
@@ -128,7 +139,7 @@ async function seedEvent(opts: {
   const {
     eventId,
     tenantId,
-    eventType = "audit.event.created",
+    eventType,
     deliveryState,
     attempts = 0,
     payload = { ref: eventId, actor_label: PII_CANARY },
@@ -325,6 +336,71 @@ describe("outbox retention -- failed/dead_lettered events 365-day window (RT-2)"
 });
 
 // ---------------------------------------------------------------------------
+// Suite 2.5: Audit events (delivered) -- 365-day window (audit-relevant carve-out)
+// ---------------------------------------------------------------------------
+//
+// Rationale: `audit.event.created` is the first registered outbox event type
+// (FR-C-007) and is audit-relevant -- it MUST inherit the 365-day window even
+// when delivered (docs/outbox/lifecycle.md section 5, line 86; FR-C-007 audit
+// immutability). This is the branch of ELIGIBLE_SQL that filters
+// `delivery_state = 'delivered' AND event_type = 'audit.event.created'`
+// against the 365-day cutoff rather than the 90-day cutoff.
+//
+// The 100-day-old case is the critical boundary: a delivered non-audit event
+// at 100 days IS eligible (RT-1b), but a delivered audit event at 100 days
+// MUST NOT be (audit carve-out). This suite locks that distinction.
+describe("outbox retention -- audit events 365-day window (RT-2.5)", () => {
+  beforeAll(async () => {
+    if (dockerSkipped) return;
+    // 1 day old -- inside both windows; NOT eligible.
+    await seedEvent({
+      eventId: EVENT_AUDIT_DELIVERED_FRESH,
+      tenantId: TENANT_R,
+      eventType: "audit.event.created",
+      deliveryState: "delivered",
+      ageDays: 1,
+    });
+    // 100 days old -- crosses 90d cutoff but inside 365d; NOT eligible (audit carve-out).
+    await seedEvent({
+      eventId: EVENT_AUDIT_DELIVERED_MID,
+      tenantId: TENANT_R,
+      eventType: "audit.event.created",
+      deliveryState: "delivered",
+      ageDays: 100,
+    });
+    // 400 days old -- crosses 365d cutoff; eligible.
+    await seedEvent({
+      eventId: EVENT_AUDIT_DELIVERED_OLD,
+      tenantId: TENANT_R,
+      eventType: "audit.event.created",
+      deliveryState: "delivered",
+      ageDays: 400,
+    });
+  });
+
+  it("a delivered audit event 1 day old is NOT eligible for purge (RT-2.5a)", async () => {
+    if (maybeSkip()) return;
+    const r = await env!.admin.query<{ event_id: string }>(ELIGIBLE_SQL);
+    const ids = r.rows.map((row) => row.event_id);
+    expect(ids).not.toContain(EVENT_AUDIT_DELIVERED_FRESH);
+  });
+
+  it("a delivered audit event 100 days old is NOT eligible -- audit inherits 365d window (RT-2.5b)", async () => {
+    if (maybeSkip()) return;
+    const r = await env!.admin.query<{ event_id: string }>(ELIGIBLE_SQL);
+    const ids = r.rows.map((row) => row.event_id);
+    expect(ids).not.toContain(EVENT_AUDIT_DELIVERED_MID);
+  });
+
+  it("a delivered audit event 400 days old IS eligible for purge (RT-2.5c)", async () => {
+    if (maybeSkip()) return;
+    const r = await env!.admin.query<{ event_id: string }>(ELIGIBLE_SQL);
+    const ids = r.rows.map((row) => row.event_id);
+    expect(ids).toContain(EVENT_AUDIT_DELIVERED_OLD);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Suite 3: Active rows are never purged (regardless of age)
 // ---------------------------------------------------------------------------
 describe("outbox retention -- active rows are never purged (RT-3)", () => {
@@ -454,14 +530,27 @@ describe("outbox retention -- right-to-erasure tombstoning (RT-4)", () => {
 // ---------------------------------------------------------------------------
 // Suite 5: DELETE shape -- the processor's mechanical step
 // ---------------------------------------------------------------------------
+//
+// Order independence: the three assertions below each make an INDEPENDENT
+// observation of post-purge state. The DELETE itself (and its before/after
+// snapshots) runs in `beforeAll`, so removing or reordering any single
+// `it` does not break the others. Re-running an individual test via
+// `--testNamePattern="RT-5b"` also works.
 describe("outbox retention -- DELETE shape (RT-5)", () => {
-  it("the eligibility predicate composes into a DELETE that purges exactly the eligible rows (RT-5a)", async () => {
-    if (maybeSkip()) return;
+  // Captured in beforeAll; read-only thereafter. Initialised to undefined so
+  // a Docker-skip path leaves them untouched and the per-test guards short-
+  // circuit before any assertion fires.
+  let eligibleIdsBefore: Set<string> | undefined;
+  let deletedIds: Set<string> | undefined;
 
-    // Capture eligibility BEFORE the DELETE, then run the DELETE with the
-    // same predicate, then prove the affected row set matches.
+  beforeAll(async () => {
+    if (dockerSkipped) return;
+
+    // Snapshot eligibility BEFORE the DELETE, then run the DELETE with the
+    // same predicate, then keep both sets in module scope for the per-test
+    // observations. The DELETE is fired exactly once per test-suite run.
     const before = await env!.admin.query<{ event_id: string }>(ELIGIBLE_SQL);
-    const eligibleIds = new Set(before.rows.map((r) => r.event_id));
+    eligibleIdsBefore = new Set(before.rows.map((r) => r.event_id));
 
     const deleted = await env!.admin.query<{ event_id: string }>(
       `WITH cutoffs AS (
@@ -480,16 +569,18 @@ describe("outbox retention -- DELETE shape (RT-5)", () => {
                AND processed_at < failed_cutoff)
         RETURNING event_id`,
     );
-
-    const deletedIds = new Set(deleted.rows.map((r) => r.event_id));
-    expect(deletedIds).toEqual(eligibleIds);
-
-    // Sanity: at least one row was deleted (the suite seeded multiple
-    // window-crossing rows). If this fails the seed/window pair is wrong.
-    expect(deletedIds.size).toBeGreaterThan(0);
+    deletedIds = new Set(deleted.rows.map((r) => r.event_id));
   });
 
-  it("after purge, no eligible rows remain (RT-5b -- idempotency)", async () => {
+  it("the DELETE affects exactly the rows the eligibility predicate identified (RT-5a)", () => {
+    if (maybeSkip()) return;
+    expect(deletedIds).toEqual(eligibleIdsBefore);
+    // Sanity: at least one row was deleted (the suite seeded multiple
+    // window-crossing rows). If this fails the seed/window pair is wrong.
+    expect(deletedIds!.size).toBeGreaterThan(0);
+  });
+
+  it("after purge, the eligibility predicate returns no rows (RT-5b -- idempotency)", async () => {
     if (maybeSkip()) return;
     const r = await env!.admin.query<{ event_id: string }>(ELIGIBLE_SQL);
     expect(r.rows).toHaveLength(0);
