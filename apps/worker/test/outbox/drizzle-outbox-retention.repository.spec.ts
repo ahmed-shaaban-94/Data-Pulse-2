@@ -271,12 +271,47 @@ async function tombstonedPayload(): Promise<{ actor_label?: unknown }> {
 // superuser) and exercises the runWithTenantContext platform-admin path
 // ---------------------------------------------------------------------------
 describe("DrizzleOutboxRetentionRepository -- app-role / platform-admin context (DR-7)", () => {
-  it("env.app role is the non-superuser app_test role (DR-7a)", async () => {
+  it("env.app role is the non-superuser app_test role AND cannot view outbox rows without tenant context (DR-7a)", async () => {
     if (maybeSkip()) return;
     const client = await env!.app.connect();
     try {
-      const r = await client.query<{ current_user: string }>("SELECT current_user");
-      expect(r.rows[0]!.current_user).toBe(APP_ROLE_NAME);
+      // Step 1: confirm we are running as the non-superuser app_test role.
+      // If env.app accidentally pointed at the superuser pool, the RLS
+      // assertion below would be a false positive.
+      const whoami = await client.query<{ current_user: string }>(
+        "SELECT current_user",
+      );
+      expect(whoami.rows[0]!.current_user).toBe(APP_ROLE_NAME);
+
+      // Step 2: with NO tenant context GUC set on this connection, the
+      // outbox_events RLS predicate
+      //   current_setting('app.current_tenant', true)::uuid = tenant_id
+      //   OR current_setting('app.is_platform_admin', true) = 'true'
+      // is fail-closed: either the empty-string `::uuid` cast errors
+      // (PostgreSQL evaluates the cast eagerly) OR the row visibility
+      // predicate matches zero rows. EITHER outcome proves the app role
+      // cannot bypass RLS without context being established by the
+      // platform-admin sweep. This mirrors the G-8 pattern from
+      // packages/db/__tests__/outbox/rls.spec.ts.
+      //
+      // The fixture beforeAll seeded BOTH tenants' rows via env.admin,
+      // so a privilege bypass would surface as a non-zero count here.
+      let count: number | null = null;
+      let threw = false;
+      try {
+        const r = await client.query<{ count: number }>(
+          "SELECT count(*)::int AS count FROM outbox_events",
+        );
+        count = r.rows[0]?.count ?? null;
+      } catch {
+        // Empty-string ::uuid cast error is the stricter fail-closed outcome.
+        threw = true;
+      }
+
+      // Either branch is acceptable; never actual data.
+      if (!threw) {
+        expect(count).toBe(0);
+      }
     } finally {
       client.release();
     }
