@@ -20,6 +20,7 @@
 import {
   isOutboxAuditEnabled,
   auditJobEnqueuerFactory,
+  outboxOrLegacyAuditJobEnqueuerFactory,
 } from "../../src/audit/audit-enqueuer.module";
 import { OutboxAuditEnqueuer } from "../../src/audit/outbox-audit-enqueuer";
 import { NoOpAuditJobEnqueuer } from "../../src/audit/audit-job.enqueuer";
@@ -169,6 +170,175 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
 
     expect(urls).toHaveLength(2);
     expect(urls.every((u) => u === "redis://localhost:6379")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer A — Unit: pool-aware factory DI matrix (T583 live DI swap)
+// ---------------------------------------------------------------------------
+//
+// Pins the four-way decision matrix of outboxOrLegacyAuditJobEnqueuerFactory:
+//
+//   OUTBOX_AUDIT_ENABLED unset/off            → legacy enqueuer
+//   OUTBOX_AUDIT_ENABLED = "1" + pool present → OutboxAuditEnqueuer
+//   OUTBOX_AUDIT_ENABLED = "1" + pool null    → fall back to legacy (NEVER drop)
+//   invalid flag value ("on", "enabled")      → legacy enqueuer
+//
+// No Postgres connection is opened: the pool reference passed in is
+// either an unused `Pool` instance or null. The factory only consults
+// `pool === null` and threads the reference into `new OutboxAuditEnqueuer(pool)`
+// — it never queries.
+
+describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)", () => {
+  const originalEnv = process.env;
+  let stderrWrites: string[] = [];
+  let stderrSpy: jest.SpyInstance | null = null;
+
+  beforeEach(() => {
+    // Fresh process.env per test so flag mutations don't leak.
+    process.env = { ...originalEnv };
+    // Capture stderr writes so we can assert the misconfiguration log line
+    // without leaking it to test output.
+    stderrWrites = [];
+    stderrSpy = jest
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrWrites.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+    if (stderrSpy) stderrSpy.mockRestore();
+  });
+
+  /** Construct a never-used Pool. The factory only inspects `=== null`. */
+  function makeFakePool(): Pool {
+    // The Pool constructor is lazy — no connection is opened until a query
+    // is issued. We never query, so this is a safe placeholder for "pool
+    // is present" without booting Postgres.
+    return new Pool({
+      connectionString: "postgres://fake:fake@127.0.0.1:1/fake",
+    });
+  }
+
+  function fakeQueueFactory(): (url: string) => AuditQueueLike {
+    return () => ({ add: async () => null });
+  }
+
+  it("OUTBOX_AUDIT_ENABLED unset → legacy enqueuer (NODE_ENV=test, no REDIS_URL)", () => {
+    delete process.env["OUTBOX_AUDIT_ENABLED"];
+    delete process.env["REDIS_URL"];
+    process.env["NODE_ENV"] = "test";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    // Legacy factory's test-fallback is NoOp when REDIS_URL is unset.
+    expect(enqueuer).toBeInstanceOf(NoOpAuditJobEnqueuer);
+    expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
+    expect(stderrWrites).toHaveLength(0);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED unset → legacy enqueuer (NODE_ENV=test + REDIS_URL → AuditQueueProducer)", () => {
+    delete process.env["OUTBOX_AUDIT_ENABLED"];
+    process.env["NODE_ENV"] = "test";
+    process.env["REDIS_URL"] = "redis://localhost:6379";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
+      pool,
+      fakeQueueFactory(),
+    );
+
+    expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
+    expect(stderrWrites).toHaveLength(0);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='1' + pool present → OutboxAuditEnqueuer", () => {
+    process.env["OUTBOX_AUDIT_ENABLED"] = "1";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
+    expect(stderrWrites).toHaveLength(0);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='true' + pool present → OutboxAuditEnqueuer (case-insensitive)", () => {
+    process.env["OUTBOX_AUDIT_ENABLED"] = "TRUE";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='yes' + pool present → OutboxAuditEnqueuer", () => {
+    process.env["OUTBOX_AUDIT_ENABLED"] = "yes";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='on' (invalid token) → legacy enqueuer", () => {
+    process.env["OUTBOX_AUDIT_ENABLED"] = "on";
+    process.env["NODE_ENV"] = "test";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='1' + pool null → safe fallback to legacy + warn line on stderr (NEVER drop events)", () => {
+    process.env["OUTBOX_AUDIT_ENABLED"] = "1";
+    process.env["NODE_ENV"] = "test";
+    process.env["REDIS_URL"] = "redis://localhost:6379";
+
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
+      null,
+      fakeQueueFactory(),
+    );
+
+    // 1. Never silently drops — falls back to the legacy BullMQ producer.
+    expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
+
+    // 2. Misconfiguration is observable — exactly one structured stderr
+    //    line with the documented component name, no PII, no secret data.
+    expect(stderrWrites).toHaveLength(1);
+    const line = stderrWrites[0]!;
+    const parsed = JSON.parse(line.trim()) as Record<string, unknown>;
+    expect(parsed["level"]).toBe("warn");
+    expect(parsed["component"]).toBe("audit.enqueuer");
+    expect(String(parsed["message"])).toContain("OUTBOX_AUDIT_ENABLED=1");
+    expect(String(parsed["message"])).toContain("PG_POOL is null");
+    // 3. The log line does not include the DATABASE_URL value or any
+    //    other potentially-PII string.
+    expect(line).not.toContain("postgres://");
+  });
+
+  it("OUTBOX_AUDIT_ENABLED='1' + pool null + NODE_ENV=production + no REDIS_URL → legacy factory fails loud", () => {
+    // The flag is on, the pool is unavailable, AND the legacy fallback
+    // itself cannot construct a real producer (production + no Redis).
+    // The legacy factory throws the operator-runbook error in that case.
+    // This pins the worst-case branch: we never silently drop, and the
+    // operator sees BOTH the fallback warn line and the production
+    // bootstrapping error.
+    process.env["OUTBOX_AUDIT_ENABLED"] = "1";
+    process.env["NODE_ENV"] = "production";
+    delete process.env["REDIS_URL"];
+
+    expect(() => outboxOrLegacyAuditJobEnqueuerFactory(null)).toThrow(
+      /AuditModule: REDIS_URL is required in production/,
+    );
+    // Fallback warn line still fires before the legacy factory throws.
+    expect(stderrWrites).toHaveLength(1);
   });
 });
 

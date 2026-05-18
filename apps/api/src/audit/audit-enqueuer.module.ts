@@ -22,6 +22,7 @@
  */
 import { Module, type Provider } from "@nestjs/common";
 import { Queue, type JobsOptions } from "bullmq";
+import type { Pool } from "pg";
 
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
@@ -35,6 +36,7 @@ import {
   AuditQueueProducer,
   type AuditQueueLike,
 } from "./audit-queue.producer";
+import { OutboxAuditEnqueuer } from "./outbox-audit-enqueuer";
 
 /**
  * Build the runtime `AuditJobEnqueuer`.
@@ -73,19 +75,81 @@ export function auditJobEnqueuerFactory(
 
 /**
  * Returns true when the outbox-backed audit path should be used in place of
- * direct BullMQ enqueueing. Slice 1B ships the OutboxAuditEnqueuer class and
- * this flag helper, but the live DI swap is intentionally deferred: doing it
- * in this module would require importing AuthModule (the holder of PG_POOL),
- * which would re-introduce the circular import this leaf module exists to
- * avoid (see the module docstring). The live swap will land alongside Slice
- * 1C's dead-letter admin endpoint, which already imports AuthModule for
- * RolesGuard — that's the natural place to wire it without a new circular.
+ * direct BullMQ enqueueing. Defaults OFF — production cutover is operator-
+ * driven, not code-driven.
+ *
+ * The DI swap landed with slice 1C-B2 (T583): `outboxOrLegacyAuditJobEnqueuerFactory`
+ * below consults this flag and returns either an OutboxAuditEnqueuer (flag on +
+ * pool present) or the legacy AuditQueueProducer / NoOpAuditJobEnqueuer (flag
+ * off, or flag on but pool unavailable).
+ *
+ * The live binding lives in `OutboxAuditEnqueuerModule` (a sibling leaf module
+ * that imports AuthModule to inject PG_POOL). This module — `AuditEnqueuerModule`
+ * — keeps its legacy provider so `AuthModule` can still resolve
+ * AUDIT_JOB_ENQUEUER for the auth-signin emission path without picking up the
+ * outbox dependency on PG_POOL (which would re-introduce the
+ * `AuthModule → AuditEnqueuerModule → AuthModule` cycle this leaf module
+ * exists to avoid).
  *
  * The flag accepts the literal strings "1", "true", or "yes" (case-insensitive).
  */
 export function isOutboxAuditEnabled(): boolean {
   const raw = (process.env["OUTBOX_AUDIT_ENABLED"] ?? "").toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
+}
+
+/**
+ * Pool-aware factory used by `OutboxAuditEnqueuerModule` (slice 1C-B2, T583).
+ *
+ * Decision matrix:
+ *
+ *   OUTBOX_AUDIT_ENABLED unset/off            → legacy `auditJobEnqueuerFactory`
+ *                                               (direct BullMQ enqueueing).
+ *   OUTBOX_AUDIT_ENABLED on  + pool present   → `OutboxAuditEnqueuer`
+ *                                               (writes audit.event.created
+ *                                               rows to outbox_events).
+ *   OUTBOX_AUDIT_ENABLED on  + pool null      → fall back to legacy +
+ *                                               emit a PII-safe stderr line
+ *                                               so an operator can see the
+ *                                               configuration mismatch.
+ *
+ * Safe-fallback rationale (matches task instruction "fall back to legacy
+ * only if the existing architecture clearly supports safe fallback"):
+ *   - The legacy path is exactly what runs when the flag is off, so it is
+ *     guaranteed-safe steady-state.
+ *   - A flag-on + null-pool combination is a misconfiguration, not a
+ *     failure mode; failing loud would crash request handling for a
+ *     misconfiguration the operator can fix at runtime.
+ *   - The structured stderr line ensures the misconfiguration is
+ *     observable. Mirrors the PII-safe logging policy used by the
+ *     drainer (drainer.processor.ts lines 307-334) and the outbox
+ *     retention worker (retention.worker.ts).
+ *
+ * The `queueFactory` parameter passes through to the legacy fallback so
+ * unit tests can swap the BullMQ Queue out without booting Redis.
+ */
+export function outboxOrLegacyAuditJobEnqueuerFactory(
+  pool: Pool | null,
+  queueFactory?: (url: string) => AuditQueueLike,
+): AuditJobEnqueuer {
+  if (!isOutboxAuditEnabled()) {
+    return auditJobEnqueuerFactory(queueFactory);
+  }
+  if (pool === null) {
+    // Misconfiguration: flag is on but no DB pool is available. The
+    // legacy BullMQ path keeps audit emissions flowing while the
+    // operator investigates. NEVER silently drop audit events.
+    const line = JSON.stringify({
+      level: "warn",
+      component: "audit.enqueuer",
+      message:
+        "OUTBOX_AUDIT_ENABLED=1 but PG_POOL is null; falling back to legacy " +
+        "BullMQ audit enqueuer. Check DATABASE_URL configuration.",
+    });
+    process.stderr.write(line + "\n");
+    return auditJobEnqueuerFactory(queueFactory);
+  }
+  return new OutboxAuditEnqueuer(pool);
 }
 
 const auditJobEnqueuerProvider: Provider = {
