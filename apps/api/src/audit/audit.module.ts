@@ -51,6 +51,7 @@ import { RolesGuard } from "../auth/roles.guard";
 import { AuditController } from "./audit.controller";
 import { AuditEmitterInterceptor } from "./audit-emitter.interceptor";
 import { AuditEnqueuerModule } from "./audit-enqueuer.module";
+import { OutboxAuditEnqueuerModule } from "./outbox-audit-enqueuer.module";
 import {
   AUDIT_JOB_ENQUEUER,
   type AuditJobEnqueuer,
@@ -82,7 +83,20 @@ const auditRepositoryProvider: Provider = {
 };
 
 @Module({
-  imports: [AuditEnqueuerModule, AuthModule, ContextModule],
+  // Import order matters: `OutboxAuditEnqueuerModule` is listed AFTER
+  // `AuditEnqueuerModule` so Nest's last-import-wins semantics give the
+  // request-graph AUDIT_JOB_ENQUEUER consumers the outbox-aware factory
+  // (slice 1C-B2, T583). `AuditEnqueuerModule` stays imported because
+  // (a) other modules reference it directly (AuthModule, audit-queue
+  // tests), and (b) the type-export contract documented below still
+  // resolves through it. `outbox-audit-enqueuer.module.spec.ts` pins
+  // this resolution order with a Nest test module.
+  imports: [
+    AuditEnqueuerModule,
+    OutboxAuditEnqueuerModule,
+    AuthModule,
+    ContextModule,
+  ],
   controllers: [AuditController],
   providers: [
     auditInterceptorProvider,
@@ -90,14 +104,16 @@ const auditRepositoryProvider: Provider = {
     AuditService,
     RolesGuard,
   ],
-  // Re-export `AuditEnqueuerModule` so downstream consumers of `AuditModule`
-  // see `AUDIT_JOB_ENQUEUER` exactly as before — the token's provider has
-  // moved into the leaf module, but the re-export contract is preserved so
-  // existing tests (`audit.module.spec.ts`) and any downstream module that
-  // expects the token to be reachable through `AuditModule` keeps working.
-  // NOTE: Nest forbids listing a token directly in `exports` when its
-  // provider lives in an imported module — re-exporting the module itself
+  // Re-export both enqueuer modules so downstream consumers of
+  // `AuditModule` see `AUDIT_JOB_ENQUEUER` exactly as before. The
+  // OutboxAuditEnqueuerModule export wins for resolution order, but
+  // re-exporting AuditEnqueuerModule preserves the existing test
+  // surface (`audit.module.spec.ts`) and downstream modules that
+  // expect the legacy token-export chain.
+  //
+  // Nest forbids listing a token directly in `exports` when its
+  // provider lives in an imported module — re-exporting the modules
   // is the supported mechanism (and is functionally equivalent).
-  exports: [AuditEnqueuerModule],
+  exports: [AuditEnqueuerModule, OutboxAuditEnqueuerModule],
 })
 export class AuditModule {}
