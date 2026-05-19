@@ -34,3 +34,15 @@ export type {
   ClaimedOutboxEvent,
   ClaimFn,
 } from "./repository";
+
+// Dead-letter triage queries (T591 / 1C-C1)
+export {
+  getDeadLettered,
+  listDeadLettered,
+  sanitizeLastErrorClass,
+} from "./repository";
+export type {
+  ListDeadLetteredInput,
+  OutboxDeadLetterCursor,
+  OutboxDeadLetterRecord,
+} from "./repository";

@@ -1,0 +1,334 @@
+/**
+ * apps/api/test/outbox/admin.contract.spec.ts (T591, 1C-C1)
+ *
+ * Contract-conformance test for `listOutboxDeadLetters` +
+ * `getOutboxDeadLetter`. Modelled after the audit slice in
+ * `contract-conformance.spec.ts`:
+ *
+ *   * Loads `packages/contracts/openapi/outbox.openapi.yaml` via the
+ *     production loader (`loadOpenApiContracts`).
+ *   * Confirms both operationIds are registered AND paths match the
+ *     controller's mounted routes (T300 conformance).
+ *   * Boots a minimal Nest app with scripted guards and a fake service,
+ *     issues real HTTP requests, validates response bodies against the
+ *     compiled JSON Schema using ajv + ajv-formats (OpenAPI nullable
+ *     pre-processed to JSON Schema 2019-09 `[T, "null"]`).
+ *
+ * NOTE: This spec does NOT modify the existing top-level
+ * `contract-conformance.spec.ts` -- the loader auto-discovers the new
+ * outbox.openapi.yaml; this spec is the per-endpoint behavioural
+ * partner that the umbrella spec leaves to the slice author.
+ */
+import "reflect-metadata";
+
+import Ajv, { type ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
+import {
+  type CanActivate,
+  type ExecutionContext,
+  type INestApplication,
+} from "@nestjs/common";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+
+import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
+import { RolesGuard } from "../../src/auth/roles.guard";
+import { GlobalExceptionFilter } from "../../src/common/exception.filter";
+import { loadOpenApiContracts } from "../../src/openapi/loader";
+
+import { OutboxAdminController } from "../../src/outbox/admin.controller";
+import { OutboxAdminService } from "../../src/outbox/admin.service";
+import type {
+  ListOutboxDeadLettersResponse,
+  OutboxDeadLetterDto,
+} from "../../src/outbox/admin.dto";
+
+// ---------------------------------------------------------------------------
+// OpenAPI 3.0 `nullable` → JSON Schema rewrite (copied semantics from
+// the umbrella contract-conformance spec — small enough to inline).
+// ---------------------------------------------------------------------------
+type JsonSchemaNode = { [key: string]: unknown };
+
+function openapiSchemaToJsonSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(openapiSchemaToJsonSchema);
+  if (node === null || typeof node !== "object") return node;
+  const obj = node as JsonSchemaNode;
+  const result: JsonSchemaNode = {};
+  for (const [k, v] of Object.entries(obj)) {
+    result[k] = openapiSchemaToJsonSchema(v);
+  }
+  if (result["nullable"] === true && typeof result["type"] === "string") {
+    result["type"] = [result["type"] as string, "null"];
+    delete result["nullable"];
+  }
+  if (result["nullable"] === true && typeof result["$ref"] === "string") {
+    const ref = result["$ref"] as string;
+    delete result["nullable"];
+    delete result["$ref"];
+    return { ...result, anyOf: [{ $ref: ref }, { type: "null" }] };
+  }
+  if (result["nullable"] === true) delete result["nullable"];
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Build validators from the loaded contract.
+// ---------------------------------------------------------------------------
+const ajv = new Ajv({ strict: false, allErrors: true });
+addFormats(ajv);
+
+let validateListResponse: ValidateFunction;
+let validateDetailResponse: ValidateFunction;
+
+function buildValidators(): void {
+  const contracts = loadOpenApiContracts();
+  const outboxContract = contracts.find((c) => c.id === "outbox.openapi");
+  if (!outboxContract) {
+    throw new Error(
+      "outbox.openapi contract not found — check packages/contracts/openapi/",
+    );
+  }
+
+  const DOC_ID = "outbox.openapi";
+  if (!ajv.getSchema(DOC_ID)) {
+    const processedDoc = openapiSchemaToJsonSchema(
+      outboxContract.document,
+    ) as object;
+    ajv.addSchema({ ...processedDoc, $id: DOC_ID });
+  }
+
+  validateListResponse = ajv.compile({
+    $ref: `${DOC_ID}#/components/schemas/ListOutboxDeadLettersResponse`,
+  });
+  validateDetailResponse = ajv.compile({
+    $ref: `${DOC_ID}#/components/schemas/OutboxDeadLetter`,
+  });
+}
+
+function assertConformsTo(
+  validator: ValidateFunction,
+  body: unknown,
+): void {
+  const ok = validator(body);
+  if (!ok) {
+    throw new Error(
+      `Response does not conform to schema:\n${JSON.stringify(validator.errors, null, 2)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scripted guards + fake service (always-allow for conformance tests)
+// ---------------------------------------------------------------------------
+class AllowGuard implements CanActivate {
+  canActivate(_ctx: ExecutionContext): boolean {
+    return true;
+  }
+}
+
+class FakeService {
+  public listResponse: ListOutboxDeadLettersResponse = {
+    items: [],
+    next_cursor: null,
+  };
+  public detailResponse: OutboxDeadLetterDto | null = null;
+
+  async list(): Promise<ListOutboxDeadLettersResponse> {
+    return this.listResponse;
+  }
+  async get(): Promise<OutboxDeadLetterDto | null> {
+    return this.detailResponse;
+  }
+}
+
+function makeDto(overrides: Partial<OutboxDeadLetterDto> = {}): OutboxDeadLetterDto {
+  return {
+    event_id: "0195b100-0000-7000-8000-000000000001",
+    event_type: "audit.event.created",
+    tenant_id: "0195b100-0000-7000-8000-000000000010",
+    store_id: null,
+    delivery_state: "dead_lettered" as const,
+    attempts: 8,
+    correlation_id: "0195b100-0000-7000-8000-000000000099",
+    last_error_class: "ConsumerTimeout",
+    occurred_at: "2026-05-19T10:00:00.000Z",
+    created_at: "2026-05-19T10:00:00.000Z",
+    updated_at: "2026-05-19T11:30:00.000Z",
+    processed_at: "2026-05-19T11:30:00.000Z",
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fixture
+// ---------------------------------------------------------------------------
+let app: INestApplication;
+let fake: FakeService;
+
+beforeAll(async () => {
+  buildValidators();
+
+  fake = new FakeService();
+
+  const moduleRef = await Test.createTestingModule({
+    controllers: [OutboxAdminController],
+    providers: [{ provide: OutboxAdminService, useValue: fake }],
+  })
+    .overrideGuard(DashboardAuthGuard)
+    .useValue(new AllowGuard())
+    .overrideGuard(RolesGuard)
+    .useValue(new AllowGuard())
+    .compile();
+
+  app = moduleRef.createNestApplication({ bufferLogs: true });
+  app.useGlobalFilters(new GlobalExceptionFilter());
+  await app.init();
+}, 30_000);
+
+afterAll(async () => {
+  if (app) await app.close();
+}, 30_000);
+
+beforeEach(() => {
+  fake.listResponse = { items: [], next_cursor: null };
+  fake.detailResponse = null;
+});
+
+function http() {
+  return request(app.getHttpServer());
+}
+
+// ===========================================================================
+// 1. operationId presence + path mapping (T300 surface check)
+// ===========================================================================
+describe("OpenAPI surface — operationIds + paths (T300 surface)", () => {
+  it("outbox.openapi.yaml registers listOutboxDeadLetters at GET /api/v1/admin/outbox/dead-letters", () => {
+    const contracts = loadOpenApiContracts();
+    const doc = (
+      contracts.find((c) => c.id === "outbox.openapi")!.document as {
+        paths: Record<string, Record<string, { operationId?: string }>>;
+      }
+    ).paths;
+    expect(doc["/api/v1/admin/outbox/dead-letters"]).toBeDefined();
+    expect(doc["/api/v1/admin/outbox/dead-letters"]!["get"]!.operationId).toBe(
+      "listOutboxDeadLetters",
+    );
+  });
+
+  it("outbox.openapi.yaml registers getOutboxDeadLetter at GET /api/v1/admin/outbox/dead-letters/{eventId}", () => {
+    const contracts = loadOpenApiContracts();
+    const doc = (
+      contracts.find((c) => c.id === "outbox.openapi")!.document as {
+        paths: Record<string, Record<string, { operationId?: string }>>;
+      }
+    ).paths;
+    expect(
+      doc["/api/v1/admin/outbox/dead-letters/{eventId}"],
+    ).toBeDefined();
+    expect(
+      doc["/api/v1/admin/outbox/dead-letters/{eventId}"]!["get"]!.operationId,
+    ).toBe("getOutboxDeadLetter");
+  });
+
+  it("contract.security uses cookieAuth (matches AuditController)", () => {
+    const contracts = loadOpenApiContracts();
+    const doc = (
+      contracts.find((c) => c.id === "outbox.openapi")!.document as {
+        paths: Record<
+          string,
+          Record<string, { security?: Array<Record<string, unknown>> }>
+        >;
+        components: { securitySchemes: Record<string, unknown> };
+      }
+    );
+    expect(doc.components.securitySchemes["cookieAuth"]).toBeDefined();
+    const op = doc.paths["/api/v1/admin/outbox/dead-letters"]!["get"]!;
+    expect(op.security?.[0]).toEqual({ cookieAuth: [] });
+  });
+
+  it("OutboxDeadLetter schema forbids `payload` field (allowlist completeness)", () => {
+    const contracts = loadOpenApiContracts();
+    const doc = contracts.find((c) => c.id === "outbox.openapi")!.document as {
+      components: {
+        schemas: Record<
+          string,
+          { properties?: Record<string, unknown>; required?: string[] }
+        >;
+      };
+    };
+    const schema = doc.components.schemas["OutboxDeadLetter"]!;
+    expect(schema.properties).toBeDefined();
+    expect(Object.keys(schema.properties!)).not.toContain("payload");
+    expect(Object.keys(schema.properties!)).not.toContain("last_error");
+  });
+});
+
+// ===========================================================================
+// 2. Behavioural conformance — list endpoint
+// ===========================================================================
+describe("GET /api/v1/admin/outbox/dead-letters — contract conformance", () => {
+  it("empty page conforms to ListOutboxDeadLettersResponse", async () => {
+    const res = await http()
+      .get("/api/v1/admin/outbox/dead-letters")
+      .expect(200);
+    assertConformsTo(validateListResponse, res.body);
+    expect(res.body).toEqual({ items: [], next_cursor: null });
+  });
+
+  it("one item with null processed_at boundary still conforms", async () => {
+    fake.listResponse = {
+      items: [makeDto({ processed_at: null, last_error_class: null, store_id: null, correlation_id: null })],
+      next_cursor: null,
+    };
+    const res = await http()
+      .get("/api/v1/admin/outbox/dead-letters")
+      .expect(200);
+    assertConformsTo(validateListResponse, res.body);
+  });
+
+  it("page with non-null next_cursor conforms", async () => {
+    fake.listResponse = {
+      items: [makeDto()],
+      next_cursor: "dGVzdC1jdXJzb3I",
+    };
+    const res = await http()
+      .get("/api/v1/admin/outbox/dead-letters")
+      .expect(200);
+    assertConformsTo(validateListResponse, res.body);
+  });
+});
+
+// ===========================================================================
+// 3. Behavioural conformance — detail endpoint
+// ===========================================================================
+describe("GET /api/v1/admin/outbox/dead-letters/{eventId} — contract conformance", () => {
+  it("200 response body conforms to OutboxDeadLetter", async () => {
+    const fixed = makeDto();
+    fake.detailResponse = fixed;
+    const res = await http()
+      .get(`/api/v1/admin/outbox/dead-letters/${fixed.event_id}`)
+      .expect(200);
+    assertConformsTo(validateDetailResponse, res.body);
+  });
+
+  it("200 with all nullable fields null still conforms", async () => {
+    const fixed = makeDto({
+      store_id: null,
+      correlation_id: null,
+      last_error_class: null,
+      processed_at: null,
+    });
+    fake.detailResponse = fixed;
+    const res = await http()
+      .get(`/api/v1/admin/outbox/dead-letters/${fixed.event_id}`)
+      .expect(200);
+    assertConformsTo(validateDetailResponse, res.body);
+  });
+
+  it("404 envelope when service returns null (no schema conformance required — only status)", async () => {
+    fake.detailResponse = null;
+    await http()
+      .get("/api/v1/admin/outbox/dead-letters/0195b100-0000-7000-8000-000000000999")
+      .expect(404);
+  });
+});

@@ -1,0 +1,274 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Outbox Admin API
+  version: "1.0.0-draft"
+  description: >
+    Read-only operator surface for the transactional-outbox dead-letter
+    queue. Endpoints are platform-scoped (NOT tenant-scoped) and gated
+    by `@PlatformAdminOnly()` via `RolesGuard`. Per T591 (slice 1C-C1).
+    The dedicated `platform:operator` role proposed in
+    `docs/outbox/dead-letter-triage.md` §5.1 is deferred to a separate
+    role-foundation slice; this slice uses platform-admin as the
+    operator gate (strictly tighter — every future operator is also a
+    platform admin, so no operator loses access when the dedicated role
+    lands).
+
+    The response surface is a redacted projection of `outbox_events`:
+    the `payload` column is NEVER returned, and the `last_error` column
+    is exposed only as `last_error_class` after a defensive sanitizer
+    confirms it is a bare class identifier. PII never appears in any
+    field returned by these endpoints.
+
+    Retry / acknowledge actions are deferred to slices 1C-C2 / 1C-C3
+    (both gated on a schema change to extend the `delivery_state` enum).
+
+servers:
+  - url: https://api.example.com
+
+paths:
+  /api/v1/admin/outbox/dead-letters:
+    get:
+      summary: List dead-lettered outbox events for operator triage.
+      operationId: listOutboxDeadLetters
+      description: >
+        Returns dead-lettered rows ordered by `occurred_at DESC,
+        event_id DESC` (newest failure first). Filterable by event_type
+        and tenant_id; paginated via opaque base64url cursor encoding
+        the `(occurred_at, event_id)` tuple of the next page boundary.
+
+        Authorization: requires the authenticated session principal to
+        be a platform admin (`@PlatformAdminOnly`). Non-admins receive
+        403.
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: event_type
+          required: false
+          schema: { type: string, minLength: 1 }
+          description: >
+            Filter to a single registry event-type, e.g.
+            `audit.event.created`. Exact match (no prefix wildcard).
+        - in: query
+          name: tenant_id
+          required: false
+          schema: { type: string, format: uuid }
+          description: >
+            Filter to dead-letters originating from a single tenant.
+            The operator role is platform-level — tenant_id is part of
+            the filter surface, not part of the auth context.
+        - in: query
+          name: cursor
+          required: false
+          schema: { type: string, minLength: 1 }
+          description: >
+            Opaque pagination token returned in the previous page's
+            `next_cursor`. Treated as opaque — clients MUST NOT decode
+            or construct cursors themselves.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: OK — page of dead-lettered events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListOutboxDeadLettersResponse"
+              examples:
+                emptyPage:
+                  summary: Empty page (no dead-letters or end-of-stream)
+                  value:
+                    items: []
+                    next_cursor: null
+                onePage:
+                  summary: One page with redacted dead-letter row
+                  value:
+                    items:
+                      - event_id: "0195b100-0000-7000-8000-000000000001"
+                        event_type: "audit.event.created"
+                        tenant_id: "0195b100-0000-7000-8000-000000000010"
+                        store_id: null
+                        delivery_state: "dead_lettered"
+                        attempts: 8
+                        correlation_id: "0195b100-0000-7000-8000-000000000099"
+                        last_error_class: "ConsumerTimeout"
+                        occurred_at: "2026-05-19T10:00:00.000Z"
+                        created_at: "2026-05-19T10:00:00.000Z"
+                        updated_at: "2026-05-19T11:30:00.000Z"
+                        processed_at: "2026-05-19T11:30:00.000Z"
+                    next_cursor: "MjAyNi0wNS0xOVQxMDowMDowMC4wMDBafDAxOTViMTAwLTAwMDAtNzAwMC04MDAwLTAwMDAwMDAwMDAwMQ"
+        "400":
+          description: >
+            Invalid query parameter (bad UUID, bad cursor encoding, or
+            limit out of range). Body conforms to the standard error
+            envelope.
+        "401":
+          description: Caller is not authenticated.
+        "403":
+          description: Caller is authenticated but not a platform admin.
+
+  /api/v1/admin/outbox/dead-letters/{eventId}:
+    get:
+      summary: Get a single dead-lettered outbox event for triage.
+      operationId: getOutboxDeadLetter
+      description: >
+        Returns the redacted projection for a single dead-lettered row.
+
+        Returns 404 when:
+          - the eventId does not exist, OR
+          - the eventId exists but is NOT in `dead_lettered` state.
+
+        Both cases are externally indistinguishable by design — the
+        endpoint contract is dead-letter triage, not generic event
+        lookup.
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK — single dead-lettered event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxDeadLetter"
+              examples:
+                deadLetter:
+                  summary: A dead-lettered audit event after 8 attempts
+                  value:
+                    event_id: "0195b100-0000-7000-8000-000000000001"
+                    event_type: "audit.event.created"
+                    tenant_id: "0195b100-0000-7000-8000-000000000010"
+                    store_id: null
+                    delivery_state: "dead_lettered"
+                    attempts: 8
+                    correlation_id: "0195b100-0000-7000-8000-000000000099"
+                    last_error_class: "ConsumerTimeout"
+                    occurred_at: "2026-05-19T10:00:00.000Z"
+                    created_at: "2026-05-19T10:00:00.000Z"
+                    updated_at: "2026-05-19T11:30:00.000Z"
+                    processed_at: "2026-05-19T11:30:00.000Z"
+        "400":
+          description: Invalid eventId (bad UUID).
+        "401":
+          description: Caller is not authenticated.
+        "403":
+          description: Caller is authenticated but not a platform admin.
+        "404":
+          description: >
+            Event not found OR event exists but is not in
+            `dead_lettered` state. The two cases share one response.
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  schemas:
+    OutboxDeadLetter:
+      type: object
+      description: >
+        Redacted projection of an `outbox_events` row in the
+        `dead_lettered` state. The `payload` column is NEVER returned;
+        the raw `last_error` column is NEVER returned (only the
+        sanitized `last_error_class` is exposed).
+      required:
+        - event_id
+        - event_type
+        - tenant_id
+        - store_id
+        - delivery_state
+        - attempts
+        - correlation_id
+        - last_error_class
+        - occurred_at
+        - created_at
+        - updated_at
+        - processed_at
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: UUIDv7 primary key of the outbox event.
+        event_type:
+          type: string
+          description: Registry-controlled event type, e.g. `audit.event.created`.
+        tenant_id:
+          type: string
+          format: uuid
+          description: Tenant scope of the event.
+        store_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Store scope when applicable; NULL for tenant-level events.
+        delivery_state:
+          type: string
+          enum: [dead_lettered]
+          description: >
+            Always the literal `dead_lettered` — the endpoint contract
+            is dead-letter triage. Other states surface as 404.
+        attempts:
+          type: integer
+          minimum: 0
+          description: >
+            Number of claim attempts at the time the row transitioned to
+            `dead_lettered`. Bounded by the retry budget (currently 8).
+        correlation_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: End-to-end trace id from the originating request or job.
+        last_error_class:
+          type: string
+          nullable: true
+          description: >
+            Defensively-sanitized error-class identifier (e.g.
+            `ConsumerTimeout`). NULL when the column was never set or
+            when sanitisation rejected the stored value as unsafe. The
+            raw `last_error` column is never exposed.
+        occurred_at:
+          type: string
+          format: date-time
+          description: Business event timestamp (UTC), ISO 8601.
+        created_at:
+          type: string
+          format: date-time
+          description: Row insert time (producer commit time).
+        updated_at:
+          type: string
+          format: date-time
+          description: Last state-transition time.
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            Set when the row reached `delivered` or `dead_lettered`.
+            For rows returned by this endpoint, always non-null.
+
+    ListOutboxDeadLettersResponse:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxDeadLetter"
+        next_cursor:
+          type: string
+          nullable: true
+          description: >
+            Opaque cursor for the next page; null when the current page
+            is the last. Clients MUST treat as opaque.
