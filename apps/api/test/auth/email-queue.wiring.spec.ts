@@ -87,33 +87,60 @@ describe("emailJobEnqueuerFactory — REDIS_URL branch behaviour", () => {
   });
 });
 
-describe("emailJobEnqueuerFactory — Queue construction wiring", () => {
-  it("constructs the BullMQ Queue with the 'email' queue name", () => {
+/**
+ * Lazy-init note (cleanup branch):
+ * `emailJobEnqueuerFactory()` no longer constructs the BullMQ Queue at
+ * factory-call time -- construction is deferred to first `enqueue*()`
+ * so that Nest's `overrideProvider().useValue()` cannot orphan a real
+ * Queue + ioredis client. The wiring tests below trigger materialisation
+ * by calling one of the `enqueue*` methods on the returned producer,
+ * then assert on the recorded queueCalls. Net wiring contract is
+ * unchanged at steady state.
+ */
+
+const PROBE_TOKEN_FOR_LAZY_MATERIALISATION = "lazy-init-probe-token-only";
+
+async function materialiseEmailQueue(): Promise<void> {
+  // Calling any enqueue* triggers lazy construction. We use
+  // enqueuePasswordReset because its payload requires no PII beyond a
+  // probe-token string the BullMQ mock will never inspect.
+  const producer = emailJobEnqueuerFactory();
+  if (producer instanceof EmailQueueProducer) {
+    await producer.enqueuePasswordReset({
+      email: "noop@example.test",
+      rawToken: PROBE_TOKEN_FOR_LAZY_MATERIALISATION,
+      userId: "00000000-0000-7000-8000-000000000001",
+    });
+  }
+}
+
+describe("emailJobEnqueuerFactory — Queue construction wiring (lazy)", () => {
+  it("constructs the BullMQ Queue with the 'email' queue name (on first enqueue)", async () => {
     process.env["NODE_ENV"] = "production";
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    emailJobEnqueuerFactory();
+    await materialiseEmailQueue();
     expect(queueCalls).toHaveLength(1);
     expect(queueCalls[0]!.name).toBe(EMAIL_QUEUE_NAME);
     expect(queueCalls[0]!.name).toBe("email");
   });
 
-  it("passes the connection URL through to the Queue", () => {
+  it("passes the connection URL through to the Queue", async () => {
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    emailJobEnqueuerFactory();
+    await materialiseEmailQueue();
     expect(queueCalls[0]!.opts["connection"]).toEqual({
       url: "redis://localhost:6379",
     });
   });
 
-  it("passes DEFAULT_JOB_OPTIONS from @data-pulse-2/shared as defaultJobOptions", () => {
+  it("passes DEFAULT_JOB_OPTIONS from @data-pulse-2/shared as defaultJobOptions", async () => {
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    emailJobEnqueuerFactory();
+    await materialiseEmailQueue();
     expect(queueCalls[0]!.opts["defaultJobOptions"]).toBe(DEFAULT_JOB_OPTIONS);
   });
 
-  it("the forwarded defaultJobOptions equal the shared retry/backoff/DLQ values", () => {
+  it("the forwarded defaultJobOptions equal the shared retry/backoff/DLQ values", async () => {
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    emailJobEnqueuerFactory();
+    await materialiseEmailQueue();
     const opts = queueCalls[0]!.opts["defaultJobOptions"] as typeof DEFAULT_JOB_OPTIONS;
     expect(opts.attempts).toBe(DEFAULT_JOB_OPTIONS.attempts);
     expect(opts.backoff).toEqual(DEFAULT_JOB_OPTIONS.backoff);
@@ -121,9 +148,15 @@ describe("emailJobEnqueuerFactory — Queue construction wiring", () => {
     expect(opts.removeOnFail).toEqual(DEFAULT_JOB_OPTIONS.removeOnFail);
   });
 
-  it("returns an EmailQueueProducer wrapping the Queue", () => {
+  it("returns an EmailQueueProducer (BEFORE any Queue is constructed)", () => {
+    // This assertion is unchanged but the comment matters: the producer
+    // is returned eagerly; only the Queue inside is lazy.
     process.env["REDIS_URL"] = "redis://localhost:6379";
     const out = emailJobEnqueuerFactory();
     expect(out).toBeInstanceOf(EmailQueueProducer);
+    // Critical: NO Queue should have been constructed yet (this is the
+    // whole point of the lazy refactor — overrideProvider must be able
+    // to replace the binding before any side effect).
+    expect(queueCalls).toHaveLength(0);
   });
 });

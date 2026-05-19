@@ -114,10 +114,10 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
   });
 
   /**
-   * Trivial fake matching `AuditQueueLike`. We never invoke `.add()` on it —
-   * the assertions only check the constructed enqueuer's class. Returning a
-   * fake-queue factory lets us hit the REDIS_URL-set branch without booting
-   * Redis or BullMQ.
+   * Trivial fake matching `AuditQueueLike`. The .add() spy lets the producer's
+   * lazy-init path materialise the queue when we call enqueuer.enqueue() in
+   * the URL-capture assertions below -- factory-time side effects no longer
+   * fire (see lazy-init contract on AuditQueueProducer + auditJobEnqueuerFactory).
    */
   function fakeQueueFactory(): { queueFactory: (url: string) => AuditQueueLike; urls: string[] } {
     const urls: string[] = [];
@@ -128,6 +128,31 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
     return { queueFactory, urls };
   }
 
+  /**
+   * Probe payload reused across URL-capture assertions. Carries no PII --
+   * the fake queue's .add() never inspects it; the only reason to call
+   * enqueuer.enqueue() is to materialise the lazy producer's underlying
+   * queue so the queueFactory thunk fires and captures the URL.
+   *
+   * Lazy-init context: auditJobEnqueuerFactory now returns a producer
+   * WITHOUT having invoked the queueFactory thunk -- the call is deferred
+   * to first enqueue(). This shifts construction from Nest module-init
+   * time to first use, so Nest's `overrideProvider(... ).useValue(spy)`
+   * cannot orphan a live BullMQ Queue. See repository.ts / auth.module.ts
+   * + the lifecycle specs for the full rationale.
+   */
+  const probePayload: AuditJobPayload = {
+    actor_user_id: null,
+    actor_label: null,
+    tenant_id: "00000000-0000-7000-8000-000000000001",
+    store_id: null,
+    action: "test.lazy.materialise",
+    target_type: null,
+    target_id: null,
+    request_id: null,
+    metadata: null,
+  };
+
   it("NODE_ENV=production + REDIS_URL unset → throws with stable operator-runbook message", () => {
     process.env["NODE_ENV"] = "production";
     delete process.env["REDIS_URL"];
@@ -136,7 +161,7 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
     );
   });
 
-  it("NODE_ENV=production + REDIS_URL set → AuditQueueProducer wired with the configured URL", () => {
+  it("NODE_ENV=production + REDIS_URL set → AuditQueueProducer wired with the configured URL (on first enqueue, lazy)", async () => {
     process.env["NODE_ENV"] = "production";
     process.env["REDIS_URL"] = "redis://prod-host:6379";
     const { queueFactory, urls } = fakeQueueFactory();
@@ -144,10 +169,15 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
     const enqueuer = auditJobEnqueuerFactory(queueFactory);
 
     expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    // Lazy-init: the thunk has NOT fired yet -- materialisation is
+    // deferred to first enqueue() so an `overrideProvider().useValue()`
+    // cannot orphan a real Queue. Pre-refactor this was 1 already.
+    expect(urls).toEqual([]);
+    await (enqueuer as AuditQueueProducer).enqueue(probePayload);
     expect(urls).toEqual(["redis://prod-host:6379"]);
   });
 
-  it("NODE_ENV=test + REDIS_URL set → AuditQueueProducer (non-prod path with Redis configured)", () => {
+  it("NODE_ENV=test + REDIS_URL set → AuditQueueProducer (non-prod path with Redis configured, lazy)", async () => {
     process.env["NODE_ENV"] = "test";
     process.env["REDIS_URL"] = "redis://test-host:6379";
     const { queueFactory, urls } = fakeQueueFactory();
@@ -155,6 +185,9 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
     const enqueuer = auditJobEnqueuerFactory(queueFactory);
 
     expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
+    // Same lazy-init contract as above.
+    expect(urls).toEqual([]);
+    await (enqueuer as AuditQueueProducer).enqueue(probePayload);
     expect(urls).toEqual(["redis://test-host:6379"]);
   });
 
@@ -174,16 +207,31 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
     expect(enqueuer).toBeInstanceOf(NoOpAuditJobEnqueuer);
   });
 
-  it("queueFactory parameter is the test seam — invoked exactly once per call", () => {
+  it("queueFactory parameter is the test seam — invoked exactly once per producer's first enqueue (lazy)", async () => {
     process.env["NODE_ENV"] = "test";
     process.env["REDIS_URL"] = "redis://localhost:6379";
     const { queueFactory, urls } = fakeQueueFactory();
 
-    auditJobEnqueuerFactory(queueFactory);
-    auditJobEnqueuerFactory(queueFactory);
+    const enqueuer1 = auditJobEnqueuerFactory(queueFactory);
+    const enqueuer2 = auditJobEnqueuerFactory(queueFactory);
+
+    // Pre-refactor, the two factory calls already populated urls. After
+    // the lazy-init refactor, both producers are returned WITHOUT
+    // invoking the thunk; materialisation is deferred to first enqueue.
+    expect(urls).toEqual([]);
+
+    // Materialise each producer separately -- the seam must fire once
+    // per producer, not once per factory call.
+    await (enqueuer1 as AuditQueueProducer).enqueue(probePayload);
+    await (enqueuer2 as AuditQueueProducer).enqueue(probePayload);
 
     expect(urls).toHaveLength(2);
     expect(urls.every((u) => u === "redis://localhost:6379")).toBe(true);
+
+    // Sanity: re-enqueueing the same producer does NOT re-invoke the
+    // thunk (lazy producer caches the materialised queue).
+    await (enqueuer1 as AuditQueueProducer).enqueue(probePayload);
+    expect(urls).toHaveLength(2);
   });
 });
 

@@ -221,13 +221,21 @@ describe("auditJobEnqueuerFactory", () => {
     expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
   });
 
-  it("passes REDIS_URL to the queueFactory when REDIS_URL is set", () => {
+  it("passes REDIS_URL to the queueFactory when REDIS_URL is set (on first enqueue, lazy)", async () => {
     const capturedUrls: string[] = [];
     process.env["REDIS_URL"] = "redis://localhost:6379";
-    auditJobEnqueuerFactory((url) => {
+    const enqueuer = auditJobEnqueuerFactory((url) => {
       capturedUrls.push(url);
       return new FakeQueue();
     });
+    // Lazy-init: the producer is now returned WITHOUT having invoked
+    // the queueFactory thunk -- materialisation is deferred to first
+    // enqueue(). This is the same change that fixes the override-orphan
+    // leak documented in the cleanup PR (fix/api-queue-factories-defer-
+    // queue-construction). Before the refactor `capturedUrls.length`
+    // was 1 here; now it's 0 until enqueue runs.
+    expect(capturedUrls).toEqual([]);
+    await enqueuer.enqueue(examplePayload);
     expect(capturedUrls).toEqual(["redis://localhost:6379"]);
   });
 });

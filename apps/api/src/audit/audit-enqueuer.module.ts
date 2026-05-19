@@ -42,10 +42,26 @@ import { OutboxAuditEnqueuer } from "./outbox-audit-enqueuer";
 /**
  * Build the runtime `AuditJobEnqueuer`.
  *
- * Identical behaviour to the factory previously inlined in `AuditModule` —
- * only the call site has moved. The optional `queueFactory` parameter is
- * a unit-test seam so specs can construct a fake `Queue` without a live
- * Redis connection.
+ * Lazy-init contract
+ * ------------------
+ * The factory returns the producer WITHOUT constructing the underlying
+ * BullMQ `Queue`. Construction happens on first `enqueue()` call (see
+ * `AuditQueueProducer`'s lazy-mode constructor + `ensureQueue()`).
+ * This shifts the Queue's side effects from Nest module-init time to
+ * first use, which means:
+ *
+ *   * `overrideProvider(AUDIT_JOB_ENQUEUER).useValue(spy)` orphans the
+ *     factory-returned producer cleanly -- with eager construction the
+ *     orphaned producer kept its BullMQ Queue alive and Jest reported
+ *     "worker process has failed to exit gracefully" at suite teardown
+ *     (the PR #240 db-integration leak). Lazy producers never construct
+ *     a Queue when overridden, so no resource survives the override.
+ *   * Production behaviour is unchanged at steady state: the first
+ *     audit emission constructs the Queue exactly once.
+ *
+ * The `queueFactory` parameter remains a unit-test seam: specs that
+ * want to assert on the `url` value passed to the Queue constructor
+ * can supply a custom factory and we close over it in the thunk.
  */
 export function auditJobEnqueuerFactory(
   queueFactory?: (url: string) => AuditQueueLike,
@@ -64,14 +80,17 @@ export function auditJobEnqueuerFactory(
     }
     return new NoOpAuditJobEnqueuer();
   }
-  const queue =
+  // Defer Queue construction to first use. The thunk captures `url`
+  // and the optional `queueFactory` seam so both production and unit
+  // tests follow the same lazy materialisation path.
+  const provider = () =>
     queueFactory != null
       ? queueFactory(url)
       : new Queue(AUDIT_QUEUE_NAME, {
           connection: { url },
           defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
         });
-  return new AuditQueueProducer(queue);
+  return new AuditQueueProducer(provider);
 }
 
 /**

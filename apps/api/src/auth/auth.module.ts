@@ -99,6 +99,19 @@ export const REDIS_CLIENT = "REDIS_CLIENT";
  * mirroring the symmetric extraction `workerFactoryProviderFactory`
  * on the worker side.
  *
+ * Lazy-init contract
+ * ------------------
+ * The factory returns the producer WITHOUT constructing the underlying
+ * BullMQ `Queue`. Construction happens on first `enqueuePasswordReset` /
+ * `enqueueEmailVerification` / `enqueueInvitation` call (see
+ * `EmailQueueProducer`'s lazy-mode constructor + `ensureQueue()`).
+ * This means an `overrideProvider(EMAIL_JOB_ENQUEUER).useValue(spy)`
+ * orphans the factory-returned producer cleanly -- with eager
+ * construction the orphaned producer kept its BullMQ Queue alive and
+ * Jest reported "worker process has failed to exit gracefully" at
+ * suite teardown (PR #240 db-integration leak). See the full rationale
+ * on `auditJobEnqueuerFactory` in `audit-enqueuer.module.ts`.
+ *
  * Production wiring policy:
  *   - `NODE_ENV=production` + `REDIS_URL` missing → throw at boot.
  *     Silently dropping password-reset / email-verify jobs is a
@@ -106,8 +119,9 @@ export const REDIS_CLIENT = "REDIS_CLIENT";
  *   - non-production + `REDIS_URL` missing → fall back to
  *     `NoOpEmailJobEnqueuer` so dev / CI machines without Redis still
  *     boot.
- *   - `REDIS_URL` set → build a `Queue` with the shared default job
- *     options (single source of truth in `@data-pulse-2/shared`).
+ *   - `REDIS_URL` set → return an `EmailQueueProducer` whose lazy
+ *     thunk will build the `Queue` with the shared default job
+ *     options on first enqueue.
  */
 export function emailJobEnqueuerFactory(): EmailJobEnqueuer {
   const url = process.env["REDIS_URL"];
@@ -120,11 +134,14 @@ export function emailJobEnqueuerFactory(): EmailJobEnqueuer {
     }
     return new NoOpEmailJobEnqueuer();
   }
-  const queue = new Queue(EMAIL_QUEUE_NAME, {
-    connection: { url },
-    defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
-  });
-  return new EmailQueueProducer(queue);
+  // Defer Queue construction to first use. The thunk captures `url`
+  // so production wiring is preserved at steady state.
+  const provider = () =>
+    new Queue(EMAIL_QUEUE_NAME, {
+      connection: { url },
+      defaultJobOptions: DEFAULT_JOB_OPTIONS as JobsOptions,
+    });
+  return new EmailQueueProducer(provider);
 }
 
 /**
