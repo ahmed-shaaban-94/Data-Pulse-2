@@ -185,4 +185,33 @@ describe("EmailQueueProducer.lazy mode (override-orphan leak fix)", () => {
     await producer.onModuleDestroy();
     expect(queue.closeCalls).toBe(1);
   });
+
+  it("L-6: enqueuePasswordReset AFTER onModuleDestroy rejects and never materialises the queue", async () => {
+    // CodeRabbit review on PR #242: with the old `this.queue ??
+    // (this.queue = this.queueProvider!())`, a late enqueue on an
+    // already-destroyed producer would happily invoke the thunk and
+    // build a fresh BullMQ Queue + ioredis client -- a brand-new
+    // leak that the destroy hook had already short-circuited past.
+    //
+    // L-6 is the explicit regression for that post-destroy materialisation
+    // path. The producer is constructed lazy, destroyed BEFORE any
+    // enqueue, then the test asserts:
+    //   - the late enqueue rejects with the "is closed" sentinel
+    //   - the provider thunk was NEVER invoked (calls === 0)
+    //   - no FakeQueueWithClose was built, so closeCalls is also 0
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new EmailQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+
+    await producer.onModuleDestroy();
+
+    await expect(producer.enqueuePasswordReset(PROBE_JOB)).rejects.toThrow(
+      /EmailQueueProducer is closed/,
+    );
+    expect(calls).toBe(0);
+    expect(queue.closeCalls).toBe(0);
+  });
 });

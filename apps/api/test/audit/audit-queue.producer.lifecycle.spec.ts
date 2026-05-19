@@ -228,4 +228,43 @@ describe("AuditQueueProducer.lazy mode (override-orphan leak fix)", () => {
     await producer.onModuleDestroy();
     expect(queue.closeCalls).toBe(1);
   });
+
+  it("L-6: enqueue AFTER onModuleDestroy rejects and never materialises the queue", async () => {
+    // CodeRabbit review on PR #242: symmetric mirror of the L-6 case
+    // in email-queue.producer.lifecycle.spec.ts. The old
+    // `this.queue ?? (this.queue = this.queueProvider!())` would let
+    // a late audit emission invoke the thunk on a destroyed producer
+    // and build a fresh BullMQ Queue -- exactly the kind of leak the
+    // lazy refactor was supposed to prevent.
+    //
+    // L-6 pins the no-resurrection guarantee for the audit side:
+    //   - the producer is destroyed BEFORE any enqueue,
+    //   - the late enqueue rejects with the "is closed" sentinel,
+    //   - the provider thunk was NEVER invoked (calls === 0),
+    //   - no FakeQueueWithClose was built (closeCalls === 0).
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new AuditQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+
+    await producer.onModuleDestroy();
+
+    await expect(
+      producer.enqueue({
+        actor_user_id: null,
+        actor_label: null,
+        tenant_id: "00000000-0000-7000-8000-000000000001",
+        store_id: null,
+        action: "test.lazy.post-destroy",
+        target_type: null,
+        target_id: null,
+        request_id: null,
+        metadata: null,
+      }),
+    ).rejects.toThrow(/AuditQueueProducer is closed/);
+    expect(calls).toBe(0);
+    expect(queue.closeCalls).toBe(0);
+  });
 });

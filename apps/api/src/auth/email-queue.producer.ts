@@ -129,9 +129,46 @@ export class EmailQueueProducer
 
   /**
    * Materialise the underlying Queue on first use.
+   *
+   * Post-destroy guard
+   * ------------------
+   * CodeRabbit review on PR #242: the previous implementation
+   * (`this.queue ?? (this.queue = this.queueProvider!())`) would
+   * happily invoke the provider thunk AFTER `onModuleDestroy()` set
+   * `this.closed = true`. In production that creates a fresh BullMQ
+   * Queue plus background ioredis client which `onModuleDestroy` has
+   * already short-circuited past -- a brand-new resource leak that
+   * is the exact opposite of what the lazy refactor was designed to
+   * prevent.
+   *
+   * Order of checks:
+   *   1. Queue already materialised → return it (fast path).
+   *   2. Producer is closed → throw. Caller MUST NOT enqueue against
+   *      a destroyed producer; surfacing this loudly is the only way
+   *      to catch latent post-destroy emissions (e.g. an async cleanup
+   *      hook that fires after `app.close()`).
+   *   3. Provider thunk is null → throw a defensive Error. In normal
+   *      flows this is unreachable -- the constructor sets one of
+   *      `queue` / `queueProvider`, and the materialisation path
+   *      below nulls `queueProvider` only AFTER setting `queue`.
+   *   4. Materialise via the thunk and clear `queueProvider` so we
+   *      cannot accidentally invoke it twice (and so the GC can free
+   *      any closure state the thunk was holding).
    */
   private ensureQueue(): Queue | QueueLike {
-    return this.queue ?? (this.queue = this.queueProvider!());
+    if (this.queue !== null) return this.queue;
+    if (this.closed) {
+      throw new Error("EmailQueueProducer is closed");
+    }
+    if (this.queueProvider === null) {
+      throw new Error(
+        "EmailQueueProducer queue provider is unavailable (lazy invariant violated)",
+      );
+    }
+    const q = this.queueProvider();
+    this.queue = q;
+    this.queueProvider = null;
+    return q;
   }
 
   async enqueuePasswordReset(job: PasswordResetEmailJob): Promise<void> {
@@ -175,7 +212,14 @@ export class EmailQueueProducer
   async onModuleDestroy(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    if (this.queue === null) return; // lazy, never materialised
+    if (this.queue === null) {
+      // Lazy, never materialised. Drop the provider thunk too so a
+      // subsequent `enqueue*` cannot resurrect the queue via the
+      // `ensureQueue` materialisation path (post-destroy guard --
+      // CodeRabbit review on PR #242).
+      this.queueProvider = null;
+      return;
+    }
     const closeFn = (this.queue as QueueLike).close;
     if (typeof closeFn === "function") {
       try {
