@@ -79,6 +79,7 @@ addFormats(ajv);
 
 let validateListResponse: ValidateFunction;
 let validateDetailResponse: ValidateFunction;
+let validateErrorResponse: ValidateFunction;
 
 function buildValidators(): void {
   const contracts = loadOpenApiContracts();
@@ -102,6 +103,12 @@ function buildValidators(): void {
   });
   validateDetailResponse = ajv.compile({
     $ref: `${DOC_ID}#/components/schemas/OutboxDeadLetter`,
+  });
+  // The Error envelope is shared across 400/401/403/404 responses (see
+  // outbox.openapi.yaml). We compile it once so the 404-conformance test
+  // can assert the SHAPE of the error body, not just the status code.
+  validateErrorResponse = ajv.compile({
+    $ref: `${DOC_ID}#/components/schemas/Error`,
   });
 }
 
@@ -252,9 +259,11 @@ describe("OpenAPI surface — operationIds + paths (T300 surface)", () => {
     // 1. The cookieAuth scheme is defined.
     expect(doc.components.securitySchemes["cookieAuth"]).toBeDefined();
 
-    // 2. Top-level document security includes cookieAuth.
+    // 2. Top-level document security includes cookieAuth. Order-agnostic
+    //    so adding additional schemes later (e.g. bearerAuth for service
+    //    accounts) does not silently invalidate this assertion.
     expect(doc.security).toBeDefined();
-    expect(doc.security?.[0]).toEqual({ cookieAuth: [] });
+    expect(doc.security).toContainEqual({ cookieAuth: [] });
 
     // 3. Neither operation overrides with public security `[]` (which
     //    would make the endpoint anonymous-accessible). Per OpenAPI
@@ -359,10 +368,27 @@ describe("GET /api/v1/admin/outbox/dead-letters/{eventId} — contract conforman
     assertConformsTo(validateDetailResponse, res.body);
   });
 
-  it("404 envelope when service returns null (no schema conformance required — only status)", async () => {
+  it("404 response body conforms to the documented Error envelope schema", async () => {
+    // CodeRabbit review on PR #240: status-only assertion permits silent
+    // drift in the error-body shape. Validate the 404 body against the
+    // OpenAPI `Error` schema (`{ error: { code, message, request_id? } }`)
+    // so a regression in `GlobalExceptionFilter` or the controller's
+    // `NotFoundException` payload would surface here.
     fake.detailResponse = null;
-    await http()
-      .get("/api/v1/admin/outbox/dead-letters/0195b100-0000-7000-8000-000000000999")
+    const res = await http()
+      .get(
+        "/api/v1/admin/outbox/dead-letters/0195b100-0000-7000-8000-000000000999",
+      )
       .expect(404);
+    assertConformsTo(validateErrorResponse, res.body);
+    // Pin the canonical shape -- not an exhaustive assertion, just
+    // enough to catch the most likely regressions (e.g. a return to
+    // Nest's default flat `{statusCode, error, message}` shape).
+    expect(res.body).toMatchObject({
+      error: {
+        code: expect.any(String) as unknown as string,
+        message: expect.any(String) as unknown as string,
+      },
+    });
   });
 });

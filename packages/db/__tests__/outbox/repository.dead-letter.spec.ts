@@ -631,14 +631,14 @@ describe("RLS posture (DL-6) — no BYPASSRLS, GUC-only escape", () => {
       await client.query(`SET LOCAL app.is_platform_admin = 'false'`);
 
       let count: string | null = null;
-      let threw = false;
+      let threwMessage: string | null = null;
       try {
         const r = await client.query<{ count: string }>(
           "SELECT COUNT(*)::text AS count FROM outbox_events WHERE delivery_state = 'dead_lettered'",
         );
         count = r.rows[0]?.count ?? null;
-      } catch {
-        threw = true;
+      } catch (err: unknown) {
+        threwMessage = err instanceof Error ? err.message : String(err);
       }
       try {
         await client.query("ROLLBACK");
@@ -646,28 +646,44 @@ describe("RLS posture (DL-6) — no BYPASSRLS, GUC-only escape", () => {
         /* ignore */
       }
 
-      // Fail-closed: either 0 rows or an error -- never actual data.
-      if (!threw) {
+      // CodeRabbit review on PR #240: narrow the alternate failure
+      // mode so unrelated breakages cannot masquerade as fail-closed.
+      // Either:
+      //   - the query returned exactly 0 rows (Postgres 15+ behaviour
+      //     where the `true` second arg to current_setting returns
+      //     NULL on unset and `NULL::uuid` makes the policy fail closed), OR
+      //   - the query threw, AND the error is the expected RLS UUID-cast
+      //     failure ("invalid input syntax for type uuid"). Anything else
+      //     (network errors, syntax errors, etc.) is NOT a valid
+      //     fail-closed outcome and the test must fail loudly.
+      if (threwMessage === null) {
         expect(count).toBe("0");
+      } else {
+        expect(threwMessage).toMatch(/invalid input syntax for type uuid/);
       }
     } finally {
       client.release();
     }
   });
 
-  it("app_role sees dead-letters across tenants ONLY when platform-admin GUC is active", async () => {
+  it("app_role sees BOTH tenants' dead-letters when platform-admin GUC is active (cross-tenant visibility)", async () => {
     if (maybeSkip()) return;
-    const count = await runWithTenantContext(
+    // CodeRabbit review on PR #240: `count >= 2` alone is NOT sufficient
+    // to prove cross-tenant visibility, because tenant A has multiple
+    // dead-letter rows on its own. Pin the actual tenant IDs returned
+    // so the assertion fails loudly if the platform-admin OR-branch
+    // ever regresses to single-tenant scope.
+    const tenantIds = await runWithTenantContext(
       env!.app,
       { tenantId: null, isPlatformAdmin: true },
       async (client) => {
-        const res = await client.query<{ n: number }>(
-          "SELECT count(*)::int AS n FROM outbox_events WHERE delivery_state = 'dead_lettered'",
+        const res = await client.query<{ tenant_id: string }>(
+          "SELECT DISTINCT tenant_id FROM outbox_events WHERE delivery_state = 'dead_lettered'",
         );
-        return res.rows[0]!.n;
+        return res.rows.map((r) => r.tenant_id);
       },
     );
-    expect(count).toBeGreaterThanOrEqual(2); // tenant A + tenant B at minimum
+    expect(tenantIds).toEqual(expect.arrayContaining([TENANT_A, TENANT_B]));
   });
 
   it("app_role does NOT hold BYPASSRLS (probes pg_roles)", async () => {
