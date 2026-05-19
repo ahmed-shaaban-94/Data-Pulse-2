@@ -78,6 +78,20 @@ describe("isOutboxAuditEnabled — feature-flag parsing", () => {
     expect(isOutboxAuditEnabled()).toBe(true);
   });
 
+  it("tolerates leading/trailing whitespace (' true ', 'yes\\n', '\\t1') -- trim before parse", () => {
+    // .env files and shell here-docs frequently introduce surrounding
+    // whitespace; the parser strips it before lowercasing so misconfigured
+    // values still resolve to the operator's intent.
+    process.env["OUTBOX_AUDIT_ENABLED"] = " true ";
+    expect(isOutboxAuditEnabled()).toBe(true);
+    process.env["OUTBOX_AUDIT_ENABLED"] = "yes\n";
+    expect(isOutboxAuditEnabled()).toBe(true);
+    process.env["OUTBOX_AUDIT_ENABLED"] = "\t1";
+    expect(isOutboxAuditEnabled()).toBe(true);
+    process.env["OUTBOX_AUDIT_ENABLED"] = " YES\r\n";
+    expect(isOutboxAuditEnabled()).toBe(true);
+  });
+
   it("returns false for other truthy-looking values", () => {
     process.env["OUTBOX_AUDIT_ENABLED"] = "on";
     expect(isOutboxAuditEnabled()).toBe(false);
@@ -191,36 +205,81 @@ describe("auditJobEnqueuerFactory — REDIS_URL × NODE_ENV branch matrix", () =
 
 describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)", () => {
   const originalEnv = process.env;
-  let stderrWrites: string[] = [];
-  let stderrSpy: jest.SpyInstance | null = null;
+
+  /**
+   * Pools created via makeFakePool are tracked here so afterEach can
+   * await `pool.end()` on each one. Even though the Pool constructor is
+   * lazy and we never query, leaving instances unended leaks an event
+   * loop reference and Jest reports "worker process has failed to exit
+   * gracefully" -- the same warning we already see (pre-existing) in the
+   * Layer B Testcontainers block. Cleaning these up keeps the Layer A
+   * suite cleanup-clean.
+   */
+  let createdPools: Pool[] = [];
+
+  /** Structured-logger spy bindings captured per test. */
+  let loggerWarns: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+
+  /**
+   * Minimal Logger-shaped fake. We only need `warn` for the assertions
+   * below; the unused methods are stubs so the factory can call any of
+   * them without crashing if behaviour ever changes. Matches the
+   * `@data-pulse-2/shared` Logger surface (pino-compatible).
+   */
+  function makeFakeLogger(): {
+    warn: jest.Mock;
+    info: jest.Mock;
+    error: jest.Mock;
+    debug: jest.Mock;
+    trace: jest.Mock;
+    fatal: jest.Mock;
+    child: jest.Mock;
+  } {
+    const warn = jest.fn((obj: Record<string, unknown>, msg: string) => {
+      loggerWarns.push({ obj, msg });
+    });
+    const stub = jest.fn();
+    const child = jest.fn(() => makeFakeLogger());
+    return {
+      warn,
+      info: stub,
+      error: stub,
+      debug: stub,
+      trace: stub,
+      fatal: stub,
+      child,
+    };
+  }
 
   beforeEach(() => {
     // Fresh process.env per test so flag mutations don't leak.
     process.env = { ...originalEnv };
-    // Capture stderr writes so we can assert the misconfiguration log line
-    // without leaking it to test output.
-    stderrWrites = [];
-    stderrSpy = jest
-      .spyOn(process.stderr, "write")
-      .mockImplementation((chunk: unknown) => {
-        stderrWrites.push(typeof chunk === "string" ? chunk : String(chunk));
-        return true;
-      });
+    createdPools = [];
+    loggerWarns = [];
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     process.env = originalEnv;
-    if (stderrSpy) stderrSpy.mockRestore();
+    // End every Pool we created so Jest does not flag leaked event-loop
+    // references. `pool.end()` is idempotent and resolves quickly for
+    // never-connected pools.
+    for (const pool of createdPools) {
+      await pool.end().catch(() => undefined);
+    }
+    createdPools.length = 0;
   });
 
   /** Construct a never-used Pool. The factory only inspects `=== null`. */
   function makeFakePool(): Pool {
     // The Pool constructor is lazy — no connection is opened until a query
     // is issued. We never query, so this is a safe placeholder for "pool
-    // is present" without booting Postgres.
-    return new Pool({
+    // is present" without booting Postgres. Tracked in `createdPools` so
+    // afterEach can release the resource.
+    const pool = new Pool({
       connectionString: "postgres://fake:fake@127.0.0.1:1/fake",
     });
+    createdPools.push(pool);
+    return pool;
   }
 
   function fakeQueueFactory(): (url: string) => AuditQueueLike {
@@ -233,12 +292,17 @@ describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)"
     process.env["NODE_ENV"] = "test";
 
     const pool = makeFakePool();
-    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+    const logger = makeFakeLogger();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
+      pool,
+      undefined,
+      logger as unknown as import("@data-pulse-2/shared").Logger,
+    );
 
     // Legacy factory's test-fallback is NoOp when REDIS_URL is unset.
     expect(enqueuer).toBeInstanceOf(NoOpAuditJobEnqueuer);
     expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
-    expect(stderrWrites).toHaveLength(0);
+    expect(loggerWarns).toHaveLength(0);
   });
 
   it("OUTBOX_AUDIT_ENABLED unset → legacy enqueuer (NODE_ENV=test + REDIS_URL → AuditQueueProducer)", () => {
@@ -247,24 +311,31 @@ describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)"
     process.env["REDIS_URL"] = "redis://localhost:6379";
 
     const pool = makeFakePool();
+    const logger = makeFakeLogger();
     const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
       pool,
       fakeQueueFactory(),
+      logger as unknown as import("@data-pulse-2/shared").Logger,
     );
 
     expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
     expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
-    expect(stderrWrites).toHaveLength(0);
+    expect(loggerWarns).toHaveLength(0);
   });
 
   it("OUTBOX_AUDIT_ENABLED='1' + pool present → OutboxAuditEnqueuer", () => {
     process.env["OUTBOX_AUDIT_ENABLED"] = "1";
 
     const pool = makeFakePool();
-    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+    const logger = makeFakeLogger();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
+      pool,
+      undefined,
+      logger as unknown as import("@data-pulse-2/shared").Logger,
+    );
 
     expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
-    expect(stderrWrites).toHaveLength(0);
+    expect(loggerWarns).toHaveLength(0);
   });
 
   it("OUTBOX_AUDIT_ENABLED='true' + pool present → OutboxAuditEnqueuer (case-insensitive)", () => {
@@ -285,6 +356,16 @@ describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)"
     expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
   });
 
+  it("OUTBOX_AUDIT_ENABLED=' true ' (whitespace) + pool present → OutboxAuditEnqueuer", () => {
+    // Pairs with the trim-before-parse fix in isOutboxAuditEnabled().
+    process.env["OUTBOX_AUDIT_ENABLED"] = " true ";
+
+    const pool = makeFakePool();
+    const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(pool);
+
+    expect(enqueuer).toBeInstanceOf(OutboxAuditEnqueuer);
+  });
+
   it("OUTBOX_AUDIT_ENABLED='on' (invalid token) → legacy enqueuer", () => {
     process.env["OUTBOX_AUDIT_ENABLED"] = "on";
     process.env["NODE_ENV"] = "test";
@@ -295,32 +376,38 @@ describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)"
     expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
   });
 
-  it("OUTBOX_AUDIT_ENABLED='1' + pool null → safe fallback to legacy + warn line on stderr (NEVER drop events)", () => {
+  it("OUTBOX_AUDIT_ENABLED='1' + pool null → safe fallback to legacy + warn through structured logger (NEVER drop events)", () => {
     process.env["OUTBOX_AUDIT_ENABLED"] = "1";
     process.env["NODE_ENV"] = "test";
     process.env["REDIS_URL"] = "redis://localhost:6379";
 
+    const logger = makeFakeLogger();
     const enqueuer = outboxOrLegacyAuditJobEnqueuerFactory(
       null,
       fakeQueueFactory(),
+      logger as unknown as import("@data-pulse-2/shared").Logger,
     );
 
     // 1. Never silently drops — falls back to the legacy BullMQ producer.
     expect(enqueuer).toBeInstanceOf(AuditQueueProducer);
     expect(enqueuer).not.toBeInstanceOf(OutboxAuditEnqueuer);
 
-    // 2. Misconfiguration is observable — exactly one structured stderr
-    //    line with the documented component name, no PII, no secret data.
-    expect(stderrWrites).toHaveLength(1);
-    const line = stderrWrites[0]!;
-    const parsed = JSON.parse(line.trim()) as Record<string, unknown>;
-    expect(parsed["level"]).toBe("warn");
-    expect(parsed["component"]).toBe("audit.enqueuer");
-    expect(String(parsed["message"])).toContain("OUTBOX_AUDIT_ENABLED=1");
-    expect(String(parsed["message"])).toContain("PG_POOL is null");
-    // 3. The log line does not include the DATABASE_URL value or any
-    //    other potentially-PII string.
-    expect(line).not.toContain("postgres://");
+    // 2. Misconfiguration is observable through the structured logger.
+    //    The shared @data-pulse-2/shared logger applies the redaction
+    //    matrix at emit time; the binding we pass MUST already be
+    //    PII-safe (no payload, no secret values).
+    expect(loggerWarns).toHaveLength(1);
+    const { obj, msg } = loggerWarns[0]!;
+    expect(obj["component"]).toBe("audit.enqueuer");
+    expect(obj["request_id"]).toBeNull();
+    expect(obj["tenant_id"]).toBeNull();
+    expect(msg).toContain("OUTBOX_AUDIT_ENABLED=1");
+    expect(msg).toContain("PG_POOL is null");
+    // 3. Neither the binding nor the message echoes secret-shaped values
+    //    (DATABASE_URL connection strings, etc.).
+    const serialised = JSON.stringify(obj) + " " + msg;
+    expect(serialised).not.toContain("postgres://");
+    expect(serialised).not.toMatch(/password/i);
   });
 
   it("OUTBOX_AUDIT_ENABLED='1' + pool null + NODE_ENV=production + no REDIS_URL → legacy factory fails loud", () => {
@@ -334,11 +421,16 @@ describe("outboxOrLegacyAuditJobEnqueuerFactory — pool-aware DI matrix (T583)"
     process.env["NODE_ENV"] = "production";
     delete process.env["REDIS_URL"];
 
-    expect(() => outboxOrLegacyAuditJobEnqueuerFactory(null)).toThrow(
-      /AuditModule: REDIS_URL is required in production/,
-    );
+    const logger = makeFakeLogger();
+    expect(() =>
+      outboxOrLegacyAuditJobEnqueuerFactory(
+        null,
+        undefined,
+        logger as unknown as import("@data-pulse-2/shared").Logger,
+      ),
+    ).toThrow(/AuditModule: REDIS_URL is required in production/);
     // Fallback warn line still fires before the legacy factory throws.
-    expect(stderrWrites).toHaveLength(1);
+    expect(loggerWarns).toHaveLength(1);
   });
 });
 

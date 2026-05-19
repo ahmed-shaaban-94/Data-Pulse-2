@@ -24,6 +24,7 @@ import { Module, type Provider } from "@nestjs/common";
 import { Queue, type JobsOptions } from "bullmq";
 import type { Pool } from "pg";
 
+import { createLogger, type Logger } from "@data-pulse-2/shared";
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 import {
@@ -91,10 +92,13 @@ export function auditJobEnqueuerFactory(
  * `AuthModule → AuditEnqueuerModule → AuthModule` cycle this leaf module
  * exists to avoid).
  *
- * The flag accepts the literal strings "1", "true", or "yes" (case-insensitive).
+ * The flag accepts the literal strings "1", "true", or "yes"
+ * (case-insensitive). Leading and trailing whitespace is stripped before
+ * parsing so " true " and "yes\n" (common when the value comes from a
+ * .env file or shell here-doc) are correctly recognised as enabled.
  */
 export function isOutboxAuditEnabled(): boolean {
-  const raw = (process.env["OUTBOX_AUDIT_ENABLED"] ?? "").toLowerCase();
+  const raw = (process.env["OUTBOX_AUDIT_ENABLED"] ?? "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
 }
 
@@ -109,9 +113,11 @@ export function isOutboxAuditEnabled(): boolean {
  *                                               (writes audit.event.created
  *                                               rows to outbox_events).
  *   OUTBOX_AUDIT_ENABLED on  + pool null      → fall back to legacy +
- *                                               emit a PII-safe stderr line
- *                                               so an operator can see the
- *                                               configuration mismatch.
+ *                                               emit a PII-safe structured
+ *                                               warn line through the shared
+ *                                               pino logger so an operator
+ *                                               can see the configuration
+ *                                               mismatch.
  *
  * Safe-fallback rationale (matches task instruction "fall back to legacy
  * only if the existing architecture clearly supports safe fallback"):
@@ -120,17 +126,34 @@ export function isOutboxAuditEnabled(): boolean {
  *   - A flag-on + null-pool combination is a misconfiguration, not a
  *     failure mode; failing loud would crash request handling for a
  *     misconfiguration the operator can fix at runtime.
- *   - The structured stderr line ensures the misconfiguration is
- *     observable. Mirrors the PII-safe logging policy used by the
- *     drainer (drainer.processor.ts lines 307-334) and the outbox
- *     retention worker (retention.worker.ts).
+ *   - The structured warn line ensures the misconfiguration is
+ *     observable through the same boundary the rest of the API uses
+ *     (`@data-pulse-2/shared` createLogger, which honours
+ *     DEFAULT_REDACT_PATHS and is what `apps/api/src/main.ts` and the
+ *     pos-* modules use). PII-safe by construction.
+ *
+ * Module-init context vs request context
+ * --------------------------------------
+ * This factory fires at Nest module-init time, before any HTTP request
+ * is being handled. There is no `request_id` / `tenant_id` to attach to
+ * the log line. The warn binding therefore explicitly emits both as
+ * `null` so the line's shape matches the FR-B-004 request-scoped log
+ * schema -- downstream log-search tooling does not have to special-case
+ * boot-time emissions.
  *
  * The `queueFactory` parameter passes through to the legacy fallback so
- * unit tests can swap the BullMQ Queue out without booting Redis.
+ * unit tests can swap the BullMQ Queue out without booting Redis. The
+ * optional `logger` parameter is the structured-logger seam: tests pass
+ * a spy logger to assert on the emitted bindings without parsing stderr
+ * JSON; production callers (and call sites that simply do not supply a
+ * logger) get a module-local logger via `createLogger`. No new
+ * dependencies; createLogger is already used by `apps/api/src/main.ts`
+ * and several pos-* modules.
  */
 export function outboxOrLegacyAuditJobEnqueuerFactory(
   pool: Pool | null,
   queueFactory?: (url: string) => AuditQueueLike,
+  logger?: Logger,
 ): AuditJobEnqueuer {
   if (!isOutboxAuditEnabled()) {
     return auditJobEnqueuerFactory(queueFactory);
@@ -139,14 +162,21 @@ export function outboxOrLegacyAuditJobEnqueuerFactory(
     // Misconfiguration: flag is on but no DB pool is available. The
     // legacy BullMQ path keeps audit emissions flowing while the
     // operator investigates. NEVER silently drop audit events.
-    const line = JSON.stringify({
-      level: "warn",
-      component: "audit.enqueuer",
-      message:
-        "OUTBOX_AUDIT_ENABLED=1 but PG_POOL is null; falling back to legacy " +
+    //
+    // The structured boundary is `@data-pulse-2/shared` createLogger.
+    // When the caller did not pass an explicit logger we build a
+    // module-local one bound to `api.audit.enqueuer` -- mirrors the
+    // pos-shifts/pos-operators per-module logger pattern.
+    const log = logger ?? createLogger({ service: "api.audit.enqueuer" });
+    log.warn(
+      {
+        component: "audit.enqueuer",
+        request_id: null,
+        tenant_id: null,
+      },
+      "OUTBOX_AUDIT_ENABLED=1 but PG_POOL is null; falling back to legacy " +
         "BullMQ audit enqueuer. Check DATABASE_URL configuration.",
-    });
-    process.stderr.write(line + "\n");
+    );
     return auditJobEnqueuerFactory(queueFactory);
   }
   return new OutboxAuditEnqueuer(pool);
