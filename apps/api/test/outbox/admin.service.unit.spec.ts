@@ -116,9 +116,16 @@ describe("OutboxAdminService.list — repo input forwarding", () => {
     await service.list({ limit: 10 });
     expect(listDeadLettered).toHaveBeenCalledTimes(1);
     const [, input] = listDeadLettered.mock.calls[0]!;
-    expect(input.eventType).toBeUndefined();
-    expect(input.tenantId).toBeUndefined();
-    expect(input.cursor).toBeUndefined();
+    // CodeRabbit review on PR #240: `.toBeUndefined()` passes both
+    // when the key is absent AND when it is present-but-undefined.
+    // The "no undefined overspread" service contract requires actual
+    // KEY ABSENCE (so the repo sees a clean object, not one littered
+    // with `undefined` slots that the spread `{ ...maybe }` pattern
+    // would otherwise leave behind). Assert ABSENCE via
+    // `not.toHaveProperty`, which checks own-property existence.
+    expect(input).not.toHaveProperty("eventType");
+    expect(input).not.toHaveProperty("tenantId");
+    expect(input).not.toHaveProperty("cursor");
     // Service requests limit + 1 to detect end-of-page in one round-trip.
     expect(input.limit).toBe(11);
   });

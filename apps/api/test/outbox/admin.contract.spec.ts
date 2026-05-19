@@ -295,7 +295,11 @@ describe("OpenAPI surface — operationIds + paths (T300 surface)", () => {
       components: {
         schemas: Record<
           string,
-          { properties?: Record<string, unknown>; required?: string[] }
+          {
+            properties?: Record<string, unknown>;
+            required?: string[];
+            additionalProperties?: boolean;
+          }
         >;
       };
     };
@@ -303,6 +307,48 @@ describe("OpenAPI surface — operationIds + paths (T300 surface)", () => {
     expect(schema.properties).toBeDefined();
     expect(Object.keys(schema.properties!)).not.toContain("payload");
     expect(Object.keys(schema.properties!)).not.toContain("last_error");
+    // CodeRabbit review on PR #240: a property-list check alone does
+    // NOT prevent a response from leaking `payload` or `last_error`
+    // at runtime -- it only proves the documentation does not declare
+    // them. The schema MUST be closed (`additionalProperties: false`)
+    // for AJV to actually reject such responses. The negative cases
+    // below verify the closed-schema contract end-to-end.
+    expect(schema.additionalProperties).toBe(false);
+  });
+
+  it("AJV rejects an OutboxDeadLetter response that carries a `payload` field", () => {
+    // Defence-in-depth probe: even if the repository or service
+    // regressed and started widening the projection to include
+    // `payload`, the AJV-compiled schema MUST reject the response.
+    const valid = makeDto();
+    const withPayload = { ...valid, payload: { leaked: true } };
+    expect(validateDetailResponse(withPayload)).toBe(false);
+  });
+
+  it("AJV rejects an OutboxDeadLetter response that carries a raw `last_error` field", () => {
+    // Mirror of the payload probe: the column-name-equal alias for the
+    // sanitised error class MUST stay out of the response. Only the
+    // documented `last_error_class` field is allowed.
+    const valid = makeDto();
+    const withRawError = {
+      ...valid,
+      last_error: "RuntimeError: connection refused",
+    };
+    expect(validateDetailResponse(withRawError)).toBe(false);
+  });
+
+  it("AJV rejects an OutboxDeadLetter response with an arbitrary unknown field", () => {
+    // Generic closure probe: the schema must reject ANY field outside
+    // the allowlist, not just the two named-sensitive ones above.
+    const valid = makeDto();
+    const withUnknown = { ...valid, debug_marker: "internal" };
+    expect(validateDetailResponse(withUnknown)).toBe(false);
+  });
+
+  it("AJV accepts a properly-shaped OutboxDeadLetter (positive control)", () => {
+    // Sanity check that the closure didn't accidentally break the
+    // happy path -- the fixture DTO MUST still validate.
+    expect(validateDetailResponse(makeDto())).toBe(true);
   });
 });
 

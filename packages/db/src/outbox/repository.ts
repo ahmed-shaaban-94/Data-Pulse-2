@@ -644,7 +644,22 @@ export async function listDeadLettered(
       // Build the WHERE clause + parameter list incrementally so optional
       // filters never appear as `... AND NULL = NULL` (which would silently
       // match nothing). Each conditional appends to the same parameter list.
-      const where: string[] = ["delivery_state = 'dead_lettered'"];
+      // Two predicates ALWAYS apply, regardless of filters:
+      //   1. `delivery_state = 'dead_lettered'` -- the endpoint contract
+      //      is dead-letter triage; other states surface as a 404.
+      //   2. `processed_at IS NOT NULL` -- CodeRabbit review on PR #240.
+      //      `markDeadLettered` sets `processed_at = now()` as part of
+      //      the transition, so every dead-lettered row in production
+      //      should already have it set; the predicate is defence in
+      //      depth against a future code path (e.g. a manual UPDATE or
+      //      a backfill script) that could leave `processed_at` NULL.
+      //      The OpenAPI documents `processed_at` as non-null for rows
+      //      returned by this endpoint, so the contract is encoded in
+      //      the SQL.
+      const where: string[] = [
+        "delivery_state = 'dead_lettered'",
+        "processed_at IS NOT NULL",
+      ];
       const params: unknown[] = [];
 
       if (input.eventType !== undefined) {
@@ -718,11 +733,17 @@ export async function getDeadLettered(
     pool,
     { tenantId: null, isPlatformAdmin: true },
     async (client) => {
+      // `processed_at IS NOT NULL` mirrors the list query's guard --
+      // see CodeRabbit review on PR #240 + list predicate above. The
+      // OpenAPI documents `processed_at` as non-null for any row this
+      // endpoint returns, so the contract is encoded in SQL rather
+      // than relying on application invariants.
       const res = await client.query<DeadLetterDbRow>(
         `SELECT ${DEAD_LETTER_COLUMNS}
            FROM outbox_events
           WHERE event_id = $1::uuid
             AND delivery_state = 'dead_lettered'
+            AND processed_at IS NOT NULL
           LIMIT 1`,
         [eventId],
       );

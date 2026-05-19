@@ -521,14 +521,20 @@ describe("listDeadLettered (DL-4) — pagination", () => {
     for (let i = 1; i < rows.length; i++) {
       const prev = rows[i - 1]!;
       const cur = rows[i]!;
-      const cmpTime = cur.occurred_at.getTime() - prev.occurred_at.getTime();
-      if (cmpTime > 0) {
+      // CodeRabbit review on PR #240: `Date#getTime()` truncates the
+      // timestamp to milliseconds, so two rows that share a ms bucket
+      // but differ at the microsecond level compared via `.getTime()`
+      // would (incorrectly) be marked as a tie. The repository's
+      // ORDER BY occurred_at DESC orders by the underlying µs-precision
+      // column, so the test MUST compare at the same precision -- use
+      // the µs-text projection from `mapRow()`.
+      if (cur.occurred_at_text > prev.occurred_at_text) {
         throw new Error(
-          `occurred_at ordering violated at i=${i}: prev=${prev.occurred_at.toISOString()} cur=${cur.occurred_at.toISOString()}`,
+          `occurred_at ordering violated at i=${i}: prev=${prev.occurred_at_text} cur=${cur.occurred_at_text}`,
         );
       }
-      if (cmpTime === 0) {
-        // Tie -- event_id MUST be DESC.
+      if (cur.occurred_at_text === prev.occurred_at_text) {
+        // Tie at µs precision -- event_id MUST be DESC.
         expect(cur.event_id < prev.event_id).toBe(true);
       }
     }
@@ -591,8 +597,19 @@ describe("listDeadLettered (DL-4) — pagination", () => {
 
     const tenantId = "0de60000-0000-7000-8000-000000000001";
     const eventBaseTime = `0deb0000-0000-7000-8000-aaaaaaaaaa`;
-    const EVENT_FIRST = `${eventBaseTime}01`;
-    const EVENT_SECOND = `${eventBaseTime}02`;
+    // CodeRabbit review on PR #240: the seed UUIDs are intentionally
+    // ANTI-CORRELATED with the timestamp ordering. EVENT_OLDER (anchor.t)
+    // gets the LEXICOGRAPHICALLY LARGER UUID (`...aa99`); EVENT_NEWER
+    // (anchor.t + 1µs) gets the LEXICOGRAPHICALLY SMALLER UUID
+    // (`...aa01`). Under DESC ordering by `(occurred_at, event_id)`:
+    //   - CORRECT µs-precision impl: NEWER first (timestamp wins),
+    //     so page1 must contain EVENT_NEWER (`...aa01`).
+    //   - REGRESSED ms-precision impl: timestamps tie at ms, event_id
+    //     DESC kicks in, so page1 would contain EVENT_OLDER (`...aa99`).
+    // The assertion at the bottom pins EVENT_NEWER as page1's row,
+    // which fails LOUDLY for any ms-truncating regression.
+    const EVENT_OLDER = `${eventBaseTime}99`;
+    const EVENT_NEWER = `${eventBaseTime}01`;
 
     // Use a fresh tenant so the rows are isolated from the suite-level
     // fixture data (which mixes tenant A's many dead-letters into the
@@ -617,7 +634,7 @@ describe("listDeadLettered (DL-4) — pagination", () => {
          delivery_state, attempts, last_error,
          occurred_at, created_at, updated_at, processed_at)
       SELECT
-        $1::uuid,
+        $1::uuid,  -- EVENT_OLDER -- anchor.t -- LARGER UUID
         $3::uuid,
         'sub.ms.regression',
         '{}'::jsonb,
@@ -631,7 +648,7 @@ describe("listDeadLettered (DL-4) — pagination", () => {
       FROM anchor
       UNION ALL
       SELECT
-        $2::uuid,
+        $2::uuid,  -- EVENT_NEWER -- anchor.t + 1µs -- SMALLER UUID
         $3::uuid,
         'sub.ms.regression',
         '{}'::jsonb,
@@ -644,7 +661,7 @@ describe("listDeadLettered (DL-4) — pagination", () => {
         anchor.t + interval '1 microsecond'
       FROM anchor
       `,
-      [EVENT_FIRST, EVENT_SECOND, tenantId],
+      [EVENT_OLDER, EVENT_NEWER, tenantId],
     );
 
     // Sanity check: confirm the two rows truly land in the same
@@ -678,6 +695,13 @@ describe("listDeadLettered (DL-4) — pagination", () => {
     });
     expect(page1).toHaveLength(1);
 
+    // Page 1 MUST be EVENT_NEWER. If the implementation truncates the
+    // timestamp comparison to milliseconds the two rows tie at ms, the
+    // `event_id DESC` tie-breaker would pick the lexicographically
+    // LARGER UUID (EVENT_OLDER, `...aa99`) instead -- this assertion
+    // is the regression trap.
+    expect(page1[0]!.event_id).toBe(EVENT_NEWER);
+
     // Page 2 (cursor = page1's last row's µs text + event_id).
     const cursorRow = page1[0]!;
     const page2 = await listDeadLettered(env!.app, {
@@ -690,13 +714,14 @@ describe("listDeadLettered (DL-4) — pagination", () => {
       limit: 100,
     });
 
-    // Page 2 must contain the OTHER row -- no gap, no duplicate.
+    // Page 2 must be exactly EVENT_OLDER -- no gap (the row must
+    // appear) and no duplicate (it must NOT be EVENT_NEWER again).
     expect(page2).toHaveLength(1);
-    expect(page2[0]!.event_id).not.toBe(cursorRow.event_id);
+    expect(page2[0]!.event_id).toBe(EVENT_OLDER);
 
     // The union of page1 + page2 must be exactly the two seeded rows.
     const seenIds = new Set([cursorRow.event_id, page2[0]!.event_id]);
-    expect(seenIds).toEqual(new Set([EVENT_FIRST, EVENT_SECOND]));
+    expect(seenIds).toEqual(new Set([EVENT_OLDER, EVENT_NEWER]));
   });
 });
 

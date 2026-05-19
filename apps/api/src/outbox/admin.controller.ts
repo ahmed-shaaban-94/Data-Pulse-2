@@ -48,7 +48,6 @@
 import {
   Controller,
   Get,
-  HttpStatus,
   Inject,
   NotFoundException,
   Param,
@@ -116,11 +115,16 @@ export class OutboxAdminController {
   ): Promise<OutboxDeadLetterDto> {
     const row = await this.service.get(eventId);
     if (!row) {
-      throw new NotFoundException({
-        statusCode: HttpStatus.NOT_FOUND,
-        error: "Not Found",
-        message: "Dead-letter event not found.",
-      });
+      // Throw a plain string-payload NotFoundException so the
+      // GlobalExceptionFilter maps it to the canonical envelope
+      // `{ error: { code: "not_found", message, request_id } }`
+      // documented in outbox.openapi.yaml. CodeRabbit review on
+      // PR #240: constructing a custom `{ statusCode, error, message }`
+      // body here would only be cosmetic (the filter discards every
+      // field except `message`), but it created the impression of
+      // controller/contract drift -- the inline body did not match
+      // the documented Error schema even though the wire bytes did.
+      throw new NotFoundException("Dead-letter event not found.");
     }
     return row;
   }

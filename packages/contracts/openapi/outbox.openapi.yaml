@@ -209,11 +209,16 @@ components:
   schemas:
     OutboxDeadLetter:
       type: object
+      additionalProperties: false
       description: >
         Redacted projection of an `outbox_events` row in the
         `dead_lettered` state. The `payload` column is NEVER returned;
         the raw `last_error` column is NEVER returned (only the
-        sanitized `last_error_class` is exposed).
+        sanitized `last_error_class` is exposed). `additionalProperties:
+        false` closes the schema so AJV rejects ANY response carrying
+        a field outside the documented allowlist -- defence in depth
+        against a future projection regression silently leaking
+        `payload`, `last_error`, or other sensitive columns.
       required:
         - event_id
         - event_type
@@ -292,6 +297,7 @@ components:
 
     ListOutboxDeadLettersResponse:
       type: object
+      additionalProperties: false
       required:
         - items
         - next_cursor
