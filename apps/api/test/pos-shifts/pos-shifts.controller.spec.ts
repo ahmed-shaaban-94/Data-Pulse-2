@@ -286,13 +286,23 @@ beforeAll(async () => {
       throw err;
     }
   }
-});
+}, 90_000);
+// ^ The Jest default of 30s is too tight for this hook on the busier
+// self-hosted CI runner: the Testcontainers Postgres boot
+// (`startPgEnv` -> `applyAllUpAndCreateAppRole`) plus ~160 lines of
+// seed inserts has tipped over 30s during contention windows, while
+// completing in ~15s on developer hardware. 90s matches the
+// convention used by other heavy Testcontainers-backed specs in the
+// repo (e.g. `packages/db/__tests__/outbox/retention.spec.ts` uses
+// 180_000 for the same shape of work). Bumping only the `beforeAll`
+// timeout -- the per-test timeouts inside this suite are unchanged,
+// so a hung individual test still fails fast.
 
 afterAll(async () => {
   if (app) await app.close();
   if (pool) await pool.end().catch(() => undefined);
   if (env) await stopPgEnv(env);
-});
+}, 60_000);
 
 // -----------------------------------------------------------------------
 // Tests
