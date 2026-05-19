@@ -12,6 +12,7 @@
 **Created**: 2026-05-16
 **Owner**: Ahmed Shaaban
 **Parallel-safe with**: 003-catalog-foundation
+**Runtime execution status**: tracked in [docs/production-readiness/004-closeout-status.md](../../docs/production-readiness/004-closeout-status.md)
 
 > **PLANNING-ONLY NOTE**: This `tasks.md` is a **planning artifact**, not an
 > implementation roster. **Listing a task here is not approval to execute it.**
