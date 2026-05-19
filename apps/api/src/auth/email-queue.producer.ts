@@ -28,7 +28,7 @@
  *     just a 32-char hash slice and a short scope literal. Anything
  *     legible in queue dashboards stays opaque.
  */
-import { Injectable } from "@nestjs/common";
+import { Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Queue } from "bullmq";
 import { injectTraceContext } from "@data-pulse-2/shared/observability/otel";
@@ -64,6 +64,11 @@ const JOB_ID_SCOPES = {
  * keeps the unit spec free of any BullMQ runtime — tests pass an
  * in-memory fake that records calls — and documents exactly which
  * BullMQ method we depend on.
+ *
+ * `close()` is OPTIONAL so existing in-memory test doubles continue to
+ * work without a no-op stub; the producer's `onModuleDestroy` checks for
+ * the method before invoking it (see class below). Real `bullmq.Queue`
+ * always exposes `close()`.
  */
 export interface QueueLike {
   add(
@@ -71,10 +76,27 @@ export interface QueueLike {
     data: unknown,
     opts?: { jobId?: string },
   ): Promise<unknown>;
+  close?(): Promise<void>;
 }
 
+/**
+ * EmailQueueProducer owns the underlying BullMQ `Queue`'s background
+ * connection lifetime in production (`emailJobEnqueuerFactory` constructs
+ * the Queue and hands it in here, with no other owner). Nest's
+ * `OnModuleDestroy` lifecycle hook lets us close that connection cleanly
+ * when the module shuts down -- without this hook, the queue's background
+ * ioredis client survives Nest's `app.close()` and Jest reports
+ * "worker process has failed to exit gracefully" at suite teardown,
+ * which CI's exit-code aggregation flips from warning to error past a
+ * leak-count threshold (observed on PR #240). See branch
+ * `fix/api-queue-producers-close-on-destroy`.
+ */
 @Injectable()
-export class EmailQueueProducer implements EmailJobEnqueuer {
+export class EmailQueueProducer
+  implements EmailJobEnqueuer, OnModuleDestroy
+{
+  private closed = false;
+
   constructor(private readonly queue: Queue | QueueLike) {}
 
   async enqueuePasswordReset(job: PasswordResetEmailJob): Promise<void> {
@@ -104,6 +126,26 @@ export class EmailQueueProducer implements EmailJobEnqueuer {
       { ...job, traceContext: injectTraceContext() },
       { jobId },
     );
+  }
+
+  /**
+   * Close the underlying BullMQ Queue on module shutdown.
+   *
+   * Idempotent + defensive — see the matching docstring on
+   * `AuditQueueProducer.onModuleDestroy` for the full rationale and
+   * lineage to PR #240's CI leak.
+   */
+  async onModuleDestroy(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    const closeFn = (this.queue as QueueLike).close;
+    if (typeof closeFn === "function") {
+      try {
+        await closeFn.call(this.queue);
+      } catch {
+        // Best-effort shutdown. See AuditQueueProducer counterpart.
+      }
+    }
   }
 }
 
