@@ -435,10 +435,26 @@ describe("listDeadLettered (DL-2) — redaction discipline", () => {
         "correlation_id",
         "last_error_class",
         "occurred_at",
+        // occurred_at_text is the µs-precision projection used for the
+        // keyset cursor (see admin.query.schema.ts). It is internal to
+        // the repository/service contract; the service's `toDto`
+        // mapper drops it before the row reaches the wire.
+        "occurred_at_text",
         "created_at",
         "updated_at",
         "processed_at",
       ]),
+    );
+  });
+
+  it("occurred_at_text projection matches the documented µs-precision shape", async () => {
+    if (maybeSkip()) return;
+    const rows = await listDeadLettered(env!.app, { limit: 1 });
+    expect(rows.length).toBeGreaterThan(0);
+    const row = rows[0]!;
+    // Exact 27-char shape: yyyy-MM-ddTHH:mm:ss.UUUUUUZ
+    expect(row.occurred_at_text).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/,
     );
   });
 });
@@ -528,7 +544,7 @@ describe("listDeadLettered (DL-4) — pagination", () => {
     expect(page1.length).toBe(2);
 
     const cursor = {
-      occurredAt: page1[1]!.occurred_at,
+      occurredAtText: page1[1]!.occurred_at_text,
       eventId: page1[1]!.event_id,
     };
     const page2 = await listDeadLettered(env!.app, {
@@ -556,6 +572,131 @@ describe("listDeadLettered (DL-4) — pagination", () => {
     await expect(
       listDeadLettered(env!.app, { limit: -1 }),
     ).rejects.toThrow(RangeError);
+  });
+
+  it("microsecond-precision cursor paginates two sub-ms rows without gap or duplicate (DL-4 regression)", async () => {
+    if (maybeSkip()) return;
+    // CodeRabbit review on PR #240: the previous cursor codec carried
+    // `Date.toISOString()` (ms-precision), so two dead-letters whose
+    // `occurred_at` shared a millisecond bucket but differed in
+    // microseconds collided in the keyset predicate. Symptom: page 1
+    // returns row A, page 2 (cursor = A) re-emits A OR skips B
+    // depending on which side of `<` the comparison landed on.
+    //
+    // The fix carries `occurred_at_text` end-to-end (µs precision) and
+    // compares via `$N::timestamptz` against the verbatim string. This
+    // regression test seeds two rows whose `occurred_at` values are
+    // exactly 1 microsecond apart, drains them with `limit: 1`, and
+    // asserts page 2 contains the OTHER row (no gap, no duplicate).
+
+    const tenantId = "0de60000-0000-7000-8000-000000000001";
+    const eventBaseTime = `0deb0000-0000-7000-8000-aaaaaaaaaa`;
+    const EVENT_FIRST = `${eventBaseTime}01`;
+    const EVENT_SECOND = `${eventBaseTime}02`;
+
+    // Use a fresh tenant so the rows are isolated from the suite-level
+    // fixture data (which mixes tenant A's many dead-letters into the
+    // page even with eventType filter).
+    await env!.admin.query(
+      `INSERT INTO tenants (id, slug, name) VALUES ($1, 'dle-sub-ms', 'DLE Sub-Ms') ON CONFLICT DO NOTHING`,
+      [tenantId],
+    );
+
+    // Pick a deterministic "now-anchor" so we can derive the two
+    // timestamps from the database itself (avoids the JS-side ms
+    // truncation when we INSERT). Both rows are seeded in a single
+    // statement that materialises the two µs-offset timestamps from a
+    // single `clock_timestamp()` snapshot.
+    await env!.admin.query(
+      `
+      WITH anchor AS (
+        SELECT clock_timestamp() AS t
+      )
+      INSERT INTO outbox_events
+        (event_id, tenant_id, event_type, payload,
+         delivery_state, attempts, last_error,
+         occurred_at, created_at, updated_at, processed_at)
+      SELECT
+        $1::uuid,
+        $3::uuid,
+        'sub.ms.regression',
+        '{}'::jsonb,
+        'dead_lettered',
+        8,
+        'SubMsError',
+        anchor.t,
+        anchor.t,
+        anchor.t,
+        anchor.t
+      FROM anchor
+      UNION ALL
+      SELECT
+        $2::uuid,
+        $3::uuid,
+        'sub.ms.regression',
+        '{}'::jsonb,
+        'dead_lettered',
+        8,
+        'SubMsError',
+        anchor.t + interval '1 microsecond',
+        anchor.t + interval '1 microsecond',
+        anchor.t + interval '1 microsecond',
+        anchor.t + interval '1 microsecond'
+      FROM anchor
+      `,
+      [EVENT_FIRST, EVENT_SECOND, tenantId],
+    );
+
+    // Sanity check: confirm the two rows truly land in the same
+    // millisecond bucket but differ at the microsecond level. If a
+    // future Postgres / driver / OS change ever broke that assumption,
+    // the test below would no longer cover the regression.
+    const rawProbe = await env!.admin.query<{
+      event_id: string;
+      occ: string;
+      occ_us: string;
+    }>(
+      `SELECT event_id::text,
+              to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS occ,
+              to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occ_us
+         FROM outbox_events
+        WHERE tenant_id = $1::uuid AND event_type = 'sub.ms.regression'
+        ORDER BY occurred_at ASC`,
+      [tenantId],
+    );
+    expect(rawProbe.rows).toHaveLength(2);
+    // Same ms bucket -- the regression precondition.
+    expect(rawProbe.rows[0]!.occ).toBe(rawProbe.rows[1]!.occ);
+    // Distinct µs -- the precondition the new cursor must preserve.
+    expect(rawProbe.rows[0]!.occ_us).not.toBe(rawProbe.rows[1]!.occ_us);
+
+    // Page 1 (newest first, limit 1).
+    const page1 = await listDeadLettered(env!.app, {
+      tenantId,
+      eventType: "sub.ms.regression",
+      limit: 1,
+    });
+    expect(page1).toHaveLength(1);
+
+    // Page 2 (cursor = page1's last row's µs text + event_id).
+    const cursorRow = page1[0]!;
+    const page2 = await listDeadLettered(env!.app, {
+      tenantId,
+      eventType: "sub.ms.regression",
+      cursor: {
+        occurredAtText: cursorRow.occurred_at_text,
+        eventId: cursorRow.event_id,
+      },
+      limit: 100,
+    });
+
+    // Page 2 must contain the OTHER row -- no gap, no duplicate.
+    expect(page2).toHaveLength(1);
+    expect(page2[0]!.event_id).not.toBe(cursorRow.event_id);
+
+    // The union of page1 + page2 must be exactly the two seeded rows.
+    const seenIds = new Set([cursorRow.event_id, page2[0]!.event_id]);
+    expect(seenIds).toEqual(new Set([EVENT_FIRST, EVENT_SECOND]));
   });
 });
 

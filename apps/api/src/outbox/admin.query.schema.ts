@@ -35,22 +35,57 @@ import { z } from "zod";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Internal contract between schema, service, and repository. */
+/**
+ * Whitelist regex for the cursor's occurred_at text component. The
+ * repository projects PostgreSQL `timestamptz` columns through
+ * `to_char(... AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+ * which preserves microsecond precision. Anchoring on that exact shape
+ * rejects truncated / fabricated cursor inputs without going through
+ * the lossy `Date` ctor (a JS `Date` parses ISO strings at millisecond
+ * resolution -- the four trailing microsecond digits would be silently
+ * discarded, breaking keyset pagination across rows that share a
+ * millisecond bucket but differ in microseconds).
+ */
+const OCCURRED_AT_TEXT_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+
+/**
+ * Internal contract between schema, service, and repository.
+ *
+ * `occurredAtText` is the **lossless** representation of the row's
+ * `occurred_at` timestamptz with microsecond precision -- carried as
+ * a string end-to-end so the keyset predicate can compare against
+ * `$N::timestamptz` without ever round-tripping through a millisecond-
+ * precision JS `Date`. See `repository.ts` (mapRow) for the projection.
+ */
 export interface OutboxAdminCursor {
-  readonly occurredAt: Date;
+  readonly occurredAtText: string;
   readonly eventId: string;
 }
 
-/** Encode `(occurredAt, eventId)` as opaque base64url. */
-export function encodeCursor(occurredAt: Date, eventId: string): string {
-  const payload = `${occurredAt.toISOString()}|${eventId}`;
+/**
+ * Encode `(occurredAtText, eventId)` as opaque base64url.
+ *
+ * Both parts are passed through verbatim -- callers MUST hand the same
+ * string the repository projected (microsecond-precision UTC
+ * timestamptz text). The codec is intentionally a pure byte
+ * transformation; it does NOT re-parse the timestamp.
+ */
+export function encodeCursor(occurredAtText: string, eventId: string): string {
+  const payload = `${occurredAtText}|${eventId}`;
   return Buffer.from(payload, "utf8").toString("base64url");
 }
 
 /**
- * Decode opaque base64url cursor back to `(occurredAt, eventId)`. Throws
- * on any malformed shape so the Zod transform can surface it as a
- * `validation_error` 400.
+ * Decode opaque base64url cursor back to `(occurredAtText, eventId)`.
+ * Throws on any malformed shape so the Zod transform can surface it as
+ * a `validation_error` 400.
+ *
+ * The timestamp half is validated against `OCCURRED_AT_TEXT_RE` -- we
+ * deliberately do NOT call `new Date(isoPart)` (lossy: JS Date is
+ * ms-precision; the 4 trailing microsecond digits would be silently
+ * dropped, defeating the whole point of the precision tightening).
+ * Postgres consumes the literal string directly via `$N::timestamptz`.
  */
 export function decodeCursor(raw: string): OutboxAdminCursor {
   let decoded: string;
@@ -66,16 +101,15 @@ export function decodeCursor(raw: string): OutboxAdminCursor {
   if (sep <= 0 || sep === decoded.length - 1) {
     throw new Error("cursor: missing separator");
   }
-  const isoPart = decoded.slice(0, sep);
+  const occurredAtText = decoded.slice(0, sep);
   const idPart = decoded.slice(sep + 1);
-  const occurredAt = new Date(isoPart);
-  if (Number.isNaN(occurredAt.getTime())) {
+  if (!OCCURRED_AT_TEXT_RE.test(occurredAtText)) {
     throw new Error("cursor: invalid occurred_at");
   }
   if (!UUID_RE.test(idPart)) {
     throw new Error("cursor: invalid event_id");
   }
-  return { occurredAt, eventId: idPart };
+  return { occurredAtText, eventId: idPart };
 }
 
 /**

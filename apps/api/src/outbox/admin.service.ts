@@ -75,7 +75,9 @@ export class OutboxAdminService {
       ...(input.tenantId !== undefined && { tenantId: input.tenantId }),
       ...(input.cursor !== undefined && {
         cursor: {
-          occurredAt: input.cursor.occurredAt,
+          // Microsecond-precision timestamptz text, carried verbatim
+          // through the cursor codec -- see admin.query.schema.ts.
+          occurredAtText: input.cursor.occurredAtText,
           eventId: input.cursor.eventId,
         },
       }),
@@ -88,7 +90,11 @@ export class OutboxAdminService {
     let nextCursor: string | null = null;
     if (hasMore && kept.length > 0) {
       const last = kept[kept.length - 1]!;
-      nextCursor = encodeCursor(last.occurred_at, last.event_id);
+      // last.occurred_at_text is the µs-precision projection -- using
+      // last.occurred_at (a JS Date) would drop sub-millisecond digits
+      // and cause keyset pagination to gap or duplicate rows that
+      // share a millisecond bucket. See repository.ts mapRow().
+      nextCursor = encodeCursor(last.occurred_at_text, last.event_id);
     }
 
     return {

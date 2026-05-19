@@ -309,10 +309,16 @@ describe("query param threading (AC-3)", () => {
       .expect(400);
   });
 
-  it("accepts a well-formed cursor and forwards the decoded tuple", async () => {
-    // Base64url of "2026-05-19T10:00:00.000Z|0e195b10-0000-7000-8000-000000000001"
+  it("accepts a well-formed cursor and forwards the µs-precision tuple", async () => {
+    // CodeRabbit review on PR #240: the cursor's timestamp half is now
+    // a verbatim microsecond-precision timestamptz text token (NOT a
+    // JS Date) so keyset pagination preserves sub-millisecond ordering.
+    // The base64url payload encodes the exact 27-char shape produced by
+    // the repository's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+    // projection -- 6 fractional digits, trailing Z.
+    const occurredAtText = "2026-05-19T10:00:00.123456Z";
     const cursor = Buffer.from(
-      `2026-05-19T10:00:00.000Z|${EVENT_1}`,
+      `${occurredAtText}|${EVENT_1}`,
       "utf8",
     ).toString("base64url");
     await http()
@@ -320,11 +326,16 @@ describe("query param threading (AC-3)", () => {
       .expect(200);
     expect(fakeService.lastListInput).toMatchObject({
       cursor: {
+        occurredAtText,
         eventId: EVENT_1,
       },
     });
-    const decoded = (fakeService.lastListInput as { cursor: { occurredAt: Date } }).cursor;
-    expect(decoded.occurredAt.toISOString()).toBe("2026-05-19T10:00:00.000Z");
+    const decoded = (
+      fakeService.lastListInput as { cursor: { occurredAtText: string } }
+    ).cursor;
+    // The string is forwarded verbatim -- no Date round-trip.
+    expect(typeof decoded.occurredAtText).toBe("string");
+    expect(decoded.occurredAtText).toBe(occurredAtText);
   });
 
   it("rejects unknown query keys with 400 (strict schema)", async () => {

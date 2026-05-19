@@ -442,6 +442,19 @@ export interface OutboxDeadLetterRecord {
    */
   readonly last_error_class: string | null;
   readonly occurred_at: Date;
+  /**
+   * Microsecond-precision UTC text projection of `occurred_at`, produced
+   * by `to_char(... AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`.
+   *
+   * Why this field exists: JS `Date` (and `Date.toISOString()`) operate
+   * at millisecond resolution. Postgres `timestamptz` is microsecond-
+   * precision, so two dead-letters seeded inside the same millisecond
+   * bucket but at distinct microseconds are indistinguishable through
+   * `occurred_at`. The cursor codec (`admin.query.schema.ts`) carries
+   * this string verbatim so keyset pagination never gaps or duplicates
+   * rows whose ms-truncated timestamps collide.
+   */
+  readonly occurred_at_text: string;
   readonly created_at: Date;
   readonly updated_at: Date;
   readonly processed_at: Date | null;
@@ -449,12 +462,18 @@ export interface OutboxDeadLetterRecord {
 
 /**
  * Opaque pagination cursor. Encoded base64url by the controller as
- * `<occurredAtIso>|<eventId>` -- the repository receives the decoded
- * tuple. Matches the audit endpoint's encoding convention so reviewers
- * can audit one cursor codec for the whole API.
+ * `<occurredAtText>|<eventId>` -- the repository receives the decoded
+ * tuple. The timestamp is a verbatim microsecond-precision text token
+ * (NOT a JS `Date`) so the keyset predicate can compare via
+ * `$N::timestamptz` without truncating to milliseconds.
+ *
+ * Note: this is intentionally tighter than the audit endpoint's cursor,
+ * which still uses Date-precision. Dead-letter triage is operator-
+ * scoped and benefits from deterministic ordering across sub-ms
+ * timestamps; the audit endpoint will be tightened in a future pass.
  */
 export interface OutboxDeadLetterCursor {
-  readonly occurredAt: Date;
+  readonly occurredAtText: string;
   readonly eventId: string;
 }
 
@@ -542,6 +561,7 @@ const DEAD_LETTER_COLUMNS = `
   correlation_id,
   last_error,
   occurred_at,
+  to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at_text,
   created_at,
   updated_at,
   processed_at
@@ -549,6 +569,10 @@ const DEAD_LETTER_COLUMNS = `
 
 // Row shape that node-pg returns for the projection above. `last_error`
 // is the raw column; the row mapper sanitises it into `last_error_class`.
+// `occurred_at_text` is the microsecond-precision UTC projection used
+// for keyset cursors -- node-pg returns it as a plain string because
+// `to_char()` produces `text`, not `timestamptz` (the type oid the pg
+// type-parser would convert to a JS `Date`).
 interface DeadLetterDbRow {
   event_id: string;
   event_type: string;
@@ -559,6 +583,7 @@ interface DeadLetterDbRow {
   correlation_id: string | null;
   last_error: string | null;
   occurred_at: Date;
+  occurred_at_text: string;
   created_at: Date;
   updated_at: Date;
   processed_at: Date | null;
@@ -575,6 +600,7 @@ function mapRow(row: DeadLetterDbRow): OutboxDeadLetterRecord {
     correlation_id: row.correlation_id,
     last_error_class: sanitizeLastErrorClass(row.last_error),
     occurred_at: row.occurred_at,
+    occurred_at_text: row.occurred_at_text,
     created_at: row.created_at,
     updated_at: row.updated_at,
     processed_at: row.processed_at,
@@ -634,7 +660,14 @@ export async function listDeadLettered(
         // Postgres supports row-value comparisons directly, but the
         // explicit OR-form makes the index choice unambiguous for the
         // planner and easier to read.
-        params.push(input.cursor.occurredAt.toISOString());
+        //
+        // The cursor's `occurredAtText` is a verbatim microsecond-
+        // precision timestamptz literal (e.g. `2026-05-19T10:00:00.123456Z`)
+        // produced by the row mapper's `to_char(... AT TIME ZONE 'UTC', ...)`
+        // projection. We hand it to Postgres as a string and let the
+        // `::timestamptz` cast parse it -- this preserves full µs
+        // precision, unlike going through a JS `Date`.
+        params.push(input.cursor.occurredAtText);
         const occIdx = params.length;
         params.push(input.cursor.eventId);
         const idIdx = params.length;
