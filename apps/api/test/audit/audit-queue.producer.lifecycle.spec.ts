@@ -123,3 +123,109 @@ describe("AuditQueueProducer.onModuleDestroy", () => {
     expect(queue.closeCalls).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Lazy-init mode -- the override-orphan leak fix
+// ---------------------------------------------------------------------------
+//
+// The production `auditJobEnqueuerFactory` now returns a producer in LAZY
+// mode -- it accepts a `() => Queue` thunk instead of an eager Queue.
+// This shifts BullMQ Queue construction from Nest module-init time to
+// first `enqueue()`. The test cases below pin:
+//
+//   L-1: lazy producer does NOT call the provider thunk at construction.
+//   L-2: first `enqueue()` invokes the thunk exactly once.
+//   L-3: second `enqueue()` reuses the materialised queue (no re-build).
+//   L-4: onModuleDestroy on a never-enqueued producer is a clean no-op
+//        (the leak fix -- nothing to close because nothing was built).
+//   L-5: onModuleDestroy AFTER an enqueue closes the materialised queue.
+//
+describe("AuditQueueProducer.lazy mode (override-orphan leak fix)", () => {
+  it("L-1: lazy producer does NOT call the provider thunk at construction", () => {
+    let calls = 0;
+    new AuditQueueProducer(() => {
+      calls += 1;
+      return new FakeQueueWithClose();
+    });
+    expect(calls).toBe(0);
+  });
+
+  it("L-2: first enqueue() invokes the thunk exactly once", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new AuditQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    await producer.enqueue({
+      actor_user_id: null,
+      actor_label: null,
+      tenant_id: "00000000-0000-7000-8000-000000000001",
+      store_id: null,
+      action: "test.lazy",
+      target_type: null,
+      target_id: null,
+      request_id: null,
+      metadata: null,
+    });
+    expect(calls).toBe(1);
+    expect(queue.addCalls).toBe(1);
+  });
+
+  it("L-3: second enqueue() reuses the materialised queue", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new AuditQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    const payload = {
+      actor_user_id: null,
+      actor_label: null,
+      tenant_id: "00000000-0000-7000-8000-000000000001",
+      store_id: null,
+      action: "test.lazy",
+      target_type: null,
+      target_id: null,
+      request_id: null,
+      metadata: null,
+    };
+    await producer.enqueue(payload);
+    await producer.enqueue(payload);
+    expect(calls).toBe(1);
+    expect(queue.addCalls).toBe(2);
+  });
+
+  it("L-4: onModuleDestroy on a never-enqueued lazy producer is a clean no-op", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new AuditQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    // Crucial: enqueue was NEVER called. The producer was effectively
+    // orphaned (this is exactly what happens when overrideProvider replaces
+    // the binding before any code path used the original).
+    await expect(producer.onModuleDestroy()).resolves.toBeUndefined();
+    expect(calls).toBe(0);
+    expect(queue.closeCalls).toBe(0);
+  });
+
+  it("L-5: onModuleDestroy AFTER enqueue closes the materialised queue", async () => {
+    const queue = new FakeQueueWithClose();
+    const producer = new AuditQueueProducer(() => queue);
+    await producer.enqueue({
+      actor_user_id: null,
+      actor_label: null,
+      tenant_id: "00000000-0000-7000-8000-000000000001",
+      store_id: null,
+      action: "test.lazy",
+      target_type: null,
+      target_id: null,
+      request_id: null,
+      metadata: null,
+    });
+    await producer.onModuleDestroy();
+    expect(queue.closeCalls).toBe(1);
+  });
+});

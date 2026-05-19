@@ -108,3 +108,81 @@ describe("EmailQueueProducer.onModuleDestroy", () => {
     expect(queue.closeCalls).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Lazy-init mode -- the override-orphan leak fix (symmetric to audit producer)
+// ---------------------------------------------------------------------------
+//
+// See `audit-queue.producer.lifecycle.spec.ts` for the full rationale.
+// The production `emailJobEnqueuerFactory` now returns a producer in
+// LAZY mode -- it accepts a `() => Queue` thunk instead of an eager
+// Queue. The test cases below pin the same lazy semantics:
+//
+//   L-1: lazy producer does NOT call the provider thunk at construction.
+//   L-2: first enqueue* invokes the thunk exactly once.
+//   L-3: subsequent enqueue* calls reuse the materialised queue.
+//   L-4: onModuleDestroy on a never-enqueued producer is a clean no-op.
+//   L-5: onModuleDestroy AFTER enqueue closes the materialised queue.
+//
+describe("EmailQueueProducer.lazy mode (override-orphan leak fix)", () => {
+  const PROBE_JOB = {
+    email: "noop@example.test",
+    rawToken: "lazy-probe-only",
+    userId: "00000000-0000-7000-8000-000000000001",
+  };
+
+  it("L-1: lazy producer does NOT call the provider thunk at construction", () => {
+    let calls = 0;
+    new EmailQueueProducer(() => {
+      calls += 1;
+      return new FakeQueueWithClose();
+    });
+    expect(calls).toBe(0);
+  });
+
+  it("L-2: first enqueuePasswordReset() invokes the thunk exactly once", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new EmailQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    await producer.enqueuePasswordReset(PROBE_JOB);
+    expect(calls).toBe(1);
+    expect(queue.addCalls).toBe(1);
+  });
+
+  it("L-3: subsequent enqueue* calls reuse the materialised queue", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new EmailQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    await producer.enqueuePasswordReset(PROBE_JOB);
+    await producer.enqueueEmailVerification(PROBE_JOB);
+    await producer.enqueueInvitation(PROBE_JOB);
+    expect(calls).toBe(1);
+    expect(queue.addCalls).toBe(3);
+  });
+
+  it("L-4: onModuleDestroy on a never-enqueued lazy producer is a clean no-op", async () => {
+    let calls = 0;
+    const queue = new FakeQueueWithClose();
+    const producer = new EmailQueueProducer(() => {
+      calls += 1;
+      return queue;
+    });
+    await expect(producer.onModuleDestroy()).resolves.toBeUndefined();
+    expect(calls).toBe(0);
+    expect(queue.closeCalls).toBe(0);
+  });
+
+  it("L-5: onModuleDestroy AFTER enqueue closes the materialised queue", async () => {
+    const queue = new FakeQueueWithClose();
+    const producer = new EmailQueueProducer(() => queue);
+    await producer.enqueuePasswordReset(PROBE_JOB);
+    await producer.onModuleDestroy();
+    expect(queue.closeCalls).toBe(1);
+  });
+});

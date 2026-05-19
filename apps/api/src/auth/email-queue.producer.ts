@@ -80,28 +80,64 @@ export interface QueueLike {
 }
 
 /**
- * EmailQueueProducer owns the underlying BullMQ `Queue`'s background
- * connection lifetime in production (`emailJobEnqueuerFactory` constructs
- * the Queue and hands it in here, with no other owner). Nest's
- * `OnModuleDestroy` lifecycle hook lets us close that connection cleanly
- * when the module shuts down -- without this hook, the queue's background
- * ioredis client survives Nest's `app.close()` and Jest reports
- * "worker process has failed to exit gracefully" at suite teardown,
- * which CI's exit-code aggregation flips from warning to error past a
- * leak-count threshold (observed on PR #240). See branch
- * `fix/api-queue-producers-close-on-destroy`.
+ * Lazy-queue provider thunk. See the matching docstring on
+ * `AuditQueueProducer` (`audit-queue.producer.ts`) for the full
+ * rationale: production factory passes a thunk so the real BullMQ
+ * Queue is NOT constructed at Nest module-init time, which would
+ * leak past an `overrideProvider` that runs after init.
+ */
+export type EmailQueueProvider = () => Queue | QueueLike;
+
+/**
+ * EmailQueueProducer accepts EITHER a ready `Queue | QueueLike`
+ * (eager: existing tests pass a FakeQueue directly) OR an
+ * `EmailQueueProvider` thunk (lazy: production factory passes a thunk
+ * that constructs the real BullMQ Queue on first enqueue).
+ *
+ * See `AuditQueueProducer` (`audit-queue.producer.ts`) for the full
+ * rationale on lazy-init -- this class is the symmetric mirror with
+ * identical semantics. The two producers were refactored together
+ * so the override-orphan leak class is closed at both factory sites.
  */
 @Injectable()
 export class EmailQueueProducer
   implements EmailJobEnqueuer, OnModuleDestroy
 {
   private closed = false;
+  /** Materialised Queue. `null` while still lazy. */
+  private queue: Queue | QueueLike | null;
+  /** Thunk to build the Queue on first use; `null` once materialised. */
+  private queueProvider: EmailQueueProvider | null;
 
-  constructor(private readonly queue: Queue | QueueLike) {}
+  /**
+   * Eager: pass a ready `Queue | QueueLike`. Used by unit specs and
+   * by call sites where the queue is already constructed.
+   *
+   * Lazy: pass an `EmailQueueProvider` thunk. Used by the production
+   * `emailJobEnqueuerFactory` so the BullMQ Queue is NOT constructed
+   * at Nest module-init time.
+   */
+  constructor(queueOrProvider: Queue | QueueLike | EmailQueueProvider) {
+    if (typeof queueOrProvider === "function") {
+      this.queue = null;
+      this.queueProvider = queueOrProvider;
+    } else {
+      this.queue = queueOrProvider;
+      this.queueProvider = null;
+    }
+  }
+
+  /**
+   * Materialise the underlying Queue on first use.
+   */
+  private ensureQueue(): Queue | QueueLike {
+    return this.queue ?? (this.queue = this.queueProvider!());
+  }
 
   async enqueuePasswordReset(job: PasswordResetEmailJob): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.passwordReset, job.rawToken);
-    await this.queue.add(
+    const queue = this.ensureQueue();
+    await queue.add(
       EMAIL_JOB_NAMES.passwordReset,
       { ...job, traceContext: injectTraceContext() },
       { jobId },
@@ -112,7 +148,8 @@ export class EmailQueueProducer
     job: EmailVerificationEmailJob,
   ): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.emailVerification, job.rawToken);
-    await this.queue.add(
+    const queue = this.ensureQueue();
+    await queue.add(
       EMAIL_JOB_NAMES.emailVerification,
       { ...job, traceContext: injectTraceContext() },
       { jobId },
@@ -121,7 +158,8 @@ export class EmailQueueProducer
 
   async enqueueInvitation(job: InvitationEmailJob): Promise<void> {
     const jobId = deriveJobId(JOB_ID_SCOPES.invitation, job.rawToken);
-    await this.queue.add(
+    const queue = this.ensureQueue();
+    await queue.add(
       EMAIL_JOB_NAMES.invitation,
       { ...job, traceContext: injectTraceContext() },
       { jobId },
@@ -131,13 +169,13 @@ export class EmailQueueProducer
   /**
    * Close the underlying BullMQ Queue on module shutdown.
    *
-   * Idempotent + defensive — see the matching docstring on
-   * `AuditQueueProducer.onModuleDestroy` for the full rationale and
-   * lineage to PR #240's CI leak.
+   * Idempotent + defensive + lazy-aware -- see the matching docstring
+   * on `AuditQueueProducer.onModuleDestroy` for the full rationale.
    */
   async onModuleDestroy(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.queue === null) return; // lazy, never materialised
     const closeFn = (this.queue as QueueLike).close;
     if (typeof closeFn === "function") {
       try {

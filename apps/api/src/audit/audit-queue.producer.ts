@@ -56,28 +56,94 @@ export interface AuditQueueLike {
 }
 
 /**
- * AuditQueueProducer owns the underlying BullMQ `Queue`'s background
- * connection lifetime in production (`auditJobEnqueuerFactory` constructs
- * the Queue and hands it in here, with no other owner). Nest's
- * `OnModuleDestroy` lifecycle hook lets us close that connection cleanly
- * when the module shuts down -- without this hook, the queue's background
- * ioredis client survives Nest's `app.close()` and Jest reports
- * "worker process has failed to exit gracefully" at suite teardown,
- * which CI's exit-code aggregation flips from warning to error past a
- * leak-count threshold (observed on PR #240). See branch
- * `fix/api-queue-producers-close-on-destroy`.
+ * Lazy-queue provider thunk. The factory returns one of these instead of
+ * an eagerly-constructed Queue so Nest's `overrideProvider(...).useValue(...)`
+ * can replace the binding BEFORE any real BullMQ Queue is constructed
+ * (which would open a background ioredis socket and leak past
+ * `app.close()` -- see class docstring below).
+ */
+export type AuditQueueProvider = () => Queue | AuditQueueLike;
+
+/**
+ * AuditQueueProducer accepts EITHER a ready `Queue | AuditQueueLike`
+ * (eager: existing tests pass a FakeQueue directly) OR a
+ * `AuditQueueProvider` thunk (lazy: production factory passes a thunk
+ * that constructs the real BullMQ Queue on first `enqueue()`).
+ *
+ * Why lazy on the production path
+ * -------------------------------
+ * Nest's `Test.createTestingModule(...).overrideProvider(...).useValue(...)`
+ * replaces the binding for a token AFTER the original `useFactory` has
+ * already run. When the factory eagerly constructs a `new Queue(...)`,
+ * the resulting orphaned producer holds a background ioredis client
+ * that survives `app.close()` -- Jest then reports "worker process has
+ * failed to exit gracefully" at suite teardown. Threshold-crossing
+ * accumulation of these leaked handles flips CI's db-integration step
+ * from exit-0-with-warning to exit-1 (observed on PR #240).
+ *
+ * The PR #241 `OnModuleDestroy` hook fixes the LEGITIMATE teardown
+ * path (when the producer in the container is the one Nest actually
+ * destroys), but does not cover the override-orphan case: an
+ * overridden producer never has `onModuleDestroy` called on it because
+ * Nest no longer knows it exists.
+ *
+ * Lazy construction shifts the side effect from MODULE INIT to FIRST
+ * USE. In the override case, the original producer is orphaned with
+ * its lazy Queue never constructed -- no socket, no timer, no leak.
+ * In the production case, the first audit emission constructs the
+ * Queue exactly once and the same `OnModuleDestroy` hook closes it
+ * cleanly at shutdown.
+ *
+ * Concurrency: two concurrent `enqueue()` calls on a cold producer
+ * could both try to initialise. BullMQ Queue construction is
+ * synchronous, so the late caller would briefly observe a half-built
+ * Queue. The double-check guard (`this.queue ?? (this.queue = ...)`)
+ * is safe under Node's single-threaded event-loop semantics; the
+ * worst case is one wasted Queue object that the GC reclaims.
  */
 @Injectable()
 export class AuditQueueProducer
   implements AuditJobEnqueuer, OnModuleDestroy
 {
   private closed = false;
+  /** Materialised Queue. `null` while still lazy. */
+  private queue: Queue | AuditQueueLike | null;
+  /** Thunk to build the Queue on first use; `null` once materialised. */
+  private queueProvider: AuditQueueProvider | null;
 
-  constructor(private readonly queue: Queue | AuditQueueLike) {}
+  /**
+   * Eager: pass a ready `Queue | AuditQueueLike`. Used by unit specs
+   * that supply a FakeQueue and by call sites where the queue is
+   * already constructed.
+   *
+   * Lazy: pass an `AuditQueueProvider` thunk. Used by the production
+   * `auditJobEnqueuerFactory` so the BullMQ Queue is NOT constructed
+   * at Nest module-init time (which would leak past an
+   * overrideProvider that runs after init).
+   */
+  constructor(queueOrProvider: Queue | AuditQueueLike | AuditQueueProvider) {
+    if (typeof queueOrProvider === "function") {
+      this.queue = null;
+      this.queueProvider = queueOrProvider;
+    } else {
+      this.queue = queueOrProvider;
+      this.queueProvider = null;
+    }
+  }
+
+  /**
+   * Materialise the underlying Queue on first use. Called by `enqueue`
+   * (and by `onModuleDestroy` only when we have already materialised
+   * via an enqueue -- never to force materialisation just for cleanup).
+   */
+  private ensureQueue(): Queue | AuditQueueLike {
+    return this.queue ?? (this.queue = this.queueProvider!());
+  }
 
   async enqueue(payload: AuditJobPayload): Promise<void> {
+    const queue = this.ensureQueue();
     // No jobId — every emission must produce a distinct BullMQ job entry.
-    await this.queue.add(AUDIT_FANOUT_JOB_NAME_API, { ...payload, traceContext: injectTraceContext() });
+    await queue.add(AUDIT_FANOUT_JOB_NAME_API, { ...payload, traceContext: injectTraceContext() });
   }
 
   /**
@@ -89,15 +155,20 @@ export class AuditQueueProducer
    * idempotent, but the guard avoids double-await and keeps the
    * intent obvious).
    *
+   * Lazy-aware: if the producer was constructed in lazy mode and
+   * `enqueue()` was never called, there is no Queue to close. The
+   * hook does nothing -- the whole point of lazy mode.
+   *
    * Defensive: optional-chain on `close` so in-memory test doubles
    * that omit the method continue to work. Errors from `close()` are
-   * swallowed -- shutdown is best-effort and a failed close on a
+   * swallowed -- shutdown is best-effort and a failed close on an
    * already-disconnected client is exactly the noise we don't want
    * to log at process exit.
    */
   async onModuleDestroy(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    if (this.queue === null) return; // lazy, never materialised
     const closeFn = (this.queue as AuditQueueLike).close;
     if (typeof closeFn === "function") {
       try {
