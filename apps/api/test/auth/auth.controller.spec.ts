@@ -32,6 +32,28 @@
  */
 import "reflect-metadata";
 
+// jest.mock("bullmq") -- required even though EmailQueueProducer now
+// implements OnModuleDestroy (PR #241). Reason: this spec uses
+// `overrideProvider(EMAIL_JOB_ENQUEUER).useValue(emailSpy)`. Nest's
+// override REPLACES the binding but does NOT undo the original
+// useFactory's side effects -- the factory at auth.module.ts:112
+// already invoked `new Queue(EMAIL_QUEUE_NAME, { connection: { url:
+// REDIS_URL } })` before the override took effect. The producer wrapped
+// around that queue is then ORPHANED out of the container (replaced by
+// emailSpy), so its OnModuleDestroy hook is never called by Nest. The
+// real Queue's background ioredis client survives `app.close()` and
+// Jest reports "worker process has failed to exit gracefully" -> CI
+// exit-1 once cumulative leaks cross threshold. The architecturally
+// correct fix is to defer Queue construction in the factory itself,
+// but that's a larger refactor; mocking bullmq here keeps the spec
+// fast and hermetic without touching production semantics. Same
+// pattern as auth/email-queue.wiring.spec.ts.
+jest.mock("bullmq", () => ({
+  Queue: jest.fn().mockImplementation(function () {
+    return { add: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
+  }),
+}));
+
 import { hashPassword } from "@data-pulse-2/auth";
 import { newId } from "@data-pulse-2/shared";
 import { INestApplication } from "@nestjs/common";
