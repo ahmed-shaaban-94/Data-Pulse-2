@@ -230,20 +230,54 @@ describe("OpenAPI surface — operationIds + paths (T300 surface)", () => {
     ).toBe("getOutboxDeadLetter");
   });
 
-  it("contract.security uses cookieAuth (matches AuditController)", () => {
+  it("contract.security uses cookieAuth at the document level (applies to BOTH endpoints)", () => {
+    // CodeRabbit review on PR #240: assert the detail route is gated too.
+    // Approach: rely on OpenAPI's top-level `security:` (which applies to
+    // every operation unless an operation overrides it with its own
+    // `security:` block). We assert:
+    //   1. The `cookieAuth` securityScheme is defined.
+    //   2. The document-level `security: [{ cookieAuth: [] }]` is present.
+    //   3. Neither operation declares an empty `security: []` override
+    //      (which would re-publish the endpoint as anonymous).
     const contracts = loadOpenApiContracts();
-    const doc = (
-      contracts.find((c) => c.id === "outbox.openapi")!.document as {
-        paths: Record<
-          string,
-          Record<string, { security?: Array<Record<string, unknown>> }>
-        >;
-        components: { securitySchemes: Record<string, unknown> };
-      }
-    );
+    const doc = contracts.find((c) => c.id === "outbox.openapi")!.document as {
+      paths: Record<
+        string,
+        Record<string, { security?: Array<Record<string, unknown>> }>
+      >;
+      components: { securitySchemes: Record<string, unknown> };
+      security?: Array<Record<string, unknown>>;
+    };
+
+    // 1. The cookieAuth scheme is defined.
     expect(doc.components.securitySchemes["cookieAuth"]).toBeDefined();
-    const op = doc.paths["/api/v1/admin/outbox/dead-letters"]!["get"]!;
-    expect(op.security?.[0]).toEqual({ cookieAuth: [] });
+
+    // 2. Top-level document security includes cookieAuth.
+    expect(doc.security).toBeDefined();
+    expect(doc.security?.[0]).toEqual({ cookieAuth: [] });
+
+    // 3. Neither operation overrides with public security `[]` (which
+    //    would make the endpoint anonymous-accessible). Per OpenAPI
+    //    semantics, omitting per-operation `security` inherits from the
+    //    document, so the assertion is "either inherited OR explicitly
+    //    requires cookieAuth — never an empty override".
+    const listOp = doc.paths["/api/v1/admin/outbox/dead-letters"]!["get"]!;
+    const detailOp =
+      doc.paths["/api/v1/admin/outbox/dead-letters/{eventId}"]!["get"]!;
+    for (const [name, op] of [
+      ["list", listOp] as const,
+      ["detail", detailOp] as const,
+    ]) {
+      if (op.security !== undefined) {
+        // If present, must be non-empty AND include cookieAuth.
+        expect(op.security.length).toBeGreaterThan(0);
+        expect(op.security).toContainEqual({ cookieAuth: [] });
+        // Sanity: NEVER an empty-array override.
+        expect(op.security).not.toEqual([]);
+        // eslint-disable-next-line no-console
+        void name;
+      }
+    }
   });
 
   it("OutboxDeadLetter schema forbids `payload` field (allowlist completeness)", () => {

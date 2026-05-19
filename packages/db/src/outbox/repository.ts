@@ -494,24 +494,35 @@ const SAFE_ERROR_CLASS_MAX_LEN = 80;
  * signatures), but if a future code path regresses and stores a raw
  * exception string, this function refuses to leak it.
  *
- *   - null / undefined / empty / whitespace-only -> null
- *   - matches SAFE_ERROR_CLASS_RE and within length cap -> value
- *   - anything else -> null (suppress rather than substitute; the
- *     audit team can investigate via the DB directly).
+ *   - null / undefined            -> null
+ *   - non-string                  -> null
+ *   - empty string                -> null
+ *   - leading/trailing whitespace -> null (NOT trim-then-accept; a
+ *     well-behaved producer never adds whitespace, so any whitespace
+ *     is a red flag)
+ *   - longer than the length cap  -> null
+ *   - unsafe chars / quotes / braces / inner whitespace -> null
+ *   - matches SAFE_ERROR_CLASS_RE -> the ORIGINAL value (untouched)
  *
  * Returning `null` (rather than a sentinel like "RedactedError") avoids
  * implying "an error class was here but we hid it" -- the absence is
- * already the contract. The defensive controller test asserts both
- * shapes are acceptable.
+ * already the contract. Strict equality `value !== value.trim()` is the
+ * whitespace check (rather than trim-then-test) because we want to
+ * reject -- not silently repair -- a column that should never have had
+ * whitespace in the first place.
  */
 export function sanitizeLastErrorClass(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (trimmed.length > SAFE_ERROR_CLASS_MAX_LEN) return null;
-  if (!SAFE_ERROR_CLASS_RE.test(trimmed)) return null;
-  return trimmed;
+  if (value.length === 0) return null;
+  // Reject leading/trailing whitespace explicitly -- a well-behaved
+  // producer (markFailed / markDeadLettered) never inserts it; presence
+  // means the column was set via an out-of-band path that bypassed the
+  // class-name contract, so we refuse to leak it.
+  if (value !== value.trim()) return null;
+  if (value.length > SAFE_ERROR_CLASS_MAX_LEN) return null;
+  if (!SAFE_ERROR_CLASS_RE.test(value)) return null;
+  return value;
 }
 
 // ---------------------------------------------------------------------------

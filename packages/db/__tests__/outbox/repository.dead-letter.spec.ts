@@ -334,6 +334,17 @@ describe("sanitizeLastErrorClass (unit)", () => {
     expect(sanitizeLastErrorClass("RuntimeError: details")).toBeNull();
   });
 
+  it("rejects values with leading or trailing whitespace (regression: must NOT trim-then-accept)", () => {
+    // CodeRabbit review on PR #240: an earlier version of the sanitizer
+    // trimmed-then-validated, which silently repaired malformed input.
+    // The new contract rejects any whitespace so the absence is loud.
+    expect(sanitizeLastErrorClass(" ConsumerTimeout")).toBeNull();
+    expect(sanitizeLastErrorClass("ConsumerTimeout ")).toBeNull();
+    expect(sanitizeLastErrorClass(" ConsumerTimeout ")).toBeNull();
+    expect(sanitizeLastErrorClass("\tConsumerTimeout")).toBeNull();
+    expect(sanitizeLastErrorClass("ConsumerTimeout\n")).toBeNull();
+  });
+
   it("rejects values containing quotes or braces", () => {
     expect(sanitizeLastErrorClass('Err"injection"')).toBeNull();
     expect(sanitizeLastErrorClass("Err{payload}")).toBeNull();

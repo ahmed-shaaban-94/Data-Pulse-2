@@ -39,20 +39,22 @@ paths:
         Authorization: requires the authenticated session principal to
         be a platform admin (`@PlatformAdminOnly`). Non-admins receive
         403.
-      security:
-        - cookieAuth: []
       parameters:
         - in: query
           name: event_type
           required: false
-          schema: { type: string, minLength: 1 }
+          schema:
+            type: string
+            minLength: 1
           description: >
             Filter to a single registry event-type, e.g.
             `audit.event.created`. Exact match (no prefix wildcard).
         - in: query
           name: tenant_id
           required: false
-          schema: { type: string, format: uuid }
+          schema:
+            type: string
+            format: uuid
           description: >
             Filter to dead-letters originating from a single tenant.
             The operator role is platform-level — tenant_id is part of
@@ -60,7 +62,9 @@ paths:
         - in: query
           name: cursor
           required: false
-          schema: { type: string, minLength: 1 }
+          schema:
+            type: string
+            minLength: 1
           description: >
             Opaque pagination token returned in the previous page's
             `next_cursor`. Treated as opaque — clients MUST NOT decode
@@ -106,12 +110,23 @@ paths:
         "400":
           description: >
             Invalid query parameter (bad UUID, bad cursor encoding, or
-            limit out of range). Body conforms to the standard error
-            envelope.
+            limit out of range).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           description: Caller is authenticated but not a platform admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/admin/outbox/dead-letters/{eventId}:
     get:
@@ -127,13 +142,13 @@ paths:
         Both cases are externally indistinguishable by design — the
         endpoint contract is dead-letter triage, not generic event
         lookup.
-      security:
-        - cookieAuth: []
       parameters:
         - in: path
           name: eventId
           required: true
-          schema: { type: string, format: uuid }
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: OK — single dead-lettered event.
@@ -159,14 +174,30 @@ paths:
                     processed_at: "2026-05-19T11:30:00.000Z"
         "400":
           description: Invalid eventId (bad UUID).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "403":
           description: Caller is authenticated but not a platform admin.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "404":
           description: >
             Event not found OR event exists but is not in
             `dead_lettered` state. The two cases share one response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
 components:
   securitySchemes:
@@ -215,7 +246,8 @@ components:
           description: Store scope when applicable; NULL for tenant-level events.
         delivery_state:
           type: string
-          enum: [dead_lettered]
+          enum:
+            - dead_lettered
           description: >
             Always the literal `dead_lettered` — the endpoint contract
             is dead-letter triage. Other states surface as 404.
@@ -260,10 +292,13 @@ components:
 
     ListOutboxDeadLettersResponse:
       type: object
-      required: [items, next_cursor]
+      required:
+        - items
+        - next_cursor
       properties:
         items:
           type: array
+          maxItems: 200
           items:
             $ref: "#/components/schemas/OutboxDeadLetter"
         next_cursor:
@@ -272,3 +307,31 @@ components:
           description: >
             Opaque cursor for the next page; null when the current page
             is the last. Clients MUST treat as opaque.
+
+    Error:
+      type: object
+      required:
+        - error
+      description: >
+        Canonical error envelope used across the API. Matches the shape
+        defined in `auth.openapi.yaml` (slice 1, US3).
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+            message:
+              type: string
+              description: Human-readable error summary. No sensitive data.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-assigned correlation id for cross-log tracing.
+
+security:
+  - cookieAuth: []
