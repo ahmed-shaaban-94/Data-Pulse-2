@@ -1,0 +1,106 @@
+# execution-map.yaml — TEMPLATE
+#
+# Copy this file to `specs/<spec-id>/execution-map.yaml` and replace every
+# `<placeholder>` with real content. Fields follow the schema in
+# `docs/agent-os/slice-schema.yaml` — refer to that file for field types,
+# allowed values, and validation rules.
+#
+# Maestro reads this file as the source of truth for slice state. Manual
+# edits are allowed (and expected) when the user wants to add a finding,
+# reorder, mark a slice closed, or propose a new group.
+
+spec: <spec-id>                     # e.g. "003-catalog-foundation"
+version: 1
+base: origin/main                   # branch all slices are cut from
+
+# ----------------------------------------------------------------------------
+# findings — discoveries that affect slice scheduling
+# ----------------------------------------------------------------------------
+findings: []
+  # Example shape:
+  # - id: EXAMPLE_FINDING
+  #   summary: >
+  #     One-paragraph description of what was found and why it matters.
+  #   affected:
+  #     - some_table
+  #     - some_module
+  #   severity: medium                # critical | high | medium | low
+  #   proof: <commit-sha-or-test-path>
+  #   blocks:
+  #     - SLICE_ID_THAT_CANT_PROCEED
+  #   resolved_by: SLICE_THAT_CLOSES_IT
+
+# ----------------------------------------------------------------------------
+# slices — the work items
+# ----------------------------------------------------------------------------
+slices:
+
+  - id: <SLICE_ID_1>
+    task_ids: []                    # e.g. ["T335"]
+    type: test                      # feat | fix | test | refactor | docs | chore | perf | ci
+    status: ready                   # proposed | blocked | ready | approved | in_progress | local_uncommitted | committed | pushed | in_review | merged | closed
+    approval_required: false        # set true for any gated surface
+    depends_on: []
+    blocks: []
+    agent: sonnet-test              # see docs/agent-os/agent-profiles.yaml
+    allowed_files:
+      - packages/db/__tests__/<path>.spec.ts
+    forbidden_files: []
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "<pattern>"
+        expected: GREEN N/N
+        docker_required: true
+    stop:
+      - if <slice-specific stop condition>
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    # branch_template: <override-if-needed>
+    # worktree_template: <override-if-needed>
+    # predecessors_must_be_merged: false
+
+  - id: <SLICE_ID_2>
+    task_ids: []
+    type: fix
+    status: blocked
+    approval_required: true         # this example touches a gated surface
+    depends_on:
+      - <SLICE_ID_1>
+    blocks: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/drizzle/<NNNN>_<name>.sql
+      - packages/db/drizzle/<NNNN>_<name>.down.sql
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "<focused>"
+        expected: was RED, now GREEN
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "<regression-1>"
+        expected: GREEN N/N (no regression)
+        docker_required: true
+    stop:
+      - if predecessor RED proof is not present
+      - if the migration changes structure beyond the brief
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe         # gated SQL slices serialize
+
+# ----------------------------------------------------------------------------
+# groups — optional parallel waves
+# ----------------------------------------------------------------------------
+groups: []
+  # Example:
+  # - id: WAVE_X
+  #   members:
+  #     - <SLICE_A>
+  #     - <SLICE_B>
+  #     - <SLICE_C>
+  #   parallel_safety: safe
+  #   proposed: true                  # awaiting user approval

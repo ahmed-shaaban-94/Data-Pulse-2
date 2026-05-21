@@ -1,0 +1,477 @@
+# 003-catalog-foundation — Execution Map (Agent OS v1)
+#
+# Authoritative state of the catalog spec for Maestro dispatch. Mirrors the
+# task plan in tasks.md but adds: slice status, agent assignments, allowed
+# files, validation contracts, findings, and proposed parallel groups.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/003-catalog-foundation/wave-status.md
+#
+# Updated: 2026-05-21 after PR #254 opened (RLS_CROSS_STORE_FIX in review).
+
+spec: 003-catalog-foundation
+version: 1
+base: origin/main
+
+# ----------------------------------------------------------------------------
+# findings
+# ----------------------------------------------------------------------------
+findings:
+  - id: RLS_CROSS_STORE_READ_LEAK
+    summary: >
+      store_product_overrides and unknown_items declare two PERMISSIVE
+      SELECT policies per table (a tenant_isolation policy checking
+      tenant_id only, and a store_read policy checking store_id-or-empty).
+      PostgreSQL OR-combines PERMISSIVE policies, so the tenant_isolation
+      policy alone returns TRUE for every row of the active tenant
+      regardless of store_id. A runtime principal with
+      app.current_tenant = Tenant A and app.current_store = Store X can
+      SELECT Tenant A / Store Y rows — a cross-store data leak inside a
+      tenant. Writes are unaffected (the FOR ALL _tenant_write policies
+      already AND tenant_id with store_id).
+    affected:
+      - store_product_overrides
+      - unknown_items
+    severity: medium
+    proof: 3da993b  # RED Testcontainers spec at packages/db/__tests__/migration/catalog-rls-store-read.spec.ts
+    blocks:
+      - T336
+      - T340
+      - T341
+      - T342
+      - T343
+      - T344
+    resolved_by: RLS_CROSS_STORE_FIX
+
+# ----------------------------------------------------------------------------
+# slices
+# ----------------------------------------------------------------------------
+slices:
+
+  # ===== Merged on main =====================================================
+
+  - id: T320
+    task_ids: [T320]
+    type: feat
+    status: merged
+    approval_required: true   # gated (schema modules)
+    depends_on: []
+    blocks: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/catalog/**
+    validation: []
+    stop: []
+    report_fields: [changed_files]
+    parallel_safety: safe
+
+  - id: T331
+    task_ids: [T331]
+    type: test
+    status: merged
+    approval_required: false
+    depends_on: [T320]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/schema/catalog/**
+    validation: []
+    stop: []
+    report_fields: [changed_files]
+    parallel_safety: safe
+
+  - id: T326_T327_T328_T329
+    task_ids: [T326, T327, T328, T329]
+    type: test
+    status: merged
+    approval_required: false
+    depends_on: [T320, T331]
+    blocks: [T330]
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/migration/0001-catalog.spec.ts
+    validation: []
+    stop: []
+    report_fields: [changed_files]
+    parallel_safety: safe
+
+  - id: T330
+    task_ids: [T330]
+    type: feat
+    status: merged
+    approval_required: true   # gated (SQL migration)
+    depends_on: [T326_T327_T328_T329]
+    blocks: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/drizzle/0007_catalog.sql
+      - packages/db/drizzle/0007_catalog.down.sql
+    validation: []
+    stop: []
+    report_fields: [changed_files]
+    parallel_safety: unsafe   # gated SQL — serialize
+
+  - id: PR250_DB_INTEGRATION_FALLOUT
+    task_ids: []
+    type: fix
+    status: merged
+    approval_required: false
+    depends_on: [T330]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/migration/0001-catalog.spec.ts
+      - packages/db/__tests__/outbox/rls.spec.ts
+    validation: []
+    stop: []
+    report_fields: [changed_files]
+    parallel_safety: safe
+
+  # ===== Local only — committed/uncommitted, not on main ====================
+
+  - id: T335_TENANT_HELPER_COVERAGE
+    task_ids: [T335]
+    type: test
+    status: local_uncommitted   # file exists in prior worktree dp2-catalog-helper-foundation; not staged, not committed, not merged
+    approval_required: false
+    depends_on: [T330]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/helpers/with-tenant-catalog.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/helpers/with-tenant-catalog.spec.ts"
+        expected: GREEN 5/5
+        docker_required: true
+    stop:
+      - if helper signature changes
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    # Worktree at C:\Users\user\Documents\GitHub\dp2-catalog-helper-foundation
+    # Branch: test/003-catalog-helper-foundation
+    # Uncommitted file present. Could be cherry-picked or re-created.
+
+  - id: RLS_CROSS_STORE_RED_PROOF
+    task_ids: []
+    type: test
+    status: in_review     # part of PR #254 (cherry-picked alongside the fix)
+    approval_required: false
+    depends_on: [T330]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/migration/catalog-rls-store-read.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/catalog-rls-store-read.spec.ts"
+        expected: RED 2/2 (before fix); GREEN 2/2 (after RLS_CROSS_STORE_FIX)
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+    # Commit on local branch: 3da993b
+    # Cherry-picked into PR #254 as 8cf797a
+
+  # ===== Next gated slice — RLS fix (in review as PR #254) ==================
+
+  - id: RLS_CROSS_STORE_FIX
+    task_ids: []
+    type: fix
+    status: in_review     # PR #254 open against main
+    approval_required: true   # gated (SQL migration)
+    depends_on:
+      - T330
+      - RLS_CROSS_STORE_RED_PROOF
+    blocks:
+      - T336
+      - T340
+      - T341
+      - T342
+      - T343
+      - T344
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/__tests__/migration/catalog-rls-store-read.spec.ts
+      - packages/db/drizzle/0008_catalog_store_read_isolation.sql
+      - packages/db/drizzle/0008_catalog_store_read_isolation.down.sql
+    forbidden_files:
+      - packages/db/drizzle/0007_catalog.sql   # do not edit 0007; new migration only
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/catalog-rls-store-read.spec.ts"
+        expected: GREEN 2/2 (was RED 2/2)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/0001-catalog.spec.ts"
+        expected: GREEN 27/27 (T327 up->down->up round-trip preserved)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/outbox/rls.spec.ts"
+        expected: GREEN 12/12 (G-9 cross-table policy regression sweep)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/schema/catalog"
+        expected: GREEN 119/119 across 9 suites
+        docker_required: true
+    stop:
+      - if either 0008 SQL file edits 0007
+      - if regression sweep produces any new failure
+      - if RED proof spec is not also present in the slice (round-trip evidence)
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe   # gated SQL — serialize
+
+  # ===== Blocked by RLS_CROSS_STORE_READ_LEAK ===============================
+
+  - id: T336
+    task_ids: [T336]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/__tests__/helpers/with-store-catalog.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/helpers/with-store-catalog.spec.ts"
+        expected: GREEN
+        docker_required: true
+    stop:
+      - withStore helper does not exist; consider whether to test
+        runWithTenantContext + manual store GUC instead, OR wait for a
+        separate slice to author withStore
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+    # NOTE: blocked by TWO things — the RLS leak proven by
+    # RLS_CROSS_STORE_READ_LEAK, AND the absence of a withStore helper.
+    # rls-test-matrix.md:464-465 claims withStore exists at
+    # packages/db/src/helpers/with-store.ts but the file is missing.
+
+  - id: T340
+    task_ids: [T340]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+    blocks:
+      - T341
+      - T342
+      - T343
+      - T344
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/__support__/isolation-harness.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/__support__"
+        expected: GREEN
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T341
+    task_ids: [T341]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/isolation/cross-tenant-read.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T342
+    task_ids: [T342]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - T340
+      - RLS_CROSS_STORE_FIX     # explicit — this test depends on the RLS fix landing
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/isolation/cross-store-read.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-store-read"
+        expected: GREEN
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T343
+    task_ids: [T343]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/rls-bypass-probe"
+        expected: GREEN
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T344
+    task_ids: [T344]
+    type: test
+    status: blocked
+    approval_required: false
+    depends_on:
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/isolation/malicious-override.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/malicious-override"
+        expected: GREEN
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  # ===== Proposed Phase-3 RED tests (not approved) ==========================
+
+  - id: T350_TENANT_CATALOG_CREATE_RED
+    task_ids: [T350]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/tenant-catalog.service.create.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/tenant-catalog.service.create"
+        expected: RED initially — service does not exist yet
+        docker_required: true
+    stop:
+      - if test attempts to implement the service it claims to test
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T360_GLOBAL_CATALOG_LIST_RED
+    task_ids: [T360]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/global-catalog.service.list.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/global-catalog.service.list"
+        expected: RED initially
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T372_STORE_OVERRIDE_CREATE_RED
+    task_ids: [T372]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/store-override.service.create.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/store-override.service.create"
+        expected: RED initially
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+  - id: T383_PRODUCT_ALIASES_UNIQUENESS_RED
+    task_ids: [T383]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+      - T340
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/product-aliases.service.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/product-aliases.service"
+        expected: RED initially
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+    parallel_safety: safe
+
+# ----------------------------------------------------------------------------
+# groups — proposed parallel waves
+# ----------------------------------------------------------------------------
+groups:
+
+  - id: PHASE3_RED_WAVE
+    members:
+      - T340
+      - T350_TENANT_CATALOG_CREATE_RED
+      - T360_GLOBAL_CATALOG_LIST_RED
+      - T372_STORE_OVERRIDE_CREATE_RED
+      - T383_PRODUCT_ALIASES_UNIQUENESS_RED
+    parallel_safety: safe
+    proposed: true
+    # Members touch disjoint apps/api/test/catalog/** paths. Eligible to
+    # run together once RLS_CROSS_STORE_FIX is merged and the
+    # db-integration suite on main is green. Not approved — awaiting user
+    # endorsement before dispatch.

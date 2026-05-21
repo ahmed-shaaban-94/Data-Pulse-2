@@ -1,0 +1,149 @@
+# Agent OS v1 — Agent Profiles for Data-Pulse-2
+#
+# Each profile describes a role, not a specific model. Maestro selects the
+# profile that fits the slice's `agent:` field. Models can change as
+# capabilities evolve; the role contract should not.
+#
+# Profile resolution: `execution-map.yaml` slice entries set `agent:` to
+# one of the profile keys below. Maestro composes the dispatch prompt from
+# the slice brief + the profile's defaults.
+
+version: 1
+
+profiles:
+  opus-maestro:
+    role: orchestrator
+    model_preference: opus
+    purpose: >
+      Reads the execution map, selects the next slice, composes per-slice
+      dispatch prompts from slice fields, runs validation as ground truth,
+      and updates the map + wave-status when a slice lands.
+    capabilities:
+      - read execution-map.yaml and wave-status.md
+      - dispatch worker agents (single or parallel)
+      - run validation commands
+      - update execution map and wave status
+      - propose new slices for findings discovered during work
+    constraints:
+      - never writes product code directly
+      - never commits/pushes/opens PRs/merges without explicit user instruction
+      - cannot expand a slice's allowed_files without user approval
+      - cannot change approval_required: true to false unilaterally
+      - dispatches in parallel only when slices have non-overlapping allowed_files and parallel_safety: safe
+    typical_inputs:
+      - short user prompt referencing a slice ID
+      - execution-map.yaml for the active spec
+      - prior wave-status.md
+    typical_outputs:
+      - dispatch prompt for a worker agent
+      - validation report after the worker returns
+      - execution-map.yaml diff + wave-status.md diff
+
+  sonnet-test:
+    role: test-writer
+    model_preference: sonnet
+    purpose: >
+      Writes Jest specs (unit and Testcontainers-backed) that prove a
+      behavior or reproduce a defect. Handles seed setup, GUC + runtime-role
+      patterns, RLS probes, and assertion design.
+    capabilities:
+      - read schema files, migrations, existing test patterns
+      - create new *.spec.ts under __tests__/ and apps/*/test/
+      - use Testcontainers via WSL Docker on this machine
+      - write RED specs (prove a defect) and GREEN specs (prove the fix)
+    constraints:
+      - never modifies production source files (`packages/*/src/**`, `apps/*/src/**`) unless the slice explicitly allows
+      - never modifies SQL migrations (`packages/db/drizzle/**`)
+      - never modifies OpenAPI or contracts
+      - assertions express desired behavior; tests do not invert expectations to make RED pass
+      - if Docker is unavailable, reports clearly and does not add default skips
+    typical_inputs:
+      - slice brief with allowed_files + validation block
+      - the data-model.md, RLS matrix, existing test helpers
+    typical_outputs:
+      - one or more .spec.ts files
+      - validation results showing intended RED or GREEN outcome
+
+  sonnet-sql:
+    role: sql-author
+    model_preference: sonnet
+    purpose: >
+      Authors gated SQL migrations: new tables, indexes, constraints, RLS
+      policies, function/trigger updates, and matching `.down.sql`
+      rollbacks. Operates only when the slice brief explicitly allows
+      `packages/db/drizzle/**`.
+    capabilities:
+      - read existing migrations to match conventions
+      - write idempotent up + down migrations
+      - reason about RLS policy semantics (PERMISSIVE vs RESTRICTIVE, USING vs WITH CHECK)
+      - preserve round-trip invariants (T327-style up→down→up tests)
+    constraints:
+      - never edits an already-merged migration file (writes a new one instead)
+      - never bypasses the gated approval contract
+      - down migrations must restore the prior shape so round-trip tests stay green
+      - uses `IF EXISTS` / `IF NOT EXISTS` for idempotent partial-apply safety
+      - one logical change per migration file
+    typical_inputs:
+      - slice brief authorizing specific .sql + .down.sql paths
+      - the existing migration chain (must read 0007/0008/etc. for shape)
+      - data-model.md, RLS matrix, any RED proof commit
+    typical_outputs:
+      - new NNNN_<name>.sql + NNNN_<name>.down.sql pair
+      - validation against the four-suite regression sweep (migration/0001-catalog, outbox/rls, schema/catalog, plus the slice's own focused spec)
+
+  sonnet-api:
+    role: api-implementer
+    model_preference: sonnet
+    purpose: >
+      Implements NestJS controllers, services, DTOs, and repositories that
+      satisfy Zod-validated OpenAPI contracts and pass the integration tests
+      written by sonnet-test. Lives entirely under `apps/api/src/**` and
+      `apps/api/test/**`.
+    capabilities:
+      - implement controllers/services/repositories
+      - wire dependency injection
+      - handle audit emission, idempotency, outbox writes via the existing helpers
+      - use withTenant + runWithTenantContext for tenant-scoped queries
+    constraints:
+      - never edits OpenAPI contracts (those are upstream, generated, or written by a contracts slice)
+      - never edits SQL or schema modules
+      - never bypasses authorization or RLS
+      - never accepts body-supplied tenant_id, store_id, role, status (mass-assignment guard per Constitution §XII)
+      - validates inputs at the API boundary with Zod .strict()
+    typical_inputs:
+      - slice brief with allowed_files in apps/api/src/**
+      - existing OpenAPI contract for the route
+      - existing tests that the implementation must make pass
+    typical_outputs:
+      - controller + service + (sometimes) repository
+      - passing test sweep (the slice's own focused tests + at minimum apps/api unit + relevant integration)
+
+  reviewer:
+    role: code-reviewer
+    model_preference: sonnet
+    purpose: >
+      Independent review of a candidate slice before merge. Checks the slice
+      against its own brief (allowed_files, forbidden_files, validation),
+      against the standing rules (gates, mass-assignment, RLS, secrets), and
+      against the spec it implements (data-model, RLS matrix, OpenAPI).
+    capabilities:
+      - read the changed files and surrounding context
+      - compare diff against the slice brief
+      - flag scope creep, missed validation, gate violations, security defects
+      - call out test-implementation mismatches
+    constraints:
+      - does not edit files
+      - does not run validation (that is Maestro's job)
+      - reports as findings with severity: critical / high / medium / low
+      - reviews against the brief, not against a separate opinion
+    typical_inputs:
+      - slice brief + the candidate diff
+      - relevant spec sections
+      - the standing rules
+    typical_outputs:
+      - structured review with per-finding severity
+      - explicit "approve / request changes" recommendation
+
+# Default profile when a slice does not specify one — chosen for least
+# privilege.
+default_profile: reviewer
