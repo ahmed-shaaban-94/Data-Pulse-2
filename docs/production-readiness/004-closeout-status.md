@@ -263,7 +263,6 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
    | `idempotency_replay_total` | Unit/allowlist-tested | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
    | `idempotency_conflict_total` | Unit/allowlist-tested | Same as above. |
    | `idempotency_in_progress_total` | Unit/allowlist-tested | Same as above. |
-   | `http_error_4xx_total` (per-route label) | Live-scraped / label gap | Present in scrape but `route="unknown"` for all error-path samples — exception-filter boundary limitation. Tracked as follow-up (separate observability-polish slice). |
 
    A future operator-validation slice must exercise these paths and record scrape
    evidence to move P4 to DONE.
