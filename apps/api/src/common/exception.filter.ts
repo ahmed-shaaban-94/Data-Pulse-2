@@ -86,12 +86,15 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
     const requestId = request.requestId ?? newId();
     // In an HTTP transport, the host Nest passes here is structurally an
-    // ExecutionContext (getClass / getHandler available when a route was
-    // matched). `routeTemplate` falls back to "unknown" when metadata is
-    // absent — e.g., a 404 that never hit a controller. That fallback is
-    // a bounded label value, safe for metric cardinality.
+    // ExecutionContext, but at the exception-filter boundary
+    // `getClass`/`getHandler` are often undefined (the handler that
+    // threw has already unwound). `routeTemplate` reads Nest Reflect
+    // metadata first and falls back to Express's `request.route.path` —
+    // the matched-route template Express attaches when routing succeeds
+    // (identical fallback to `idempotency.interceptor.ts`). Genuine
+    // unmatched 404s yield "unknown", which is a bounded label value.
     const execCtx = host as ExecutionContext;
-    const route = routeTemplate(execCtx);
+    const route = routeTemplate(execCtx, request);
 
     if (exception instanceof ZodError) {
       recordValidationFailure({ route });

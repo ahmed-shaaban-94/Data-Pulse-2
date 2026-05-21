@@ -32,6 +32,13 @@ interface CapturedResponse {
 
 interface FakeRequest {
   requestId?: string;
+  /**
+   * Mirrors Express's matched-route record. When present, the global
+   * exception filter feeds this through to `routeTemplate` so error-path
+   * metrics can recover the bounded route template even when Nest's
+   * ArgumentsHost has already lost the controller-bound handler (PR-E).
+   */
+  route?: { path?: string };
 }
 
 interface FakeResponse {
@@ -266,5 +273,65 @@ describe("GlobalExceptionFilter", () => {
       },
     });
     expect(Object.keys(captured.body as object)).toEqual(["error"]);
+  });
+
+  // ---- PR-E — route label uses request.route fallback --------------------
+  // When a matched controller throws, Nest's ArgumentsHost loses
+  // getClass/getHandler at the exception-filter boundary — but Express
+  // has already populated `request.route.path` with the matched route
+  // template. The filter feeds the request through `routeTemplate`, so
+  // error-path metrics now carry the real route instead of "unknown".
+
+  describe("route label — request.route fallback (PR-E)", () => {
+    it("records the matched route template on http_error_4xx_total when request.route is bound", () => {
+      const filter = new GlobalExceptionFilter();
+      const captured: CapturedResponse = {};
+      const { host } = makeHost(
+        { requestId: REQ_ID, route: { path: "/api/v1/auth/signin" } },
+        captured,
+      );
+      filter.catch(new HttpException("nope", HttpStatus.UNAUTHORIZED), host);
+
+      expect(recordHttp4xxError).toHaveBeenCalledTimes(1);
+      expect((recordHttp4xxError as jest.Mock).mock.calls[0]?.[0]).toEqual({
+        route: "/api/v1/auth/signin",
+        status: "401",
+      });
+    });
+
+    it("records the matched route template on validation_failure_total when request.route is bound", () => {
+      const filter = new GlobalExceptionFilter();
+      const captured: CapturedResponse = {};
+      const { host } = makeHost(
+        { requestId: REQ_ID, route: { path: "/api/v1/auth/signin" } },
+        captured,
+      );
+      const zodResult = z.object({ x: z.string() }).safeParse({ x: 42 });
+      if (zodResult.success) throw new Error("expected zod failure");
+      filter.catch(zodResult.error, host);
+
+      expect(recordValidationFailure).toHaveBeenCalledTimes(1);
+      expect((recordValidationFailure as jest.Mock).mock.calls[0]?.[0]).toEqual({
+        route: "/api/v1/auth/signin",
+      });
+      expect((recordHttp4xxError as jest.Mock).mock.calls[0]?.[0]).toEqual({
+        route: "/api/v1/auth/signin",
+        status: "400",
+      });
+    });
+
+    it("falls back to 'unknown' for genuine unmatched 404s (no request.route)", () => {
+      // An unmatched URL never gets a `route` record bound by Express.
+      // The filter must still emit a bounded label — "unknown" is correct.
+      const filter = new GlobalExceptionFilter();
+      const captured: CapturedResponse = {};
+      const { host } = makeHost({ requestId: REQ_ID }, captured);
+      filter.catch(new NotFoundException("nope"), host);
+
+      expect((recordHttp4xxError as jest.Mock).mock.calls[0]?.[0]).toEqual({
+        route: "unknown",
+        status: "404",
+      });
+    });
   });
 });

@@ -64,6 +64,17 @@ layer.
   reached an endpoint and was refused), the second is the context layer's
   failure to establish a tenant scope at all. Both increment together for
   the same incident; they are not duplicates.
+- **`route="unknown"` on error-path metrics.** For samples emitted from
+  `GlobalExceptionFilter` (`http_error_4xx_total`, `http_error_5xx_total`,
+  `validation_failure_total`), the `route` label is resolved in this
+  order: (1) Nest controller/handler Reflect metadata, (2) Express's
+  matched-route record `request.route.path`, (3) the bounded literal
+  `"unknown"`. Resolution (3) applies only to genuine unmatched 404s —
+  i.e., requests for paths Express never bound a route to. In that case
+  no per-route metric breakdown is meaningful (the path does not exist
+  in the catalogue), and `route="unknown"` is the correct, bounded
+  label. Matched-route error samples always carry the real template
+  (e.g., `route="/api/v1/auth/signin"`).
 
 ---
 

@@ -102,4 +102,85 @@ describe("routeTemplate", () => {
     );
     expect(template).toContain(":id");
   });
+
+  // ---------------------------------------------------------------------
+  // PR-E — request.route fallback for the exception-filter boundary
+  // ---------------------------------------------------------------------
+  // At the GlobalExceptionFilter boundary, Nest's `ArgumentsHost` typically
+  // returns `undefined` from `getClass`/`getHandler` (the handler that
+  // threw has already unwound). The Express router, however, has
+  // populated `request.route.path` with the matched template before the
+  // throw — so feeding the request as a second argument lets the helper
+  // recover the route for matched-route error samples while leaving
+  // genuine unmatched 404s reporting "unknown".
+
+  describe("request.route fallback (PR-E)", () => {
+    it("uses request.route.path when Nest metadata is absent", () => {
+      class Plain {}
+      const plainHandler = function plain(): void {};
+      const ctx = makeCtx(Plain, plainHandler); // no Reflect metadata
+
+      expect(
+        routeTemplate(ctx, { route: { path: "/api/v1/auth/signin" } }),
+      ).toBe("/api/v1/auth/signin");
+    });
+
+    it("prefers Nest metadata over request.route.path when both are present", () => {
+      class FakeController {}
+      Reflect.defineMetadata("path", "api/v1/tenants", FakeController);
+      const handler = function findOne(): void {};
+      Reflect.defineMetadata("path", ":id", handler);
+
+      // Metadata says /:id; request.route is a stale rendered path.
+      // The helper must prefer the bounded template.
+      expect(
+        routeTemplate(makeCtx(FakeController, handler), {
+          route: { path: "/api/v1/tenants/0190f1cf-aaaa-bbbb-cccc-000000000000" },
+        }),
+      ).toBe("/api/v1/tenants/:id");
+    });
+
+    it("falls back to 'unknown' when neither metadata nor request.route is present (genuine unmatched 404)", () => {
+      class Plain {}
+      const plainHandler = function plain(): void {};
+      expect(routeTemplate(makeCtx(Plain, plainHandler), undefined)).toBe(
+        "unknown",
+      );
+      expect(routeTemplate(makeCtx(Plain, plainHandler), {})).toBe("unknown");
+      expect(
+        routeTemplate(makeCtx(Plain, plainHandler), { route: undefined }),
+      ).toBe("unknown");
+      expect(
+        routeTemplate(makeCtx(Plain, plainHandler), { route: { path: "" } }),
+      ).toBe("unknown");
+    });
+
+    it("uses request.route.path even when getClass throws", () => {
+      const badCtx = {
+        getClass: () => {
+          throw new Error("no class");
+        },
+        getHandler: () => undefined,
+      } as unknown as ExecutionContext;
+
+      expect(
+        routeTemplate(badCtx, { route: { path: "/api/v1/auth/signin" } }),
+      ).toBe("/api/v1/auth/signin");
+    });
+
+    it("returns a low-cardinality route template (no rendered IDs) from request.route", () => {
+      // Express's `request.route.path` is the route template that Express
+      // matched against — it carries `:id`-style params, not rendered
+      // UUIDs. Sanity-check: the fallback must not regress label safety.
+      class Plain {}
+      const plainHandler = function plain(): void {};
+      const result = routeTemplate(makeCtx(Plain, plainHandler), {
+        route: { path: "/api/v1/tenants/:id/members/:member_id" },
+      });
+      expect(result).toBe("/api/v1/tenants/:id/members/:member_id");
+      expect(result).not.toMatch(
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      );
+    });
+  });
 });
