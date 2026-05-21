@@ -4,13 +4,25 @@
   "private": true,
   "description": "Authentication primitives shared by api and worker: argon2id password helper, SHA-256 token-hash helper, session/token shape types.",
   "type": "commonjs",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./passwords": "./src/passwords.ts",
-    "./tokens": "./src/tokens.ts",
-    "./types": "./src/types.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./passwords": {
+      "types": "./dist/passwords.d.ts",
+      "default": "./dist/passwords.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens.d.ts",
+      "default": "./dist/tokens.js"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./dist/types.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
