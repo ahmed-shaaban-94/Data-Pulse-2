@@ -22,9 +22,10 @@
  *
  * Test strategy
  * -------------
- * Use `jest.isolateModules()` to control module evaluation order in-process:
+ * Use `jest.isolateModulesAsync()` to control module evaluation order
+ * in-process while awaiting async work inside the isolated scope:
  *   1. Set `WORKER_METRICS_PORT` / `WORKER_METRICS_BIND_HOST` before loading
- *      any module.
+ *      any module (restored to their original values in `afterEach`).
  *   2. Load `instrumentation.ts` FIRST — this calls `startOtel()`
  *      synchronously, registering the MeterProvider on `@opentelemetry/api`.
  *   3. Load `worker.metrics.ts` SECOND — its module-level
@@ -91,12 +92,32 @@ async function waitForMetricsEndpoint(
 
 describe("T483 — worker production import-order regression", () => {
   let metricsPort: number;
+  let prevMetricsPort: string | undefined;
+  let prevMetricsBindHost: string | undefined;
 
   beforeEach(async () => {
     metricsPort = await getFreePort();
+    // Snapshot env vars BEFORE the test mutates them so afterEach can
+    // restore the exact prior state (including absence) — leaving them
+    // mutated leaks across test files.
+    prevMetricsPort = process.env["WORKER_METRICS_PORT"];
+    prevMetricsBindHost = process.env["WORKER_METRICS_BIND_HOST"];
   });
 
   afterEach(async () => {
+    // Restore env vars: if they were absent before, delete them; otherwise
+    // restore the prior value. Mirrors how Jest itself treats `process.env`
+    // as shared mutable state across the file.
+    if (prevMetricsPort === undefined) {
+      delete process.env["WORKER_METRICS_PORT"];
+    } else {
+      process.env["WORKER_METRICS_PORT"] = prevMetricsPort;
+    }
+    if (prevMetricsBindHost === undefined) {
+      delete process.env["WORKER_METRICS_BIND_HOST"];
+    } else {
+      process.env["WORKER_METRICS_BIND_HOST"] = prevMetricsBindHost;
+    }
     // Reset global OTel state so other test files start clean.
     otelMetrics.disable();
   });
@@ -104,56 +125,49 @@ describe("T483 — worker production import-order regression", () => {
   it("worker metric instruments emit to /metrics when instrumentation + worker.metrics load before bootstrap", async () => {
     const capturedPort = metricsPort;
 
-    await new Promise<void>((resolve, reject) => {
-      jest.isolateModules(async () => {
-        try {
-          // Step 1: set env so instrumentation.ts picks them up.
-          process.env["WORKER_METRICS_PORT"] = String(capturedPort);
-          process.env["WORKER_METRICS_BIND_HOST"] = "127.0.0.1";
+    await jest.isolateModulesAsync(async () => {
+      // Step 1: set env so instrumentation.ts picks them up.
+      process.env["WORKER_METRICS_PORT"] = String(capturedPort);
+      process.env["WORKER_METRICS_BIND_HOST"] = "127.0.0.1";
 
-          // Step 2: load instrumentation FIRST — mimics main.ts import order.
-          // This calls startOtel() synchronously, registering the
-          // MeterProvider on @opentelemetry/api.
-          require("../../src/instrumentation");
+      // Step 2: load instrumentation FIRST — mimics main.ts import order.
+      // This calls startOtel() synchronously, registering the
+      // MeterProvider on @opentelemetry/api.
+      require("../../src/instrumentation");
 
-          // Step 3: wait for the Prometheus exporter's HTTP listener to be up.
-          await waitForMetricsEndpoint(
-            `http://127.0.0.1:${capturedPort}/metrics`,
-          );
+      // Step 3: wait for the Prometheus exporter's HTTP listener to be up.
+      await waitForMetricsEndpoint(
+        `http://127.0.0.1:${capturedPort}/metrics`,
+      );
 
-          // Step 4: load worker.metrics AFTER the provider is set. This is the
-          // exact same side-effect import that main.ts now performs. All
-          // instruments created at module load resolve to live SDK counters.
-          const {
-            recordQueueRetry,
-          }: typeof import("../../src/observability/metrics/worker.metrics") =
-            require("../../src/observability/metrics/worker.metrics");
+      // Step 4: load worker.metrics AFTER the provider is set. This is the
+      // exact same side-effect import that main.ts now performs. All
+      // instruments created at module load resolve to live SDK counters.
+      const {
+        recordQueueRetry,
+      }: typeof import("../../src/observability/metrics/worker.metrics") =
+        require("../../src/observability/metrics/worker.metrics");
 
-          // Step 5: emit a data point for a uniquely-named worker signal.
-          // `queue_retry_total` is one of the seven worker-emission families
-          // documented in signals.md §3.2 and cannot collide with any OTel
-          // auto-instrumentation signal name.
-          recordQueueRetry({ queue: "email" });
+      // Step 5: emit a data point for a uniquely-named worker signal.
+      // `queue_retry_total` is one of the seven worker-emission families
+      // documented in signals.md §3.2 and cannot collide with any OTel
+      // auto-instrumentation signal name.
+      recordQueueRetry({ queue: "email" });
 
-          // Step 6: flush + scrape with a short retry loop. Prometheus
-          // collection is pull-based; the body should contain the family
-          // after the next collect cycle.
-          let body = "";
-          const deadline = Date.now() + 3000;
-          while (Date.now() < deadline) {
-            body = await fetchText(
-              `http://127.0.0.1:${capturedPort}/metrics`,
-            );
-            if (body.includes("queue_retry_total")) break;
-            await new Promise((r) => setTimeout(r, 100));
-          }
+      // Step 6: flush + scrape with a short retry loop. Prometheus
+      // collection is pull-based; the body should contain the family
+      // after the next collect cycle.
+      let body = "";
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        body = await fetchText(
+          `http://127.0.0.1:${capturedPort}/metrics`,
+        );
+        if (body.includes("queue_retry_total")) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
 
-          expect(body).toContain("queue_retry_total");
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      });
+      expect(body).toContain("queue_retry_total");
     });
   });
 });
