@@ -76,9 +76,6 @@ const _dbMigrationStatus: ObservableGauge = meter.createObservableGauge(
   },
 );
 
-// _dbMigrationStatus: addCallback wiring deferred to migration-runner slice.
-void _dbMigrationStatus;
-
 // Counters — directly emittable at call sites.
 const _dbSlowQuery: Counter = meter.createCounter("db_slow_query_total", {
   description:
@@ -191,6 +188,96 @@ export function registerDbPoolGauges(deps: {
     stop: () => {
       _dbPoolInUse.removeCallback(inUseCallback);
       _dbPoolWaiters.removeCallback(waitersCallback);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// db_migration_status — ObservableGauge addCallback registrar
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal observable-result interface for the OTel addCallback signature.
+ * Exported so unit tests can supply a mock without importing OTel SDK types.
+ */
+export interface DbMigrationStatusObservableResult {
+  observe(value: number, attributes: Attributes): void;
+}
+
+async function _defaultMigrationCountQuery(pool: Pool): Promise<number> {
+  const res = await pool.query<{ count: number }>(
+    "SELECT COUNT(*)::int AS count FROM _drizzle_migrations",
+  );
+  return res.rows[0]?.count ?? 0;
+}
+
+/**
+ * Build the scrape-time callback for `db_migration_status`.
+ *
+ * Extracted for testability — the OTel no-op meter used in unit tests
+ * silently discards addCallback, so the real callback path can only be
+ * exercised by calling this function directly with a mock result.
+ *
+ * Per scrape, exactly three observations are emitted (mutually exclusive):
+ *   applied  — 1 when applied count >= totalMigrations, 0 otherwise.
+ *   pending  — 1 when applied count <  totalMigrations, 0 otherwise.
+ *   failed   — 1 when the ledger query itself threw, 0 otherwise.
+ *
+ * A re-entrancy guard prevents a slow scrape from stacking callbacks.
+ *
+ * @param pool             Live pg.Pool for the COUNT(*) query.
+ * @param totalMigrations  Total UP migration files resolved at registrar init.
+ * @param executeQuery     Injectable seam for unit tests; defaults to the
+ *                         real COUNT(*) query against `_drizzle_migrations`.
+ */
+export function createDbMigrationStatusCallback(
+  pool: Pool,
+  totalMigrations: number,
+  executeQuery: (pool: Pool) => Promise<number> = _defaultMigrationCountQuery,
+): (result: DbMigrationStatusObservableResult) => Promise<void> {
+  let inFlight = false;
+  return async (result) => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const applied = await executeQuery(pool);
+      const allApplied = applied >= totalMigrations;
+      result.observe(allApplied ? 1 : 0, { state: "applied" } as Attributes);
+      result.observe(allApplied ? 0 : 1, { state: "pending" } as Attributes);
+      result.observe(0, { state: "failed" } as Attributes);
+    } catch {
+      result.observe(0, { state: "applied" } as Attributes);
+      result.observe(0, { state: "pending" } as Attributes);
+      result.observe(1, { state: "failed" } as Attributes);
+    } finally {
+      inFlight = false;
+    }
+  };
+}
+
+/**
+ * Register addCallback for `db_migration_status` against the given pg.Pool.
+ *
+ * Behavior:
+ *   - `deps.pool === null` → returns a no-op `{ stop }` handle.
+ *   - Otherwise → registers one async callback that queries the migration
+ *     ledger at scrape time and observes applied/pending/failed states.
+ */
+export function registerDbMigrationStatusGauge(deps: {
+  readonly pool: Pool | null;
+  readonly totalMigrations: number;
+}): { stop: () => void } {
+  const { pool, totalMigrations } = deps;
+  if (pool === null) {
+    return { stop: () => undefined };
+  }
+
+  const callback = createDbMigrationStatusCallback(pool, totalMigrations);
+  _dbMigrationStatus.addCallback(callback);
+
+  return {
+    stop: () => {
+      _dbMigrationStatus.removeCallback(callback);
     },
   };
 }
