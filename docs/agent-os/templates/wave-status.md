@@ -24,7 +24,7 @@ One paragraph. What is done, what is blocked, what is the next move.
 
 ---
 
-## Local only — committed but not on `main`
+## Local only — committed/uncommitted, not on `main`
 
 | Slice ID | Branch | Commit | Notes |
 |---|---|---|---|
@@ -82,7 +82,7 @@ One paragraph. Which slice to run next, and why.
 
 ## Next short Maestro prompt
 
-```
+```text
 Use Agent OS. Execute slice <SLICE_ID>. Stop before commit.
 ```
 

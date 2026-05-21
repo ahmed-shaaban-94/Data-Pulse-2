@@ -119,7 +119,7 @@ This is exactly how `RLS_CROSS_STORE_READ_LEAK` was captured.
 
 ## Quick reference — the short prompt
 
-```
+```text
 Use Agent OS. Execute slice <SLICE_ID>. Stop before commit.
 ```
 

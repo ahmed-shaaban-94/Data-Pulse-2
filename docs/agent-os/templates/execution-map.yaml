@@ -38,7 +38,7 @@ slices:
   - id: <SLICE_ID_1>
     task_ids: []                    # e.g. ["T335"]
     type: test                      # feat | fix | test | refactor | docs | chore | perf | ci
-    status: ready                   # proposed | blocked | ready | approved | in_progress | committed | pushed | in_review | merged | closed
+    status: ready                   # proposed | blocked | ready | approved | in_progress | local_uncommitted | committed | pushed | in_review | merged | closed
     approval_required: false        # set true for any gated surface
     depends_on: []
     blocks: []

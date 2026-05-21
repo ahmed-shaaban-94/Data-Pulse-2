@@ -33,7 +33,7 @@ locally but not committed.
 
 ---
 
-## Local only — committed but not on `main`
+## Local only — committed/uncommitted, not on `main`
 
 | Slice ID | Branch | Commit | Notes |
 |---|---|---|---|
@@ -111,18 +111,18 @@ workflow).
 
 When PR #254 merges:
 
-```
+```text
 Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
 ```
 
 When you want to land T335's local work as a follow-up:
 
-```
+```text
 Use Agent OS. Execute slice T335_TENANT_HELPER_COVERAGE. Stop before commit.
 ```
 
 If new findings come up that should be captured before any further work:
 
-```
+```text
 Use Agent OS. Capture finding <ID> into the catalog execution map.
 ```
