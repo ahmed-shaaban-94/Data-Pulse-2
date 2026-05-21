@@ -78,6 +78,17 @@ import {
   context,
   type TraceCarrier,
 } from "@data-pulse-2/shared/observability/otel";
+import {
+  recordWorkerJobDuration,
+  recordWorkerProcessingFailure,
+  sanitizeErrorClass,
+} from "../observability/metrics/worker.metrics";
+
+// T596: queue-level job_name per signals.md §3. The fanout processor handles
+// only "audit-fanout" jobs today; the label value mirrors that queue-level
+// bounded set member (already in WORKER_JOB_NAMES) per the approved D1
+// decision.
+const JOB_NAME_AUDIT_FANOUT = "audit-fanout" as const;
 
 // ---------------------------------------------------------------------------
 // Job name
@@ -192,34 +203,56 @@ export class AuditFanoutProcessor {
   ) {}
 
   async process(jobName: string, data: unknown): Promise<void> {
-    const carrier =
-      typeof data === "object" && data !== null && "traceContext" in data
-        ? ((data as { traceContext?: TraceCarrier }).traceContext ?? {})
-        : {};
-    const restoredCtx = extractTraceContext(carrier);
+    // T596: instrument the processor boundary. Wall-clock duration on every
+    // exit (success and failure) feeds worker_job_duration_seconds; the
+    // catch branch additionally increments worker_processing_failure_total
+    // with the sanitized error class. Behavior is unchanged: thrown errors
+    // (MalformedAuditJobError, UnknownAuditJobError, transient DB errors)
+    // are rethrown verbatim so BullMQ's existing retry / DLQ semantics
+    // continue to apply.
+    const startNs = process.hrtime.bigint();
+    try {
+      const carrier =
+        typeof data === "object" && data !== null && "traceContext" in data
+          ? ((data as { traceContext?: TraceCarrier }).traceContext ?? {})
+          : {};
+      const restoredCtx = extractTraceContext(carrier);
 
-    return context.with(restoredCtx, async () => {
-      if (jobName !== AUDIT_FANOUT_JOB_NAME) {
-        throw new UnknownAuditJobError(jobName);
-      }
+      return await context.with(restoredCtx, async () => {
+        if (jobName !== AUDIT_FANOUT_JOB_NAME) {
+          throw new UnknownAuditJobError(jobName);
+        }
 
-      const parsed = parseJobData(jobName, data);
+        const parsed = parseJobData(jobName, data);
 
-      const row: AuditEventInsertRow = {
-        id:            newId(),
-        actor_user_id: parsed.actor_user_id,
-        actor_label:   parsed.actor_label,
-        tenant_id:     parsed.tenant_id,
-        store_id:      parsed.store_id,
-        action:        parsed.action,
-        target_type:   parsed.target_type,
-        target_id:     parsed.target_id,
-        request_id:    coerceRequestId(parsed.request_id),
-        metadata:      safeMetadata(parsed.metadata),
-      };
+        const row: AuditEventInsertRow = {
+          id:            newId(),
+          actor_user_id: parsed.actor_user_id,
+          actor_label:   parsed.actor_label,
+          tenant_id:     parsed.tenant_id,
+          store_id:      parsed.store_id,
+          action:        parsed.action,
+          target_type:   parsed.target_type,
+          target_id:     parsed.target_id,
+          request_id:    coerceRequestId(parsed.request_id),
+          metadata:      safeMetadata(parsed.metadata),
+        };
 
-      await this.db.insertAuditEvent(row);
-    });
+        await this.db.insertAuditEvent(row);
+      });
+    } catch (err: unknown) {
+      const errorClass = sanitizeErrorClass(
+        err instanceof Error ? err.constructor.name : null,
+      );
+      recordWorkerProcessingFailure({
+        job_name: JOB_NAME_AUDIT_FANOUT,
+        error_class: errorClass,
+      });
+      throw err;
+    } finally {
+      const durationSeconds = Number(process.hrtime.bigint() - startNs) / 1_000_000_000;
+      recordWorkerJobDuration({ job_name: JOB_NAME_AUDIT_FANOUT }, durationSeconds);
+    }
   }
 }
 
