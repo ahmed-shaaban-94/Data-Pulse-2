@@ -185,6 +185,44 @@ schema:
       to be in the canonical branch (e.g. follow-up specs that should not
       rebase against unmerged work).
 
+  # --------------------------------------------------------------------------
+  # Audit fields — populated by the post-merge closeout workflow
+  # (see docs/agent-os/maestro-playbook.md "Workflow — post-merge closeout").
+  # All optional. Required fields above are unchanged.
+  # --------------------------------------------------------------------------
+
+  merged_in_pr:
+    type: integer
+    required: false
+    description: >
+      GitHub PR number that landed this slice. Populated when `status`
+      transitions to `merged`. Read-only audit; never used for dispatch.
+
+  merged_at_commit:
+    type: string
+    required: false
+    description: >
+      Short SHA of the merge commit on `main` (e.g. `5801369`). Populated
+      together with `merged_in_pr`. Lets readers cross-reference the map
+      to `git log` without resolving PR numbers.
+
+  merged_at_date:
+    type: string
+    required: false
+    description: >
+      Calendar date of the merge in ISO YYYY-MM-DD form. Convenience
+      audit field; the authoritative timestamp is the merge commit
+      itself.
+
+  previously_blocked:
+    type: list[string]
+    required: false
+    description: >
+      Slice IDs that were in this slice's `blocks:` list before the
+      closeout cleared them. Preserves the historical block record once
+      `blocks:` is emptied at merge time. Audit-only — does not affect
+      scheduling.
+
 # ----------------------------------------------------------------------------
 # Map-level fields — top-level of execution-map.yaml
 # ----------------------------------------------------------------------------
@@ -236,6 +274,37 @@ map_schema:
       resolved_by:
         type: string
         description: Slice ID that closes the finding once merged.
+
+      # ----------------------------------------------------------------------
+      # Finding-level audit fields — populated by the post-merge closeout
+      # workflow when the resolving slice is merged. All optional. Required
+      # fields above are unchanged.
+      # ----------------------------------------------------------------------
+      resolved_by_pr:
+        type: integer
+        required: false
+        description: >
+          GitHub PR number whose merge resolved the finding. Same value as
+          the resolving slice's `merged_in_pr`. Populated together with
+          `resolved_by_commit` and `resolved_at`.
+      resolved_by_commit:
+        type: string
+        required: false
+        description: >
+          Short SHA of the merge commit on `main` that resolved this
+          finding. Same value as the resolving slice's `merged_at_commit`.
+      resolved_at:
+        type: string
+        required: false
+        description: >
+          Calendar date the finding was resolved (ISO YYYY-MM-DD).
+      previously_blocked:
+        type: list[string]
+        required: false
+        description: >
+          Slice IDs that were in this finding's `blocks:` list before the
+          closeout cleared them. Preserves the historical block record
+          once `blocks:` is emptied at resolution time.
 
   slices:
     type: list[slice]

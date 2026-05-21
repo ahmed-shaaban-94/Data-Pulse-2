@@ -80,6 +80,33 @@ One paragraph. Which slice to run next, and why.
 
 ---
 
+## Post-merge closeout
+
+> When a PR for one of this spec's slices merges to `main`, run the
+> closeout to refresh both this file and `execution-map.yaml`.
+> Full workflow: `docs/agent-os/maestro-playbook.md` "Workflow —
+> post-merge closeout".
+> Reusable prompt template: `docs/agent-os/templates/post-merge-closeout-prompt.md`.
+
+Short prompt:
+
+```text
+Use Agent OS.
+Close out PR #<PR_NUMBER>.
+Spec: <SPEC_PATH>
+Expected slice: <EXPECTED_SLICE_ID>
+Update execution-map.yaml and wave-status.md.
+Stop before commit.
+```
+
+The closeout updates these audit fields on the merged slice:
+`merged_in_pr`, `merged_at_commit`, `merged_at_date`, `previously_blocked`.
+If the slice resolves a finding, the same closeout sets
+`resolved_by_pr`, `resolved_by_commit`, `resolved_at`, and
+`previously_blocked` on the finding entry.
+
+---
+
 ## Next short Maestro prompt
 
 ```text
