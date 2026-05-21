@@ -24,20 +24,13 @@
  *     (the authoritative assertion inventory for T326–T329; this spec
  *     follows it byte-for-byte).
  *
- * RED expectation: the migration file `packages/db/drizzle/0001_catalog.sql`
- * does not exist yet. The `beforeAll` block reads it from disk; absent the
- * file, every test fails with a "Catalog migration file not yet authored"
- * error pointing at T330. That is the intended RED gate — when T330 lands,
- * these tests turn green without modification.
- *
- * Naming reconciliation note (migration-test-plan.md §5 / §16-R2): the
- * tasks.md path `packages/db/drizzle/0001_catalog.sql` collides with the
- * already-merged `0001_pos_operator_identity.sql`. T330 owns the rename
- * (the next free lex slot is `0007_catalog.sql` since `0006_outbox_events.sql`
- * is on main). This spec deliberately references the tasks.md path so the
- * RED reason is unambiguously "T330 has not authored the migration yet";
- * the assertion that resolves the filename mismatch lives inside T330's PR,
- * not here.
+ * Migration file resolution (post-T330): the catalog migration ships as
+ * `packages/db/drizzle/0007_catalog.sql` (with rollback `0007_catalog.down.sql`).
+ * tasks.md §5.3 originally proposed `0001_catalog.sql`, but slots 0001-0006
+ * were already taken on `origin/main` when T330 was authored, so the next
+ * free lex slot was used per migration-test-plan.md §5 / §16-R2. The
+ * spec file name (`0001-catalog.spec.ts`) is preserved as the documented
+ * test path; only the SQL filename resolution moved.
  *
  * Docker policy (matches `migration_0001.spec.ts`): a missing Docker
  * runtime is a HARD failure unless `MIGRATION_TEST_ALLOW_SKIP=1` is set,
@@ -66,8 +59,8 @@ const DRIZZLE_DIR = resolve(__dirname, "..", "..", "drizzle");
 // when reconciling the lex-order collision documented in
 // `migration-test-plan.md §16-R2`. The test reads `CATALOG_UP_PATH` once at
 // load time; renaming is a one-line edit here when T330 lands.
-const CATALOG_UP_PATH = resolve(DRIZZLE_DIR, "0001_catalog.sql");
-const CATALOG_DOWN_PATH = resolve(DRIZZLE_DIR, "0001_catalog.down.sql");
+const CATALOG_UP_PATH = resolve(DRIZZLE_DIR, "0007_catalog.sql");
+const CATALOG_DOWN_PATH = resolve(DRIZZLE_DIR, "0007_catalog.down.sql");
 
 // ---------------------------------------------------------------------------
 // Catalog inventory (per data-model.md §2-§8) — used by every test below
@@ -549,23 +542,75 @@ describe("T328 — Q5: no FK between tenant_products and global_products", () =>
     if (!env) throw new Error("env not initialized");
     // migration-test-plan.md §8.4 — copy-on-adopt-snapshot guarantee:
     // platform-side delete must NOT cascade or constrain tenant data.
-    // The exact column/seed shape depends on T330's authored schema;
-    // when T330 lands, replace these placeholders with real fixture
-    // INSERTs that match the data-model.md §2/§3 column lists.
     //
-    // This assertion is kept structural: pull the column lists from
-    // information_schema, find the PK + minimal-NOT-NULL set on both
-    // tables, seed via parameterized INSERT, hard-DELETE the global row,
-    // and re-SELECT the tenant row.
-    //
-    // RED today: data-model.md §3 declares `source_global_product_id` is
-    // intentionally without an FK, but until T330 authors the migration,
-    // this test cannot run. After T330 lands, T330's PR will replace this
-    // structural skeleton with a concrete seed/delete/select round-trip
-    // pinned to the authored column set.
-    throw new Error(
-      "T330 must author the soft-reference behavioral fixture: seed a global product + tenant product with matching source_global_product_id, DELETE the global, re-SELECT the tenant, assert the tenant row survives.",
+    // Fixture: seed one tenants row, one global_products row, one
+    // tenant_products row whose `source_global_product_id` points at the
+    // global row. Hard-delete the global row. The tenant row MUST survive
+    // intact with its `source_global_product_id` unchanged — proving the
+    // soft-reference behavior (no FK + no cascade).
+    const tenantId = "0e000000-0000-7000-8000-000000000301";
+    const globalProductId = "0e000000-0000-7000-8000-000000000302";
+    const tenantProductId = "0e000000-0000-7000-8000-000000000303";
+    const actorId = "0e000000-0000-7000-8000-000000000304";
+
+    // Clean up from any prior run (admin pool bypasses RLS — fixture setup).
+    await env.admin.query(
+      "DELETE FROM tenant_products WHERE id = $1",
+      [tenantProductId],
     );
+    await env.admin.query(
+      "DELETE FROM global_products WHERE id = $1",
+      [globalProductId],
+    );
+    await env.admin.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+
+    await env.admin.query(
+      "INSERT INTO tenants (id, slug, name, status) VALUES ($1, $2, $3, 'active')",
+      [tenantId, "t-cat-soft-ref", "Catalog soft-ref tenant"],
+    );
+    await env.admin.query(
+      "INSERT INTO global_products (id, name, created_by) VALUES ($1, $2, $3)",
+      [globalProductId, "Global Coffee 500g", actorId],
+    );
+    await env.admin.query(
+      `
+        INSERT INTO tenant_products
+          (id, tenant_id, name, tax_category, source_global_product_id,
+           created_by, updated_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $6)
+      `,
+      [
+        tenantProductId,
+        tenantId,
+        "Coffee 500g",
+        "standard",
+        globalProductId,
+        actorId,
+      ],
+    );
+
+    // Hard-delete the global row. There is no FK; this MUST succeed.
+    await env.admin.query("DELETE FROM global_products WHERE id = $1", [
+      globalProductId,
+    ]);
+
+    // The tenant row survives with its provenance reference still pointing
+    // at the now-missing UUID — copy-on-adopt snapshot guarantee.
+    const surviving = await env.admin.query<{
+      id: string;
+      source_global_product_id: string | null;
+    }>(
+      "SELECT id, source_global_product_id FROM tenant_products WHERE id = $1",
+      [tenantProductId],
+    );
+    expect(surviving.rowCount).toBe(1);
+    expect(surviving.rows[0]?.source_global_product_id).toBe(globalProductId);
+
+    // Cleanup so a later test run starts clean.
+    await env.admin.query("DELETE FROM tenant_products WHERE id = $1", [
+      tenantProductId,
+    ]);
+    await env.admin.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
   });
 });
 
@@ -635,23 +680,133 @@ describe("T329 — Q1: money columns are numeric(19,4) with non-negative CHECK",
     },
   );
 
+  /**
+   * migration-test-plan.md §9.4 — live exercise of the non-negative CHECK.
+   * Each table needs a different companion-column set to satisfy its own
+   * NOT NULLs while triggering the money CHECK with `-0.01`. UUID literals
+   * use a stable per-table prefix so cleanup is deterministic across reruns.
+   *
+   * `MIGRATION_TEST_ALLOW_SKIP=1` workstations never reach this code: the
+   * `ensureCatalogMigrationLoaded()` guard short-circuits earlier when env
+   * is null.
+   */
   it.each(MONEY_COLUMNS)(
     "$table rejects negative values inserted into $column at the row level",
-    async ({ table, column, nullable: _nullable }) => {
+    async ({ table, column }) => {
       ensureCatalogMigrationLoaded();
       if (!env) throw new Error("env not initialized");
-      // migration-test-plan.md §9.4: live exercise of the predicate. The
-      // exact set of NOT-NULL companion columns depends on the authored
-      // schema (T330), so we cannot stage a complete INSERT here without
-      // pinning it to a specific column shape that does not yet exist.
-      //
-      // The structural assertion above (`pg_get_constraintdef ... >= 0`)
-      // proves the constraint EXISTS. T330's PR replaces this stub with
-      // a real `INSERT ... VALUES (..., -0.01, ...)` round-trip whose
-      // companion columns match the authored schema.
-      throw new Error(
-        `T330 must author a live INSERT round-trip for ${table}.${column} = -0.01 and assert the CHECK fires. Companion NOT-NULL columns depend on T330's authored schema.`,
+
+      const tenantId = `0e000000-0000-7000-8000-00000000040${MONEY_COLUMNS.findIndex(
+        (m) => m.table === table && m.column === column,
+      ) + 1}`;
+      const storeId = `0e000000-0000-7000-8000-00000000041${MONEY_COLUMNS.findIndex(
+        (m) => m.table === table && m.column === column,
+      ) + 1}`;
+      const tenantProductId = `0e000000-0000-7000-8000-00000000042${MONEY_COLUMNS.findIndex(
+        (m) => m.table === table && m.column === column,
+      ) + 1}`;
+      const actorId = "0e000000-0000-7000-8000-000000000400";
+
+      // Cleanup from a prior run, in reverse FK dependency order.
+      await env.admin.query("DELETE FROM price_history WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM store_product_overrides WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM tenant_products WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM stores WHERE id = $1", [storeId]);
+      await env.admin.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
+
+      // Seed common prerequisites. Each table picks what it needs.
+      if (table !== "global_products") {
+        await env.admin.query(
+          "INSERT INTO tenants (id, slug, name, status) VALUES ($1, $2, $3, 'active')",
+          [tenantId, `t-neg-${MONEY_COLUMNS.findIndex((m) => m.table === table)}`, "neg-money tenant"],
+        );
+      }
+      if (table === "store_product_overrides") {
+        await env.admin.query(
+          "INSERT INTO stores (id, tenant_id, slug, name) VALUES ($1, $2, $3, $4)",
+          [storeId, tenantId, "s-neg", "neg-money store"],
+        );
+      }
+      if (table === "store_product_overrides" || table === "price_history") {
+        await env.admin.query(
+          `
+            INSERT INTO tenant_products
+              (id, tenant_id, name, tax_category, created_by, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $5)
+          `,
+          [tenantProductId, tenantId, "neg-money product", "standard", actorId],
+        );
+      }
+
+      // The actual negative-INSERT under test. Each branch is shaped to the
+      // exact NOT-NULL set of the target table; the only "interesting" value
+      // is the money column set to -0.01.
+      const negativeInsert = (() => {
+        switch (table) {
+          case "global_products":
+            return env!.admin.query(
+              `
+                INSERT INTO global_products
+                  (name, default_price, default_currency_code, created_by)
+                VALUES ($1, $2, $3, $4)
+              `,
+              ["neg global", "-0.01", "USD", actorId],
+            );
+          case "tenant_products":
+            return env!.admin.query(
+              `
+                INSERT INTO tenant_products
+                  (tenant_id, name, default_price, default_currency_code,
+                   tax_category, created_by, updated_by)
+                VALUES ($1, $2, $3, $4, $5, $6, $6)
+              `,
+              [tenantId, "neg product", "-0.01", "USD", "standard", actorId],
+            );
+          case "store_product_overrides":
+            return env!.admin.query(
+              `
+                INSERT INTO store_product_overrides
+                  (tenant_id, store_id, product_id, price, currency_code,
+                   created_by, updated_by)
+                VALUES ($1, $2, $3, $4, $5, $6, $6)
+              `,
+              [tenantId, storeId, tenantProductId, "-0.01", "USD", actorId],
+            );
+          case "price_history":
+            return env!.admin.query(
+              `
+                INSERT INTO price_history
+                  (tenant_id, product_id, price, currency_code,
+                   effective_from, changed_by, correlation_id)
+                VALUES ($1, $2, $3, $4, now(), $5, $6)
+              `,
+              [
+                tenantId,
+                tenantProductId,
+                "-0.01",
+                "USD",
+                actorId,
+                "0e000000-0000-7000-8000-000000000499",
+              ],
+            );
+          default:
+            throw new Error(`unhandled money table: ${table}`);
+        }
+      })();
+
+      // The CHECK must fire; constraint name pattern documented in
+      // migration-test-plan.md §9.3 (`*_price_non_negative` or
+      // `price_history_price_positive`).
+      await expect(negativeInsert).rejects.toThrow(
+        /_price_non_negative|_price_positive|check constraint/i,
       );
+
+      // Cleanup.
+      await env.admin.query("DELETE FROM price_history WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM store_product_overrides WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM tenant_products WHERE tenant_id = $1", [tenantId]);
+      await env.admin.query("DELETE FROM stores WHERE id = $1", [storeId]);
+      await env.admin.query("DELETE FROM tenants WHERE id = $1", [tenantId]);
     },
   );
 });
