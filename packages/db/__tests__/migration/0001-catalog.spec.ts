@@ -38,12 +38,12 @@
  * and the per-test guards turn the assertions into a soft skip. CI MUST
  * NOT set `MIGRATION_TEST_ALLOW_SKIP=1`.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { basename, resolve } from "node:path";
 
 import {
   APP_ROLE_NAME,
-  applyAllUpAndCreateAppRole,
+  ensureAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -101,14 +101,35 @@ let catalogUpSql: string | null = null;
 let catalogDownSql: string | null = null;
 let migrationGateError: string | null = null;
 
+/**
+ * Apply every UP migration in lex order EXCEPT the catalog migration. This
+ * spec needs the database in its pre-catalog state so the T326 "applies
+ * cleanly" test can apply 0007_catalog itself and the pre-state assertions
+ * ("no catalog tables") are meaningful. The shared
+ * `applyAllUpAndCreateAppRole` helper applies every `.sql` file including
+ * 0007_catalog, which would defeat this design.
+ */
+async function applyPreCatalogMigrations(pgEnv: PgTestEnv): Promise<void> {
+  const upFiles = readdirSync(DRIZZLE_DIR)
+    .filter((n) => /^\d{4}_.+\.sql$/.test(n) && !n.endsWith(".down.sql"))
+    .filter((n) => basename(n) !== basename(CATALOG_UP_PATH))
+    .sort();
+  for (const name of upFiles) {
+    const sql = readFileSync(resolve(DRIZZLE_DIR, name), "utf8");
+    await pgEnv.admin.query(sql);
+  }
+  await ensureAppRole(pgEnv);
+}
+
 beforeAll(async () => {
-  // Phase 1: confirm Docker is reachable and apply existing (pre-catalog)
-  // migrations. Even if T330 has not landed, we still want to know that
-  // the Testcontainers harness boots — otherwise the RED reason is
-  // ambiguous (could be Docker, could be T330).
+  // Phase 1: confirm Docker is reachable and apply EVERY pre-catalog
+  // migration (0000-0006) but NOT 0007_catalog. T326's "applies cleanly"
+  // test applies the catalog migration exactly once; the pre-state
+  // assertions then validate the empty-catalog-tables baseline before
+  // that single apply.
   try {
     env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
+    await applyPreCatalogMigrations(env);
   } catch (err: unknown) {
     dockerSkipReason = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -123,15 +144,15 @@ beforeAll(async () => {
     );
   }
 
-  // Phase 2: read the catalog migration SQL. If T330 has not landed,
-  // record the precise reason so per-test failures point at the right
-  // gate rather than at the harness.
+  // Phase 2: read the catalog migration SQL. T330 has landed, so both
+  // files MUST be present on disk. Missing files are a hard failure here
+  // (no longer the gated RED case).
   if (!existsSync(CATALOG_UP_PATH)) {
-    migrationGateError = `Catalog migration file not yet authored (T330 gated). Expected at: ${CATALOG_UP_PATH}`;
+    migrationGateError = `Catalog migration file missing. Expected at: ${CATALOG_UP_PATH}`;
     return;
   }
   if (!existsSync(CATALOG_DOWN_PATH)) {
-    migrationGateError = `Catalog rollback file not yet authored (T330 gated). Expected at: ${CATALOG_DOWN_PATH}`;
+    migrationGateError = `Catalog rollback file missing. Expected at: ${CATALOG_DOWN_PATH}`;
     return;
   }
   catalogUpSql = readFileSync(CATALOG_UP_PATH, "utf8");
@@ -723,8 +744,11 @@ describe("T329 — Q1: money columns are numeric(19,4) with non-negative CHECK",
       }
       if (table === "store_product_overrides") {
         await env.admin.query(
-          "INSERT INTO stores (id, tenant_id, slug, name) VALUES ($1, $2, $3, $4)",
-          [storeId, tenantId, "s-neg", "neg-money store"],
+          // `stores` table from 0000_initial.sql declares (id, tenant_id,
+          // code, name, …). There is no `slug` column — Wave 4 originally
+          // used the wrong name; fixed here in the db-integration hotfix.
+          "INSERT INTO stores (id, tenant_id, code, name) VALUES ($1, $2, $3, $4)",
+          [storeId, tenantId, "S-NEG", "neg-money store"],
         );
       }
       if (table === "store_product_overrides" || table === "price_history") {

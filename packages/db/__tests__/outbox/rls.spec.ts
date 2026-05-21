@@ -423,15 +423,33 @@ describe("cross-table regression sweep after migration 0006 (T598)", () => {
     }
   });
 
-  it("G-9c: all policies on all tenant-scoped tables still have WITH CHECK (regression probe)", async () => {
+  it("G-9c: every write-capable policy on every tenant-scoped table has WITH CHECK and a USING guard (regression probe)", async () => {
     if (maybeSkip()) return;
 
+    // PostgreSQL policy semantics:
+    //   - FOR SELECT — `qual` (USING) is required; `with_check` is always NULL.
+    //   - FOR INSERT — `with_check` is required; `qual` is always NULL.
+    //   - FOR UPDATE — both `qual` and `with_check` apply.
+    //   - FOR DELETE — `qual` is required; `with_check` is always NULL.
+    //   - FOR ALL    — applies to every command; `qual` AND `with_check`
+    //                  are required for the write paths to be guarded.
+    //
+    // The original sweep treated EVERY policy as a write policy and demanded
+    // `with_check IS NOT NULL`. That fails legitimately for SELECT-only and
+    // DELETE-only policies (notably the per-command policies introduced by
+    // 0007_catalog.sql, e.g. `price_history_no_delete` and the
+    // `*_tenant_isolation` SELECT policies on every catalog table). The
+    // regression intent — "write-capable policies must not silently lose
+    // their tenant/store guard" — is preserved by gating the assertion on
+    // `cmd` and asserting USING/WITH CHECK separately per policy class.
     const r = await env!.admin.query<{
       tablename: string;
       policyname: string;
+      cmd: string;
+      qual: string | null;
       with_check: string | null;
     }>(
-      `SELECT tablename, policyname, with_check
+      `SELECT tablename, policyname, cmd, qual, with_check
        FROM pg_policies
        WHERE schemaname = 'public'
        ORDER BY tablename, policyname`,
@@ -439,7 +457,42 @@ describe("cross-table regression sweep after migration 0006 (T598)", () => {
 
     expect(r.rows.length).toBeGreaterThan(0);
     for (const row of r.rows) {
-      expect(row.with_check).not.toBeNull();
+      const ctx = `${row.tablename}.${row.policyname} (cmd=${row.cmd})`;
+      switch (row.cmd) {
+        case "SELECT":
+          expect({ ctx, qual: row.qual }).toMatchObject({
+            ctx,
+            qual: expect.any(String),
+          });
+          break;
+        case "INSERT":
+          expect({ ctx, with_check: row.with_check }).toMatchObject({
+            ctx,
+            with_check: expect.any(String),
+          });
+          break;
+        case "UPDATE":
+        case "ALL":
+          expect({ ctx, qual: row.qual }).toMatchObject({
+            ctx,
+            qual: expect.any(String),
+          });
+          expect({ ctx, with_check: row.with_check }).toMatchObject({
+            ctx,
+            with_check: expect.any(String),
+          });
+          break;
+        case "DELETE":
+          expect({ ctx, qual: row.qual }).toMatchObject({
+            ctx,
+            qual: expect.any(String),
+          });
+          // with_check is intentionally NULL for DELETE — PostgreSQL forbids
+          // it. Nothing to assert here.
+          break;
+        default:
+          throw new Error(`Unexpected policy cmd '${row.cmd}' on ${ctx}`);
+      }
     }
   });
 });
