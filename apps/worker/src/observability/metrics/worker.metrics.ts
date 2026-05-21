@@ -490,19 +490,31 @@ async function defaultPendingQuery(pool: Pool): Promise<OutboxPendingRow[]> {
     runWithTenantContext: <T>(
       pool: Pool,
       ctx: { tenantId: string | null; isPlatformAdmin: boolean },
-      work: (client: { query: (sql: string) => Promise<{ rows: Array<{ event_type: string; count: string }> }> }) => Promise<T>,
+      work: (client: {
+        query: (
+          sql: string,
+          values?: unknown[],
+        ) => Promise<{
+          rows: Array<{ event_type: string; count: string }>;
+        }>;
+      }) => Promise<T>,
     ) => Promise<T>;
   };
   return runWithTenantContext(
     pool,
     { tenantId: null, isPlatformAdmin: true },
     async (client) => {
-      const states = PENDING_DELIVERY_STATES.map((s) => `'${s}'`).join(", ");
+      // Parameterized query — even though PENDING_DELIVERY_STATES is a
+      // compile-time const today, the repo's house style for any SQL
+      // taking a list of values is `= ANY($1::text[])` (see drainer,
+      // repository, retention). Future-proofs against the constant ever
+      // becoming non-literal.
       const result = await client.query(
         `SELECT event_type, COUNT(*)::text AS count
            FROM outbox_events
-          WHERE delivery_state IN (${states})
+          WHERE delivery_state = ANY($1::text[])
           GROUP BY event_type`,
+        [[...PENDING_DELIVERY_STATES]],
       );
       return result.rows.map((r) => ({
         event_type: r.event_type,
