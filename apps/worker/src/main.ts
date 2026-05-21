@@ -26,6 +26,14 @@
 // any module that creates instruments at load time (worker.metrics.ts, etc.).
 import "./instrumentation";
 
+// Force worker metric instruments to register with the live MeterProvider.
+// This module's top-level code calls `meter.createCounter(...)` /
+// `assertMetricLabels(...)` as side effects; without this import the
+// instruments are never created and the Prometheus scrape never shows
+// platform-defined worker signals (signals.md §3).
+// Constitution §VII / T483.
+import "./observability/metrics/worker.metrics";
+
 import {
   type INestApplicationContext,
   Logger,
