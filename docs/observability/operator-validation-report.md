@@ -13,7 +13,7 @@
 - **Branch at HEAD**: `main`
 - **Last merged PR**: #262 (`docs(004): record P7 exit-gate evidence (T597-T600) + add T599 invariant guard`)
 
-```
+```bash
 $ git log -1 --oneline
 678baa4 docs(004): record P7 exit-gate evidence (T597-T600) + add T599 invariant guard (#262)
 ```
@@ -226,7 +226,7 @@ No PII / payload leakage in the logs (verified `errorName` only).
 
 ### 6.1 Why PASS
 
-- **API side**: all custom metrics whose code paths were exercised by representative traffic are present in the live scrape: `http_request_count`, `http_request_duration_seconds`, `http_error_4xx_total`, `validation_failure_total`. The label shape on the success path is correct (`route="/api/v1/auth/signin"`); the label shape on the error path falls back to `route="unknown"` (a known limitation, not a regression).
+- **API side**: all custom metrics whose code paths were exercised by representative traffic are present in the live scrape: `http_request_count_total`, `http_request_duration_seconds`, `http_error_4xx_total`, `validation_failure_total`. The label shape on the success path is correct (`route="/api/v1/auth/signin"`); the label shape on the error path falls back to `route="unknown"` (a known limitation, not a regression).
 - **Worker side**: every metric introduced by T595 (PR-B-1 + PR-B-2) and T596 is live with correct labels:
   - `outbox_pending_total` correctly aggregates by `event_type` at scrape time via the ObservableGauge addCallback (PR-B-2 working in production).
   - `outbox_dead_letter_total` and `outbox_drain_duration_seconds` emit at the right per-row branches (PR-B-1).

@@ -104,7 +104,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P4 | T470–T472 | Metric definitions registered (API, DB, worker) | #229 | PARTIAL | PR #229 wires OTel metrics SDK and exposes `/metrics`; metric family definitions registered. Actual emission from DB and drainer call-sites still pending. |
 | P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | Not confirmed | PARTIAL | Not explicitly referenced in merged PR bodies. |
 | P4 | T480–T482 | P4 validation suite GREEN | #227 | DONE | PR #227 closeout report at `docs/observability/p4-closeout-report.md` confirms T480–T482 GREEN. |
-| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), THIS PR | DONE | Operator-side run on 2026-05-21 against commit `678baa47` proved every exercised API + worker custom metric appears in the live Prometheus scrape with correct label shape. Verdict **PASS**. Full evidence + honest absences: `docs/observability/operator-validation-report.md`. |
+| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), THIS PR | DONE | Operator-side run on 2026-05-21 against commit `678baa47` proved every exercised API + worker custom metric appears in the live Prometheus scrape with expected label shape for exercised paths (with the documented error-path `route="unknown"` limitation). Verdict **PASS**. Full evidence + honest absences: `docs/observability/operator-validation-report.md`. |
 
 ### P5 — Track D Idempotency (T500–T534)
 
