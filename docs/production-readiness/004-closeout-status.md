@@ -8,6 +8,17 @@
 
 ## Changelog
 
+- **2026-05-21** (T483 P4 addCallback wiring — PRs #270 and #271) —
+  Four previously-unwired ObservableGauge instruments are now wired.
+  PR #270 (W1+W2): `ApiDbPoolGaugeRegistrar` (API) and `WorkerDbPoolGaugeRegistrar`
+  (worker) wire `db_pool_in_use` + `db_pool_waiters` against their respective
+  pg.Pool instances; `QueueLagGaugeRegistrar` wires `queue_lag_seconds` against
+  5 BullMQ queue readers in the worker. PR #271 (W3): `ApiDbMigrationStatusGaugeRegistrar`
+  wires `db_migration_status` querying `_drizzle_migrations COUNT(*)` at scrape
+  time, with filesystem-resolved total migration count and `Number.MAX_SAFE_INTEGER`
+  fallback on discovery error. All four signals move from "Unwired / deferred" to
+  "addCallback wired; not yet live-scraped". `redis_command_duration_seconds`
+  remains the last unwired instrument in the P4 catalogue.
 - **2026-05-21** (T483 operator evidence — status correction 2026-05-21) —
   T483 live `/metrics` scrape validation recorded against commit `678baa47`
   (see `docs/observability/operator-validation-report.md`). Verdict:
@@ -60,7 +71,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. Full signal-catalogue live-scrape evidence (DB pool, DB migration, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
+| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` addCallbacks wired (PRs #270/#271). Only `redis_command_duration_seconds` remains unwired. Full signal-catalogue live-scrape evidence (all four newly-wired signals + Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
 | P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
@@ -107,6 +118,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | Not confirmed | PARTIAL | Not explicitly referenced in merged PR bodies. |
 | P4 | T480–T482 | P4 validation suite GREEN | #227 | DONE | PR #227 closeout report at `docs/observability/p4-closeout-report.md` confirms T480–T482 GREEN. |
 | P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), PR #265 | **PASS (exercised paths) / PARTIAL (full catalogue)** | Operator-side run on 2026-05-21 against commit `678baa47`. Exercised API/worker/outbox metrics present in live scrape with expected label shapes. Verdict **PASS for exercised paths**. Full signal-catalogue coverage (DB pool, DB migration, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) **not yet live-proven** — see §4.C backlog and `docs/observability/operator-validation-report.md`. |
+| P4 | T483 addCallback wiring (W1–W3) | `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` ObservableGauge addCallback wiring | #270 (W1+W2), #271 (W3) | **DONE (wired; not yet live-scraped)** | PR #270: `ApiDbPoolGaugeRegistrar` + `WorkerDbPoolGaugeRegistrar` (pool counters); `QueueLagGaugeRegistrar` (5 BullMQ queues, clamped lag, re-entrancy guard). PR #271: `ApiDbMigrationStatusGaugeRegistrar` (applied/pending/failed state logic, `Number.MAX_SAFE_INTEGER` fallback on filesystem error). Unit tests for all four wiring paths. `redis_command_duration_seconds` ioredis hook remains the last unwired instrument. |
 
 ### P5 — Track D Idempotency (T500–T534)
 
@@ -249,11 +261,11 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 
    | Signal | Current tier | Blocker / note |
    |---|---|---|
-   | `db_migration_status` | Unwired / deferred | No `addCallback` wired; future slice. |
-   | `db_pool_in_use` | Unwired / deferred | ObservableGauge not wired with `addCallback`; future slice. |
-   | `db_pool_waiters` | Unwired / deferred | Same as above. |
-   | `redis_command_duration_seconds` | Unwired / deferred | No ioredis instrumentation hook in this slice; deferred per `worker.metrics.ts` source comment. |
-   | `queue_lag_seconds` | Unwired / deferred | ObservableGauge registered; no `addCallback` wired yet. |
+   | `db_migration_status` | addCallback wired (PR #271) | `ApiDbMigrationStatusGaugeRegistrar` queries `_drizzle_migrations COUNT(*)` at scrape time; applied/pending/failed states; not yet live-scraped. |
+   | `db_pool_in_use` | addCallback wired (PR #270) | `ApiDbPoolGaugeRegistrar` (API) + `WorkerDbPoolGaugeRegistrar` (worker) read synchronous pool counters; not yet live-scraped. |
+   | `db_pool_waiters` | addCallback wired (PR #270) | Same registrars as `db_pool_in_use`; not yet live-scraped. |
+   | `redis_command_duration_seconds` | Unwired / deferred | No ioredis instrumentation hook; last unwired instrument in the P4 catalogue. |
+   | `queue_lag_seconds` | addCallback wired (PR #270) | `QueueLagGaugeRegistrar` wired against 5 BullMQ queues in worker; re-entrancy guard; lag clamped ≥ 0; not yet live-scraped. |
    | `db_slow_query_total` | Registered | No slow-query hook wired; threshold 500ms; not exercised in T483 run. |
    | `auth_failure_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
    | `suspicious_login_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
@@ -341,10 +353,10 @@ must live-exercise every signal in `docs/observability/signals.md` and
 record scrape evidence for each. This requires:
 
 1. **Wiring unwired instruments** (source change, separate gated PR):
-   - `db_migration_status` `addCallback`
-   - `db_pool_in_use` / `db_pool_waiters` `addCallback`
-   - `redis_command_duration_seconds` ioredis hook
-   - `queue_lag_seconds` `addCallback`
+   - ~~`db_migration_status` `addCallback`~~ — done (PR #271)
+   - ~~`db_pool_in_use` / `db_pool_waiters` `addCallback`~~ — done (PR #270)
+   - ~~`queue_lag_seconds` `addCallback`~~ — done (PR #270)
+   - `redis_command_duration_seconds` ioredis hook — **remaining**
 
 2. **Exercising unexercised paths** (operator run against a seeded environment):
    - Auth failures (seeded user + wrong password / blocked IP / expired token)
