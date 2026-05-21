@@ -8,16 +8,18 @@
 
 ## Changelog
 
-- **2026-05-21** (T483 operator evidence) — T483 live `/metrics` scrape
-  validation recorded against commit `678baa47` (see
-  `docs/observability/operator-validation-report.md`). Verdict: **PASS**.
-  P4 status moves from "DONE for code / NEEDS OPERATOR VALIDATION" to
-  **DONE**. P7 closure is complete for every in-scope item; the only
-  remaining open items are T591 admin write endpoints (1C-C2 retry/
-  requeue, 1C-C3 acknowledge) and deferred observability infra
-  (`redis_command_duration_seconds`, `queue_lag_seconds`, BullMQ
-  `QueueEvents`, dedicated `platform:operator` role), all of which are
-  separate-slice / future-feature work.
+- **2026-05-21** (T483 operator evidence — status correction 2026-05-21) —
+  T483 live `/metrics` scrape validation recorded against commit `678baa47`
+  (see `docs/observability/operator-validation-report.md`). Verdict:
+  **PASS for exercised API/worker/outbox paths only**. The run proves OTel
+  SDK wiring, metric registration order, and emission call-sites for the
+  subset of signals whose code paths were touched by representative traffic.
+  It does **not** prove full signal-catalogue live-scrape coverage. P4
+  status is therefore **PARTIAL** — not DONE. Unwired and unexercised
+  signals (DB pool, DB migration, Redis, idempotency, auth-failure,
+  RLS-failure, cross-tenant, suspicious-login) remain a backlog item.
+  P7 outbox observability scope is **DONE**; Spec 004 P4 full-catalogue
+  coverage remains PARTIAL pending a future operator-validation slice.
 - **2026-05-21** — P7 closeout. T565 (PR #255), T595 PR-B-1 (PR #253) and
   PR-B-2 (PR #259), T596 (PR #251) all merged; Codecov upload flake removed
   by PR #257. T597–T600 exit-gate validation recorded in §3 and §11. P7
@@ -58,10 +60,10 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **DONE** | Redaction and structured logging wired (T473/T474). API metrics emitting (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 live `/metrics` operator scrape **PASSED** on 2026-05-21 against commit `678baa47` — see `docs/observability/operator-validation-report.md`. |
+| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. Full signal-catalogue live-scrape evidence (DB pool, DB migration, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
-| P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600), and T483 live `/metrics` operator scrape evidence (PASS, 2026-05-21) all complete. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
+| P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
 | P8 — SDK strategy | E | **DONE** | Strategy and handoff docs merged; no `packages/sdk` or generated files introduced. |
 | P9 — Cross-track validation | — | **SUPERSEDED / STALE for runtime status** | Planning-phase report (PR #212) does not cover PRs #222–#242. This document is the authoritative runtime status. |
 
@@ -104,7 +106,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P4 | T470–T472 | Metric definitions registered (API, DB, worker) | #229 | PARTIAL | PR #229 wires OTel metrics SDK and exposes `/metrics`; metric family definitions registered. Actual emission from DB and drainer call-sites still pending. |
 | P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | Not confirmed | PARTIAL | Not explicitly referenced in merged PR bodies. |
 | P4 | T480–T482 | P4 validation suite GREEN | #227 | DONE | PR #227 closeout report at `docs/observability/p4-closeout-report.md` confirms T480–T482 GREEN. |
-| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), THIS PR | DONE | Operator-side run on 2026-05-21 against commit `678baa47` proved every exercised API + worker custom metric appears in the live Prometheus scrape with expected label shape for exercised paths (with the documented error-path `route="unknown"` limitation). Verdict **PASS**. Full evidence + honest absences: `docs/observability/operator-validation-report.md`. |
+| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), PR #265 | **PASS (exercised paths) / PARTIAL (full catalogue)** | Operator-side run on 2026-05-21 against commit `678baa47`. Exercised API/worker/outbox metrics present in live scrape with expected label shapes. Verdict **PASS for exercised paths**. Full signal-catalogue coverage (DB pool, DB migration, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) **not yet live-proven** — see §4.C backlog and `docs/observability/operator-validation-report.md`. |
 
 ### P5 — Track D Idempotency (T500–T534)
 
@@ -181,9 +183,11 @@ No code change is needed to unblock them.
    `docker run --rm -v "$PWD/loadtests/k6:/scripts" grafana/k6:0.50.0 run /scripts/smoke.js --vus 1 --duration 5s`
    against a live non-prod stack and record the result.
 
-*(T483 — Live `/metrics` scrape validation: **closed by this PR**. Operator
-run on 2026-05-21 against commit `678baa47` recorded in
-`docs/observability/operator-validation-report.md`. Verdict PASS.)*
+*(T483 — Exercised-path operator evidence recorded in PR #265 against commit
+`678baa47`. Verdict: **PASS for exercised API/worker/outbox paths**.
+Full signal-catalogue live-scrape coverage remains open — see §4.C for the
+explicit backlog. `docs/observability/operator-validation-report.md` holds
+the scrape evidence and honest absences.)*
 
 ### B — Docs-Only Cleanup
 
@@ -215,7 +219,7 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 `packages/**`, DB schema, or OpenAPI contracts.
 
 *(T595 / T596 — closed by PRs #251, #253, #259; see §3 P7 rows.)*
-*(T597–T600 — closed by this PR; see §11.)*
+*(T597–T600 — closed by PR #262; see §11.)*
 
 1. **T591 retry/requeue endpoint (1C-C2)** — Deferred by PR #240. Requires a
    `delivery_state` enum extension and a new `manual.outbox.replay` event-type
@@ -224,11 +228,45 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 2. **T591 acknowledge endpoint (1C-C3)** — Deferred by PR #240. Requires
    `acknowledged` as a new terminal state in the `delivery_state` enum.
 
-3. **Remaining P4 emission tasks** — Any P4 signal tests and emission tasks not
-   yet confirmed in merged evidence: `cross_tenant_rejection_total` emission from
-   `TenantContextGuard` (T475), `db_rls_context_failure_total` emission from a
-   DB instrumentation hook (T476), and any outstanding signal-presence test suites
-   (T460, T463–T466 completeness).
+3. **P4 full signal-catalogue live-scrape coverage (PARTIAL — explicit backlog)**
+
+   The T483 exercised-path run (2026-05-21) proved a subset of signals. The
+   following signals from `docs/observability/signals.md` have **not yet been
+   live-proven** in a Prometheus scrape. They are categorised below by their
+   current maturity tier:
+
+   **Maturity tiers used in this table:**
+
+   | Tier | Meaning |
+   |---|---|
+   | Registered | Instrument family created and bound to the OTel MeterProvider (definition only). |
+   | Unit/allowlist-tested | Covered by a unit test or an allowlist-presence test; no live emission confirmed. |
+   | Production-emitting | Emission call-site exists in merged source (PRs #248 / #251 / #253 / #259); exercised by real traffic in T483 run. |
+   | Live-scraped (exercised) | Observed in a real `/metrics` scrape during the T483 operator run. |
+   | Unwired / deferred | No `addCallback` or emission call-site wired yet; future slice required. |
+
+   **P4 signal backlog — not yet live-scraped:**
+
+   | Signal | Current tier | Blocker / note |
+   |---|---|---|
+   | `db_migration_status` | Unwired / deferred | No `addCallback` wired; future slice. |
+   | `db_pool_in_use` | Unwired / deferred | ObservableGauge not wired with `addCallback`; future slice. |
+   | `db_pool_waiters` | Unwired / deferred | Same as above. |
+   | `redis_command_duration_seconds` | Unwired / deferred | No ioredis instrumentation hook in this slice; deferred per `worker.metrics.ts` source comment. |
+   | `queue_lag_seconds` | Unwired / deferred | ObservableGauge registered; no `addCallback` wired yet. |
+   | `db_slow_query_total` | Registered | No slow-query hook wired; threshold 500ms; not exercised in T483 run. |
+   | `auth_failure_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
+   | `suspicious_login_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
+   | `tenant_context_failure_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven — requires authenticated request with bad tenant context. |
+   | `cross_tenant_rejection_total` | Unit/allowlist-tested (T475 PARTIAL) | Emission from `TenantContextGuard` not confirmed in merged PR evidence; not live-proven. |
+   | `db_rls_context_failure_total` | Unit/allowlist-tested (T476 PARTIAL) | Emission from DB instrumentation hook not confirmed in merged PR evidence; not live-proven. |
+   | `idempotency_replay_total` | Unit/allowlist-tested | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
+   | `idempotency_conflict_total` | Unit/allowlist-tested | Same as above. |
+   | `idempotency_in_progress_total` | Unit/allowlist-tested | Same as above. |
+   | `http_error_4xx_total` (per-route label) | Live-scraped / label gap | Present in scrape but `route="unknown"` for all error-path samples — exception-filter boundary limitation. Tracked as follow-up (separate observability-polish slice). |
+
+   A future operator-validation slice must exercise these paths and record scrape
+   evidence to move P4 to DONE.
 
 ### D — Future Schema / Migration Work
 
@@ -279,28 +317,50 @@ planning artifact.
 
 ---
 
-## 6. Next Recommended Slice
+## 6. Next Recommended Slices
 
-After the 2026-05-21 P7 closeout (incl. T483 operator evidence on the same
-day), the remaining recommended slice is **T437 only** — k6 smoke-run
-against a live non-prod stack. Option B (T595/T596 metrics emission
-pre-flight) is **closed** — see §3 P7 rows and PRs #251 / #253 / #259.
-T483 is closed — see §3 P4 / T483 row and
-`docs/observability/operator-validation-report.md`.
+After the 2026-05-21 P7 closeout and T483 exercised-path operator evidence,
+two operator-validation slices remain open, plus the P4 full-catalogue
+coverage work:
 
-### Option A — Operator Validation Slice (T437 only)
+### Option A — Operator Validation: k6 Smoke-Run (T437)
 
 **Recommended when a live non-prod environment is available.**
 
 Perform and record:
 1. T437 — k6 smoke-run (5s, 1 VU, `grafana/k6:0.50.0`) against a live non-prod stack.
 
-*(T483 — already complete; see above.)*
-
 Deliverable: append a T437 subsection to
 `docs/observability/operator-validation-report.md` recording the run
 timestamp, environment, pass/fail, and any latency observations. No source
 changes required.
+
+### Option B — P4 Full Signal-Catalogue Live-Scrape (new slice)
+
+P4 is **PARTIAL**. To move P4 to DONE, a future operator-validation slice
+must live-exercise every signal in `docs/observability/signals.md` and
+record scrape evidence for each. This requires:
+
+1. **Wiring unwired instruments** (source change, separate gated PR):
+   - `db_migration_status` `addCallback`
+   - `db_pool_in_use` / `db_pool_waiters` `addCallback`
+   - `redis_command_duration_seconds` ioredis hook
+   - `queue_lag_seconds` `addCallback`
+
+2. **Exercising unexercised paths** (operator run against a seeded environment):
+   - Auth failures (seeded user + wrong password / blocked IP / expired token)
+   - Suspicious login patterns
+   - Authenticated cross-tenant request (exercises `cross_tenant_rejection_total`)
+   - DB call missing `runWithTenantContext` (exercises `db_rls_context_failure_total`)
+   - `POST /api/v1/memberships/invite` with `Idempotency-Key` (exercises `idempotency_*`)
+   - Slow query exceeding 500ms threshold (exercises `db_slow_query_total`)
+
+3. **Route label fix on exception-filter path** (`route="unknown"` follow-up).
+
+Deliverable: a new section in `docs/observability/operator-validation-report.md`
+(or a separate `operator-validation-report-p4-full.md`) recording scrape evidence
+for each previously-absent signal. No source changes for items in (2) and (3)
+above; gated source changes required for (1).
 
 ---
 
@@ -407,11 +467,12 @@ by role privilege.
 ### 11.5 P7 exit-gate verdict
 
 All four T597–T600 invariants are **satisfied** against a real Postgres
-container as of 2026-05-21. T483 (live `/metrics` operator scrape) was
-**completed on the same day** — evidence recorded in
-`docs/observability/operator-validation-report.md` with verdict PASS.
-This retires the §2 "P4 — Observability instrumentation" NEEDS OPERATOR
-VALIDATION note and closes every in-scope item under Spec 004 P7.
+container as of 2026-05-21. T483 exercised-path operator evidence was
+recorded on the same day — scrape evidence in
+`docs/observability/operator-validation-report.md` with verdict **PASS for
+exercised API/worker/outbox paths**. This closes every in-scope item under
+Spec 004 **P7 (outbox first slice)**. P4 full signal-catalogue live-scrape
+coverage remains **PARTIAL** — see §4.C for the explicit backlog.
 
 ---
 

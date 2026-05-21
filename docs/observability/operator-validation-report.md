@@ -2,7 +2,10 @@
 
 **Spec**: 004 Platform Production Readiness (Track B / P4)
 **Task**: T483 — Operator validation: a real local dev run scrapes `/metrics` and shows every signal from `docs/observability/signals.md` (subject to the "exercised path" caveat below).
-**Verdict**: **PASS** — every metric whose production path was exercised in this run appears in the live scrape with the expected label shape; every absent metric is honestly traceable to an unexercised code path (no faked traffic, no warm-up emissions).
+
+**Verdict — exercised paths**: **PASS** — every metric whose production path was exercised in this run appears in the live scrape with the expected label shape; every absent metric is honestly traceable to an unexercised code path (no faked traffic, no warm-up emissions).
+
+**Verdict — full signal catalogue**: **NOT COMPLETE** — signals requiring seeded users, authenticated sessions, DB instrumentation hooks, Redis hooks, or a slow-query threshold breach were not exercised. Full-catalogue live-scrape coverage is a separate open operator-validation slice. See §4.2, §5.2, §7, and `docs/production-readiness/004-closeout-status.md §4.C` for the explicit backlog.
 
 ---
 
@@ -180,11 +183,11 @@ curl -s http://127.0.0.1:9091/metrics > worker-metrics.txt # 175 lines
 | `idempotency_replay_total`, `idempotency_conflict_total`, `idempotency_in_progress_total` | Requires hitting `POST /api/v1/memberships/invite` with `Idempotency-Key` header + a real authenticated context. Out of scope for this representative-traffic run. |
 | `suspicious_login_total` | Requires a documented "suspicious" pattern across multiple signin attempts (covered by T466 unit tests; not part of this live run). |
 
-### 4.3 Known label-shape observation (not a blocker)
+### 4.3 Known label-shape limitation — documented follow-up
 
 `http_error_4xx_total` and `validation_failure_total` carry `route="unknown"` for all 6 error samples, while `http_request_count_total` correctly carries `route="/api/v1/auth/signin"`. The mismatch is because `GlobalExceptionFilter.routeTemplate(host as ExecutionContext)` returns `"unknown"` when Nest hasn't bound controller metadata onto the host (which is the case at the exception-filter boundary), while `LoggingInterceptor` (which runs *before* the exception is thrown) sees the full controller metadata via `ExecutionContext.getClass()` / `getHandler()`.
 
-This is a known, documented limitation — see `apps/api/src/common/route-template.ts` and the comment in `exception.filter.ts` line 92–93. **Not a T483 blocker**: every metric family from the signals catalogue that has an exercised emission path is present; the label inconsistency just means error-class breakdowns are aggregated under `route="unknown"` rather than per-route in this run. Filed for future improvement (separate slice).
+This is a known, unresolved limitation — see `apps/api/src/common/route-template.ts` and the comment in `exception.filter.ts` line 92–93. The metric families are live and incrementing correctly; the `route` label on error-path samples is unusable for per-route breakdowns in this release. **Explicitly tracked as a follow-up** in `docs/production-readiness/004-closeout-status.md §4.C` (P4 signal backlog) and §7 below. Requires a separate observability-polish slice; not gating T483 exercised-path PASS.
 
 ## 5. Worker scrape findings (`:9091/metrics`)
 
@@ -222,9 +225,11 @@ No PII / payload leakage in the logs (verified `errorName` only).
 
 ## 6. T483 verdict
 
-**PASS.**
+**PASS — exercised API/worker/outbox paths.**
 
-### 6.1 Why PASS
+**NOT COMPLETE — full signal catalogue.** Signals not exercised in this run remain a backlog item; see §4.2, §5.2, and §7.
+
+### 6.1 Why PASS (exercised paths)
 
 - **API side**: all custom metrics whose code paths were exercised by representative traffic are present in the live scrape: `http_request_count_total`, `http_request_duration_seconds`, `http_error_4xx_total`, `validation_failure_total`. The label shape on the success path is correct (`route="/api/v1/auth/signin"`); the label shape on the error path falls back to `route="unknown"` (a known limitation, not a regression).
 - **Worker side**: every metric introduced by T595 (PR-B-1 + PR-B-2) and T596 is live with correct labels:
@@ -246,7 +251,7 @@ No PII / payload leakage in the logs (verified `errorName` only).
 
 ## 7. Follow-ups (not blockers)
 
-1. **Route label on error-path metrics** — `http_error_4xx_total`, `validation_failure_total` currently report `route="unknown"` because the `GlobalExceptionFilter` accesses route metadata through `ArgumentsHost`, which doesn't carry controller metadata at the exception boundary. Fix would route the request-template through the exception filter via a request-scoped binding. Track in a separate observability-polish slice; not gating P7 closure.
+1. **Route label on error-path metrics** (`route="unknown"` — open follow-up) — `http_error_4xx_total`, `validation_failure_total` currently report `route="unknown"` because the `GlobalExceptionFilter` accesses route metadata through `ArgumentsHost`, which doesn't carry controller metadata at the exception boundary. Fix requires routing the request-template through the exception filter via a request-scoped binding. **Explicitly tracked in `004-closeout-status.md §4.C` P4 signal backlog** as an open item. Not gating T483 exercised-path PASS; does prevent "correct label shape" claim for error-path metrics.
 2. **`worker_processing_failure_total` live evidence** — to confirm in production traffic, exercise the API's email-enqueue path (`POST /api/v1/auth/password-reset/request` with a real user) followed by a forced adapter failure. Out of scope for T483 representative-traffic mandate.
 3. **`auth_failure_total` live evidence** — seed a user in the dev DB and run signin against it with: (a) wrong password, (b) right password from blocked IP, (c) expired token. Each populates `auth_failure_total{cause}`. Out of scope for this run.
 4. **`idempotency_*` live evidence** — needs an authenticated `POST /api/v1/memberships/invite` with `Idempotency-Key` header. Requires seeded admin + tenant. Future operator-evidence cycle.
