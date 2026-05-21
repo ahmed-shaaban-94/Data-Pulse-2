@@ -1,8 +1,8 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-21 (post-#254 merge)
+**Last updated:** 2026-05-21 (post-#260 closeout)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `483aae4` (RLS cross-store isolation fix — PR #254)
+**Base:** `origin/main` at `5801369` (T335 tenant helper coverage — PR #260)
 **Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low severity; documentation/scaffolding mismatch, not a security defect)
 **Resolved findings (kept for audit):** 1 — `RLS_CROSS_STORE_READ_LEAK` (resolved by PR #254 @ `483aae4`)
 
@@ -10,14 +10,12 @@
 
 ## TL;DR
 
-Catalog Phase 2 closed cleanly. The RLS cross-store read leak that surfaced
-during the T335/T336 helper wave was fixed and merged as PR #254 — both
-affected tables (`store_product_overrides`, `unknown_items`) now AND-gate
-SELECT by tenant AND store. T340 is **ready to dispatch**; T341–T344 are
-chain-blocked on T340 (no longer on any finding). T336 remains blocked,
-but solely on the missing `withStore` helper — a separate documented
-finding that needs its own authorization path. T335's tenant-helper
-coverage spec exists `local_uncommitted` and can be landed any time.
+Catalog Phase 2 is fully cleaned up. The cross-store read leak (PR #254)
+and T335's tenant-helper coverage (PR #260) are both on `main`. **T340
+is ready to dispatch** — authoring the catalog isolation harness unlocks
+the entire T341–T344 read-sweep wave. T336 stays blocked solely on the
+missing `withStore` helper (`MISSING_WITHSTORE_HELPER` finding) and
+needs its own authorization path. No slice is currently `local_uncommitted`.
 
 ---
 
@@ -32,26 +30,28 @@ coverage spec exists `local_uncommitted` and can be landed any time.
 | `PR250_DB_INTEGRATION_FALLOUT` | CodeRabbit fixes for `0001-catalog.spec.ts` + `outbox/rls.spec.ts` | PR #250 |
 | `RLS_CROSS_STORE_RED_PROOF` | RED proof spec for the cross-store leak | merged in PR #254 @ `483aae4` |
 | `RLS_CROSS_STORE_FIX` | `0008_catalog_store_read_isolation.sql` + `.down.sql` | PR #254 @ `483aae4` |
+| `T335_TENANT_HELPER_COVERAGE` | `withTenant` catalog coverage spec for `tenant_products` via `runWithTenantContext` | PR #260 @ `5801369` |
 
-### Context from neighboring merges since previous refresh
+### Context from neighboring merges
 
 These landed alongside the catalog work and affect the surrounding context, not catalog directly:
 
 - **PR #256** (`docs(agent-os): add spec execution layer`) — Agent OS v1 docs landed at `a482842`. The map you're reading now is governed by `docs/agent-os/slice-schema.yaml`.
 - **PR #257** (`ci: remove Codecov coverage upload step`) — landed at `1bd5161`. The recurring `db-integration` Codecov `AggregateError` false-FAILURE is gone from CI; future PRs will not show that flake.
+- **PR #258** (`docs(catalog): refresh Agent OS execution map`) — landed at `470da55`. First spec-level map refresh under the Agent OS protocol.
+- **PR #261** (`docs(agent-os): add post-merge closeout protocol`) — landed at `4840e70`. Defines the workflow used to author *this* refresh. Schema now formalizes the audit fields (`merged_in_pr`, `merged_at_commit`, `merged_at_date`, `previously_blocked`, plus their finding-level counterparts).
 - **PR #255** (T565 worker outbox redaction it.todo gaps) — landed at `c182a27`. Worker-side, no catalog impact.
+- **PR #259** (T595 PR-B-2 outbox_pending_total gauge) — landed at `7e9c031`. Worker-side, no catalog impact.
 
 ---
 
 ## Local only — committed/uncommitted, not on `main`
 
-| Slice ID | Branch | Commit | Notes |
-|---|---|---|---|
-| `T335_TENANT_HELPER_COVERAGE` | `test/003-catalog-helper-foundation` | uncommitted (file on disk) | `with-tenant-catalog.spec.ts` exists in worktree `dp2-catalog-helper-foundation`; validated 5/5 GREEN against Testcontainers; status `local_uncommitted`. Can be cherry-picked or rewritten on a fresh branch. |
+_None._
 
-The two RLS slices (`RLS_CROSS_STORE_RED_PROOF`, `RLS_CROSS_STORE_FIX`)
-previously listed here are now on `main` via PR #254 and have moved to
-the [Merged](#merged-on-main) table.
+All previously-local work is now on `main`:
+- `T335_TENANT_HELPER_COVERAGE` — merged in PR #260 @ `5801369`
+- `RLS_CROSS_STORE_RED_PROOF`, `RLS_CROSS_STORE_FIX` — merged in PR #254 @ `483aae4`
 
 ---
 
@@ -73,7 +73,7 @@ the [Merged](#merged-on-main) table.
 
 - **Summary:** `rls-test-matrix.md:464-465` and `plan.md:210` claim `packages/db/src/helpers/with-store.ts` ships from feature 001, but the file does not exist on `main`. Only `with-tenant.ts` and `audit-insert.ts` are present.
 - **Severity:** low (documentation / scaffolding mismatch — not a security defect or correctness bug; it's a spec-vs-reality drift that blocks one test slice).
-- **Proof:** `ls packages/db/src/helpers/` on `main @ 483aae4` returns only `audit-insert.ts` and `with-tenant.ts`.
+- **Proof:** `ls packages/db/src/helpers/` on `main @ 5801369` returns only `audit-insert.ts` and `with-tenant.ts`.
 - **Blocks:** `T336` only.
 - **Resolution paths (either, with explicit user approval):**
   1. **New gated slice** authors `packages/db/src/helpers/with-store.ts` (forbidden surface — needs approval).
@@ -98,7 +98,6 @@ the [Merged](#merged-on-main) table.
 | Slice ID | Type | Agent | Approval needed? | Notes |
 |---|---|---|---|---|
 | `T340` | test | `sonnet-test` | no | Catalog isolation harness at `apps/api/test/catalog/__support__/isolation-harness.ts`. Unblocks T341–T344. No gated surface. |
-| `T335_TENANT_HELPER_COVERAGE` | test | `sonnet-test` | no | `local_uncommitted` — file exists in `dp2-catalog-helper-foundation` worktree, validated 5/5 GREEN. Could be committed as-is or re-authored via a fresh Agent OS slice. |
 
 ---
 
@@ -121,32 +120,53 @@ explicit user endorsement.
 
 ## Next recommended action
 
-**Run `T335_TENANT_HELPER_COVERAGE` first.** It's the most conservative
-play — small slice, no gated surface, completes already-validated work
-that's sitting `local_uncommitted` in a worktree. Lands a clean RLS-side
-coverage win on `main` and leaves the heavier Phase-3 wave for a separate
-authorization step.
+**Author T340 — the catalog isolation harness.** It's the only `ready`
+slice on the map and it's the chain-blocker for T341, T342, T343, and
+T344. Sequential dispatch (T340 alone, then T341–T344 as they unblock)
+is the lowest-cognitive-load path; parallel dispatch as
+`PHASE3_RED_WAVE` is available if you want higher throughput.
 
-After T335 lands, the next move is one of:
+T336 is the other still-blocked slice and needs an explicit decision on
+how to resolve `MISSING_WITHSTORE_HELPER` (author the missing helper,
+or reinterpret T336 to test the GUC contract directly). That decision
+is independent of T340 and can happen whenever.
 
-1. **`T340` solo** — author the isolation harness on its own, then dispatch T341–T344 as ready slices once the harness lands. Sequential, lowest cognitive load.
-2. **`PHASE3_RED_WAVE` group** — dispatch T340 + T350/T360/T372/T383 in parallel (five worktrees, five branches). Requires explicit endorsement of the group. Highest throughput but most coordination overhead.
+---
+
+## Post-merge closeout
+
+When a PR for one of this spec's slices merges to `main`, run the
+closeout to refresh both this file and `execution-map.yaml`.
+Full workflow: `docs/agent-os/maestro-playbook.md` "Workflow —
+post-merge closeout".
+Reusable prompt template: `docs/agent-os/templates/post-merge-closeout-prompt.md`.
+
+Short prompt:
+
+```text
+Use Agent OS.
+Close out PR #<PR_NUMBER>.
+Spec: specs/003-catalog-foundation
+Expected slice: <EXPECTED_SLICE_ID>
+Update execution-map.yaml and wave-status.md.
+Stop before commit.
+```
+
+The closeout updates these audit fields on the merged slice:
+`merged_in_pr`, `merged_at_commit`, `merged_at_date`, `previously_blocked`.
+If the slice resolves a finding, the same closeout sets
+`resolved_by_pr`, `resolved_by_commit`, `resolved_at`, and
+`previously_blocked` on the finding entry.
 
 ---
 
 ## Next short Maestro prompt
 
 ```text
-Use Agent OS. Execute slice T335_TENANT_HELPER_COVERAGE. Stop before commit.
-```
-
-After T335 merges, either of these is appropriate:
-
-```text
 Use Agent OS. Execute slice T340. Stop before commit.
 ```
 
-or
+Or, for the parallel wave (requires explicit endorsement):
 
 ```text
 Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
