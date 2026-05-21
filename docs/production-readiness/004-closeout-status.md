@@ -263,7 +263,6 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
    | `idempotency_replay_total` | Unit/allowlist-tested | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
    | `idempotency_conflict_total` | Unit/allowlist-tested | Same as above. |
    | `idempotency_in_progress_total` | Unit/allowlist-tested | Same as above. |
-   | `http_error_4xx_total` (per-route label) | Live-scraped (resolved by PR-E) | Resolved by adding `request.route.path` fallback to `routeTemplate()` (`apps/api/src/common/route-template.ts`). Matched-route error samples now carry the real template (e.g., `route="/api/v1/auth/signin"`). Genuine unmatched 404s legitimately retain `route="unknown"` — documented in `docs/observability/signals.md §1` notes. No longer a P4 backlog item; remains in the §6 Option B operator-evidence list as a re-scrape confirmation. |
 
    A future operator-validation slice must exercise these paths and record scrape
    evidence to move P4 to DONE.
