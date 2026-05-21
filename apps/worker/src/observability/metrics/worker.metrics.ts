@@ -505,43 +505,37 @@ export interface QueueLagGaugeDeps {
   ) => Promise<ReadonlyArray<{ readonly timestamp: number }>>;
 }
 
-/**
- * Register the `queue_lag_seconds` ObservableGauge callback.
- *
- * Behavior:
- *   - `deps.queues === null` → no-op handle (no Redis).
- *   - Otherwise → registers an OTel addCallback. At each scrape, for each
- *     queue in `WORKER_QUEUE_NAMES`, the callback calls `queue.getWaiting(0, 0)`
- *     to read the oldest waiting job and derives lag:
- *       lag = (Date.now() - oldest_job.timestamp) / 1000   [seconds]
- *     If the queue is empty, lag = 0. If the queue is absent from the map,
- *     the entry is skipped (not observed).
- *
- * Re-entrancy:
- *   The callback skips re-execution if the previous tick is still in-flight.
- *   OTel default scrape cadence is ~60 s; Redis LRANGE is sub-millisecond,
- *   so this is defense-in-depth.
- *
- * Failure handling:
- *   Per-queue errors log ONE structured stderr line (errorName only — no
- *   message or Redis key) and skip the observation for that queue. A top-level
- *   `finally` always resets the in-flight flag.
- */
-export function registerQueueLagGauge(
-  deps: QueueLagGaugeDeps,
-): { stop: () => void } {
-  const queues = deps.queues;
-  if (queues === null) {
-    return { stop: () => undefined };
-  }
+/** Observable result shape passed to OTel addCallback functions. */
+export interface QueueLagObservableResult {
+  observe(value: number, attributes: Attributes): void;
+}
 
-  const getWaiting =
-    deps.getWaitingFn ?? ((q: Queue) => q.getWaiting(0, 0));
+/**
+ * Build the `queue_lag_seconds` callback function without registering it.
+ *
+ * Extracted so tests can obtain the real callback via this function and invoke
+ * it directly with a mock `QueueLagObservableResult` — exercising the actual
+ * production path without requiring a live OTel MetricReader.
+ *
+ * The returned callback:
+ *   - Skips re-execution when a previous tick is still in-flight (re-entrancy
+ *     guard; inFlight state is scoped to this closure).
+ *   - For each queue in `WORKER_QUEUE_NAMES` present in `queues`: calls
+ *     `getWaitingFn`, derives lag = `Math.max(0, (now - oldest.timestamp) / 1000)`,
+ *     then calls `observableResult.observe(lag, { queue })`. Clamping to ≥ 0
+ *     prevents negative values from producer/consumer clock drift.
+ *   - On per-queue error: logs ONE structured stderr line (errorName only) and
+ *     skips that queue's observation. Never throws.
+ */
+export function createQueueLagCallback(
+  queues: ReadonlyMap<string, Queue>,
+  getWaitingFn: (
+    queue: Queue,
+  ) => Promise<ReadonlyArray<{ readonly timestamp: number }>>,
+): (observableResult: QueueLagObservableResult) => Promise<void> {
   let inFlight = false;
 
-  const callback = async (observableResult: {
-    observe(value: number, attributes: Attributes): void;
-  }): Promise<void> => {
+  return async (observableResult: QueueLagObservableResult): Promise<void> => {
     if (inFlight) return;
     inFlight = true;
     try {
@@ -550,11 +544,11 @@ export function registerQueueLagGauge(
           const queue = queues.get(queueName);
           if (queue === undefined) return;
           try {
-            const waiting = await getWaiting(queue);
+            const waiting = await getWaitingFn(queue);
             const first = waiting[0];
             const lag =
               first !== undefined
-                ? (Date.now() - first.timestamp) / 1000
+                ? Math.max(0, (Date.now() - first.timestamp) / 1000)
                 : 0;
             observableResult.observe(lag, {
               queue: queueName,
@@ -578,6 +572,33 @@ export function registerQueueLagGauge(
       inFlight = false;
     }
   };
+}
+
+/**
+ * Register the `queue_lag_seconds` ObservableGauge callback.
+ *
+ * Behavior:
+ *   - `deps.queues === null` → no-op handle (no Redis).
+ *   - Otherwise → builds the callback via `createQueueLagCallback` and
+ *     registers it with the OTel `_queueLag` instrument. At each scrape,
+ *     for each queue in `WORKER_QUEUE_NAMES`, the callback calls
+ *     `queue.getWaiting(0, 0)` and observes lag in seconds (clamped ≥ 0).
+ *
+ * The returned `{ stop }` handle removes the callback. `QueueLagGaugeRegistrar`
+ * calls it on `onModuleDestroy` so the callback does not outlive the Queue
+ * reader connections.
+ */
+export function registerQueueLagGauge(
+  deps: QueueLagGaugeDeps,
+): { stop: () => void } {
+  const queues = deps.queues;
+  if (queues === null) {
+    return { stop: () => undefined };
+  }
+
+  const getWaiting =
+    deps.getWaitingFn ?? ((q: Queue) => q.getWaiting(0, 0));
+  const callback = createQueueLagCallback(queues, getWaiting);
 
   _queueLag.addCallback(callback);
   return {

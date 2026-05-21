@@ -37,6 +37,7 @@ import {
   WORKER_QUEUE_NAMES,
   WORKER_JOB_NAMES,
   WORKER_ERROR_CLASSES,
+  createQueueLagCallback,
   recordOutboxDeadLetter,
   recordOutboxDrainDuration,
   recordQueueDeadLetter,
