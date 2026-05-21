@@ -26,15 +26,34 @@ import { LoggingInterceptor } from "../../src/common/logging.interceptor";
 // Module mock — must be before any imports that depend on @data-pulse-2/shared
 // ---------------------------------------------------------------------------
 
-jest.mock("@data-pulse-2/shared", () => ({
-  withRequestContext: jest.fn((logger: unknown) => logger),
-  // T474: LoggingInterceptor now reads the active OTel trace-id to populate
-  // `correlation_id`, falling back to the supplied request_id. The unit
-  // suite stays Docker-free / OTel-free, so the helper is stubbed to
-  // return its fallback verbatim — the interceptor's behavior is
-  // unchanged from the unit's perspective.
-  getCorrelationId: jest.fn((fallback: string) => fallback),
-}));
+jest.mock("@data-pulse-2/shared", () => {
+  // Minimal noop OTel instrument shape used by api.metrics.ts at module load.
+  // The unit suite stays OTel-free; api.metrics is loaded transitively by
+  // the interceptor (it imports the emission helpers), so getMeter and
+  // assertMetricLabels must resolve to something callable.
+  const noopCounter = { add: jest.fn() };
+  const noopHistogram = { record: jest.fn() };
+  const noopGauge = { addCallback: jest.fn() };
+  const noopMeter = {
+    createCounter: jest.fn(() => noopCounter),
+    createHistogram: jest.fn(() => noopHistogram),
+    createObservableGauge: jest.fn(() => noopGauge),
+  };
+  return {
+    withRequestContext: jest.fn((logger: unknown) => logger),
+    // T474: LoggingInterceptor now reads the active OTel trace-id to
+    // populate `correlation_id`, falling back to the supplied request_id.
+    // The unit suite stays Docker-free / OTel-free, so the helper is
+    // stubbed to return its fallback verbatim — the interceptor's
+    // behavior is unchanged from the unit's perspective.
+    getCorrelationId: jest.fn((fallback: string) => fallback),
+    // Required by api.metrics.ts module body (transitively imported by
+    // the interceptor). The mock is a no-op — emission assertions live
+    // in the integration spec, not here.
+    getMeter: jest.fn(() => noopMeter),
+    assertMetricLabels: jest.fn(),
+  };
+});
 
 // Import AFTER mock registration so the mock is in place
 import { withRequestContext } from "@data-pulse-2/shared";

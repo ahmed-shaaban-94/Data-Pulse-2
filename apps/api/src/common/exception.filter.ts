@@ -1,6 +1,7 @@
 import {
   ArgumentsHost,
   Catch,
+  type ExecutionContext,
   ExceptionFilter,
   HttpException,
   HttpStatus,
@@ -8,6 +9,13 @@ import {
 import { ErrorCodes, errorEnvelope, newId } from "@data-pulse-2/shared";
 import type { Request, Response } from "express";
 import { ZodError } from "zod";
+
+import {
+  recordHttp4xxError,
+  recordHttp5xxError,
+  recordValidationFailure,
+} from "../observability/metrics/api.metrics";
+import { routeTemplate } from "./route-template";
 
 /**
  * Map HTTP status codes to canonical error codes used in the envelope.
@@ -77,8 +85,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const request = http.getRequest<Request & { requestId?: string }>();
     const response = http.getResponse<Response>();
     const requestId = request.requestId ?? newId();
+    // In an HTTP transport, the host Nest passes here is structurally an
+    // ExecutionContext (getClass / getHandler available when a route was
+    // matched). `routeTemplate` falls back to "unknown" when metadata is
+    // absent — e.g., a 404 that never hit a controller. That fallback is
+    // a bounded label value, safe for metric cardinality.
+    const execCtx = host as ExecutionContext;
+    const route = routeTemplate(execCtx);
 
     if (exception instanceof ZodError) {
+      recordValidationFailure({ route });
+      recordHttp4xxError({ route, status: "400" });
       const envelope = errorEnvelope({
         code: ErrorCodes.VALIDATION,
         message: "Request validation failed",
@@ -96,6 +113,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         exception,
         statusDefaultMessage(status),
       );
+      if (status >= 500) {
+        recordHttp5xxError({ route, status: String(status) });
+      } else if (status >= 400) {
+        recordHttp4xxError({ route, status: String(status) });
+      }
       const envelope = errorEnvelope({
         code,
         message,
@@ -110,6 +132,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const message =
       exception instanceof Error ? exception.message : "Internal Server Error";
     void message;
+    recordHttp5xxError({ route, status: "500" });
     const envelope = errorEnvelope({
       code: ErrorCodes.INTERNAL,
       message: "Internal Server Error",
