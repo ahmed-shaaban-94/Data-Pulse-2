@@ -79,6 +79,31 @@ describe("schema/catalog/tenant_products (T318)", () => {
     expect(cols["tenantId"]?.notNull).toBe(true);
   });
 
+  it("`tenant_id` declares a FK to `tenants.id` (Constitution §2 — tenant scoping enforced at the schema layer)", () => {
+    expect(tenantProducts).toBeDefined();
+    const cfg = getTableConfig(tenantProducts);
+    const fks = cfg.foreignKeys as ForeignKey[];
+
+    // Find the FK whose local column set includes `tenant_id`. The migration
+    // suite (T326+) will additionally verify ON DELETE RESTRICT at the
+    // pg_constraint level; here we anchor the FK presence + target shape in
+    // Drizzle metadata so a future refactor cannot silently drop it.
+    const tenantFk = fks.find((fk) => {
+      const ref = fk.reference();
+      return ref.columns.some((col) => col.name === "tenant_id");
+    });
+    expect(tenantFk).toBeDefined();
+
+    const ref = tenantFk!.reference();
+    expect(getTableName(ref.foreignTable)).toBe("tenants");
+    // The referenced column on `tenants` MUST be `id`. Drizzle exposes the
+    // referenced columns via `ref.foreignColumns` in 0.45.x.
+    const referencedColumnNames = ref.foreignColumns.map(
+      (col) => (col as { name: string }).name,
+    );
+    expect(referencedColumnNames).toEqual(["id"]);
+  });
+
   it("monetary `default_price` is `numeric(19, 4)` (Q1)", () => {
     expect(tenantProducts).toBeDefined();
     const cols = getTableColumns(tenantProducts) as Record<

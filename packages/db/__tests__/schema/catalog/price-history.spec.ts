@@ -31,6 +31,16 @@ function renderSQL(value: unknown): string {
   return dialect.sqlToQuery(value as SQL).sql;
 }
 
+/**
+ * `PgDialect` emits quoted identifiers (`"price_history"."store_id"`), which
+ * breaks regex assertions that expect `\s+` between a column name and an
+ * operator. Strip the quotes for matching — we are verifying the structural
+ * predicate, not the rendering convention.
+ */
+function normalizeRenderedSql(sql: string): string {
+  return sql.replaceAll('"', "");
+}
+
 describe("price_history Drizzle schema (T323)", () => {
   it("maps to the SQL table name 'price_history'", () => {
     expect(getTableName(priceHistory)).toBe("price_history");
@@ -243,11 +253,17 @@ describe("price_history Drizzle schema (T323)", () => {
         "tenant_id",
         "product_id",
       ]);
-      // WHERE predicate must reference store_id IS NULL AND effective_to IS NULL.
-      const whereStr = renderSQL(config.where).toLowerCase();
-      expect(whereStr).toContain("store_id");
-      expect(whereStr).toContain("is null");
-      expect(whereStr).toContain("effective_to");
+      // Q9 — tenant-level open interval: WHERE must be
+      //   store_id IS NULL AND effective_to IS NULL
+      // The conjoined regex asserts both clauses are present in order with
+      // an `AND` between them, so a future drift to e.g. `store_id IS NOT
+      // NULL` or a missing `effective_to` clause fails the test.
+      // The `(?:\w+\.)?` allows the rendered table qualifier
+      // (`price_history.effective_to`) that PgDialect emits after the AND.
+      const whereStr = normalizeRenderedSql(renderSQL(config.where)).toLowerCase();
+      expect(whereStr).toMatch(
+        /store_id\s+is\s+null\s+and\s+(?:\w+\.)?effective_to\s+is\s+null/,
+      );
     });
 
     it("declares a store-level open-interval partial unique index — Q9", () => {
@@ -272,14 +288,19 @@ describe("price_history Drizzle schema (T323)", () => {
         "product_id",
         "store_id",
       ]);
-      const whereStr = renderSQL(config.where).toLowerCase();
-      expect(whereStr).toContain("store_id");
-      expect(whereStr).toContain("is not null");
-      expect(whereStr).toContain("effective_to");
-      expect(whereStr).toContain("is null");
+      // Q9 — store-level open interval: WHERE must be
+      //   store_id IS NOT NULL AND effective_to IS NULL
+      // The conjoined regex requires both clauses with the correct null-tests
+      // joined by `AND`; a token-only check could pass on a wrongly inverted
+      // predicate (e.g. store_id IS NULL). `(?:\w+\.)?` allows the rendered
+      // table qualifier (`price_history.effective_to`).
+      const whereStr = normalizeRenderedSql(renderSQL(config.where)).toLowerCase();
+      expect(whereStr).toMatch(
+        /store_id\s+is\s+not\s+null\s+and\s+(?:\w+\.)?effective_to\s+is\s+null/,
+      );
     });
 
-    it("declares a tenant timeline index ordered by effective_from DESC", () => {
+    it("declares a tenant timeline index ordered by effective_from (asc/desc verified at migration layer)", () => {
       const cfg = getTableConfig(priceHistory);
       const idx = cfg.indexes.find(
         (i) => i.config.name === "idx_price_history_product_timeline",
@@ -287,7 +308,7 @@ describe("price_history Drizzle schema (T323)", () => {
       expect(idx).toBeDefined();
       const config = idx!.config as {
         unique?: boolean;
-        columns: Array<{ name: string }>;
+        columns: Array<{ name: string; order?: unknown }>;
       };
       expect(config.unique).toBeFalsy();
       expect(config.columns.map((c) => c.name)).toEqual([
@@ -295,6 +316,19 @@ describe("price_history Drizzle schema (T323)", () => {
         "product_id",
         "effective_from",
       ]);
+      // data-model.md §7 prescribes `effective_from DESC` for this timeline
+      // index. Drizzle 0.45.x does NOT surface column direction on the
+      // index config builder (the `.desc()` modifier is captured inside the
+      // SQL fragment emitted at migration generation time, not on
+      // `config.columns[i].order`). Reliable DESC verification therefore
+      // lives at the migration-level suite (T326+) which can inspect the
+      // generated SQL via `pg_indexes.indexdef`. Here we assert the
+      // strongest reliable shape: column set and order on the index,
+      // non-unique, no WHERE predicate.
+      expect(config.columns[2]?.name).toBe("effective_from");
+      expect(
+        (idx!.config as { where?: unknown }).where,
+      ).toBeUndefined();
     });
 
     it("declares a store timeline index partial on store_id IS NOT NULL", () => {
@@ -315,9 +349,10 @@ describe("price_history Drizzle schema (T323)", () => {
         "store_id",
         "effective_from",
       ]);
-      const whereStr = renderSQL(config.where).toLowerCase();
-      expect(whereStr).toContain("store_id");
-      expect(whereStr).toContain("is not null");
+      // Partial on store_id IS NOT NULL: assert the full predicate, not just
+      // tokens, so an inverted predicate (`store_id IS NULL`) would fail.
+      const whereStr = normalizeRenderedSql(renderSQL(config.where)).toLowerCase();
+      expect(whereStr).toMatch(/store_id\s+is\s+not\s+null/);
     });
   });
 

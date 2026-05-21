@@ -23,6 +23,9 @@
  * exported symbol is in fact a Drizzle pgTable instance bound to the correct
  * snake_case table name from data-model.md, not just any value.
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { getTableName } from "drizzle-orm";
 
 import * as schema from "../../../src/schema";
@@ -40,6 +43,47 @@ const CATALOG_TABLE_EXPORTS: ReadonlyArray<readonly [string, string]> = [
   ["priceHistory", "price_history"],
   ["unknownItems", "unknown_items"],
 ] as const;
+
+// The seven catalog modules data-model.md §1–§8 sanctions for re-export from
+// `packages/db/src/schema/index.ts`. Any extra `./catalog/<module>` line in
+// the barrel signals an unsanctioned table leaking through the public API.
+const EXPECTED_CATALOG_MODULES: readonly string[] = [
+  "global-products",
+  "tenant-products",
+  "tenant-product-categories",
+  "store-product-overrides",
+  "product-aliases",
+  "price-history",
+  "unknown-items",
+];
+
+const SCHEMA_BARREL_PATH = resolve(
+  __dirname,
+  "..",
+  "..",
+  "..",
+  "src",
+  "schema",
+  "index.ts",
+);
+
+/**
+ * Parse the schema barrel and return the catalog module slugs it re-exports.
+ *
+ * Matches lines of the form (with optional whitespace):
+ *   export * from "./catalog/<module>";
+ *   export * from './catalog/<module>';
+ * Returns just the `<module>` token, sorted, so the assertion is order-agnostic.
+ */
+function readCatalogReExports(): string[] {
+  const source = readFileSync(SCHEMA_BARREL_PATH, "utf8");
+  const pattern = /export\s+\*\s+from\s+["']\.\/catalog\/([\w-]+)["']\s*;?/g;
+  const modules: string[] = [];
+  for (const match of source.matchAll(pattern)) {
+    modules.push(match[1]!);
+  }
+  return modules.sort();
+}
 
 describe("packages/db/src/schema/index.ts — catalog barrel (T316/T331)", () => {
   it.each(CATALOG_TABLE_EXPORTS)(
@@ -65,5 +109,16 @@ describe("packages/db/src/schema/index.ts — catalog barrel (T316/T331)", () =>
         expectedTableName,
       );
     }
+  });
+
+  it("source barrel `./catalog/*` re-exports exactly the seven sanctioned modules — no extras, no missing", () => {
+    // The runtime re-export check above only fails if a sanctioned export is
+    // missing. It cannot detect an EXTRA catalog re-export (e.g. someone adds
+    // `export * from "./catalog/draft_table";` for a feature not yet in
+    // data-model.md). Parsing the barrel source closes that gap: we assert
+    // the set of `./catalog/<module>` import paths equals the sanctioned set.
+    const actual = readCatalogReExports();
+    const expected = [...EXPECTED_CATALOG_MODULES].sort();
+    expect(actual).toEqual(expected);
   });
 });
