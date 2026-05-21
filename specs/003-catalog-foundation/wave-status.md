@@ -31,6 +31,7 @@ needs its own authorization path. No slice is currently `local_uncommitted`.
 | `RLS_CROSS_STORE_RED_PROOF` | RED proof spec for the cross-store leak | merged in PR #254 @ `483aae4` |
 | `RLS_CROSS_STORE_FIX` | `0008_catalog_store_read_isolation.sql` + `.down.sql` | PR #254 @ `483aae4` |
 | `T335_TENANT_HELPER_COVERAGE` | `withTenant` catalog coverage spec for `tenant_products` via `runWithTenantContext` | PR #260 @ `5801369` |
+| `T340` | Catalog isolation harness (`apps/api/test/catalog/__support__/isolation-harness.ts`) | PR #264 @ `02cdf75` |
 
 ### Context from neighboring merges
 
@@ -86,10 +87,6 @@ All previously-local work is now on `main`:
 | Slice ID | Blocked by | Notes |
 |---|---|---|
 | `T336` | `MISSING_WITHSTORE_HELPER` finding | No remaining slice-level deps — `RLS_CROSS_STORE_FIX` cleared. Only the missing helper file blocks now. |
-| `T341` | `T340` | Cross-tenant read sweep — chain-blocked on harness, no longer on the RLS finding. |
-| `T342` | `T340` | Cross-store read sweep — chain-blocked on harness; the RLS fix is now in place so this test is expected to be authorable as RED→GREEN against the corrected SQL. |
-| `T343` | `T340` | RLS bypass probe — chain-blocked on harness. |
-| `T344` | `T340` | Malicious body-override — chain-blocked on harness. |
 
 ---
 
@@ -97,7 +94,10 @@ All previously-local work is now on `main`:
 
 | Slice ID | Type | Agent | Approval needed? | Notes |
 |---|---|---|---|---|
-| `T340` | test | `sonnet-test` | no | Catalog isolation harness at `apps/api/test/catalog/__support__/isolation-harness.ts`. Unblocks T341–T344. No gated surface. |
+| `T341` | test | `sonnet-test` | no | Cross-tenant read sweep at `apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`. T340 dep satisfied (PR #264). |
+| `T342` | test | `sonnet-test` | no | Cross-store read sweep at `apps/api/test/catalog/isolation/cross-store-read.spec.ts`. T340 dep satisfied (PR #264). |
+| `T343` | test | `sonnet-test` | no | RLS bypass probe at `apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts`. T340 dep satisfied (PR #264). |
+| `T344` | test | `sonnet-test` | no | Malicious body-override at `apps/api/test/catalog/isolation/malicious-override.spec.ts`. T340 dep satisfied (PR #264). |
 
 ---
 
@@ -120,16 +120,17 @@ explicit user endorsement.
 
 ## Next recommended action
 
-**Author T340 — the catalog isolation harness.** It's the only `ready`
-slice on the map and it's the chain-blocker for T341, T342, T343, and
-T344. Sequential dispatch (T340 alone, then T341–T344 as they unblock)
-is the lowest-cognitive-load path; parallel dispatch as
-`PHASE3_RED_WAVE` is available if you want higher throughput.
+**T341 solo is the most conservative next step.** T340 is on `main`;
+T341–T344 are all ready. Running T341 first validates the harness in a
+real execution context and lands a concrete cross-tenant read coverage
+win. Sequential dispatch (T341 → T342 → T343 → T344) has the lowest
+cognitive load; parallel dispatch as a T341–T344 wave is available if
+you want higher throughput.
 
 T336 is the other still-blocked slice and needs an explicit decision on
 how to resolve `MISSING_WITHSTORE_HELPER` (author the missing helper,
 or reinterpret T336 to test the GUC contract directly). That decision
-is independent of T340 and can happen whenever.
+is independent of the T341–T344 wave and can happen whenever.
 
 ---
 
@@ -163,7 +164,13 @@ If the slice resolves a finding, the same closeout sets
 ## Next short Maestro prompt
 
 ```text
-Use Agent OS. Execute slice T340. Stop before commit.
+Use Agent OS. Execute slice T341. Stop before commit.
+```
+
+To run all four isolation slices in parallel:
+
+```text
+Use Agent OS. Schedule slices T341, T342, T343, T344 in parallel. Stop before dispatch.
 ```
 
 Or, for the parallel wave (requires explicit endorsement):
