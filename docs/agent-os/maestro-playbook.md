@@ -98,6 +98,99 @@ This is exactly how `RLS_CROSS_STORE_READ_LEAK` was captured.
 
 ---
 
+## Workflow — post-merge closeout
+
+When a PR merges to `main`, the slice that produced it has effectively
+moved through the pipeline — but the spec's `execution-map.yaml` and
+`wave-status.md` still describe pre-merge state. Maestro's job at
+closeout is to bring those docs into agreement with reality, capture the
+merge audit fields, and recompute what's now ready.
+
+Maestro **does not merge the PR**. The closeout is post-hoc map
+maintenance: the user (or GitHub) merges the PR; Maestro observes that
+the merge happened and updates the docs.
+
+### 1. Verify the PR is merged
+
+- `gh pr view <PR_NUMBER> --json state,mergedAt,mergeCommit,baseRefName,headRefName,title`
+- If `state` is not `MERGED`, stop — there's nothing to close out yet. Tell the user.
+- Capture `mergeCommit.oid` and `mergedAt` — these are the audit fields the slice schema asks for.
+
+### 2. Map the PR to a spec + slice ID
+
+- The user's closeout prompt names the spec (`Spec: <SPEC_PATH>`) and the expected slice (`Expected slice: <EXPECTED_SLICE_ID>`).
+- Read the spec's `execution-map.yaml`. Find the slice entry by `id`.
+- Confirm the slice's status is one of `pushed`, `in_review`, or `committed` (any pre-merge state). If it is already `merged`, stop — this PR has already been closed out.
+- If the slice ID does not exist, or if the PR's changed files extend beyond the slice's `allowed_files`, stop and ask the user before guessing. Closeouts must not silently expand a slice's footprint after the fact.
+
+### 3. Update the slice in `execution-map.yaml`
+
+For the merged slice, set:
+
+- `status: merged`
+- `merged_in_pr: <PR_NUMBER>`
+- `merged_at_commit: <merge commit short SHA, e.g. 5801369>`
+- `merged_at_date: <YYYY-MM-DD>`
+- Move the slice's `blocks:` list (if any) to `previously_blocked:` so the historical block record is preserved for audit. Set `blocks: []`.
+
+Do not delete the merged slice. The map keeps merged slices as the
+canonical record of work that landed.
+
+### 4. Update any finding the slice closed
+
+If the slice is the `resolved_by:` for a finding:
+
+- Set the finding's `resolved_by_pr: <PR_NUMBER>`
+- Set the finding's `resolved_by_commit: <merge commit short SHA>`
+- Set the finding's `resolved_at: <YYYY-MM-DD>`
+- Move the finding's `blocks:` list to `previously_blocked:`. Set `blocks: []`.
+
+### 5. Clear satisfied blockers across the map
+
+For every slice in the map whose `depends_on` includes the just-merged
+slice ID:
+
+- Remove the merged slice from that `depends_on` list (it is satisfied — no need to keep listing it; the merged slice itself is still in the map as the audit record).
+- If, after removal, the slice has no remaining unsatisfied dependencies AND its `status` was `blocked`, transition it to `ready`.
+- If a slice remains `blocked` after this pass, leave it alone — it is chain-blocked on something else. Do NOT silently mark a slice ready just because one dependency cleared.
+
+### 6. Preserve unrelated findings, slices, and blockers
+
+A closeout updates only the merged slice, the finding it resolves (if
+any), and the slices whose dependencies it satisfied. **Do not edit
+unrelated findings, unrelated slices, or unrelated blockers.** Leave
+them exactly as they were. If the closeout reveals that an unrelated
+finding has also become stale, surface that to the user as a follow-up
+suggestion — do not silently mutate it in the same diff.
+
+### 7. Update `wave-status.md`
+
+- Bump `Last updated` and `Base` (advance to the merge commit's SHA).
+- Move the merged slice's row from `Local only — committed/uncommitted` to `Merged on main`.
+- If a finding was resolved, move it from `Active findings` to `Resolved findings (audit trail)`.
+- Update the `Blocked` table — drop any row whose blocker just cleared; update the "Blocked by" cell of any row whose chain-blocker advanced.
+- Update the `Ready` table — add any slice that transitioned to `ready`.
+- Recompute the `Next recommended action` paragraph and the `Next short Maestro prompt` code fence.
+
+### 8. Validate and stop before commit (default)
+
+- Run `git diff --check` and the forbidden-path scan from the standing rules.
+- Confirm only the spec's `execution-map.yaml` and `wave-status.md` were modified (no other files).
+- Report changed files, exact transitions, and the new next-prompt — then **stop**.
+
+The user will say "commit" / "commit and push" / "open PR" as a separate
+step. Maestro does not commit a closeout autonomously unless the
+original closeout prompt explicitly authorizes it.
+
+### 9. After commit (when authorized)
+
+Use a `docs(<spec-short>): refresh Agent OS execution map` commit
+subject (e.g. `docs(catalog): refresh Agent OS execution map`). One
+slice → one closeout commit. Do not bundle the closeout with unrelated
+docs edits.
+
+---
+
 ## Slice ID conventions
 
 - All-caps, underscore-separated, descriptive: `RLS_CROSS_STORE_FIX`, `T335_TENANT_HELPER_COVERAGE`, `T342_CROSS_STORE_READ_SWEEP`.
@@ -117,10 +210,35 @@ This is exactly how `RLS_CROSS_STORE_READ_LEAK` was captured.
 
 ---
 
-## Quick reference — the short prompt
+## Quick reference — short prompts
+
+To dispatch a slice:
 
 ```text
 Use Agent OS. Execute slice <SLICE_ID>. Stop before commit.
 ```
 
-This expands, via the relevant `execution-map.yaml`, into the full per-slice brief that the worker agent receives. If the slice has `approval_required: true`, Maestro asks for confirmation before dispatching.
+To close out a merged PR (post-hoc docs maintenance — see [Workflow — post-merge closeout](#workflow--post-merge-closeout)):
+
+```text
+Use Agent OS.
+Close out PR #<PR_NUMBER>.
+Spec: <SPEC_PATH>
+Expected slice: <EXPECTED_SLICE_ID>
+Update execution-map.yaml and wave-status.md.
+Stop before commit.
+```
+
+To schedule a parallel group:
+
+```text
+Use Agent OS. Schedule group <GROUP_ID>. Stop before dispatch.
+```
+
+To resolve a finding once an unblocking path is authorized:
+
+```text
+Use Agent OS. Resolve finding <FINDING_ID>. Stop before commit.
+```
+
+Each form expands, via the relevant `execution-map.yaml`, into the full brief that the worker agent receives. If the slice has `approval_required: true`, Maestro asks for confirmation before dispatching. The closeout form is post-hoc: Maestro does not perform the merge; it observes the merged PR and updates the spec's docs to match.

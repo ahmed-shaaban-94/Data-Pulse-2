@@ -29,6 +29,14 @@ findings: []
   #   blocks:
   #     - SLICE_ID_THAT_CANT_PROCEED
   #   resolved_by: SLICE_THAT_CLOSES_IT
+  #
+  # Post-resolution audit fields — populated by the post-merge closeout
+  # workflow when the resolving slice's PR merges. All optional.
+  #   resolved_by_pr: <PR_NUMBER>
+  #   resolved_by_commit: <short-sha>
+  #   resolved_at: <YYYY-MM-DD>
+  #   previously_blocked:            # moved here from `blocks:` at resolution time
+  #     - SLICE_ID_THAT_CANT_PROCEED
 
 # ----------------------------------------------------------------------------
 # slices — the work items
@@ -91,6 +99,17 @@ slices:
       - confirmation_no_unauthorized_git_ops
       - recommended_commit_message
     parallel_safety: unsafe         # gated SQL slices serialize
+    # ------------------------------------------------------------------------
+    # Post-merge closeout audit fields — populated when status -> merged.
+    # See docs/agent-os/maestro-playbook.md "Workflow — post-merge closeout".
+    # All optional; uncomment after the slice's PR merges.
+    # ------------------------------------------------------------------------
+    # merged_in_pr: <PR_NUMBER>          # e.g. 260
+    # merged_at_commit: <short-sha>      # e.g. 5801369
+    # merged_at_date: <YYYY-MM-DD>       # e.g. 2026-05-21
+    # previously_blocked:                # moved here from `blocks:` at merge time
+    #   - <SLICE_ID_X>
+    #   - <SLICE_ID_Y>
 
 # ----------------------------------------------------------------------------
 # groups — optional parallel waves
