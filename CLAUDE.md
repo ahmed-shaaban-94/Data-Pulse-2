@@ -1,97 +1,65 @@
 # Data-Pulse-2 — Agent Context
 
-This is the multi-tenant SaaS rebuild for Data Pulse. The legacy
-`Data-Pulse` repository is reference material only — never copy from it
-without re-spec'ing here.
+Multi-tenant SaaS rebuild for Data Pulse. The legacy `Data-Pulse` repo is reference only — never copy without re-spec'ing here.
 
-## Active artifacts
+## Constitution
 
-- **Constitution**: [.specify/memory/constitution.md](.specify/memory/constitution.md) (v3.0.0)
-- **Active feature**: `001-foundation-auth-tenant-store`
-  - Spec: [specs/001-foundation-auth-tenant-store/spec.md](specs/001-foundation-auth-tenant-store/spec.md)
-  - <!-- SPECKIT START -->
-  - Plan: [specs/001-foundation-auth-tenant-store/plan.md](specs/001-foundation-auth-tenant-store/plan.md)
-  - Research: [specs/001-foundation-auth-tenant-store/research.md](specs/001-foundation-auth-tenant-store/research.md)
-  - Data model: [specs/001-foundation-auth-tenant-store/data-model.md](specs/001-foundation-auth-tenant-store/data-model.md)
-  - Contracts: [specs/001-foundation-auth-tenant-store/contracts/](specs/001-foundation-auth-tenant-store/contracts/)
-  - Quickstart: [specs/001-foundation-auth-tenant-store/quickstart.md](specs/001-foundation-auth-tenant-store/quickstart.md)
-  - <!-- SPECKIT END -->
-- **Specification artifact**: `002-pos-operator-identity` — contract planning and
-  identity model for POS operator authentication. This is a specification and
-  contract-planning artifact only. The POS application itself is a separate
-  repository; POS integrates exclusively through the documented API contracts in
-  `packages/contracts/openapi/` and must never access the SaaS database directly.
-  - Spec: [specs/002-pos-operator-identity/spec.md](specs/002-pos-operator-identity/spec.md)
-  - Research: [specs/002-pos-operator-identity/research.md](specs/002-pos-operator-identity/research.md)
-  - Contracts: [specs/002-pos-operator-identity/contracts/](specs/002-pos-operator-identity/contracts/)
-- **Specification artifact**: `003-catalog-foundation` — catalog source-of-truth
-  model (Global Product Index, Tenant Catalog, Store Override, Product Aliases,
-  Price History, Unknown Item Workflow) plus the future SaleLine Snapshot
-  obligation. Specification and planning artifact only — no implementation,
-  schema, migrations, or OpenAPI contracts authored yet.
-  - Spec: [specs/003-catalog-foundation/spec.md](specs/003-catalog-foundation/spec.md)
-  - Plan: [specs/003-catalog-foundation/plan.md](specs/003-catalog-foundation/plan.md)
+[.specify/memory/constitution.md](.specify/memory/constitution.md) (v3.0.0) is the source of truth for all 14 Core Principles. Read it when principle text matters — do not paraphrase from memory.
 
-## Constitution at a glance (v3.0.0)
+Always-on highlights:
+- **§II Multi-tenant by default** — RLS fail-closed; cross-tenant returns safe 404; runtime DB role MUST NOT bypass RLS; workers establish tenant context before any DB access.
+- **§III Backend Authority** (NON-NEGOTIABLE) — server-side authz, DB constraints, uniform error envelope, exact-decimal money, POS payload preserved as received.
+- **§IV Contract-First** — `packages/contracts/openapi/` is canonical; stable `operationId`; no raw entities in responses.
+- **§VIII Reproducible Releases** — **no `package.json` / `pnpm-lock.yaml` / DB schema / SQL migration / OpenAPI / CI changes without explicit approval (`[GATED]`).**
+- **§XII Authorization & Object Safety** — IDs in bodies are not trusted; `tenant_id`/`store_id`/`role`/`status` are forbidden in request bodies (mass-assignment).
+- **§XIV PII Discipline** — logger-boundary redaction is mandatory; soft-delete is the default; no PII in metric labels (FR-B-006).
 
-1. **Reference, Not Source of Truth** — legacy repo is reference only.
-2. **Multi-Tenant SaaS by Default** — tenant scoping at DB+API+test layers;
-   RLS fail-closed; cross-tenant access returns safe 404; workers establish
-   tenant context; runtime DB role MUST NOT bypass RLS.
-3. **Backend Authority & Data Integrity** (NON-NEGOTIABLE) — server-side authz,
-   DB constraints, cache is never source of truth, uniform error envelope,
-   money is exact-decimal + currency-coded, POS totals preserved as received.
-4. **Contract-First POS Integration** — `packages/contracts/openapi/` is the
-   source of truth; stable `operationId`; responses MUST NOT return raw DB
-   entities; versioned, authenticated, idempotent APIs; POS app is a separate
-   repo.
-5. **Async Work Belongs in Workers** — webhooks, sync, retries, scheduled jobs;
-   jobs carry `tenantId` / `storeId` / `correlationId`; workers establish
-   tenant context before DB access; failed-job logs redacted.
-6. **Test-First Quality** — write tests first; ≥80% coverage; cross-tenant +
-   cross-store sweep tests required; RLS bypass probe; malicious-override
-   tests; Testcontainers for tenant isolation.
-7. **Observable Systems** — structured logs with `request_id` / `tenant_id`,
-   metrics including queue lag / RLS context failures / duplicate event rate /
-   reconciliation mismatch rate; no secrets / tokens / PII / payloads in logs.
-8. **Reproducible & Versioned Releases** — pinned envs, numbered migrations,
-   versioned APIs; **no `package.json` / `pnpm-lock.yaml` / DB schema / SQL
-   migration changes without explicit approval**.
-9. **Source-of-Truth Model** — Global Catalog = reference; Tenant Catalog =
-   customer truth; Store Override = branch truth; SaleLine snapshot = invoice
-   truth; POS payload provenance preserved.
-10. **Retail Temporal Semantics** — distinguish `occurredAt` / `receivedAt` /
-    `processedAt` / `businessDate` / `sourceClockAt` / `voidedAt` / `refundedAt`;
-    historical sale facts MUST NOT be silently rewritten by catalog changes;
-    storage UTC; security clocks are server clocks.
-11. **Idempotency & External IDs** — retryable mutating APIs are idempotent or
-    justified; POS ingestion uses `sourceSystem` + `externalId`; workers and
-    notification jobs are idempotent.
-12. **Authorization & Object Safety** — IDs in bodies are not trusted; mass-
-    assignment forbidden (`tenant_id`, `store_id`, `role`, `status`,
-    `acceptedAt`, `createdBy`, etc.); strict body validation; safe 404 for
-    cross-tenant; default deny.
-13. **Auditability & Provenance** — auditable events carry actor / tenant /
-    store / operation / target / timestamp / `correlationId` / outcome;
-    anonymous-actor pattern; insert-only at the application layer; ingestion
-    provenance preserved.
-14. **PII & Data Lifecycle Discipline** — data classification (PII / payment /
-    business / public); explicit retention windows; right-to-erasure as a
-    first-class flow respecting audit immutability; logger-boundary redaction
-    is mandatory; soft-delete is the default.
+## Active feature
 
-> Day-to-day agent + human operating rules (start from `origin/main`, thin
-> slices, pre-flight plan, no-commit-until-told) are part of the **Working
-> Agreement** appendix in the constitution and live here / in CONTRIBUTING.md.
-> They are not Core Principles.
+**`004-platform-production-readiness`** — k6 load testing, observability instrumentation, idempotency, outbox first slice, SDK strategy. See [docs/production-readiness/004-closeout-status.md](docs/production-readiness/004-closeout-status.md) for the authoritative phase-by-phase status (this supersedes the planning-phase P9 report).
+
+Open work in 004:
+- **T483** — live `/metrics` operator scrape validation. Worker registration unblocked by PR #246; full validation blocked on emission call sites (T595/T596 + worker T460/T463–T466). See [docs/observability/operator-validation-report.md](docs/observability/operator-validation-report.md).
+- **T565** — close 5 `it.todo` worker redaction stubs (`actor_label`, `payload.metadata.{email,phone,full_name}`).
+- **T595/T596** — outbox + queue metric emission call sites (definitions exist; emission absent).
+- **T597–T600** — P7 exit-gate validation.
+
+## Shipped / paused specs
+
+- **`001-foundation-auth-tenant-store`** — shipped. Auth, tenant/store/memberships, audit pipeline, idempotency interceptor (memberships/invite), outbox first slice all merged. Reference: [specs/001-foundation-auth-tenant-store/](specs/001-foundation-auth-tenant-store/).
+- **`002-pos-operator-identity`** — specification + OpenAPI contracts only. POS app is a separate repo and integrates exclusively via `packages/contracts/openapi/`; never via the SaaS database. [specs/002-pos-operator-identity/](specs/002-pos-operator-identity/).
+- **`003-catalog-foundation`** — specification + plan + Drizzle schema modules and schema-shape tests merged (7 catalog tables: `global-products`, `tenant-products`, `store-product-overrides`, `product-aliases`, `tenant-product-categories`, `price-history`, `unknown-items`). **No SQL migrations yet** — tables are defined in code but do not exist in any DB. Runtime, contracts, and APIs intentionally paused while 004 closes. [specs/003-catalog-foundation/](specs/003-catalog-foundation/).
 
 ## What this repo does NOT own
 
-The POS application is a separate repository. This repo owns SaaS backend,
-admin/dashboard frontend (UI is its own feature), workers, and infrastructure.
+POS application (separate repo). This repo owns SaaS backend, admin/dashboard frontend (separate feature, deferred), workers, infrastructure.
 
-## Stack defaults (per current plan)
+## Stack
 
-**TypeScript-first** (backend only in this feature). Node.js 20 LTS · TypeScript 5.x (strict) · NestJS 11 (api + worker) · Drizzle ORM with explicit SQL migrations · PostgreSQL 16+ · Redis 7+ · BullMQ · pnpm workspaces · Zod (validation) · OpenAPI 3.1 (contracts of record) · Jest + Supertest + Testcontainers · pino + OpenTelemetry · argon2id (`argon2` npm) · opaque revocable bearer tokens for API/POS, httpOnly cookie sessions for dashboard humans · UUIDv7 (UUIDv4 fallback).
+- **Runtime**: Node.js 20 LTS · TypeScript 5.x strict · pnpm workspaces
+- **Backend**: NestJS 11 (api + worker)
+- **Data**: PostgreSQL 16+ with RLS · Drizzle ORM · explicit SQL migrations · Redis 7+ · BullMQ
+- **Contracts**: OpenAPI 3.1 of record · Zod for runtime validation
+- **Test**: Jest + Supertest + Testcontainers · `MIGRATION_TEST_ALLOW_SKIP=1` for Docker-less local runs
+- **Observability**: pino · OpenTelemetry · Prometheus exporter (API `:9464`, worker `127.0.0.1:9091`)
+- **Auth**: argon2id (`argon2` npm) · opaque revocable bearer tokens (API/POS) · httpOnly cookie sessions (dashboard humans)
+- **IDs**: UUIDv7 with UUIDv4 fallback
 
-**Dashboard / web frontend is deferred to a separate feature** and is not chosen or scaffolded by this foundation feature. The OpenAPI contracts produced here are the only guarantee the dashboard needs. Defaults are revisable via `/speckit-clarify`.
+Dashboard / web frontend is a separate future feature. OpenAPI contracts produced here are the only thing the dashboard depends on.
+
+## Recent infrastructure notes (read if touching workspace wiring)
+
+- **PR #245** (`fix(runtime): resolve workspace package exports to dist`) — `packages/{shared,auth,db}/package.json` now point `main` / `types` / `exports` at `dist/*.{js,d.ts}` via conditional `{ types, default }` shape. Required so `node apps/{api,worker}/dist/main.js` works at all. **Implication**: workspace packages MUST be built before they can be required at runtime (`pnpm -r build`). ts-jest still resolves correctly via the `types` condition.
+- **PR #246** (`fix(worker): register worker metrics on startup`) — `apps/worker/src/main.ts` performs a side-effect import of `./observability/metrics/worker.metrics` immediately after `./instrumentation`. Without this, the worker's 10 platform signal families (signals.md §3) never register with the live OTel MeterProvider. Order is load-bearing — `./instrumentation` must remain first. Regression test: `apps/worker/test/observability/production-import-order.spec.ts`.
+
+## Working agreement (day-to-day)
+
+These are operating rules from the constitution's Working Agreement appendix — not Core Principles:
+
+- Start every slice from latest `origin/main`. Pre-flight plan first; do not implement until approved.
+- Thin slices. No combining unrelated work.
+- Never commit / stage / push / merge / open PR without explicit instruction.
+- Forbidden paths require `[GATED]` approval: `package.json`, `pnpm-lock.yaml`, DB schema, SQL migrations, `packages/contracts/openapi/**`, `.github/workflows/**`, `apps/**` source for observability-only slices, etc. (per task-specific brief).
+- Use Testcontainers for RLS / cross-tenant integration tests. Use `MIGRATION_TEST_ALLOW_SKIP=1` when Docker is unavailable locally.
+- Untracked `bin/` and `externals/` directories are not part of any slice — leave them alone.
+- Stop conditions in a brief mean stop and report. Do not silently expand scope.
