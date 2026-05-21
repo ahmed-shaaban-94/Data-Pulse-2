@@ -1,7 +1,8 @@
-import { Module } from "@nestjs/common";
+import { Injectable, Module, type OnModuleDestroy, type OnModuleInit, Inject } from "@nestjs/common";
+import type { Pool } from "pg";
 
 import { AuditModule } from "./audit/audit.module";
-import { AuthModule } from "./auth/auth.module";
+import { AuthModule, PG_POOL } from "./auth/auth.module";
 import { ContextModule } from "./context/context.module";
 import { MembershipsModule } from "./memberships/memberships.module";
 import { OutboxAdminModule } from "./outbox/admin.module";
@@ -10,6 +11,38 @@ import { PosOperatorsModule } from "./pos-operators/pos-operators.module";
 import { PosShiftsModule } from "./pos-shifts/pos-shifts.module";
 import { StoresModule } from "./stores/stores.module";
 import { TenantsModule } from "./tenants/tenants.module";
+import { registerDbPoolGauges } from "./observability/metrics/db.metrics";
+
+/**
+ * Nest-aware registrar for the `db_pool_in_use` and `db_pool_waiters`
+ * ObservableGauge callbacks (T483 / P4 W1).
+ *
+ * On `onModuleInit` registers both callbacks against the API's pg.Pool
+ * (injected via PG_POOL, exported by AuthModule). On `onModuleDestroy`
+ * removes them so the callbacks do not reference a closed pool during
+ * graceful shutdown.
+ *
+ * The pool reads are synchronous in-memory counters — no DB round-trip,
+ * no re-entrancy risk, no async I/O.
+ */
+@Injectable()
+class ApiDbPoolGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
+  private handle: { stop: () => void } | null = null;
+
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  onModuleInit(): void {
+    this.handle = registerDbPoolGauges({ pool: this.pool });
+  }
+
+  onModuleDestroy(): void {
+    const h = this.handle;
+    this.handle = null;
+    if (h !== null) {
+      h.stop();
+    }
+  }
+}
 
 /**
  * Root module.
@@ -31,6 +64,6 @@ import { TenantsModule } from "./tenants/tenants.module";
 @Module({
   imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule],
   controllers: [],
-  providers: [],
+  providers: [ApiDbPoolGaugeRegistrar],
 })
 export class AppModule {}
