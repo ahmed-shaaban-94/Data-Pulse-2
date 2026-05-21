@@ -45,6 +45,7 @@ import {
   recordRedisCommandDuration,
   recordWorkerJobDuration,
   recordWorkerProcessingFailure,
+  registerOutboxPendingGauge,
   sanitizeErrorClass,
 } from "../../src/observability/metrics/worker.metrics";
 
@@ -59,7 +60,7 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
     });
   }
 
-  it("WORKER_METRIC_NAMES covers the seven base worker signals plus the two T595 PR-B-1 outbox signals", () => {
+  it("WORKER_METRIC_NAMES covers the seven base worker signals plus all three T595 outbox signals", () => {
     const expected = [
       "redis_command_duration_seconds",
       "queue_lag_seconds",
@@ -68,41 +69,40 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
       "queue_retry_total",
       "worker_job_duration_seconds",
       "worker_processing_failure_total",
-      // T595 PR-B-1: graduated from WORKER_OUTBOX_METRIC_NAMES to here
+      // T595 PR-B-1: graduated from WORKER_OUTBOX_METRIC_NAMES
       "outbox_dead_letter_total",
       "outbox_drain_duration_seconds",
+      // T595 PR-B-2: ObservableGauge with scrape-time addCallback
+      "outbox_pending_total",
     ];
     expect([...WORKER_METRIC_NAMES].sort()).toEqual([...expected].sort());
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Track C outbox placeholders: only outbox_pending_total remains a
-//    definition-only placeholder (its ObservableGauge addCallback wiring is
-//    deferred to T595 PR-B-2).
+// 2. Track C outbox placeholders: tombstone — all signals graduated.
+//    WORKER_OUTBOX_METRIC_NAMES is now empty (T595 PR-B-2 graduated the
+//    final placeholder, outbox_pending_total).
 // ---------------------------------------------------------------------------
 
-describe("T465 — outbox placeholders: registered but not yet emitted", () => {
-  for (const name of WORKER_OUTBOX_METRIC_NAMES) {
-    it(`outbox placeholder "${name}" is registered in ALLOWED_METRIC_LABELS`, () => {
-      expect(ALLOWED_METRIC_LABELS[name]).toBeDefined();
-    });
-  }
-
-  it("WORKER_OUTBOX_METRIC_NAMES holds only outbox_pending_total post-PR-B-1 (signals.md §3.4)", () => {
-    const expected = ["outbox_pending_total"];
-    expect([...WORKER_OUTBOX_METRIC_NAMES].sort()).toEqual([...expected].sort());
+describe("T465 — outbox placeholders: tombstone (all signals graduated post-PR-B-2)", () => {
+  it("WORKER_OUTBOX_METRIC_NAMES is empty (all three T595 signals now emit)", () => {
+    expect([...WORKER_OUTBOX_METRIC_NAMES]).toEqual([]);
   });
 
-  it("outbox placeholder names are disjoint from emit-now worker names", () => {
+  it("outbox placeholder names are disjoint from emit-now worker names (vacuously true)", () => {
     const intersect = WORKER_OUTBOX_METRIC_NAMES.filter((n) =>
       (WORKER_METRIC_NAMES as readonly string[]).includes(n),
     );
     expect(intersect).toEqual([]);
   });
 
-  it("the two PR-B-1 graduating signals are now in WORKER_METRIC_NAMES, not WORKER_OUTBOX_METRIC_NAMES", () => {
-    const graduated = ["outbox_dead_letter_total", "outbox_drain_duration_seconds"];
+  it("all three T595 outbox signals are now in WORKER_METRIC_NAMES, not WORKER_OUTBOX_METRIC_NAMES", () => {
+    const graduated = [
+      "outbox_dead_letter_total",
+      "outbox_drain_duration_seconds",
+      "outbox_pending_total",
+    ];
     for (const name of graduated) {
       expect((WORKER_METRIC_NAMES as readonly string[]).includes(name)).toBe(true);
       expect((WORKER_OUTBOX_METRIC_NAMES as readonly string[]).includes(name)).toBe(false);
@@ -319,5 +319,21 @@ describe("T465 — emission helpers: callable without a live MetricReader", () =
     expect(() =>
       recordOutboxDrainDuration({ event_type: "audit.event.created" }, 0),
     ).not.toThrow();
+  });
+
+  // T595 PR-B-2 — outbox_pending_total ObservableGauge registrar
+  it("registerOutboxPendingGauge is exported and callable with pool=null (no-DB path)", () => {
+    const result = registerOutboxPendingGauge({ pool: null });
+    expect(result).toBeDefined();
+    expect(typeof result.stop).toBe("function");
+    // stop() must be safe to call even on the no-op path.
+    expect(() => result.stop()).not.toThrow();
+  });
+
+  it("registerOutboxPendingGauge no-DB path is idempotent: many calls + stops do not throw", () => {
+    for (let i = 0; i < 5; i++) {
+      const result = registerOutboxPendingGauge({ pool: null });
+      expect(() => result.stop()).not.toThrow();
+    }
   });
 });

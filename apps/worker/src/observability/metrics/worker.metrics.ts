@@ -19,15 +19,12 @@
  *   - `outbox_dead_letter_total` and `outbox_drain_duration_seconds` are
  *     emitted from `DrainerProcessor.processRow` (T595 PR-B-1). Helpers
  *     `recordOutboxDeadLetter` / `recordOutboxDrainDuration` are exposed.
- *   - `outbox_pending_total` remains **registered as definition only** —
- *     the ObservableGauge needs an `addCallback` against a live DB pool,
- *     deferred to a follow-on slice (T595 PR-B-2).
- *
- * Per `docs/observability/p4-worker-instrumentation-plan.md` §6, registering
- * the placeholders here lets dashboards-as-code and alerts-as-code refer
- * to canonical signal names ahead of the emission slice. Adding emission
- * for the remaining outbox signal will not change this module's
- * registered names.
+ *   - `outbox_pending_total` is emitted via `registerOutboxPendingGauge`
+ *     (T595 PR-B-2): an ObservableGauge whose `addCallback` queries
+ *     `outbox_events` GROUP BY `event_type` at SDK scrape time and
+ *     observes one sample per event_type. `WorkerModule` wires the
+ *     registrar against `AuditDbPool` on `onModuleInit`; the no-DB
+ *     (dev / CI) path is a no-op.
  *
  * Emission wiring (per-processor call sites) is intentionally deferred —
  * this slice ships definitions + helpers + a presence test only. The
@@ -42,6 +39,7 @@
  *
  * Constitution §VII / FR-B-003 / FR-B-006 / FR-B-012.
  */
+import type { Pool } from "pg";
 import {
   assertMetricLabels,
   getMeter,
@@ -220,16 +218,21 @@ const _workerProcessingFailure: Counter = meter.createCounter(
   },
 );
 
-// Track C outbox — outbox_pending_total remains a PLACEHOLDER (no helper)
-// because the ObservableGauge needs an addCallback wired to a live DB pool;
-// that DB/module lifecycle wiring is the deferred T595 follow-on slice.
+// Track C outbox — outbox_pending_total is an ObservableGauge whose
+// addCallback queries outbox_events GROUP BY event_type at scrape time.
+// The callback is registered by `registerOutboxPendingGauge` (T595 PR-B-2),
+// called from WorkerModule's OutboxPendingGaugeRegistrar on Nest init.
+// The instrument is created here so the OTel Meter handle stays at module
+// scope and the callback can be registered later against the SAME instrument
+// without re-creating it.
 const _outboxPending: ObservableGauge = meter.createObservableGauge(
   "outbox_pending_total",
   {
     description:
-      "Pending outbox events by event_type. PLACEHOLDER — registered for " +
-      "dashboard/alert authoring ahead of the addCallback wiring slice; " +
-      "no values emitted yet.",
+      "Pending outbox events by event_type. Sampled at OTel scrape time " +
+      "via SELECT COUNT(*) GROUP BY event_type on rows whose delivery_state " +
+      "is in ('pending','claimed','failed'). 'delivered' and 'dead_lettered' " +
+      "are terminal and excluded.",
   },
 );
 
@@ -252,11 +255,9 @@ const _outboxDrainDuration: Histogram = meter.createHistogram(
   },
 );
 
-// Silence TS "unused variable" warnings — _queueLag is consumed by a future
-// addCallback wiring; _outboxPending stays a placeholder pending its own
-// addCallback slice.
+// Silence TS "unused variable" warning — _queueLag is consumed by a future
+// addCallback wiring (separate slice).
 void _queueLag;
-void _outboxPending;
 
 // ---------------------------------------------------------------------------
 // Attribute types — TypeScript compile-time label enforcement (FR-B-006)
@@ -425,6 +426,174 @@ export function recordOutboxDrainDuration(
 }
 
 // ---------------------------------------------------------------------------
+// outbox_pending_total — ObservableGauge addCallback registrar (T595 PR-B-2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of one row returned by the pending-events query. The pg driver
+ * serialises bigint as string; the registrar casts to Number at the boundary
+ * (safe because the outbox row count cannot realistically exceed 2^53).
+ */
+export interface OutboxPendingRow {
+  readonly event_type: string;
+  readonly count: number;
+}
+
+/**
+ * Dependencies for `registerOutboxPendingGauge`.
+ *
+ * `pool` is the `AuditDbPool.pool` value — a real `pg.Pool` in production or
+ * `null` on the safe non-prod / no-DB path. `null` makes the registrar a no-op
+ * (no callback registered).
+ *
+ * `queryFn` is an OPTIONAL injection seam for unit tests — production callers
+ * omit it. When omitted, the registrar uses the default Drizzle-less SQL
+ * shown in the source below, wrapped in `runWithTenantContext` with
+ * `{ tenantId: null, isPlatformAdmin: true }`. The outbox RLS policy
+ * permits the platform-admin context to SELECT rows from every tenant,
+ * mirroring `claimBatch` (packages/db/src/outbox/repository.ts).
+ */
+export interface OutboxPendingGaugeDeps {
+  readonly pool: Pool | null;
+  readonly queryFn?: (pool: Pool) => Promise<OutboxPendingRow[]>;
+}
+
+/**
+ * Bounded list of `delivery_state` values that contribute to the pending
+ * gauge. `delivered` is terminal (success); `dead_lettered` is terminal
+ * and separately tracked by `outbox_dead_letter_total`. Including either
+ * would double-count.
+ *
+ * Mirrors the runtime check pinned by
+ * `apps/worker/src/outbox/drainer.processor.ts` and the CHECK constraint
+ * in `packages/db/drizzle/0006_outbox_events.sql` (delivery_state must be
+ * one of: 'pending','claimed','delivered','failed','dead_lettered').
+ */
+const PENDING_DELIVERY_STATES = ["pending", "claimed", "failed"] as const;
+
+/**
+ * Default scrape-time query. Runs under
+ * `runWithTenantContext(pool, { tenantId: null, isPlatformAdmin: true }, ...)`
+ * so the outbox_events RLS policy lets the SELECT aggregate across tenants.
+ *
+ * Imports are LAZY (require-style) inside the function body to keep
+ * worker.metrics.ts free of a load-time dependency on @data-pulse-2/db.
+ * The module's existing load-time imports are already package-graph
+ * verified (PR #245); adding @data-pulse-2/db at module load would force
+ * a behavioral re-test of the `production-import-order.spec.ts` regression
+ * surface for no real benefit — the registrar's query path runs at scrape
+ * time, well after Nest init.
+ */
+async function defaultPendingQuery(pool: Pool): Promise<OutboxPendingRow[]> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { runWithTenantContext } = require("@data-pulse-2/db") as {
+    runWithTenantContext: <T>(
+      pool: Pool,
+      ctx: { tenantId: string | null; isPlatformAdmin: boolean },
+      work: (client: { query: (sql: string) => Promise<{ rows: Array<{ event_type: string; count: string }> }> }) => Promise<T>,
+    ) => Promise<T>;
+  };
+  return runWithTenantContext(
+    pool,
+    { tenantId: null, isPlatformAdmin: true },
+    async (client) => {
+      const states = PENDING_DELIVERY_STATES.map((s) => `'${s}'`).join(", ");
+      const result = await client.query(
+        `SELECT event_type, COUNT(*)::text AS count
+           FROM outbox_events
+          WHERE delivery_state IN (${states})
+          GROUP BY event_type`,
+      );
+      return result.rows.map((r) => ({
+        event_type: r.event_type,
+        count: Number(r.count),
+      }));
+    },
+  );
+}
+
+/**
+ * Register the `outbox_pending_total` ObservableGauge callback.
+ *
+ * Behavior:
+ *   - `deps.pool === null` (NoOp / dev path): returns immediately with a
+ *     no-op `stop` handle. No callback is registered. Gauge stays unobserved;
+ *     dashboards render "no data" for the missing scrape window, which is
+ *     the truthful signal — there is no DB to count against.
+ *   - Otherwise: registers an OTel `addCallback`. At each scrape the
+ *     callback runs the (optionally injected) `queryFn`, then calls
+ *     `observableResult.observe(count, { event_type })` for each row.
+ *
+ * Re-entrancy:
+ *   The callback skips re-execution if a previous tick is still in-flight.
+ *   OTel default scrape cadence is ~60s and the query (a single GROUP BY
+ *   on the partial index `idx_outbox_events_claim`) completes in
+ *   milliseconds, so this is defense-in-depth rather than a hot path.
+ *
+ * Failure handling:
+ *   The callback NEVER throws. A query error writes ONE structured
+ *   stderr line (errorName only — no `err.message`, mirrors
+ *   `DrainerProcessor.logError`) and returns without observing anything;
+ *   the next scrape gets a fresh attempt.
+ *
+ * The returned `{ stop }` handle removes the callback. `WorkerModule`'s
+ * `OutboxPendingGaugeRegistrar.onModuleDestroy` calls it during graceful
+ * shutdown so a teardown does not leave a dangling callback that would
+ * try to query a closed pool.
+ */
+export function registerOutboxPendingGauge(
+  deps: OutboxPendingGaugeDeps,
+): { stop: () => void } {
+  const pool = deps.pool;
+  if (pool === null) {
+    // Safe no-DB path. No callback registered; nothing to stop.
+    return { stop: () => undefined };
+  }
+
+  const queryFn = deps.queryFn ?? defaultPendingQuery;
+  let inFlight = false;
+
+  const callback = async (observableResult: {
+    observe(value: number, attributes: Attributes): void;
+  }): Promise<void> => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      const rows = await queryFn(pool);
+      for (const row of rows) {
+        observableResult.observe(row.count, {
+          event_type: row.event_type,
+        } as Attributes);
+      }
+    } catch (err: unknown) {
+      // OTel callbacks MUST NOT throw. Log a redacted single line and
+      // return — the next scrape retries. `errorName` only, never
+      // `err.message`: Postgres error messages can embed parameter values
+      // and runtime data (matrix §3.3, drainer.processor.logError).
+      const errorName =
+        err instanceof Error ? err.name || "Error" : "UnknownError";
+      process.stderr.write(
+        JSON.stringify({
+          level: "error",
+          component: "outbox.pending.gauge",
+          message: "outbox_pending_total callback failed",
+          errorName,
+        }) + "\n",
+      );
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  _outboxPending.addCallback(callback);
+  return {
+    stop: () => {
+      _outboxPending.removeCallback(callback);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Signal-name registry — used by T465 signal-presence test
 // ---------------------------------------------------------------------------
 
@@ -446,25 +615,26 @@ export const WORKER_METRIC_NAMES = [
   "worker_job_duration_seconds",
   "worker_processing_failure_total",
   // T595 (PR-B-1): outbox dead-letter + drain-duration emitted from
-  // DrainerProcessor.processRow. The ObservableGauge outbox_pending_total
-  // remains a placeholder (see WORKER_OUTBOX_METRIC_NAMES) because its
-  // addCallback wiring needs a live DB pool — deferred to a follow-on
-  // slice.
+  // DrainerProcessor.processRow.
   "outbox_dead_letter_total",
   "outbox_drain_duration_seconds",
+  // T595 (PR-B-2): outbox_pending_total emitted via the
+  // `registerOutboxPendingGauge` ObservableGauge addCallback, wired by
+  // WorkerModule's OutboxPendingGaugeRegistrar against AuditDbPool on
+  // Nest init.
+  "outbox_pending_total",
 ] as const satisfies readonly string[];
 
 export type WorkerMetricName = (typeof WORKER_METRIC_NAMES)[number];
 
 /**
  * Canonical names of Track C outbox signals **registered** by this module
- * as definitions only — no emission helper exposed. Today only
- * outbox_pending_total remains here; outbox_dead_letter_total and
- * outbox_drain_duration_seconds graduated to WORKER_METRIC_NAMES in PR-B-1.
- * Adding outbox_pending_total's addCallback is the Track C follow-on slice.
+ * as definitions only — no emission helper exposed.
+ *
+ * After T595 PR-B-2 all outbox signals emit; this list is now empty but
+ * kept as a tombstone so a future placeholder-style signal can land here
+ * without rebuilding the test surface that depends on the symbol.
  */
-export const WORKER_OUTBOX_METRIC_NAMES = [
-  "outbox_pending_total",
-] as const satisfies readonly string[];
+export const WORKER_OUTBOX_METRIC_NAMES = [] as const satisfies readonly string[];
 
 export type WorkerOutboxMetricName = (typeof WORKER_OUTBOX_METRIC_NAMES)[number];
