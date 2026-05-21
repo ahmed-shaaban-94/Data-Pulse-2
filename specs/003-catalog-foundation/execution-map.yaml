@@ -7,11 +7,12 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-21 after PR #254 merged. RLS_CROSS_STORE_FIX +
-# RLS_CROSS_STORE_RED_PROOF are on main at 483aae4. RLS_CROSS_STORE_READ_LEAK
-# is resolved. T340 is ready; T341-T344 chain-blocked on T340; T336 remains
-# blocked solely on the missing withStore helper. Map base advanced from
-# 696584c (PR #253) to 483aae4 (PR #254).
+# Updated: 2026-05-21 after PR #260 merged. T335_TENANT_HELPER_COVERAGE
+# is now on main at 5801369 (transitioned local_uncommitted -> merged via
+# the post-merge closeout protocol introduced in PR #261). T340 stays
+# ready; T341-T344 chain-blocked on T340; T336 remains blocked solely on
+# the missing withStore helper. Map base advanced from 483aae4 (PR #254)
+# to 5801369 (PR #260).
 
 spec: 003-catalog-foundation
 version: 1
@@ -160,12 +161,10 @@ slices:
     report_fields: [changed_files]
     parallel_safety: safe
 
-  # ===== Local only — committed/uncommitted, not on main ====================
-
   - id: T335_TENANT_HELPER_COVERAGE
     task_ids: [T335]
     type: test
-    status: local_uncommitted   # file exists in prior worktree dp2-catalog-helper-foundation; not staged, not committed, not merged
+    status: merged              # closed out 2026-05-21 via PR #260 @ 5801369
     approval_required: false
     depends_on: [T330]
     blocks: []
@@ -184,9 +183,14 @@ slices:
       - forbidden_path_check
       - confirmation_no_unauthorized_git_ops
     parallel_safety: safe
-    # Worktree at C:\Users\user\Documents\GitHub\dp2-catalog-helper-foundation
-    # Branch: test/003-catalog-helper-foundation
-    # Uncommitted file present. Could be cherry-picked or re-created.
+    merged_in_pr: 260
+    merged_at_commit: 5801369
+    merged_at_date: 2026-05-21
+    # Originally authored in worktree dp2-catalog-helper-foundation as
+    # local_uncommitted; landed on a fresh slice worktree
+    # (dp2-t335-tenant-helper, branch test/003-t335-tenant-helper-coverage)
+    # after Agent OS v1 became the active workflow. Validated 5/5 GREEN
+    # on Testcontainers Postgres 16 in WSL Docker.
 
   - id: RLS_CROSS_STORE_RED_PROOF
     task_ids: []
