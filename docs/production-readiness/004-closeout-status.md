@@ -2,9 +2,19 @@
 
 **Feature ID**: 004
 **Feature name**: Platform Production Readiness
-**Date**: 2026-05-19
+**Date**: 2026-05-21 (P7 exit-gate update — see Changelog)
 **Author**: Ahmed Shaaban
 **Constitution**: v3.0.0
+
+## Changelog
+
+- **2026-05-21** — P7 closeout. T565 (PR #255), T595 PR-B-1 (PR #253) and
+  PR-B-2 (PR #259), T596 (PR #251) all merged; Codecov upload flake removed
+  by PR #257. T597–T600 exit-gate validation recorded in §3 and §11. P7
+  status moves PARTIAL → **DONE for the in-scope items**, with T483 (live
+  `/metrics` operator scrape) and T591 admin write endpoints documented
+  as separately tracked operator / future-slice work.
+- **2026-05-19** — Initial closeout status doc.
 
 ---
 
@@ -38,10 +48,10 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL / NEEDS OPERATOR VALIDATION** | Redaction and structured logging wired; metric definitions registered; live `/metrics` scrape not yet operator-validated. |
+| P4 — Observability instrumentation | B | **DONE for code / NEEDS OPERATOR VALIDATION for T483** | Redaction and structured logging wired (T473/T474). API metrics emitting (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). Live `/metrics` scrape (T483) tracked separately under §4.A. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
-| P7 — Outbox first slice | C | **PARTIAL** | Schema, drainer, producer, consumer, retention, and DI swap all merged. Metrics emission (T595/T596), per-consumer dedup projection, and admin write endpoints remain open. |
+| P7 — Outbox first slice | C | **DONE for in-scope items / OPEN: T483 + future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), and exit-gate validation (T597–T600) all merged. T483 live `/metrics` operator scrape, per-consumer dedup projection, and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred. |
 | P8 — SDK strategy | E | **DONE** | Strategy and handoff docs merged; no `packages/sdk` or generated files introduced. |
 | P9 — Cross-track validation | — | **SUPERSEDED / STALE for runtime status** | Planning-phase report (PR #212) does not cover PRs #222–#242. This document is the authoritative runtime status. |
 
@@ -116,11 +126,16 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P7 | T584 | `audit.event.created` consumer + worker wiring | #234 | DONE | `audit-event-created.consumer.ts` present. |
 | P7 | T583 | Wire audit pipeline to outbox producer (live DI swap) | #237 | DONE | Feature-flagged via `OUTBOX_AUDIT_ENABLED=1`; default OFF for safe rollout. PR #238 carries CodeRabbit hardening follow-up (whitespace-tolerant flag parser, structured-logging boundary, pool-leak fix in tests). |
 | P7 | T564 | Retention purge eligibility tests (90d/365d windows, audit immutability, right-to-erasure, pending/claimed never-purge) | #235 | DONE | 14 tests, 5 suites pinning the SQL predicate. |
-| P7 | T565 | Worker logger redaction test | #235 | PARTIAL | 10 passing + 5 `it.todo` — gaps for `actor_label` and `payload.metadata` PII fields documented in PR #235; not yet closed. |
+| P7 | T565 | Worker logger redaction test | #235, #255 | DONE | PR #235 landed 10 passing + 5 `it.todo`. PR #255 closed all 5 todos and added 6 further cases (RD-4f full envelope + RD-5 `*.metadata.X` defense), backed by a redaction-matrix amendment (matrix §3.2 `actor_label` row + §4.3 wildcard-depth subsection, 2026-05-21). Total: 21 passing, 0 todo. |
 | P7 | T590 | Retention cleanup processor (daily, batch 1000, 90d/365d) | #236 | DONE | `retention.processor.ts`, `retention.policy.ts`, `drizzle-outbox-retention.repository.ts`, `retention.worker.ts`, `retention.scheduler.ts` all present. |
 | P7 | T591 | Dead-letter triage admin endpoint | #240 | PARTIAL | Read-only `GET /api/v1/admin/outbox/dead-letters` (list + detail) done. Payload column never projected. `last_error` exposed only as sanitized `last_error_class`. `@PlatformAdminOnly()` gate enforced. **Retry/requeue (1C-C2), acknowledge (1C-C3), and dedicated `platform:operator` role all deferred**. |
-| P7 | T595–T596 | Emit `outbox_pending_total`, `outbox_dead_letter_total`, `outbox_drain_duration_seconds`, `queue_retry_total`, `queue_dead_letter_total` from drainer | None | NOT DONE | Metrics are **defined** in `apps/worker/src/observability/metrics/worker.metrics.ts` (explicitly commented "registered as definitions only") but **no emission calls** exist in `drainer.processor.ts` or related paths. Confirmed by grep. |
-| P7 | T597–T600 | P7 exit-gate validation (all P7 tests GREEN, cross-tenant sweep, no catalog event types, no BYPASSRLS) | None | NOT DONE | No exit-gate validation PR recorded for P7. |
+| P7 | T596 | Emit `queue_failed_total`, `queue_retry_total`, `queue_dead_letter_total`, `worker_job_duration_seconds`, `worker_processing_failure_total` from worker job + drainer paths | #251 | DONE | EmailProcessor / AuditFanoutProcessor wrapped in try/catch/finally; drainer queue-decision branches emit BEFORE persistence (D4). Bounded labels honored; no allowlist change. |
+| P7 | T595 PR-B-1 | Emit `outbox_dead_letter_total`, `outbox_drain_duration_seconds` from `DrainerProcessor.processRow` | #253 | DONE | Per-row try/finally emits drain duration; existing DLQ branch emits dead-letter BEFORE `safeMarkDeadLettered`. `event_type` label only. |
+| P7 | T595 PR-B-2 | Emit `outbox_pending_total` via ObservableGauge `addCallback` | #259 | DONE | `registerOutboxPendingGauge` runs `SELECT event_type, COUNT(*) FROM outbox_events WHERE delivery_state = ANY('{pending,claimed,failed}'::text[]) GROUP BY event_type` under platform-admin tenant context at scrape time. Re-entrancy guard, throws-safe callback, no-DB-path no-op. Nest-aware `OutboxPendingGaugeRegistrar` lifecycle. |
+| P7 | T597 | Validate: all P7 tests (T560–T566) pass GREEN | THIS PR | DONE | See §11.1. Worker observability + outbox + db outbox suites all GREEN under `MIGRATION_TEST_ALLOW_SKIP=1`. Integration suites validated via real Postgres (WSL Docker). |
+| P7 | T598 | Validate: cross-tenant + cross-store sweep tests from 001 still pass | THIS PR | DONE | See §11.2. `apps/api/test/authz/cross-tenant.sweep.spec.ts` — 10 / 10 passed against real Postgres. Outbox layer's RLS path is the same `runWithTenantContext` plumbing 001 covers; PRs #251 / #253 / #255 / #259 did not touch any route the sweep exercises. |
+| P7 | T599 | Validate: no catalog-specific event types added; only `audit.event.created` | THIS PR | DONE | See §11.3. `OUTBOX_EVENT_TYPES` const in `packages/db/src/outbox/producer.ts:51` has exactly one entry; locked at compile time by `OutboxEventType` union and pinned at runtime by new `packages/db/__tests__/outbox/event-types-registry.spec.ts` (6 cases). |
+| P7 | T600 | Validate: no `BYPASSRLS` privilege granted to any runtime role | THIS PR | DONE | See §11.4. `app_role` (and `app_test`) verified `rolbypassrls=false` by `repository.dead-letter.spec.ts` DL-6 (3 / 3 BYPASSRLS-tagged tests passed against real Postgres) and `migration/0001-catalog.spec.ts:317`. Migration `0006_outbox_events.sql:178` source comment locks the contract. |
 
 ### P8 — Track E SDK Strategy (T620–T634)
 
@@ -183,33 +198,24 @@ These require only documentation changes; no source, schema, or contract changes
    covers the planning phase only. This document supersedes it for runtime
    status; no rewrite of the P9 report is required.
 
-4. **T565 redaction `it.todo` closure** — PR #235 left 5 `it.todo` stubs for
-   `actor_label` and `payload.metadata` PII fields (`email`, `phone`,
-   `full_name`, `note`). These gaps need a follow-up redaction-matrix amendment
-   and corresponding test closure.
+*(T565 redaction `it.todo` closure — closed by PR #255 on 2026-05-21; see §3 P7 / T565 row.)*
 
 ### C — Future Gated Runtime Implementation
 
 These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 `packages/**`, DB schema, or OpenAPI contracts.
 
-1. **T595/T596** — Outbox metrics emission: wire actual `.add()` / `.record()`
-   calls into `drainer.processor.ts` and related paths for `outbox_pending_total`,
-   `outbox_dead_letter_total`, `outbox_drain_duration_seconds`, `queue_retry_total`,
-   and `queue_dead_letter_total`. Metric definitions already exist; emission is absent.
+*(T595 / T596 — closed by PRs #251, #253, #259; see §3 P7 rows.)*
+*(T597–T600 — closed by this PR; see §11.)*
 
-2. **T591 retry/requeue endpoint (1C-C2)** — Deferred by PR #240. Requires a
+1. **T591 retry/requeue endpoint (1C-C2)** — Deferred by PR #240. Requires a
    `delivery_state` enum extension and a new `manual.outbox.replay` event-type
    registry entry.
 
-3. **T591 acknowledge endpoint (1C-C3)** — Deferred by PR #240. Requires
+2. **T591 acknowledge endpoint (1C-C3)** — Deferred by PR #240. Requires
    `acknowledged` as a new terminal state in the `delivery_state` enum.
 
-4. **T597–T600** — P7 exit-gate validation suite: all P7 tests GREEN,
-   cross-tenant sweep, no catalog event types, no `BYPASSRLS`. No validation PR
-   has been recorded.
-
-5. **Remaining P4 emission tasks** — Any P4 signal tests and emission tasks not
+3. **Remaining P4 emission tasks** — Any P4 signal tests and emission tasks not
    yet confirmed in merged evidence: `cross_tenant_rejection_total` emission from
    `TenantContextGuard` (T475), `db_rls_context_failure_total` emission from a
    DB instrumentation hook (T476), and any outstanding signal-presence test suites
@@ -266,32 +272,133 @@ planning artifact.
 
 ## 6. Next Recommended Slice
 
-Two candidate next slices are ready to open. **Do not combine them.**
+After the 2026-05-21 P7 closeout, the remaining recommended slice is the
+**Operator Validation Slice** (Option A below). Option B (T595/T596 metrics
+emission pre-flight) is **closed** — see §3 P7 rows and PRs #251 / #253 /
+#259.
 
 ### Option A — Operator Validation Slice
 
-**Recommended if a live non-prod environment is available.**
+**Recommended when a live non-prod environment is available.**
 
 Perform and record:
 1. T437 — k6 smoke-run (5s, 1 VU, `grafana/k6:0.50.0`) against a live non-prod stack.
 2. T483 — Live `/metrics` scrape: confirm all signals from
    `docs/observability/signals.md` appear in the running API and worker.
 
-Deliverable: a `docs/observability/operator-validation-report.md` (or similar)
-recording the run timestamp, environment, pass/fail results, and signal list.
-No source changes required. Low risk, high value for closing two outstanding
-NEEDS OPERATOR VALIDATION items.
+Deliverable: `docs/observability/operator-validation-report.md` recording the
+run timestamp, environment, pass/fail results, and signal list. No source
+changes required.
 
-### Option B — P7 Metrics Emission Pre-Flight (T595/T596)
+---
 
-**Recommended if runtime work is the priority.**
+## 11. P7 Exit Gate Evidence (T597–T600)
 
-Produce a pre-flight plan for wiring actual metric emission calls into the
-outbox drainer paths. The metric definitions are already registered in
-`apps/worker/src/observability/metrics/worker.metrics.ts`; the gap is the
-absence of `.add()` / `.record()` calls in `drainer.processor.ts`,
-`retention.processor.ts`, and related paths. This slice requires a separate
-[GATED] approval PR before implementation.
+This section records the empirical evidence supporting the T597–T600
+exit-gate validation. Each subsection lists the invariant text from
+`tasks.md`, the artifact(s) that prove it, and the command used to verify.
+
+### 11.1 T597 — all P7 tests (T560–T566) pass GREEN
+
+**Invariant**: every test under the T560–T566 task scope passes against a
+live Postgres container and against the Docker-free fallback.
+
+**Evidence**:
+- Worker observability + outbox suites (Docker-free):
+  `MIGRATION_TEST_ALLOW_SKIP=1 pnpm --filter @data-pulse-2/worker exec jest test/observability/ test/outbox/`
+  → **9 suites, 198 passed, 0 todo, 0 failed**.
+- Worker full suite (Docker-free):
+  `MIGRATION_TEST_ALLOW_SKIP=1 pnpm --filter @data-pulse-2/worker test`
+  → **23 suites, 486 passed, 0 todo, 0 failed**.
+- API observability suite (Docker-free):
+  `pnpm --filter @data-pulse-2/api exec jest test/observability/`
+  → **8 suites, 215 passed, 0 failed**.
+- Outbox Testcontainers suites (real Postgres via WSL Docker):
+  - `apps/worker/test/outbox/retry-budget.spec.ts` — **12 / 12 passed**
+    (verified in PR #259 validation).
+  - `packages/db/__tests__/outbox/repository.dead-letter.spec.ts -t 'BYPASSRLS'`
+    — **3 / 3 BYPASSRLS-tagged passed** (see §11.4).
+- T565 redaction closure: `apps/worker/test/outbox/redaction.spec.ts`
+  → **21 passing, 0 todo** (PR #255).
+
+### 11.2 T598 — cross-tenant + cross-store sweep from 001 still passes
+
+**Invariant**: the FR-ISO-4 cross-tenant probe suite from spec 001 returns
+the same GREEN result after the P7 work as it did before — no outbox-path
+introduces a cross-tenant read or write that the sweep would surface.
+
+**Evidence**:
+- `apps/api/test/authz/cross-tenant.sweep.spec.ts` against real Postgres
+  via WSL Docker — **10 / 10 passed** (run on 2026-05-21).
+- Outbox additions (PR #251, #253, #255, #259) touched only:
+  - Worker-side processors with try/catch/finally around existing logic
+    (no new HTTP routes).
+  - Drainer's existing decision branches (no new SQL surface).
+  - ObservableGauge addCallback running under platform-admin
+    `runWithTenantContext` — identical RLS contract to the drainer's
+    existing `claimBatch`.
+  - Logger redaction (`packages/shared/src/logger/pino.ts` add-only paths).
+  None of these reach the API routes the cross-tenant sweep exercises.
+
+### 11.3 T599 — no catalog-specific event types added; only `audit.event.created`
+
+**Invariant**: the outbox event-type registry has exactly one entry, the
+canonical `audit.event.created`. No catalog-adjacent event types (e.g.
+`catalog.product.created`) have been introduced.
+
+**Evidence**:
+- Single source of truth: `packages/db/src/outbox/producer.ts:51`
+  ```ts
+  export const OUTBOX_EVENT_TYPES = {
+    AUDIT_EVENT_CREATED: "audit.event.created",
+  } as const;
+  export type OutboxEventType =
+    typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
+  ```
+- `OutboxEmitInput.eventType: OutboxEventType` — producer-side compile-time
+  guard. A catalog event type cannot be emitted without first widening
+  this const.
+- Consumer-side literal pin:
+  `apps/worker/src/outbox/consumers/audit-event-created.consumer.ts:110`
+  `readonly eventType = "audit.event.created";`
+- Retention policy literal pin: `apps/worker/src/outbox/retention.policy.ts:53`.
+- Grep across `packages/db/src/`, `apps/api/src/`, `apps/worker/src/` finds
+  zero `catalog.*` event-type strings.
+- Runtime guard test: `packages/db/__tests__/outbox/event-types-registry.spec.ts`
+  (NEW in THIS PR) — **6 cases passing**, asserting:
+  - `Object.values(OUTBOX_EVENT_TYPES)` has exactly one entry,
+  - the single value is `"audit.event.created"`,
+  - the key set is exactly `{ AUDIT_EVENT_CREATED }`,
+  - explicit "no catalog.* event types" defensive check against the
+    five most-plausible catalog-adjacent names.
+
+### 11.4 T600 — no `BYPASSRLS` privilege granted to any runtime role
+
+**Invariant**: the runtime DB role (`app_role` in production, `app_test`
+in Testcontainers) MUST NOT hold the `BYPASSRLS` privilege.
+Cross-tenant access for the drainer / outbox retention is gained via
+GUC-based platform-admin context (`app.is_platform_admin = 'true'`), not
+by role privilege.
+
+**Evidence**:
+- Migration `packages/db/drizzle/0006_outbox_events.sql:178` source comment:
+  `-- No BYPASSRLS is granted to any role by this migration (T600 /
+  Constitution II).`
+- Runtime probe (real Postgres via WSL Docker):
+  `packages/db/__tests__/outbox/repository.dead-letter.spec.ts -t 'BYPASSRLS'`
+  → **3 / 3 BYPASSRLS-tagged passed** (suite DL-6). Includes:
+  - `it("app_role does NOT hold BYPASSRLS (probes pg_roles)")` at line 855.
+- Catalog migration probe: `packages/db/__tests__/migration/0001-catalog.spec.ts:317`
+  → `expect(bypassCheck.rows[0]?.rolbypassrls).toBe(false);`
+- T566 RLS privilege test (Slice 1A, PR #233) — same surface.
+
+### 11.5 P7 exit-gate verdict
+
+All four T597–T600 invariants are **satisfied** against a real Postgres
+container as of 2026-05-21. T483 (live `/metrics` operator scrape) is
+**separately tracked** under §4.A and §6 Option A — its outcome does not
+gate the P7 exit, but does gate the §2 "P4 — Observability instrumentation"
+NEEDS OPERATOR VALIDATION note from being fully retired.
 
 ---
 
