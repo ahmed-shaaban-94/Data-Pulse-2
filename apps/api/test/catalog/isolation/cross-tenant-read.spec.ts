@@ -396,6 +396,34 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
     }
   });
 
+  it("product_aliases: Tenant B context sees only its own rows", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM product_aliases ORDER BY id`,
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.product_aliases / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    }
+  });
+
+  it("unknown_items: Tenant B context sees only its own rows", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.unknown_items / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    }
+  });
+
   it("unknown_items: Tenant B context cannot see Tenant A's Store-X item by known ID", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
