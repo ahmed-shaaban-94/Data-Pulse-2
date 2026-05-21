@@ -7,7 +7,23 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
+
+// Mock metric helpers BEFORE importing the filter so the filter binds
+// to the spies. Lets us assert call shape without standing up an OTel
+// SDK or scrape endpoint.
+jest.mock("../../src/observability/metrics/api.metrics", () => ({
+  __esModule: true,
+  recordHttp4xxError: jest.fn(),
+  recordHttp5xxError: jest.fn(),
+  recordValidationFailure: jest.fn(),
+}));
+
 import { GlobalExceptionFilter } from "../../src/common/exception.filter";
+import {
+  recordHttp4xxError,
+  recordHttp5xxError,
+  recordValidationFailure,
+} from "../../src/observability/metrics/api.metrics";
 
 interface CapturedResponse {
   statusCode?: number;
@@ -50,6 +66,12 @@ function makeHost(req: FakeRequest, captured: CapturedResponse): {
 const REQ_ID = "018f3b1d-7c2a-7e3a-9bcd-0123456789ab";
 
 describe("GlobalExceptionFilter", () => {
+  beforeEach(() => {
+    (recordHttp4xxError as jest.Mock).mockClear();
+    (recordHttp5xxError as jest.Mock).mockClear();
+    (recordValidationFailure as jest.Mock).mockClear();
+  });
+
   it("formats a NotFoundException as a 404 envelope", () => {
     const filter = new GlobalExceptionFilter();
     const captured: CapturedResponse = {};
@@ -143,6 +165,92 @@ describe("GlobalExceptionFilter", () => {
     expect(body.error.request_id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
+  });
+
+  // ---- metric emission (signals.md §1) -----------------------------------
+
+  it("calls recordHttp4xxError with the exact status for HttpException 4xx", () => {
+    const filter = new GlobalExceptionFilter();
+    const captured: CapturedResponse = {};
+    const { host } = makeHost({ requestId: REQ_ID }, captured);
+    filter.catch(new NotFoundException("nope"), host);
+
+    expect(recordHttp4xxError).toHaveBeenCalledTimes(1);
+    const call = (recordHttp4xxError as jest.Mock).mock.calls[0]?.[0] as {
+      route: string;
+      status: string;
+    };
+    // Fake ArgumentsHost lacks decorator metadata → routeTemplate returns
+    // the "unknown" bounded fallback. Crucially NOT a rendered URL.
+    expect(call.route).toBe("unknown");
+    expect(call.status).toBe("404");
+    expect(recordHttp5xxError).not.toHaveBeenCalled();
+    expect(recordValidationFailure).not.toHaveBeenCalled();
+  });
+
+  it("calls recordHttp5xxError with status='500' for an unhandled Error", () => {
+    const filter = new GlobalExceptionFilter();
+    const captured: CapturedResponse = {};
+    const { host } = makeHost({ requestId: REQ_ID }, captured);
+    filter.catch(new Error("boom"), host);
+
+    expect(recordHttp5xxError).toHaveBeenCalledTimes(1);
+    expect((recordHttp5xxError as jest.Mock).mock.calls[0]?.[0]).toEqual({
+      route: "unknown",
+      status: "500",
+    });
+    expect(recordHttp4xxError).not.toHaveBeenCalled();
+  });
+
+  it("calls recordHttp5xxError for an HttpException 5xx", () => {
+    const filter = new GlobalExceptionFilter();
+    const captured: CapturedResponse = {};
+    const { host } = makeHost({ requestId: REQ_ID }, captured);
+    filter.catch(new HttpException("upstream", HttpStatus.BAD_GATEWAY), host);
+
+    expect(recordHttp5xxError).toHaveBeenCalledTimes(1);
+    expect((recordHttp5xxError as jest.Mock).mock.calls[0]?.[0]).toMatchObject({
+      status: "502",
+    });
+    expect(recordHttp4xxError).not.toHaveBeenCalled();
+  });
+
+  it("calls recordValidationFailure and recordHttp4xxError on a ZodError", () => {
+    const filter = new GlobalExceptionFilter();
+    const captured: CapturedResponse = {};
+    const { host } = makeHost({ requestId: REQ_ID }, captured);
+    const zodResult = z.object({ x: z.string() }).safeParse({ x: 42 });
+    if (zodResult.success) throw new Error("expected zod failure");
+    filter.catch(zodResult.error, host);
+
+    expect(recordValidationFailure).toHaveBeenCalledTimes(1);
+    expect((recordValidationFailure as jest.Mock).mock.calls[0]?.[0]).toEqual({
+      route: "unknown",
+    });
+    expect(recordHttp4xxError).toHaveBeenCalledTimes(1);
+    expect((recordHttp4xxError as jest.Mock).mock.calls[0]?.[0]).toEqual({
+      route: "unknown",
+      status: "400",
+    });
+    expect(recordHttp5xxError).not.toHaveBeenCalled();
+  });
+
+  it("never records a forbidden label (no field_name on validation_failure_total)", () => {
+    const filter = new GlobalExceptionFilter();
+    const captured: CapturedResponse = {};
+    const { host } = makeHost({ requestId: REQ_ID }, captured);
+    const zodResult = z
+      .object({ email: z.string().email() })
+      .safeParse({ email: "not-an-email" });
+    if (zodResult.success) throw new Error("expected zod failure");
+    filter.catch(zodResult.error, host);
+
+    // The attributes object MUST contain only `route` — no `field_name`,
+    // no `email`, no field path. FR-B-006 + signals.md §1 note.
+    const attrs = (recordValidationFailure as jest.Mock).mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(Object.keys(attrs ?? {})).toEqual(["route"]);
   });
 
   it("envelope shape always has exactly { error: { code, message, request_id } } at minimum", () => {
