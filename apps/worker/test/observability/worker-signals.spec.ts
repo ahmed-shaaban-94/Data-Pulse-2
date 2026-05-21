@@ -37,6 +37,7 @@ import {
   WORKER_QUEUE_NAMES,
   WORKER_JOB_NAMES,
   WORKER_ERROR_CLASSES,
+  createQueueLagCallback,
   recordOutboxDeadLetter,
   recordOutboxDrainDuration,
   recordQueueDeadLetter,
@@ -45,7 +46,9 @@ import {
   recordRedisCommandDuration,
   recordWorkerJobDuration,
   recordWorkerProcessingFailure,
+  registerDbPoolGauges,
   registerOutboxPendingGauge,
+  registerQueueLagGauge,
   sanitizeErrorClass,
 } from "../../src/observability/metrics/worker.metrics";
 
@@ -60,9 +63,13 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
     });
   }
 
-  it("WORKER_METRIC_NAMES covers the seven base worker signals plus all three T595 outbox signals", () => {
+  it("WORKER_METRIC_NAMES covers the two P4-W1 DB pool signals, the seven base worker signals, and all three T595 outbox signals", () => {
     const expected = [
+      // P4 W1: DB pool gauges (worker scrapes its own AuditDbPool on port 9091)
+      "db_pool_in_use",
+      "db_pool_waiters",
       "redis_command_duration_seconds",
+      // P4 W2: queue lag observable gauge
       "queue_lag_seconds",
       "queue_failed_total",
       "queue_dead_letter_total",
@@ -319,6 +326,36 @@ describe("T465 — emission helpers: callable without a live MetricReader", () =
     expect(() =>
       recordOutboxDrainDuration({ event_type: "audit.event.created" }, 0),
     ).not.toThrow();
+  });
+
+  // P4 W1 — db_pool_in_use + db_pool_waiters ObservableGauge registrar
+  it("registerDbPoolGauges is exported and callable with pool=null (no-DB path)", () => {
+    const result = registerDbPoolGauges({ pool: null });
+    expect(result).toBeDefined();
+    expect(typeof result.stop).toBe("function");
+    expect(() => result.stop()).not.toThrow();
+  });
+
+  it("registerDbPoolGauges no-DB path is idempotent: many calls + stops do not throw", () => {
+    for (let i = 0; i < 5; i++) {
+      const result = registerDbPoolGauges({ pool: null });
+      expect(() => result.stop()).not.toThrow();
+    }
+  });
+
+  // P4 W2 — queue_lag_seconds ObservableGauge registrar
+  it("registerQueueLagGauge is exported and callable with queues=null (no-Redis path)", () => {
+    const result = registerQueueLagGauge({ queues: null });
+    expect(result).toBeDefined();
+    expect(typeof result.stop).toBe("function");
+    expect(() => result.stop()).not.toThrow();
+  });
+
+  it("registerQueueLagGauge no-Redis path is idempotent: many calls + stops do not throw", () => {
+    for (let i = 0; i < 5; i++) {
+      const result = registerQueueLagGauge({ queues: null });
+      expect(() => result.stop()).not.toThrow();
+    }
   });
 
   // T595 PR-B-2 — outbox_pending_total ObservableGauge registrar

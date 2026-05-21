@@ -12,23 +12,22 @@
  *      site cannot pass `tenant_id` because the helper's TypeScript
  *      signature excludes it (compile-time enforcement of FR-B-006).
  *
- * Observable gauges (db_pool_in_use, db_pool_waiters, db_migration_status)
- * are registered here but require pool integration hooks to produce real
- * observations. The addCallback registration is deferred to the T483 /
- * SDK-extension slice (pool observer wiring). Until then they emit zero
- * while remaining properly registered so signal-presence tests pass and
- * ALLOWED_METRIC_LABELS drift checks work at module load.
+ * Observable gauges:
+ *   - `db_pool_in_use` + `db_pool_waiters` → wired via `registerDbPoolGauges`,
+ *     called from `AppModule`'s `ApiDbPoolGaugeRegistrar` on Nest init.
+ *   - `db_migration_status` → addCallback deferred to migration-runner slice.
  *
- * Emission sites (once wired):
+ * Emission sites:
  *   - `db_rls_context_failure_total` → TenantContextGuard.withBootstrapCtx
  *     when runWithTenantContext fails at the GUC-setting layer (T476).
  *   - `db_slow_query_total` → DB query hook (deferred to pool integration).
- *   - Pool/migration gauges → pool-stats observer (deferred to T483).
  *
  * No API or worker signals — those are T470 (api) and T472 (worker).
  *
  * Constitution §VII / FR-B-002 / FR-B-006 / FR-B-012.
  */
+import type { Pool } from "pg";
+
 import {
   assertMetricLabels,
   getMeter,
@@ -77,10 +76,7 @@ const _dbMigrationStatus: ObservableGauge = meter.createObservableGauge(
   },
 );
 
-// Silence TS "unused variable" warnings — instruments are registered as
-// side-effects and referenced by future addCallback wiring.
-void _dbPoolInUse;
-void _dbPoolWaiters;
+// _dbMigrationStatus: addCallback wiring deferred to migration-runner slice.
 void _dbMigrationStatus;
 
 // Counters — directly emittable at call sites.
@@ -146,6 +142,57 @@ export function recordDbRlsContextFailure(): void {
  */
 export function recordDbSlowQuery(attrs: DbSlowQueryAttrs): void {
   _dbSlowQuery.add(1, attrs as unknown as Attributes);
+}
+
+// ---------------------------------------------------------------------------
+// db_pool_in_use + db_pool_waiters — ObservableGauge addCallback registrar
+// ---------------------------------------------------------------------------
+
+/**
+ * Register addCallbacks for `db_pool_in_use` and `db_pool_waiters` against
+ * the given pg.Pool.
+ *
+ * Behavior:
+ *   - `deps.pool === null` → returns a no-op `{ stop }` handle. No callbacks
+ *     are registered. Gauges stay unobserved for the scrape window.
+ *   - Otherwise → registers one callback per gauge. Each callback reads
+ *     synchronous in-memory counters from the pool object:
+ *       db_pool_in_use   = pool.totalCount − pool.idleCount
+ *       db_pool_waiters  = pool.waitingCount
+ *     No DB round-trip, no async I/O, no re-entrancy risk.
+ *
+ * The returned `{ stop }` handle removes both callbacks. `AppModule`'s
+ * `ApiDbPoolGaugeRegistrar.onModuleDestroy` calls it during graceful shutdown.
+ */
+export function registerDbPoolGauges(deps: {
+  readonly pool: Pool | null;
+}): { stop: () => void } {
+  const pool = deps.pool;
+  if (pool === null) {
+    return { stop: () => undefined };
+  }
+
+  const inUseCallback = (result: {
+    observe(value: number, attributes: Attributes): void;
+  }): void => {
+    result.observe(pool.totalCount - pool.idleCount, {} as Attributes);
+  };
+
+  const waitersCallback = (result: {
+    observe(value: number, attributes: Attributes): void;
+  }): void => {
+    result.observe(pool.waitingCount, {} as Attributes);
+  };
+
+  _dbPoolInUse.addCallback(inUseCallback);
+  _dbPoolWaiters.addCallback(waitersCallback);
+
+  return {
+    stop: () => {
+      _dbPoolInUse.removeCallback(inUseCallback);
+      _dbPoolWaiters.removeCallback(waitersCallback);
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

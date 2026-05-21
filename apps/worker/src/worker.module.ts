@@ -76,10 +76,16 @@ import {
   type OnModuleDestroy,
   type OnModuleInit,
 } from "@nestjs/common";
-import { Worker as BullMqWorker, type WorkerOptions } from "bullmq";
+import { Queue, Worker as BullMqWorker, type WorkerOptions } from "bullmq";
 import { Pool } from "pg";
 
-import { registerOutboxPendingGauge } from "./observability/metrics/worker.metrics";
+import {
+  registerDbPoolGauges,
+  registerOutboxPendingGauge,
+  registerQueueLagGauge,
+  WORKER_QUEUE_NAMES,
+  type WorkerQueueName,
+} from "./observability/metrics/worker.metrics";
 
 import {
   EMAIL_ADAPTER,
@@ -398,6 +404,85 @@ export function outboxDrainerRunnerProviderFactory(
 }
 
 /**
+ * Nest-aware registrar for the `db_pool_in_use` and `db_pool_waiters`
+ * ObservableGauge callbacks (P4 W1).
+ *
+ * On `onModuleInit` registers both pool-stats callbacks against
+ * `AuditDbPool.pool`. On `onModuleDestroy` removes them so the callbacks
+ * do not reference a closed pool. The no-DB path (`wrapper.pool === null`)
+ * is handled inside `registerDbPoolGauges` — the registrar is always safe
+ * to wire regardless of the runtime environment.
+ */
+@Injectable()
+export class WorkerDbPoolGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
+  private handle: { stop: () => void } | null = null;
+
+  constructor(private readonly wrapper: AuditDbPool) {}
+
+  onModuleInit(): void {
+    this.handle = registerDbPoolGauges({ pool: this.wrapper.pool });
+  }
+
+  onModuleDestroy(): void {
+    const h = this.handle;
+    this.handle = null;
+    if (h !== null) {
+      h.stop();
+    }
+  }
+}
+
+/**
+ * Nest-aware registrar for the `queue_lag_seconds` ObservableGauge
+ * callback (P4 W2).
+ *
+ * On `onModuleInit`:
+ *   - If `REDIS_URL` is absent → no-op (matches `NoOpWorkerFactory` path).
+ *   - Otherwise → creates one lightweight BullMQ `Queue` reader per entry in
+ *     `WORKER_QUEUE_NAMES` and passes the map to `registerQueueLagGauge`.
+ *     Queue readers share the same connection format as the BullMQ workers but
+ *     are read-only (no processor attached). BullMQ owns each connection's
+ *     lifecycle.
+ *
+ * On `onModuleDestroy`:
+ *   - Removes the OTel callback.
+ *   - Closes all Queue reader connections (fire-and-forget errors are
+ *     swallowed since the process is already exiting).
+ */
+@Injectable()
+export class QueueLagGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
+  private queues: Map<WorkerQueueName, Queue> | null = null;
+  private handle: { stop: () => void } | null = null;
+
+  onModuleInit(): void {
+    const redisUrl = process.env["REDIS_URL"];
+    if (!redisUrl) {
+      return;
+    }
+    this.queues = new Map(
+      WORKER_QUEUE_NAMES.map((name) => [
+        name,
+        new Queue(name, { connection: { url: redisUrl } }),
+      ]),
+    );
+    this.handle = registerQueueLagGauge({ queues: this.queues });
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    const h = this.handle;
+    this.handle = null;
+    if (h !== null) {
+      h.stop();
+    }
+    const qs = this.queues;
+    this.queues = null;
+    if (qs !== null) {
+      await Promise.all([...qs.values()].map((q) => q.close().catch(() => undefined)));
+    }
+  }
+}
+
+/**
  * Nest-aware registrar for the `outbox_pending_total` ObservableGauge
  * callback (T595 PR-B-2).
  *
@@ -537,6 +622,20 @@ export class OutboxPendingGaugeRegistrar implements OnModuleInit, OnModuleDestro
       inject: [OUTBOX_DRAINER],
     },
 
+    // ── DB pool gauge registrar (P4 W1) ──────────────────────────────
+    //
+    // Registers db_pool_in_use + db_pool_waiters ObservableGauge callbacks
+    // against AuditDbPool on Nest init. Synchronous in-memory reads; no
+    // async I/O. The no-DB path is handled inside registerDbPoolGauges.
+    WorkerDbPoolGaugeRegistrar,
+
+    // ── Queue lag gauge registrar (P4 W2) ────────────────────────────
+    //
+    // Creates BullMQ Queue reader instances for all 5 WORKER_QUEUE_NAMES
+    // and registers the queue_lag_seconds ObservableGauge callback on init.
+    // No-op when REDIS_URL is absent (dev / CI without Redis).
+    QueueLagGaugeRegistrar,
+
     // ── Outbox pending-events gauge registrar (T595 PR-B-2) ───────────
     //
     // Registers the outbox_pending_total ObservableGauge callback against
@@ -556,6 +655,8 @@ export class OutboxPendingGaugeRegistrar implements OnModuleInit, OnModuleDestro
     OutboxRetentionProcessor,
     OUTBOX_DRAINER,
     OutboxDrainerRunner,
+    WorkerDbPoolGaugeRegistrar,
+    QueueLagGaugeRegistrar,
     OutboxPendingGaugeRegistrar,
   ],
 })

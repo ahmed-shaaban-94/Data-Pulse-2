@@ -39,7 +39,9 @@
  *
  * Constitution §VII / FR-B-003 / FR-B-006 / FR-B-012.
  */
+import type { Queue } from "bullmq";
 import type { Pool } from "pg";
+
 import {
   assertMetricLabels,
   getMeter,
@@ -141,6 +143,8 @@ export function sanitizeErrorClass(
 // allowlist (ALLOWED_METRIC_LABELS in packages/shared). Called once at
 // registration time; cannot be deferred to emit time.
 
+assertMetricLabels("db_pool_in_use", []);
+assertMetricLabels("db_pool_waiters", []);
 assertMetricLabels("redis_command_duration_seconds", ["command"]);
 assertMetricLabels("queue_lag_seconds", ["queue"]);
 assertMetricLabels("queue_failed_total", ["queue", "error_class"]);
@@ -162,6 +166,15 @@ assertMetricLabels("outbox_drain_duration_seconds", ["event_type"]);
 // ---------------------------------------------------------------------------
 
 const meter = getMeter("worker");
+
+// DB pool — worker process observes its own AuditDbPool stats on port 9091.
+// The API process observes its pool independently on port 9464 via db.metrics.ts.
+const _dbPoolInUse: ObservableGauge = meter.createObservableGauge("db_pool_in_use", {
+  description: "Number of connections currently checked out from the DB pool.",
+});
+const _dbPoolWaiters: ObservableGauge = meter.createObservableGauge("db_pool_waiters", {
+  description: "Number of requests currently waiting for a DB pool connection.",
+});
 
 // Redis
 const _redisCommandDuration: Histogram = meter.createHistogram(
@@ -254,10 +267,6 @@ const _outboxDrainDuration: Histogram = meter.createHistogram(
     unit: "s",
   },
 );
-
-// Silence TS "unused variable" warning — _queueLag is consumed by a future
-// addCallback wiring (separate slice).
-void _queueLag;
 
 // ---------------------------------------------------------------------------
 // Attribute types — TypeScript compile-time label enforcement (FR-B-006)
@@ -423,6 +432,180 @@ export function recordOutboxDrainDuration(
   durationSeconds: number,
 ): void {
   _outboxDrainDuration.record(durationSeconds, attrs as unknown as Attributes);
+}
+
+// ---------------------------------------------------------------------------
+// db_pool_in_use + db_pool_waiters — ObservableGauge addCallback registrar
+// ---------------------------------------------------------------------------
+
+/**
+ * Register addCallbacks for `db_pool_in_use` and `db_pool_waiters` against
+ * the worker's AuditDbPool.
+ *
+ * Mirrors the API-side `registerDbPoolGauges` in `db.metrics.ts` — each
+ * process (API port 9464, worker port 9091) scrapes its own pool separately.
+ *
+ * Behavior:
+ *   - `deps.pool === null` → no-op handle. Matches the no-DB / no-Redis safe
+ *     path (both pool and factory are null; no jobs flow).
+ *   - Otherwise → registers synchronous callbacks; reads are in-memory
+ *     counters on the pool object, no DB round-trip.
+ *
+ * The returned `{ stop }` handle is called by `WorkerDbPoolGaugeRegistrar`
+ * on `onModuleDestroy` so callbacks do not outlive the pool.
+ */
+export function registerDbPoolGauges(deps: {
+  readonly pool: Pool | null;
+}): { stop: () => void } {
+  const pool = deps.pool;
+  if (pool === null) {
+    return { stop: () => undefined };
+  }
+
+  const inUseCallback = (result: {
+    observe(value: number, attributes: Attributes): void;
+  }): void => {
+    result.observe(pool.totalCount - pool.idleCount, {} as Attributes);
+  };
+
+  const waitersCallback = (result: {
+    observe(value: number, attributes: Attributes): void;
+  }): void => {
+    result.observe(pool.waitingCount, {} as Attributes);
+  };
+
+  _dbPoolInUse.addCallback(inUseCallback);
+  _dbPoolWaiters.addCallback(waitersCallback);
+
+  return {
+    stop: () => {
+      _dbPoolInUse.removeCallback(inUseCallback);
+      _dbPoolWaiters.removeCallback(waitersCallback);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// queue_lag_seconds — ObservableGauge addCallback registrar
+// ---------------------------------------------------------------------------
+
+/**
+ * Dependencies for `registerQueueLagGauge`.
+ *
+ * `queues` is a map from queue name to a live BullMQ `Queue` reader instance.
+ * `null` makes the registrar a no-op (no-Redis path).
+ *
+ * `getWaitingFn` is an optional injection seam for unit tests — production
+ * callers omit it and the default `queue.getWaiting(0, 0)` is used.
+ */
+export interface QueueLagGaugeDeps {
+  readonly queues: ReadonlyMap<string, Queue> | null;
+  readonly getWaitingFn?: (
+    queue: Queue,
+  ) => Promise<ReadonlyArray<{ readonly timestamp: number }>>;
+}
+
+/** Observable result shape passed to OTel addCallback functions. */
+export interface QueueLagObservableResult {
+  observe(value: number, attributes: Attributes): void;
+}
+
+/**
+ * Build the `queue_lag_seconds` callback function without registering it.
+ *
+ * Extracted so tests can obtain the real callback via this function and invoke
+ * it directly with a mock `QueueLagObservableResult` — exercising the actual
+ * production path without requiring a live OTel MetricReader.
+ *
+ * The returned callback:
+ *   - Skips re-execution when a previous tick is still in-flight (re-entrancy
+ *     guard; inFlight state is scoped to this closure).
+ *   - For each queue in `WORKER_QUEUE_NAMES` present in `queues`: calls
+ *     `getWaitingFn`, derives lag = `Math.max(0, (now - oldest.timestamp) / 1000)`,
+ *     then calls `observableResult.observe(lag, { queue })`. Clamping to ≥ 0
+ *     prevents negative values from producer/consumer clock drift.
+ *   - On per-queue error: logs ONE structured stderr line (errorName only) and
+ *     skips that queue's observation. Never throws.
+ */
+export function createQueueLagCallback(
+  queues: ReadonlyMap<string, Queue>,
+  getWaitingFn: (
+    queue: Queue,
+  ) => Promise<ReadonlyArray<{ readonly timestamp: number }>>,
+): (observableResult: QueueLagObservableResult) => Promise<void> {
+  let inFlight = false;
+
+  return async (observableResult: QueueLagObservableResult): Promise<void> => {
+    if (inFlight) return;
+    inFlight = true;
+    try {
+      await Promise.all(
+        WORKER_QUEUE_NAMES.map(async (queueName) => {
+          const queue = queues.get(queueName);
+          if (queue === undefined) return;
+          try {
+            const waiting = await getWaitingFn(queue);
+            const first = waiting[0];
+            const lag =
+              first !== undefined
+                ? Math.max(0, (Date.now() - first.timestamp) / 1000)
+                : 0;
+            observableResult.observe(lag, {
+              queue: queueName,
+            } as Attributes);
+          } catch (err: unknown) {
+            const errorName =
+              err instanceof Error ? err.name || "Error" : "UnknownError";
+            process.stderr.write(
+              JSON.stringify({
+                level: "error",
+                component: "queue.lag.gauge",
+                message: "queue_lag_seconds callback failed",
+                queue: queueName,
+                errorName,
+              }) + "\n",
+            );
+          }
+        }),
+      );
+    } finally {
+      inFlight = false;
+    }
+  };
+}
+
+/**
+ * Register the `queue_lag_seconds` ObservableGauge callback.
+ *
+ * Behavior:
+ *   - `deps.queues === null` → no-op handle (no Redis).
+ *   - Otherwise → builds the callback via `createQueueLagCallback` and
+ *     registers it with the OTel `_queueLag` instrument. At each scrape,
+ *     for each queue in `WORKER_QUEUE_NAMES`, the callback calls
+ *     `queue.getWaiting(0, 0)` and observes lag in seconds (clamped ≥ 0).
+ *
+ * The returned `{ stop }` handle removes the callback. `QueueLagGaugeRegistrar`
+ * calls it on `onModuleDestroy` so the callback does not outlive the Queue
+ * reader connections.
+ */
+export function registerQueueLagGauge(
+  deps: QueueLagGaugeDeps,
+): { stop: () => void } {
+  const queues = deps.queues;
+  if (queues === null) {
+    return { stop: () => undefined };
+  }
+
+  const getWaiting =
+    deps.getWaitingFn ?? ((q: Queue) => q.getWaiting(0, 0));
+  const callback = createQueueLagCallback(queues, getWaiting);
+
+  _queueLag.addCallback(callback);
+  return {
+    stop: () => {
+      _queueLag.removeCallback(callback);
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -619,7 +802,12 @@ export function registerOutboxPendingGauge(
  * fails CI via the T465 presence test.
  */
 export const WORKER_METRIC_NAMES = [
+  // P4 W1: DB pool gauges — worker observes its own AuditDbPool via
+  // `registerDbPoolGauges`, wired by WorkerDbPoolGaugeRegistrar on Nest init.
+  "db_pool_in_use",
+  "db_pool_waiters",
   "redis_command_duration_seconds",
+  // P4 W2: queue lag gauge — wired by QueueLagGaugeRegistrar on Nest init.
   "queue_lag_seconds",
   "queue_failed_total",
   "queue_dead_letter_total",
