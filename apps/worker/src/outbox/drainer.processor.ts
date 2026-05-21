@@ -56,6 +56,8 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import type { OutboxConsumer } from "@data-pulse-2/shared";
 import type { OutboxConsumerRegistry } from "./registry";
 import {
+  recordOutboxDeadLetter,
+  recordOutboxDrainDuration,
   recordQueueDeadLetter,
   recordQueueFailed,
   recordQueueRetry,
@@ -207,47 +209,62 @@ export class DrainerProcessor {
   // ---------------------------------------------------------------------------
 
   private async processRow(row: ClaimedOutboxEvent): Promise<void> {
-    const consumer = this.registry.resolve(row.event_type);
-
-    if (!consumer) {
-      // No consumer registered for this event type. Mark failed with backoff
-      // rather than dead-lettering immediately — allows operator investigation.
-      const errorClass = "UnroutableEventType";
-      this.logError(
-        `drainer: no consumer for event_type="${row.event_type}" event_id="${row.event_id}"`,
-        new Error(errorClass),
-      );
-      // T596: emit BEFORE persistence (D4) so the metric reflects the
-      // drainer's decision regardless of whether `safeMarkFailed` succeeds.
-      // `error_class` runs through sanitizeErrorClass — "UnroutableEventType"
-      // is not in WORKER_ERROR_CLASSES and will coerce to "UnknownError"
-      // per the approved D3 decision.
-      const sanitizedClass = sanitizeErrorClass(errorClass);
-      recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
-      recordQueueRetry({ queue: DRAINER_QUEUE_LABEL });
-      await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
-      return;
-    }
-
+    // T595 (PR-B-1): per-row duration measurement for
+    // outbox_drain_duration_seconds. Wall-clock from the start of the row's
+    // processing to its terminal branch (success, retry, DLQ, or
+    // no-consumer). Emitted in finally so every exit path is timed —
+    // identical pattern to PR-A's worker_job_duration_seconds.
+    const startNs = process.hrtime.bigint();
     try {
-      await this.invokeConsumer(consumer, row);
-      await this.safeMarkDelivered(row.event_id);
-    } catch (err: unknown) {
-      const errorClass = this.extractErrorClass(err);
-      // T596: emit BEFORE persistence (D4). queue_failed_total always fires
-      // on a consumer throw; queue_retry_total vs queue_dead_letter_total
-      // mirrors the existing retry-budget branch.
-      const sanitizedClass = sanitizeErrorClass(errorClass);
-      recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
+      const consumer = this.registry.resolve(row.event_type);
 
-      if (row.attempts >= MAX_ATTEMPTS) {
-        // Budget exhausted — dead-letter.
-        recordQueueDeadLetter({ queue: DRAINER_QUEUE_LABEL });
-        await this.safeMarkDeadLettered(row.event_id, errorClass);
-      } else {
+      if (!consumer) {
+        // No consumer registered for this event type. Mark failed with backoff
+        // rather than dead-lettering immediately — allows operator investigation.
+        const errorClass = "UnroutableEventType";
+        this.logError(
+          `drainer: no consumer for event_type="${row.event_type}" event_id="${row.event_id}"`,
+          new Error(errorClass),
+        );
+        // T596: emit BEFORE persistence (D4) so the metric reflects the
+        // drainer's decision regardless of whether `safeMarkFailed` succeeds.
+        // `error_class` runs through sanitizeErrorClass — "UnroutableEventType"
+        // is not in WORKER_ERROR_CLASSES and will coerce to "UnknownError"
+        // per the approved D3 decision.
+        const sanitizedClass = sanitizeErrorClass(errorClass);
+        recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
         recordQueueRetry({ queue: DRAINER_QUEUE_LABEL });
         await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
+        return;
       }
+
+      try {
+        await this.invokeConsumer(consumer, row);
+        await this.safeMarkDelivered(row.event_id);
+      } catch (err: unknown) {
+        const errorClass = this.extractErrorClass(err);
+        // T596: emit BEFORE persistence (D4). queue_failed_total always fires
+        // on a consumer throw; queue_retry_total vs queue_dead_letter_total
+        // mirrors the existing retry-budget branch.
+        const sanitizedClass = sanitizeErrorClass(errorClass);
+        recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
+
+        if (row.attempts >= MAX_ATTEMPTS) {
+          // Budget exhausted — dead-letter.
+          recordQueueDeadLetter({ queue: DRAINER_QUEUE_LABEL });
+          // T595 (PR-B-1): outbox_dead_letter_total carries event_type, not
+          // queue. Emitted BEFORE persistence (D4 ordering) so the metric
+          // reflects the drainer's decision regardless of safeMark outcome.
+          recordOutboxDeadLetter({ event_type: row.event_type });
+          await this.safeMarkDeadLettered(row.event_id, errorClass);
+        } else {
+          recordQueueRetry({ queue: DRAINER_QUEUE_LABEL });
+          await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
+        }
+      }
+    } finally {
+      const durationSeconds = Number(process.hrtime.bigint() - startNs) / 1_000_000_000;
+      recordOutboxDrainDuration({ event_type: row.event_type }, durationSeconds);
     }
   }
 
