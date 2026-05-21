@@ -33,9 +33,12 @@ import {
 import {
   WORKER_METRIC_NAMES,
   WORKER_OUTBOX_METRIC_NAMES,
+  WORKER_OUTBOX_EVENT_TYPES,
   WORKER_QUEUE_NAMES,
   WORKER_JOB_NAMES,
   WORKER_ERROR_CLASSES,
+  recordOutboxDeadLetter,
+  recordOutboxDrainDuration,
   recordQueueDeadLetter,
   recordQueueFailed,
   recordQueueRetry,
@@ -56,7 +59,7 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
     });
   }
 
-  it("WORKER_METRIC_NAMES covers the seven documented emit-now worker signals", () => {
+  it("WORKER_METRIC_NAMES covers the seven base worker signals plus the two T595 PR-B-1 outbox signals", () => {
     const expected = [
       "redis_command_duration_seconds",
       "queue_lag_seconds",
@@ -65,13 +68,18 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
       "queue_retry_total",
       "worker_job_duration_seconds",
       "worker_processing_failure_total",
+      // T595 PR-B-1: graduated from WORKER_OUTBOX_METRIC_NAMES to here
+      "outbox_dead_letter_total",
+      "outbox_drain_duration_seconds",
     ];
     expect([...WORKER_METRIC_NAMES].sort()).toEqual([...expected].sort());
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Track C outbox placeholders: registered as definitions only
+// 2. Track C outbox placeholders: only outbox_pending_total remains a
+//    definition-only placeholder (its ObservableGauge addCallback wiring is
+//    deferred to T595 PR-B-2).
 // ---------------------------------------------------------------------------
 
 describe("T465 — outbox placeholders: registered but not yet emitted", () => {
@@ -81,12 +89,8 @@ describe("T465 — outbox placeholders: registered but not yet emitted", () => {
     });
   }
 
-  it("WORKER_OUTBOX_METRIC_NAMES covers all three documented outbox signals (signals.md §3.4)", () => {
-    const expected = [
-      "outbox_pending_total",
-      "outbox_dead_letter_total",
-      "outbox_drain_duration_seconds",
-    ];
+  it("WORKER_OUTBOX_METRIC_NAMES holds only outbox_pending_total post-PR-B-1 (signals.md §3.4)", () => {
+    const expected = ["outbox_pending_total"];
     expect([...WORKER_OUTBOX_METRIC_NAMES].sort()).toEqual([...expected].sort());
   });
 
@@ -95,6 +99,14 @@ describe("T465 — outbox placeholders: registered but not yet emitted", () => {
       (WORKER_METRIC_NAMES as readonly string[]).includes(n),
     );
     expect(intersect).toEqual([]);
+  });
+
+  it("the two PR-B-1 graduating signals are now in WORKER_METRIC_NAMES, not WORKER_OUTBOX_METRIC_NAMES", () => {
+    const graduated = ["outbox_dead_letter_total", "outbox_drain_duration_seconds"];
+    for (const name of graduated) {
+      expect((WORKER_METRIC_NAMES as readonly string[]).includes(name)).toBe(true);
+      expect((WORKER_OUTBOX_METRIC_NAMES as readonly string[]).includes(name)).toBe(false);
+    }
   });
 });
 
@@ -280,5 +292,32 @@ describe("T465 — emission helpers: callable without a live MetricReader", () =
         ).not.toThrow();
       }
     }
+  });
+
+  // T595 PR-B-1 — new outbox helpers
+  it("recordOutboxDeadLetter does not throw for each bounded event_type", () => {
+    for (const event_type of WORKER_OUTBOX_EVENT_TYPES) {
+      expect(() => recordOutboxDeadLetter({ event_type })).not.toThrow();
+    }
+  });
+
+  it("recordOutboxDeadLetter does not throw for a string event_type outside the bounded set", () => {
+    // The drainer accepts row.event_type as untyped string (a row may carry an
+    // event_type with no registered consumer — UnroutableEventType path). The
+    // helper signature widens to `string` to preserve diagnostic visibility;
+    // emission must not crash on values outside WORKER_OUTBOX_EVENT_TYPES.
+    expect(() => recordOutboxDeadLetter({ event_type: "test.event.poison" })).not.toThrow();
+  });
+
+  it("recordOutboxDrainDuration does not throw for each bounded event_type", () => {
+    for (const event_type of WORKER_OUTBOX_EVENT_TYPES) {
+      expect(() => recordOutboxDrainDuration({ event_type }, 0.05)).not.toThrow();
+    }
+  });
+
+  it("recordOutboxDrainDuration accepts a zero duration (per-row claim-immediate-fail path)", () => {
+    expect(() =>
+      recordOutboxDrainDuration({ event_type: "audit.event.created" }, 0),
+    ).not.toThrow();
   });
 });

@@ -419,3 +419,218 @@ describe("T596: drainer queue metric emission (retry / dead-letter / failed)", (
     expect(r2.rows[0]!.delivery_state).toBe("dead_lettered");
   });
 });
+
+describe("T595 PR-B-1: drainer outbox metric emission (dead-letter / drain-duration)", () => {
+  // Reuses the EV_METRICS row already inserted by the T596 beforeAll (same
+  // file scope). Each test resets attempts/state via makeMetricsClaimFn.
+  const EV_METRICS_T595 = "0bd00000-0000-4000-8000-000000000002";
+  const EVENT_TYPE_METRICS = "test.event.metrics" as const;
+
+  let outboxDeadLetterSpy: jest.SpyInstance;
+  let outboxDrainDurationSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    outboxDeadLetterSpy = jest
+      .spyOn(workerMetrics, "recordOutboxDeadLetter")
+      .mockImplementation(() => undefined);
+    outboxDrainDurationSpy = jest
+      .spyOn(workerMetrics, "recordOutboxDrainDuration")
+      .mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    outboxDeadLetterSpy.mockRestore();
+    outboxDrainDurationSpy.mockRestore();
+  });
+
+  /**
+   * Local claim helper mirroring makeMetricsClaimFn in the T596 suite —
+   * inlined here so this describe is independent of the T596 closure.
+   */
+  function makeT595ClaimFn(eventId: string, startAttempts: number) {
+    return async (_pool: unknown, _batchSize: number): Promise<ClaimedOutboxEvent[]> => {
+      await env!.admin.query(
+        `UPDATE outbox_events
+            SET attempts = $2,
+                delivery_state = 'pending',
+                next_attempt_at = NULL,
+                last_error = NULL,
+                processed_at = NULL
+          WHERE event_id = $1`,
+        [eventId, startAttempts],
+      );
+      const res = await env!.admin.query<ClaimedOutboxEvent>(
+        `WITH claimed AS (
+           UPDATE outbox_events
+              SET delivery_state='claimed', attempts=attempts+1, updated_at=now()
+            WHERE event_id=$1 AND delivery_state IN ('pending','failed')
+            RETURNING event_id, event_type, tenant_id, store_id, payload, correlation_id, occurred_at, attempts
+         ) SELECT * FROM claimed`,
+        [eventId],
+      );
+      return res.rows;
+    };
+  }
+
+  it("success branch: records drain duration with event_type, does NOT record dead-letter", async () => {
+    if (maybeSkip()) return;
+
+    const consumer: OutboxConsumer<unknown> = {
+      consumerId: "test.outbox-success",
+      eventType: EVENT_TYPE_METRICS,
+      async handle(_event: OutboxEventEnvelope<unknown>): Promise<void> {
+        // success — no throw
+      },
+    };
+    const registry = new OutboxConsumerRegistry();
+    registry.register(consumer);
+
+    const drainer = new DrainerProcessor({
+      pool: env!.admin,
+      registry,
+      claimFn: makeT595ClaimFn(EV_METRICS_T595, 0) as (
+        pool: import("pg").Pool,
+        batchSize: number,
+      ) => Promise<ClaimedOutboxEvent[]>,
+    });
+
+    await drainer.tick();
+
+    expect(outboxDrainDurationSpy).toHaveBeenCalledTimes(1);
+    const [attrs, durationSeconds] = outboxDrainDurationSpy.mock.calls[0]!;
+    expect(attrs).toEqual({ event_type: EVENT_TYPE_METRICS });
+    expect(typeof durationSeconds).toBe("number");
+    expect(durationSeconds).toBeGreaterThanOrEqual(0);
+
+    expect(outboxDeadLetterSpy).not.toHaveBeenCalled();
+  });
+
+  it("retry branch (attempts < MAX_ATTEMPTS): records drain duration, does NOT record dead-letter", async () => {
+    if (maybeSkip()) return;
+
+    class PoisonError extends Error {
+      override readonly name = "PoisonError";
+    }
+    const consumer: OutboxConsumer<unknown> = {
+      consumerId: "test.outbox-retry",
+      eventType: EVENT_TYPE_METRICS,
+      async handle(_event: OutboxEventEnvelope<unknown>): Promise<void> {
+        throw new PoisonError("boom");
+      },
+    };
+    const registry = new OutboxConsumerRegistry();
+    registry.register(consumer);
+
+    const drainer = new DrainerProcessor({
+      pool: env!.admin,
+      registry,
+      claimFn: makeT595ClaimFn(EV_METRICS_T595, 0) as (
+        pool: import("pg").Pool,
+        batchSize: number,
+      ) => Promise<ClaimedOutboxEvent[]>,
+    });
+
+    await drainer.tick();
+
+    expect(outboxDrainDurationSpy).toHaveBeenCalledTimes(1);
+    const [attrs] = outboxDrainDurationSpy.mock.calls[0]!;
+    expect(attrs).toEqual({ event_type: EVENT_TYPE_METRICS });
+
+    expect(outboxDeadLetterSpy).not.toHaveBeenCalled();
+  });
+
+  it("dead-letter branch (attempts >= MAX_ATTEMPTS): records dead-letter + drain duration with event_type", async () => {
+    if (maybeSkip()) return;
+
+    class PoisonError extends Error {
+      override readonly name = "PoisonError";
+    }
+    const consumer: OutboxConsumer<unknown> = {
+      consumerId: "test.outbox-dlq",
+      eventType: EVENT_TYPE_METRICS,
+      async handle(_event: OutboxEventEnvelope<unknown>): Promise<void> {
+        throw new PoisonError("boom");
+      },
+    };
+    const registry = new OutboxConsumerRegistry();
+    registry.register(consumer);
+
+    const drainer = new DrainerProcessor({
+      pool: env!.admin,
+      registry,
+      claimFn: makeT595ClaimFn(EV_METRICS_T595, 8) as (
+        pool: import("pg").Pool,
+        batchSize: number,
+      ) => Promise<ClaimedOutboxEvent[]>,
+    });
+
+    await drainer.tick();
+
+    expect(outboxDeadLetterSpy).toHaveBeenCalledTimes(1);
+    expect(outboxDeadLetterSpy).toHaveBeenCalledWith({ event_type: EVENT_TYPE_METRICS });
+
+    expect(outboxDrainDurationSpy).toHaveBeenCalledTimes(1);
+    const [durationAttrs] = outboxDrainDurationSpy.mock.calls[0]!;
+    expect(durationAttrs).toEqual({ event_type: EVENT_TYPE_METRICS });
+  });
+
+  it("no-consumer branch (UnroutableEventType): records drain duration, NOT dead-letter (treated as retryable)", async () => {
+    if (maybeSkip()) return;
+
+    // Empty registry — no consumer for event_type EVENT_TYPE_METRICS.
+    const registry = new OutboxConsumerRegistry();
+
+    const drainer = new DrainerProcessor({
+      pool: env!.admin,
+      registry,
+      claimFn: makeT595ClaimFn(EV_METRICS_T595, 0) as (
+        pool: import("pg").Pool,
+        batchSize: number,
+      ) => Promise<ClaimedOutboxEvent[]>,
+    });
+
+    await drainer.tick();
+
+    expect(outboxDrainDurationSpy).toHaveBeenCalledTimes(1);
+    const [attrs] = outboxDrainDurationSpy.mock.calls[0]!;
+    // The drainer passes row.event_type verbatim; an unroutable event_type
+    // still labels the duration so operators see the unrouted traffic.
+    expect(attrs).toEqual({ event_type: EVENT_TYPE_METRICS });
+
+    expect(outboxDeadLetterSpy).not.toHaveBeenCalled();
+  });
+
+  it("dead-letter branch preserves existing markDeadLettered persistence semantics", async () => {
+    if (maybeSkip()) return;
+
+    class PoisonError extends Error {
+      override readonly name = "PoisonError";
+    }
+    const consumer: OutboxConsumer<unknown> = {
+      consumerId: "test.outbox-state",
+      eventType: EVENT_TYPE_METRICS,
+      async handle(_event: OutboxEventEnvelope<unknown>): Promise<void> {
+        throw new PoisonError("boom");
+      },
+    };
+    const registry = new OutboxConsumerRegistry();
+    registry.register(consumer);
+
+    const drainer = new DrainerProcessor({
+      pool: env!.admin,
+      registry,
+      claimFn: makeT595ClaimFn(EV_METRICS_T595, 8) as (
+        pool: import("pg").Pool,
+        batchSize: number,
+      ) => Promise<ClaimedOutboxEvent[]>,
+    });
+
+    await drainer.tick();
+
+    const r = await env!.admin.query<{ delivery_state: string }>(
+      `SELECT delivery_state FROM outbox_events WHERE event_id=$1`,
+      [EV_METRICS_T595],
+    );
+    expect(r.rows[0]!.delivery_state).toBe("dead_lettered");
+  });
+});

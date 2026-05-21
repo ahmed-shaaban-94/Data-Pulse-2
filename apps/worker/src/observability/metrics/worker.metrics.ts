@@ -15,15 +15,19 @@
  *      helpers' TypeScript signatures exclude them (compile-time
  *      enforcement of FR-B-006).
  *
- * Outbox signals (`outbox_pending_total`, `outbox_dead_letter_total`,
- * `outbox_drain_duration_seconds`) are **registered as definitions only**
- * — no emission helper is exposed because the outbox implementation does
- * not exist yet (Track C P7). Per
- * `docs/observability/p4-worker-instrumentation-plan.md` §6, registering
+ * Outbox signals (signals.md §3.4):
+ *   - `outbox_dead_letter_total` and `outbox_drain_duration_seconds` are
+ *     emitted from `DrainerProcessor.processRow` (T595 PR-B-1). Helpers
+ *     `recordOutboxDeadLetter` / `recordOutboxDrainDuration` are exposed.
+ *   - `outbox_pending_total` remains **registered as definition only** —
+ *     the ObservableGauge needs an `addCallback` against a live DB pool,
+ *     deferred to a follow-on slice (T595 PR-B-2).
+ *
+ * Per `docs/observability/p4-worker-instrumentation-plan.md` §6, registering
  * the placeholders here lets dashboards-as-code and alerts-as-code refer
- * to canonical signal names ahead of the emission slice. Once Track C P7
- * lands, emission helpers will be added in a follow-on slice without
- * changing this module's registered names.
+ * to canonical signal names ahead of the emission slice. Adding emission
+ * for the remaining outbox signal will not change this module's
+ * registered names.
  *
  * Emission wiring (per-processor call sites) is intentionally deferred —
  * this slice ships definitions + helpers + a presence test only. The
@@ -96,6 +100,24 @@ export const WORKER_ERROR_CLASSES = [
 export type WorkerErrorClass = (typeof WORKER_ERROR_CLASSES)[number];
 
 const WORKER_ERROR_CLASS_SET: ReadonlySet<string> = new Set(WORKER_ERROR_CLASSES);
+
+// ---------------------------------------------------------------------------
+// Bounded outbox event_type values (T595, signals.md §3.4)
+// ---------------------------------------------------------------------------
+// Closed allowlist of event_type values the outbox metrics may be labelled
+// with. The single member today mirrors the only registered consumer
+// (`AuditEventCreatedConsumer.eventType` and `retention.policy.AUDIT_EVENT_TYPE`).
+// Adding an event_type requires registering a corresponding `OutboxConsumer`
+// AND extending this constant — both are gated by cardinality review
+// (FR-B-012). The runtime emission sites pass `row.event_type as string`
+// because the drainer receives untyped strings from Postgres; values outside
+// this set still emit (no coercion in this slice) — keeping the label
+// uncoerced preserves operator visibility into unrouted event types until a
+// stricter sanitizer is approved.
+export const WORKER_OUTBOX_EVENT_TYPES = [
+  "audit.event.created",
+] as const satisfies readonly string[];
+export type WorkerOutboxEventType = (typeof WORKER_OUTBOX_EVENT_TYPES)[number];
 
 /**
  * Coerce an arbitrary error-class name to the closed allowlist. Unknown
@@ -198,40 +220,43 @@ const _workerProcessingFailure: Counter = meter.createCounter(
   },
 );
 
-// Track C outbox placeholders — registered, NOT emitted by P4.
-// No emission helper is exposed; references are `void` to satisfy
-// unused-variable checks while keeping the side-effecting `createX`
-// call alive.
+// Track C outbox — outbox_pending_total remains a PLACEHOLDER (no helper)
+// because the ObservableGauge needs an addCallback wired to a live DB pool;
+// that DB/module lifecycle wiring is the deferred T595 follow-on slice.
 const _outboxPending: ObservableGauge = meter.createObservableGauge(
   "outbox_pending_total",
   {
     description:
       "Pending outbox events by event_type. PLACEHOLDER — registered for " +
-      "dashboard/alert authoring ahead of Track C P7; no values emitted yet.",
+      "dashboard/alert authoring ahead of the addCallback wiring slice; " +
+      "no values emitted yet.",
   },
 );
+
+// T595 (PR-B-1): outbox_dead_letter_total and outbox_drain_duration_seconds
+// are emitted from DrainerProcessor's existing per-row branches. Helpers
+// exposed below mirror the recordQueue* / recordWorker* shape used by
+// PR-A's T596 emission.
 const _outboxDeadLetter: Counter = meter.createCounter("outbox_dead_letter_total", {
   description:
-    "Outbox events that exhausted drain retries by event_type. PLACEHOLDER " +
-    "— registered for dashboard/alert authoring; no values emitted yet.",
+    "Outbox events that exhausted drain retries (row.attempts >= MAX_ATTEMPTS), " +
+    "labelled by event_type.",
 });
 const _outboxDrainDuration: Histogram = meter.createHistogram(
   "outbox_drain_duration_seconds",
   {
     description:
-      "Outbox drain batch duration in seconds by event_type. PLACEHOLDER " +
-      "— registered for dashboard/alert authoring; no values emitted yet.",
+      "Outbox per-row drain duration in seconds, labelled by event_type. " +
+      "Wall-clock from claim-dispatch to consumer return (success or failure).",
     unit: "s",
   },
 );
 
-// Silence TS "unused variable" warnings — these instruments are registered
-// as side effects and consumed by future emission wiring (queue_lag's
-// observable callback, outbox emission helpers).
+// Silence TS "unused variable" warnings — _queueLag is consumed by a future
+// addCallback wiring; _outboxPending stays a placeholder pending its own
+// addCallback slice.
 void _queueLag;
 void _outboxPending;
-void _outboxDeadLetter;
-void _outboxDrainDuration;
 
 // ---------------------------------------------------------------------------
 // Attribute types — TypeScript compile-time label enforcement (FR-B-006)
@@ -268,6 +293,29 @@ export interface WorkerJobDurationAttrs {
 export interface WorkerProcessingFailureAttrs {
   job_name: WorkerJobName;
   error_class: WorkerErrorClass;
+}
+
+/**
+ * Label shape for `outbox_dead_letter_total` and `outbox_drain_duration_seconds`.
+ *
+ * The drainer receives `row.event_type` from Postgres as an untyped string —
+ * the row may carry an event_type the worker has no consumer for (the
+ * "UnroutableEventType" path in DrainerProcessor.processRow). Typing this as
+ * `string` rather than `WorkerOutboxEventType` keeps that diagnostic
+ * visibility intact. Operators can spot unexpected event_type labels on the
+ * dashboard rather than seeing the metric silently coerce away the signal.
+ *
+ * Cardinality control comes from the consumer-registry invariant: only event
+ * types with a registered consumer (or an explicit unroutable-test fixture)
+ * ever reach this label. A separate cardinality review (FR-B-012) gates any
+ * new registered event_type.
+ */
+export interface OutboxDeadLetterAttrs {
+  event_type: string;
+}
+
+export interface OutboxDrainDurationAttrs {
+  event_type: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +397,33 @@ export function recordWorkerProcessingFailure(
   _workerProcessingFailure.add(1, attrs as unknown as Attributes);
 }
 
+/**
+ * Increment outbox_dead_letter_total for the given event_type.
+ *
+ * Emission site: `DrainerProcessor.processRow` — the existing dead-letter
+ * branch where `row.attempts >= MAX_ATTEMPTS` after a consumer throw.
+ * Called BEFORE `safeMarkDeadLettered` (mirrors PR-A's D4 ordering) so the
+ * metric reflects the drainer's decision regardless of persistence outcome.
+ */
+export function recordOutboxDeadLetter(attrs: OutboxDeadLetterAttrs): void {
+  _outboxDeadLetter.add(1, attrs as unknown as Attributes);
+}
+
+/**
+ * Record an outbox per-row drain duration observation (seconds).
+ *
+ * Emission site: `DrainerProcessor.processRow` finally — wall-clock from
+ * the start of processing to the consumer's return (success path) or the
+ * decision branch (failure / no-consumer paths). The histogram lets
+ * operators recover p50/p95/p99 per event_type at the query layer.
+ */
+export function recordOutboxDrainDuration(
+  attrs: OutboxDrainDurationAttrs,
+  durationSeconds: number,
+): void {
+  _outboxDrainDuration.record(durationSeconds, attrs as unknown as Attributes);
+}
+
 // ---------------------------------------------------------------------------
 // Signal-name registry — used by T465 signal-presence test
 // ---------------------------------------------------------------------------
@@ -370,19 +445,26 @@ export const WORKER_METRIC_NAMES = [
   "queue_retry_total",
   "worker_job_duration_seconds",
   "worker_processing_failure_total",
+  // T595 (PR-B-1): outbox dead-letter + drain-duration emitted from
+  // DrainerProcessor.processRow. The ObservableGauge outbox_pending_total
+  // remains a placeholder (see WORKER_OUTBOX_METRIC_NAMES) because its
+  // addCallback wiring needs a live DB pool — deferred to a follow-on
+  // slice.
+  "outbox_dead_letter_total",
+  "outbox_drain_duration_seconds",
 ] as const satisfies readonly string[];
 
 export type WorkerMetricName = (typeof WORKER_METRIC_NAMES)[number];
 
 /**
- * Canonical names of all Track C outbox signals **registered** by this
- * module as definitions ahead of P7. No emission helpers are exposed;
- * adding them is the Track C P7 slice's job (plan §6.3).
+ * Canonical names of Track C outbox signals **registered** by this module
+ * as definitions only — no emission helper exposed. Today only
+ * outbox_pending_total remains here; outbox_dead_letter_total and
+ * outbox_drain_duration_seconds graduated to WORKER_METRIC_NAMES in PR-B-1.
+ * Adding outbox_pending_total's addCallback is the Track C follow-on slice.
  */
 export const WORKER_OUTBOX_METRIC_NAMES = [
   "outbox_pending_total",
-  "outbox_dead_letter_total",
-  "outbox_drain_duration_seconds",
 ] as const satisfies readonly string[];
 
 export type WorkerOutboxMetricName = (typeof WORKER_OUTBOX_METRIC_NAMES)[number];
