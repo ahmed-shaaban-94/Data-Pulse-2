@@ -51,21 +51,18 @@ class ApiDbPoolGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
 
 /**
  * Count UP migration SQL files in `@data-pulse-2/db/drizzle/`.
- * Called once at module init — safe to be async.
- * Returns 0 on any filesystem error (gauge will show pending=1 until resolved).
+ * Called once at module init — throws on any filesystem error so callers
+ * can handle discovery failure explicitly rather than silently treating it
+ * as "zero migrations" (which would incorrectly mark the gauge as applied).
  */
 async function countMigrationFiles(): Promise<number> {
-  try {
-    // `require.resolve` is available in this CJS module (package type: commonjs).
-    const pkgJsonPath: string = require.resolve("@data-pulse-2/db/package.json");
-    const drizzleDir = resolve(dirname(pkgJsonPath), "drizzle");
-    const files = await readdir(drizzleDir);
-    return files.filter(
-      (f) => /^\d{4}_.+\.sql$/.test(f) && !f.endsWith(".down.sql"),
-    ).length;
-  } catch {
-    return 0;
-  }
+  // `require.resolve` is available in this CJS module (package type: commonjs).
+  const pkgJsonPath: string = require.resolve("@data-pulse-2/db/package.json");
+  const drizzleDir = resolve(dirname(pkgJsonPath), "drizzle");
+  const files = await readdir(drizzleDir);
+  return files.filter(
+    (f) => /^\d{4}_.+\.sql$/.test(f) && !f.endsWith(".down.sql"),
+  ).length;
 }
 
 /**
@@ -75,6 +72,9 @@ async function countMigrationFiles(): Promise<number> {
  * On `onModuleInit` resolves the total migration count from the filesystem,
  * then registers the scrape-time callback. On `onModuleDestroy` removes it
  * so a stale callback doesn't fire against a closed pool.
+ *
+ * If the filesystem count fails, the gauge falls back to `Number.MAX_SAFE_INTEGER`
+ * as the total so `pending=1` is always observed — never a false "applied" signal.
  */
 @Injectable()
 class ApiDbMigrationStatusGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
@@ -83,7 +83,22 @@ class ApiDbMigrationStatusGaugeRegistrar implements OnModuleInit, OnModuleDestro
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   async onModuleInit(): Promise<void> {
-    const totalMigrations = await countMigrationFiles();
+    let totalMigrations: number;
+    try {
+      totalMigrations = await countMigrationFiles();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        JSON.stringify({
+          level: "warn",
+          component: "migration.status.gauge",
+          message: "could not count migration files; gauge will report pending until resolved",
+          error: message,
+        }) + "\n",
+      );
+      // Unknown total → never mark as applied to avoid a false healthy signal.
+      totalMigrations = Number.MAX_SAFE_INTEGER;
+    }
     this.handle = registerDbMigrationStatusGauge({
       pool: this.pool,
       totalMigrations,
