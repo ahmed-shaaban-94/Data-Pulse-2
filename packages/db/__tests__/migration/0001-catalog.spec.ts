@@ -110,9 +110,15 @@ let migrationGateError: string | null = null;
  * 0007_catalog, which would defeat this design.
  */
 async function applyPreCatalogMigrations(pgEnv: PgTestEnv): Promise<void> {
+  // Restrict to migrations that sort STRICTLY before 0007_catalog.sql. A
+  // simple `!=` would also let future 0008+ migrations run against the
+  // pre-catalog schema, which would either fail spuriously or mask a real
+  // regression. Lex compare to `basename(CATALOG_UP_PATH)` keeps the
+  // pre-state window pinned to 0000–0006 even after the catalog ships.
+  const catalogUpBasename = basename(CATALOG_UP_PATH);
   const upFiles = readdirSync(DRIZZLE_DIR)
     .filter((n) => /^\d{4}_.+\.sql$/.test(n) && !n.endsWith(".down.sql"))
-    .filter((n) => basename(n) !== basename(CATALOG_UP_PATH))
+    .filter((n) => n.localeCompare(catalogUpBasename) < 0)
     .sort();
   for (const name of upFiles) {
     const sql = readFileSync(resolve(DRIZZLE_DIR, name), "utf8");
