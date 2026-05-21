@@ -8,6 +8,16 @@
 
 ## Changelog
 
+- **2026-05-21** (T483 operator evidence) — T483 live `/metrics` scrape
+  validation recorded against commit `678baa47` (see
+  `docs/observability/operator-validation-report.md`). Verdict: **PASS**.
+  P4 status moves from "DONE for code / NEEDS OPERATOR VALIDATION" to
+  **DONE**. P7 closure is complete for every in-scope item; the only
+  remaining open items are T591 admin write endpoints (1C-C2 retry/
+  requeue, 1C-C3 acknowledge) and deferred observability infra
+  (`redis_command_duration_seconds`, `queue_lag_seconds`, BullMQ
+  `QueueEvents`, dedicated `platform:operator` role), all of which are
+  separate-slice / future-feature work.
 - **2026-05-21** — P7 closeout. T565 (PR #255), T595 PR-B-1 (PR #253) and
   PR-B-2 (PR #259), T596 (PR #251) all merged; Codecov upload flake removed
   by PR #257. T597–T600 exit-gate validation recorded in §3 and §11. P7
@@ -48,10 +58,10 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **DONE for code / NEEDS OPERATOR VALIDATION for T483** | Redaction and structured logging wired (T473/T474). API metrics emitting (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). Live `/metrics` scrape (T483) tracked separately under §4.A. |
+| P4 — Observability instrumentation | B | **DONE** | Redaction and structured logging wired (T473/T474). API metrics emitting (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 live `/metrics` operator scrape **PASSED** on 2026-05-21 against commit `678baa47` — see `docs/observability/operator-validation-report.md`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
-| P7 — Outbox first slice | C | **DONE for in-scope items / OPEN: T483 + future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), and exit-gate validation (T597–T600) all merged. T483 live `/metrics` operator scrape, per-consumer dedup projection, and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred. |
+| P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600), and T483 live `/metrics` operator scrape evidence (PASS, 2026-05-21) all complete. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
 | P8 — SDK strategy | E | **DONE** | Strategy and handoff docs merged; no `packages/sdk` or generated files introduced. |
 | P9 — Cross-track validation | — | **SUPERSEDED / STALE for runtime status** | Planning-phase report (PR #212) does not cover PRs #222–#242. This document is the authoritative runtime status. |
 
@@ -94,7 +104,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P4 | T470–T472 | Metric definitions registered (API, DB, worker) | #229 | PARTIAL | PR #229 wires OTel metrics SDK and exposes `/metrics`; metric family definitions registered. Actual emission from DB and drainer call-sites still pending. |
 | P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | Not confirmed | PARTIAL | Not explicitly referenced in merged PR bodies. |
 | P4 | T480–T482 | P4 validation suite GREEN | #227 | DONE | PR #227 closeout report at `docs/observability/p4-closeout-report.md` confirms T480–T482 GREEN. |
-| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), #227 (BLOCKED at time) | NEEDS OPERATOR VALIDATION | PR #229 provides the runtime prerequisite (`/metrics` endpoint wired). Live scrape against API + worker not yet operator-recorded. |
+| P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), THIS PR | DONE | Operator-side run on 2026-05-21 against commit `678baa47` proved every exercised API + worker custom metric appears in the live Prometheus scrape with expected label shape for exercised paths (with the documented error-path `route="unknown"` limitation). Verdict **PASS**. Full evidence + honest absences: `docs/observability/operator-validation-report.md`. |
 
 ### P5 — Track D Idempotency (T500–T534)
 
@@ -171,10 +181,9 @@ No code change is needed to unblock them.
    `docker run --rm -v "$PWD/loadtests/k6:/scripts" grafana/k6:0.50.0 run /scripts/smoke.js --vus 1 --duration 5s`
    against a live non-prod stack and record the result.
 
-2. **T483** — Live `/metrics` scrape validation: confirm every signal from
-   `docs/observability/signals.md` is present when scraping the running API and
-   worker processes. PR #229 provides the runtime prerequisite; the operator
-   recording is still outstanding.
+*(T483 — Live `/metrics` scrape validation: **closed by this PR**. Operator
+run on 2026-05-21 against commit `678baa47` recorded in
+`docs/observability/operator-validation-report.md`. Verdict PASS.)*
 
 ### B — Docs-Only Cleanup
 
@@ -272,22 +281,25 @@ planning artifact.
 
 ## 6. Next Recommended Slice
 
-After the 2026-05-21 P7 closeout, the remaining recommended slice is the
-**Operator Validation Slice** (Option A below). Option B (T595/T596 metrics
-emission pre-flight) is **closed** — see §3 P7 rows and PRs #251 / #253 /
-#259.
+After the 2026-05-21 P7 closeout (incl. T483 operator evidence on the same
+day), the remaining recommended slice is **T437 only** — k6 smoke-run
+against a live non-prod stack. Option B (T595/T596 metrics emission
+pre-flight) is **closed** — see §3 P7 rows and PRs #251 / #253 / #259.
+T483 is closed — see §3 P4 / T483 row and
+`docs/observability/operator-validation-report.md`.
 
-### Option A — Operator Validation Slice
+### Option A — Operator Validation Slice (T437 only)
 
 **Recommended when a live non-prod environment is available.**
 
 Perform and record:
 1. T437 — k6 smoke-run (5s, 1 VU, `grafana/k6:0.50.0`) against a live non-prod stack.
-2. T483 — Live `/metrics` scrape: confirm all signals from
-   `docs/observability/signals.md` appear in the running API and worker.
 
-Deliverable: `docs/observability/operator-validation-report.md` recording the
-run timestamp, environment, pass/fail results, and signal list. No source
+*(T483 — already complete; see above.)*
+
+Deliverable: append a T437 subsection to
+`docs/observability/operator-validation-report.md` recording the run
+timestamp, environment, pass/fail, and any latency observations. No source
 changes required.
 
 ---
@@ -395,10 +407,11 @@ by role privilege.
 ### 11.5 P7 exit-gate verdict
 
 All four T597–T600 invariants are **satisfied** against a real Postgres
-container as of 2026-05-21. T483 (live `/metrics` operator scrape) is
-**separately tracked** under §4.A and §6 Option A — its outcome does not
-gate the P7 exit, but does gate the §2 "P4 — Observability instrumentation"
-NEEDS OPERATOR VALIDATION note from being fully retired.
+container as of 2026-05-21. T483 (live `/metrics` operator scrape) was
+**completed on the same day** — evidence recorded in
+`docs/observability/operator-validation-report.md` with verdict PASS.
+This retires the §2 "P4 — Observability instrumentation" NEEDS OPERATOR
+VALIDATION note and closes every in-scope item under Spec 004 P7.
 
 ---
 
