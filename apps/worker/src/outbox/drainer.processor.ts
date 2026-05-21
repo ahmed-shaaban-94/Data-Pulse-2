@@ -55,6 +55,18 @@ import {
 import { runWithTenantContext } from "@data-pulse-2/db";
 import type { OutboxConsumer } from "@data-pulse-2/shared";
 import type { OutboxConsumerRegistry } from "./registry";
+import {
+  recordQueueDeadLetter,
+  recordQueueFailed,
+  recordQueueRetry,
+  sanitizeErrorClass,
+} from "../observability/metrics/worker.metrics";
+
+// T596: the drainer is the failure-decision point for outbox delivery. The
+// `queue` label maps to "audit-fanout" — the only outbox-managed queue today
+// — per the approved D2 decision. Adding "outbox-drainer" to
+// WORKER_QUEUE_NAMES is deferred to a future slice.
+const DRAINER_QUEUE_LABEL = "audit-fanout" as const;
 
 // ---------------------------------------------------------------------------
 // Defaults
@@ -205,6 +217,14 @@ export class DrainerProcessor {
         `drainer: no consumer for event_type="${row.event_type}" event_id="${row.event_id}"`,
         new Error(errorClass),
       );
+      // T596: emit BEFORE persistence (D4) so the metric reflects the
+      // drainer's decision regardless of whether `safeMarkFailed` succeeds.
+      // `error_class` runs through sanitizeErrorClass — "UnroutableEventType"
+      // is not in WORKER_ERROR_CLASSES and will coerce to "UnknownError"
+      // per the approved D3 decision.
+      const sanitizedClass = sanitizeErrorClass(errorClass);
+      recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
+      recordQueueRetry({ queue: DRAINER_QUEUE_LABEL });
       await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
       return;
     }
@@ -214,11 +234,18 @@ export class DrainerProcessor {
       await this.safeMarkDelivered(row.event_id);
     } catch (err: unknown) {
       const errorClass = this.extractErrorClass(err);
+      // T596: emit BEFORE persistence (D4). queue_failed_total always fires
+      // on a consumer throw; queue_retry_total vs queue_dead_letter_total
+      // mirrors the existing retry-budget branch.
+      const sanitizedClass = sanitizeErrorClass(errorClass);
+      recordQueueFailed({ queue: DRAINER_QUEUE_LABEL, error_class: sanitizedClass });
 
       if (row.attempts >= MAX_ATTEMPTS) {
         // Budget exhausted — dead-letter.
+        recordQueueDeadLetter({ queue: DRAINER_QUEUE_LABEL });
         await this.safeMarkDeadLettered(row.event_id, errorClass);
       } else {
+        recordQueueRetry({ queue: DRAINER_QUEUE_LABEL });
         await this.safeMarkFailed(row.event_id, row.attempts, errorClass);
       }
     }

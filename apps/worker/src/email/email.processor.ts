@@ -54,6 +54,16 @@ import {
   renderInvitationEmail,
   renderPasswordResetEmail,
 } from "./templates";
+import {
+  recordWorkerJobDuration,
+  recordWorkerProcessingFailure,
+  sanitizeErrorClass,
+} from "../observability/metrics/worker.metrics";
+
+// T596: queue-level job_name per signals.md §3 — every email job (password-reset,
+// email-verify, invitation) emits with the same bounded queue-level label.
+// Sub-job-name granularity is deferred per the approved D1 decision.
+const JOB_NAME_EMAIL = "email" as const;
 
 /**
  * BullMQ job names this processor handles. Mirrors `EMAIL_JOB_NAMES`
@@ -113,33 +123,54 @@ export class EmailProcessor {
   ) {}
 
   async process(jobName: string, data: unknown): Promise<void> {
-    const carrier =
-      typeof data === "object" && data !== null && "traceContext" in data
-        ? ((data as { traceContext?: TraceCarrier }).traceContext ?? {})
-        : {};
-    const restoredCtx = extractTraceContext(carrier);
+    // T596: instrument the processor boundary. Wall-clock duration on every
+    // exit (success and failure) feeds worker_job_duration_seconds; the
+    // catch branch additionally increments worker_processing_failure_total
+    // with the sanitized error class. Behavior is unchanged: thrown errors
+    // are rethrown verbatim so BullMQ's existing retry / DLQ semantics
+    // continue to apply.
+    const startNs = process.hrtime.bigint();
+    try {
+      const carrier =
+        typeof data === "object" && data !== null && "traceContext" in data
+          ? ((data as { traceContext?: TraceCarrier }).traceContext ?? {})
+          : {};
+      const restoredCtx = extractTraceContext(carrier);
 
-    return context.with(restoredCtx, async () => {
-      switch (jobName) {
-        case EMAIL_JOB_NAMES.passwordReset: {
-          const parsed = parseAuthJobData(jobName, data);
-          await this.adapter.send(renderPasswordResetEmail(parsed));
-          return;
+      return await context.with(restoredCtx, async () => {
+        switch (jobName) {
+          case EMAIL_JOB_NAMES.passwordReset: {
+            const parsed = parseAuthJobData(jobName, data);
+            await this.adapter.send(renderPasswordResetEmail(parsed));
+            return;
+          }
+          case EMAIL_JOB_NAMES.emailVerification: {
+            const parsed = parseAuthJobData(jobName, data);
+            await this.adapter.send(renderEmailVerificationEmail(parsed));
+            return;
+          }
+          case EMAIL_JOB_NAMES.invitation: {
+            const parsed = parseInvitationJobData(jobName, data);
+            await this.adapter.send(renderInvitationEmail(parsed));
+            return;
+          }
+          default:
+            throw new UnknownEmailJobError(jobName);
         }
-        case EMAIL_JOB_NAMES.emailVerification: {
-          const parsed = parseAuthJobData(jobName, data);
-          await this.adapter.send(renderEmailVerificationEmail(parsed));
-          return;
-        }
-        case EMAIL_JOB_NAMES.invitation: {
-          const parsed = parseInvitationJobData(jobName, data);
-          await this.adapter.send(renderInvitationEmail(parsed));
-          return;
-        }
-        default:
-          throw new UnknownEmailJobError(jobName);
-      }
-    });
+      });
+    } catch (err: unknown) {
+      const errorClass = sanitizeErrorClass(
+        err instanceof Error ? err.constructor.name : null,
+      );
+      recordWorkerProcessingFailure({
+        job_name: JOB_NAME_EMAIL,
+        error_class: errorClass,
+      });
+      throw err;
+    } finally {
+      const durationSeconds = Number(process.hrtime.bigint() - startNs) / 1_000_000_000;
+      recordWorkerJobDuration({ job_name: JOB_NAME_EMAIL }, durationSeconds);
+    }
   }
 }
 

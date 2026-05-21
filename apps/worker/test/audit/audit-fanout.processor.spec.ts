@@ -30,6 +30,27 @@
  *   - T303: jobs with traceContext still parse and insert normally
  *   - T303: active context inside process() carries the producer traceId
  */
+// T596: mock the worker.metrics module BEFORE importing the processor. See
+// the equivalent block in apps/worker/test/email/email.processor.spec.ts —
+// same rationale (avoid OTel SDK at unit-test time, spy on call counts).
+jest.mock("../../src/observability/metrics/worker.metrics", () => {
+  const WORKER_ERROR_CLASSES = new Set([
+    "TenantContextMissingError",
+    "ZodValidationError",
+    "PostgresUniqueViolation",
+    "RedisConnectionError",
+    "Timeout",
+    "UnknownError",
+  ]);
+  return {
+    recordWorkerJobDuration: jest.fn(),
+    recordWorkerProcessingFailure: jest.fn(),
+    sanitizeErrorClass: jest.fn((name: string | null | undefined) =>
+      typeof name === "string" && WORKER_ERROR_CLASSES.has(name) ? name : "UnknownError",
+    ),
+  };
+});
+
 import {
   AuditFanoutProcessor,
   AUDIT_FANOUT_JOB_NAME,
@@ -45,6 +66,10 @@ import {
   injectTraceContext,
   type TestTracerHandle,
 } from "@data-pulse-2/shared/observability/otel";
+import {
+  recordWorkerJobDuration,
+  recordWorkerProcessingFailure,
+} from "../../src/observability/metrics/worker.metrics";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -94,6 +119,9 @@ describe("AuditFanoutProcessor", () => {
   beforeEach(() => {
     db = buildSpyDb();
     processor = new AuditFanoutProcessor(db);
+    // T596: reset metric spies so per-test call-count assertions are clean.
+    (recordWorkerJobDuration as jest.Mock).mockClear();
+    (recordWorkerProcessingFailure as jest.Mock).mockClear();
   });
 
   // ── Happy path ─────────────────────────────────────────────────────────
@@ -379,5 +407,89 @@ describe("T303 — OTel traceContext wiring in AuditFanoutProcessor", () => {
     });
 
     expect(contextTraceId).toBe(producerTraceId);
+  });
+});
+
+describe("T596 — AuditFanoutProcessor metric emission (worker_job_duration, worker_processing_failure)", () => {
+  let db: ReturnType<typeof buildSpyDb>;
+  let processor: AuditFanoutProcessor;
+
+  beforeEach(() => {
+    db = buildSpyDb();
+    processor = new AuditFanoutProcessor(db);
+    (recordWorkerJobDuration as jest.Mock).mockClear();
+    (recordWorkerProcessingFailure as jest.Mock).mockClear();
+  });
+
+  it("success: records worker_job_duration_seconds with job_name='audit-fanout' and non-negative duration", async () => {
+    await processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD);
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+    const [attrs, durationSeconds] = (recordWorkerJobDuration as jest.Mock).mock.calls[0]!;
+    expect(attrs).toEqual({ job_name: "audit-fanout" });
+    expect(typeof durationSeconds).toBe("number");
+    expect(durationSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it("success: does NOT record worker_processing_failure_total", async () => {
+    await processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD);
+    expect(recordWorkerProcessingFailure).not.toHaveBeenCalled();
+  });
+
+  it("malformed payload: records worker_processing_failure with job_name='audit-fanout' and error_class='UnknownError'", async () => {
+    // MalformedAuditJobError is not in WORKER_ERROR_CLASSES → "UnknownError".
+    const bad = { ...VALID_PAYLOAD, action: undefined };
+    await expect(
+      processor.process(AUDIT_FANOUT_JOB_NAME, bad),
+    ).rejects.toBeInstanceOf(MalformedAuditJobError);
+
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledTimes(1);
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "audit-fanout",
+      error_class: "UnknownError",
+    });
+  });
+
+  it("malformed payload: still records worker_job_duration_seconds (finally branch fires)", async () => {
+    await expect(
+      processor.process(AUDIT_FANOUT_JOB_NAME, "not-an-object"),
+    ).rejects.toBeInstanceOf(MalformedAuditJobError);
+
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+    const [attrs] = (recordWorkerJobDuration as jest.Mock).mock.calls[0]!;
+    expect(attrs).toEqual({ job_name: "audit-fanout" });
+  });
+
+  it("unknown job name: records worker_processing_failure with error_class='UnknownError'", async () => {
+    await expect(
+      processor.process("audit.unknown", VALID_PAYLOAD),
+    ).rejects.toBeInstanceOf(UnknownAuditJobError);
+
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledTimes(1);
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "audit-fanout",
+      error_class: "UnknownError",
+    });
+  });
+
+  it("transient DB error: records worker_processing_failure and rethrows the original error unchanged", async () => {
+    const dbError = new Error("pg: connection refused");
+    db.insertAuditEvent.mockRejectedValueOnce(dbError);
+    await expect(
+      processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD),
+    ).rejects.toBe(dbError);
+
+    // Generic Error → "UnknownError".
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "audit-fanout",
+      error_class: "UnknownError",
+    });
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+  });
+
+  it("multiple invocations: each records exactly one duration call (no leakage between calls)", async () => {
+    await processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD);
+    await processor.process(AUDIT_FANOUT_JOB_NAME, VALID_PAYLOAD);
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(2);
+    expect(recordWorkerProcessingFailure).not.toHaveBeenCalled();
   });
 });

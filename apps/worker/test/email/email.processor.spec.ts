@@ -24,6 +24,31 @@
  *   - T303: jobs with traceContext still parse and send normally
  *   - T303: legacy jobs without traceContext still work
  */
+// T596: mock the worker.metrics module BEFORE importing the processor.
+// The processor imports recordWorkerJobDuration / recordWorkerProcessingFailure
+// / sanitizeErrorClass as side effects at module load. Letting the real module
+// run would require an OTel SDK; the unit suite stays Docker- and OTel-free.
+// The mock returns no-op jest.fn() spies so we can assert call counts and
+// arguments, and a passthrough sanitizeErrorClass that mirrors the real
+// closed-allowlist behavior (anything outside the allowlist → "UnknownError").
+jest.mock("../../src/observability/metrics/worker.metrics", () => {
+  const WORKER_ERROR_CLASSES = new Set([
+    "TenantContextMissingError",
+    "ZodValidationError",
+    "PostgresUniqueViolation",
+    "RedisConnectionError",
+    "Timeout",
+    "UnknownError",
+  ]);
+  return {
+    recordWorkerJobDuration: jest.fn(),
+    recordWorkerProcessingFailure: jest.fn(),
+    sanitizeErrorClass: jest.fn((name: string | null | undefined) =>
+      typeof name === "string" && WORKER_ERROR_CLASSES.has(name) ? name : "UnknownError",
+    ),
+  };
+});
+
 import {
   EmailProcessor,
   EMAIL_JOB_NAMES,
@@ -41,6 +66,10 @@ import {
   injectTraceContext,
   type TestTracerHandle,
 } from "@data-pulse-2/shared/observability/otel";
+import {
+  recordWorkerJobDuration,
+  recordWorkerProcessingFailure,
+} from "../../src/observability/metrics/worker.metrics";
 
 const TENANT_ID = "0b000000-0000-7000-8000-00000000bb01";
 
@@ -54,6 +83,9 @@ let processor: EmailProcessor;
 beforeEach(() => {
   adapter = new RecordingEmailAdapter();
   processor = new EmailProcessor(adapter);
+  // T596: reset metric spies so per-test call-count assertions are clean.
+  (recordWorkerJobDuration as jest.Mock).mockClear();
+  (recordWorkerProcessingFailure as jest.Mock).mockClear();
 });
 
 describe("EmailProcessor — auth.password-reset", () => {
@@ -440,5 +472,106 @@ describe("T303 — OTel traceContext wiring in EmailProcessor", () => {
     });
 
     expect(contextTraceId).toBe(producerTraceId);
+  });
+});
+
+describe("T596 — EmailProcessor metric emission (worker_job_duration, worker_processing_failure)", () => {
+  it("success: records worker_job_duration_seconds with job_name='email' and non-negative duration", async () => {
+    await processor.process(EMAIL_JOB_NAMES.passwordReset, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+    });
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+    const [attrs, durationSeconds] = (recordWorkerJobDuration as jest.Mock).mock.calls[0]!;
+    expect(attrs).toEqual({ job_name: "email" });
+    expect(typeof durationSeconds).toBe("number");
+    expect(durationSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it("success: does NOT record worker_processing_failure_total", async () => {
+    await processor.process(EMAIL_JOB_NAMES.emailVerification, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      userId: USER_ID,
+    });
+    expect(recordWorkerProcessingFailure).not.toHaveBeenCalled();
+  });
+
+  it("malformed payload: records worker_processing_failure with job_name='email' and error_class='UnknownError'", async () => {
+    // MalformedEmailJobError is not in WORKER_ERROR_CLASSES — sanitizes to "UnknownError".
+    await expect(
+      processor.process(EMAIL_JOB_NAMES.passwordReset, {
+        email: EMAIL,
+        rawToken: "",
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(MalformedEmailJobError);
+
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledTimes(1);
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "email",
+      error_class: "UnknownError",
+    });
+  });
+
+  it("malformed payload: still records worker_job_duration_seconds (finally branch fires)", async () => {
+    await expect(
+      processor.process(EMAIL_JOB_NAMES.passwordReset, {
+        email: EMAIL,
+        rawToken: "",
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(MalformedEmailJobError);
+
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+    const [attrs] = (recordWorkerJobDuration as jest.Mock).mock.calls[0]!;
+    expect(attrs).toEqual({ job_name: "email" });
+  });
+
+  it("unknown job name: records worker_processing_failure with error_class='UnknownError'", async () => {
+    await expect(
+      processor.process("auth.not-a-real-job", {
+        email: EMAIL,
+        rawToken: RAW_TOKEN,
+        userId: USER_ID,
+      }),
+    ).rejects.toBeInstanceOf(UnknownEmailJobError);
+
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledTimes(1);
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "email",
+      error_class: "UnknownError",
+    });
+  });
+
+  it("adapter error: records worker_processing_failure and rethrows the original error unchanged", async () => {
+    adapter.reject = new Error("smtp ECONNREFUSED");
+    await expect(
+      processor.process(EMAIL_JOB_NAMES.passwordReset, {
+        email: EMAIL,
+        rawToken: RAW_TOKEN,
+        userId: USER_ID,
+      }),
+    ).rejects.toThrow("smtp ECONNREFUSED");
+
+    // Generic Error is not in WORKER_ERROR_CLASSES → sanitizes to UnknownError.
+    expect(recordWorkerProcessingFailure).toHaveBeenCalledWith({
+      job_name: "email",
+      error_class: "UnknownError",
+    });
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+  });
+
+  it("invitation job success path records duration with job_name='email' (same queue-level label)", async () => {
+    await processor.process(EMAIL_JOB_NAMES.invitation, {
+      email: EMAIL,
+      rawToken: RAW_TOKEN,
+      tenantId: TENANT_ID,
+    });
+    expect(recordWorkerJobDuration).toHaveBeenCalledTimes(1);
+    const [attrs] = (recordWorkerJobDuration as jest.Mock).mock.calls[0]!;
+    expect(attrs).toEqual({ job_name: "email" });
+    expect(recordWorkerProcessingFailure).not.toHaveBeenCalled();
   });
 });
