@@ -8,25 +8,29 @@
  *   `DEFAULT_REDACT_PATHS`) never appear in pino output.
  *
  *   T565's task text explicitly defers exhaustive coverage to the redaction
- *   matrix (`.specify/memory/redaction-matrix.md`, P3 / T440). This spec
- *   therefore asserts ONLY what the current matrix is contractually
- *   responsible for; it documents (via `it.todo`) the matrix-deferred gaps
- *   the test surfaced -- specifically `actor_label`, nested `payload.*.*`
- *   PII fields, and the audit envelope's `metadata.*` -- so the matrix
- *   maintainers can address them in the next matrix amendment without
- *   this test silently passing.
+ *   matrix (`.specify/memory/redaction-matrix.md`, P3 / T440). The matrix
+ *   amendment of 2026-05-21 (matrix §4.3 + §3.2 actor_label row) closed
+ *   the originally-deferred gaps. This spec now asserts ALL matrix-protected
+ *   paths the audit outbox envelope can carry:
+ *     - matrix §3.2 + `*.X`               -> suites RD-1, RD-2, RD-3
+ *     - matrix §3.2 actor_label           -> suite RD-4 (a, b, g)
+ *     - matrix §4.3 payload.metadata.X    -> suite RD-4 (c, d, e, f, g)
+ *     - matrix §4.3 *.metadata.X defense  -> suite RD-5 (a, b, c, d)
  *
- * What the matrix protects today (DEFAULT_REDACT_PATHS, top-level + `*.X`)
- * ------------------------------------------------------------------------
+ * What the matrix protects today (DEFAULT_REDACT_PATHS)
+ * -----------------------------------------------------
  *   - top-level: `email`, `phone`, `full_name`, `given_name`,
  *     `family_name`, `display_name`, `date_of_birth`, `national_id`,
- *     `ip_address`, ...
- *   - one-segment-nested: `*.email`, `*.phone`, `*.full_name`, ...
+ *     `ip_address`, `actor_label`, ...
+ *   - one-segment-nested (`*.X`): `*.email`, `*.phone`, `*.full_name`,
+ *     `*.actor_label`, ...
  *   - free text: `note`, `comment`, `description`, `feedback`, `*.note`, ...
+ *   - two-segment audit-envelope (T565 / matrix §4.3, 2026-05-21):
+ *     `payload.metadata.{email,phone,full_name,note}` and the
+ *     defensive `*.metadata.{email,phone,full_name,note}` family.
  *
- *   Pino's `*.X` wildcard matches a SINGLE segment only -- so
- *   `payload.metadata.email` (three segments deep) is NOT covered by
- *   the existing matrix. Adding it is a matrix amendment.
+ *   Pino's `*.X` wildcard matches a SINGLE segment only — see matrix §4.3
+ *   for the depth limitation and the explicit two-segment paths it lists.
  *
  * What this spec does NOT do
  * --------------------------
@@ -54,11 +58,14 @@ const PII_NAME = "Avery Canary-McTest";
 
 /**
  * An outbox-event-shaped envelope. The TOP-LEVEL `payload` sub-object
- * carries a mix of matrix-covered fields (e.g. `email`, `phone`) and
- * matrix-deferred fields (e.g. `actor_label`, `metadata.email`).
+ * carries a mix of fields covered by the original matrix and fields
+ * covered by the T565 / matrix §4.3 amendment (2026-05-21):
+ *   - `payload.{email,phone,full_name}` — original `*.X` coverage.
+ *   - `payload.actor_label`             — amendment `*.actor_label`.
+ *   - `payload.metadata.{email,phone,full_name,note}` — amendment's
+ *     explicit two-segment paths.
  *
- * The matrix-covered fields are asserted in the active tests below.
- * The deferred fields are documented in the `it.todo` section.
+ * Suite RD-4g asserts every redactable field in this envelope.
  */
 function makeOutboxEventEnvelope(): Record<string, unknown> {
   return {
@@ -74,7 +81,7 @@ function makeOutboxEventEnvelope(): Record<string, unknown> {
       email: PII_EMAIL,
       phone: PII_PHONE,
       full_name: PII_NAME,
-      // Matrix-deferred (documented in it.todo below):
+      // T565 / matrix §4.3 (2026-05-21) amendment-covered:
       actor_label: PII_EMAIL,
       metadata: {
         email: PII_EMAIL,
@@ -262,48 +269,197 @@ describe("outbox payload redaction -- full outbox envelope binding (RD-3)", () =
 });
 
 // ---------------------------------------------------------------------------
-// Suite 4: Matrix-deferred gaps -- documented for redaction-matrix follow-up
+// Suite 4: Matrix-amendment closure (T565, matrix §4.3 2026-05-21)
 // ---------------------------------------------------------------------------
 //
-// These assertions describe contracts the redaction matrix does NOT yet
-// enforce, surfaced by this spec. They are intentionally `it.todo` rather
-// than failing tests so:
+// These assertions exercise the paths added to DEFAULT_REDACT_PATHS by the
+// T565 matrix-amendment closure:
 //
-//   - the matrix-amendment work has a discoverable to-do trail, and
-//   - this spec does NOT silently pass when a future log site emits one
-//     of these fields (a reviewer adding the matrix entry will pick the
-//     todos up and convert them to real assertions in the same change).
-//
-// Matrix follow-up: add to DEFAULT_REDACT_PATHS in
-//   `packages/shared/src/logger/pino.ts`
-// and to the matrix doc at
-//   `.specify/memory/redaction-matrix.md`
-// the following paths:
 //   - `actor_label`            (audit job payload PII label)
 //   - `*.actor_label`          (nested in `payload`, `event`, etc.)
-//   - `metadata.email`         (audit envelope nested PII)
-//   - `metadata.phone`
-//   - `metadata.full_name`
-//   - `metadata.note`          (free-text PII-suspect)
-//   - `*.metadata.email`       (when the envelope itself is nested)
+//   - `payload.metadata.email`         (audit envelope nested PII)
+//   - `payload.metadata.phone`
+//   - `payload.metadata.full_name`
+//   - `payload.metadata.note`          (free-text PII-suspect)
+//   - `*.metadata.email`       (defensive: when the envelope is nested
+//                               under a different one-segment prefix)
 //   - `*.metadata.phone`
 //   - `*.metadata.full_name`
 //   - `*.metadata.note`
+//
+// Source of truth: `.specify/memory/redaction-matrix.md` §3.2 (actor_label)
+// and §4.3 (pino wildcard depth + worker outbox envelope paths).
 // ---------------------------------------------------------------------------
-describe("outbox payload redaction -- matrix-deferred gaps (RD-4)", () => {
-  it.todo(
-    "matrix amendment: `actor_label` should be redacted at the top level (RD-4a)",
-  );
-  it.todo(
-    "matrix amendment: `payload.actor_label` should be redacted via `*.actor_label` (RD-4b)",
-  );
-  it.todo(
-    "matrix amendment: `payload.metadata.email` should be redacted (two-segment nesting) (RD-4c)",
-  );
-  it.todo(
-    "matrix amendment: `payload.metadata.phone` should be redacted (RD-4d)",
-  );
-  it.todo(
-    "matrix amendment: `payload.metadata.full_name` should be redacted (RD-4e)",
-  );
+describe("outbox payload redaction -- matrix-amendment closure (RD-4)", () => {
+  it("`actor_label` is redacted at the top level (RD-4a)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info({ actor_label: PII_EMAIL }, "top-level actor_label");
+
+    const last = lines().pop()!;
+    expect(last["actor_label"]).toBe("[REDACTED]");
+  });
+
+  it("`payload.actor_label` is redacted via `*.actor_label` (RD-4b)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { payload: { actor_label: PII_EMAIL } },
+      "one-segment-nested actor_label",
+    );
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    expect(payload["actor_label"]).toBe("[REDACTED]");
+  });
+
+  it("`payload.metadata.email` is redacted (two-segment nesting) (RD-4c)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { payload: { metadata: { email: PII_EMAIL } } },
+      "two-segment metadata.email",
+    );
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    const metadata = payload["metadata"] as Record<string, unknown>;
+    expect(metadata["email"]).toBe("[REDACTED]");
+  });
+
+  it("`payload.metadata.phone` is redacted (RD-4d)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { payload: { metadata: { phone: PII_PHONE } } },
+      "two-segment metadata.phone",
+    );
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    const metadata = payload["metadata"] as Record<string, unknown>;
+    expect(metadata["phone"]).toBe("[REDACTED]");
+  });
+
+  it("`payload.metadata.full_name` is redacted (RD-4e)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { payload: { metadata: { full_name: PII_NAME } } },
+      "two-segment metadata.full_name",
+    );
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    const metadata = payload["metadata"] as Record<string, unknown>;
+    expect(metadata["full_name"]).toBe("[REDACTED]");
+  });
+
+  it("`payload.metadata.note` is redacted (free-text PII-suspect) (RD-4f)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { payload: { metadata: { note: "free-text PII suspect" } } },
+      "two-segment metadata.note",
+    );
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    const metadata = payload["metadata"] as Record<string, unknown>;
+    expect(metadata["note"]).toBe("[REDACTED]");
+  });
+
+  it("full outbox envelope: all matrix-amendment paths are redacted in a single log line (RD-4g)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(makeOutboxEventEnvelope(), "full envelope amendment check");
+
+    const last = lines().pop()!;
+    const payload = last["payload"] as Record<string, unknown>;
+    expect(payload["actor_label"]).toBe("[REDACTED]");
+    const metadata = payload["metadata"] as Record<string, unknown>;
+    expect(metadata["email"]).toBe("[REDACTED]");
+    expect(metadata["phone"]).toBe("[REDACTED]");
+    expect(metadata["full_name"]).toBe("[REDACTED]");
+    expect(metadata["note"]).toBe("[REDACTED]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 5: Defensive `*.metadata.*` paths -- nested envelope coverage
+// ---------------------------------------------------------------------------
+//
+// The matrix amendment also adds `*.metadata.X` paths so a call site that
+// binds the envelope under a one-segment prefix other than `payload`
+// (e.g., `event`, `row`, `outbox`) still has its metadata PII redacted.
+// These paths use pino's single-segment wildcard one level deeper than
+// the original `*.X` set.
+// ---------------------------------------------------------------------------
+describe("outbox payload redaction -- defensive *.metadata.* paths (RD-5)", () => {
+  it("`event.metadata.email` is redacted via `*.metadata.email` (RD-5a)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { event: { metadata: { email: PII_EMAIL } } },
+      "one-segment-prefix metadata.email",
+    );
+
+    const last = lines().pop()!;
+    const event = last["event"] as Record<string, unknown>;
+    const metadata = event["metadata"] as Record<string, unknown>;
+    expect(metadata["email"]).toBe("[REDACTED]");
+  });
+
+  it("`row.metadata.phone` is redacted via `*.metadata.phone` (RD-5b)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { row: { metadata: { phone: PII_PHONE } } },
+      "one-segment-prefix metadata.phone",
+    );
+
+    const last = lines().pop()!;
+    const row = last["row"] as Record<string, unknown>;
+    const metadata = row["metadata"] as Record<string, unknown>;
+    expect(metadata["phone"]).toBe("[REDACTED]");
+  });
+
+  it("`outbox.metadata.full_name` is redacted via `*.metadata.full_name` (RD-5c)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { outbox: { metadata: { full_name: PII_NAME } } },
+      "one-segment-prefix metadata.full_name",
+    );
+
+    const last = lines().pop()!;
+    const outbox = last["outbox"] as Record<string, unknown>;
+    const metadata = outbox["metadata"] as Record<string, unknown>;
+    expect(metadata["full_name"]).toBe("[REDACTED]");
+  });
+
+  it("`envelope.metadata.note` is redacted via `*.metadata.note` (RD-5d)", () => {
+    const { dest, lines } = makeCapture();
+    const logger = createLogger({ service: "worker", destination: dest });
+
+    logger.info(
+      { envelope: { metadata: { note: "free-text PII suspect" } } },
+      "one-segment-prefix metadata.note",
+    );
+
+    const last = lines().pop()!;
+    const envelope = last["envelope"] as Record<string, unknown>;
+    const metadata = envelope["metadata"] as Record<string, unknown>;
+    expect(metadata["note"]).toBe("[REDACTED]");
+  });
 });
