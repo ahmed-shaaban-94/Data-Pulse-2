@@ -13,6 +13,14 @@ by every future feature that emits logs.
 
 ## Changelog
 
+- **2026-05-21** — T565 amendment (004 P7 Track C). Adds `actor_label` to the
+  PII §3.2 table (audit job payloads carry it as a free-text identifier
+  substitute when no `actor_user_id` is present — same protection level as
+  `email` / `phone` / `full_name`). Adds §4.3 "Pino wildcard depth and
+  worker outbox envelope paths" documenting the single-segment-`*` limit
+  and enumerating the explicit two-segment paths needed to redact
+  `payload.metadata.{email,phone,full_name,note}` in outbox log lines.
+  Add-only per FR-B-005; no existing field reclassified.
 - **2026-05-16** — Initial matrix (004-T440). Source: spec §7.6, plan §3.2.2,
   research §11. Single source of truth for redaction at the logger boundary
   (FR-B-005, FR-B-011). Authored as planning artifact; no instrumentation
@@ -97,6 +105,7 @@ Every field that may be encountered in a log statement falls into one of:
 | `national_id`, `passport_number`, `tax_id` | PII | Government identifier; treat as PII-credential hybrid. |
 | `ip_address`, `client_ip`, `x-forwarded-for` value | PII | Identifier under most privacy regimes; log only at the gateway boundary and only with documented retention. |
 | Customer payment card metadata (`pan_last4`, `card_brand`) | payment · PII | Payment-class field; masking required at the call site is **not** sufficient — defer to the field-level redaction column below. |
+| `actor_label` | PII | Human-readable identifier substitute on audit job payloads (used when no `actor_user_id` exists — see `apps/api/src/audit/audit-job.types.ts` and the audit schema's `actor_label` column). May carry email, phone, or full name verbatim; treated at the same level as direct PII identifiers. Added by T565 (P7 Track C) amendment. |
 
 ### 3.3 PII-suspect (treat as PII by default)
 
@@ -185,6 +194,43 @@ Where an audit or log event has no authenticated actor (e.g., login
 attempts, pre-auth probes), use the sentinel `anonymous` or `system` as
 the `actor_id`. Never emit a placeholder containing the attempted
 credential (e.g., `actor_id: "attempted: admin@example.com"`).
+
+### 4.3 Pino wildcard depth and worker outbox envelope paths
+
+The shared pino logger's `redact.paths` matcher (configured in
+`packages/shared/src/logger/pino.ts` via `DEFAULT_REDACT_PATHS`) supports
+two path syntaxes:
+
+- a literal dotted path matches that exact nesting (`payload.metadata.email`
+  matches the three-segment field), and
+- the `*` wildcard matches **exactly one** path segment (`*.email` matches
+  `payload.email` and `event.email`, but **not** `payload.metadata.email`
+  — `*` does not recurse).
+
+The matrix amendment for T565 (2026-05-21) adds the following paths to
+`DEFAULT_REDACT_PATHS` so worker outbox log lines that bind the audit
+envelope (`{ payload: { metadata: { email, phone, full_name, note } } }`)
+redact the matrix-protected PII at the boundary regardless of how deeply
+the call site binds the envelope:
+
+| Path | Class | Why |
+|---|---|---|
+| `actor_label` | PII (§3.2) | Top-level binding (e.g., `logger.info({ actor_label }, ...)`). |
+| `*.actor_label` | PII (§3.2) | One-segment-nested binding (e.g., `payload.actor_label`). |
+| `payload.metadata.email` | PII (§3.2) | Audit envelope's `metadata` block can carry an email captured at the call site. |
+| `payload.metadata.phone` | PII (§3.2) | Same nesting; phone. |
+| `payload.metadata.full_name` | PII (§3.2) | Same nesting; name. |
+| `payload.metadata.note` | PII-suspect (§3.3) | Free-text user-supplied note nested under metadata. |
+| `*.metadata.email` | PII (§3.2) | Defensive: matches `event.metadata.email`, `row.metadata.email`, etc. (any one-segment prefix). |
+| `*.metadata.phone` | PII (§3.2) | Same defensive pattern. |
+| `*.metadata.full_name` | PII (§3.2) | Same. |
+| `*.metadata.note` | PII-suspect (§3.3) | Same. |
+
+If a future call site binds the envelope under a deeper nesting (e.g.,
+`{ outer: { payload: { metadata: { email } } } }`, three levels above
+`metadata`), an additional explicit path is required — `**` is not
+available in pino. Add the literal path here AND in
+`DEFAULT_REDACT_PATHS`; do not rely on call-site redaction (FR-B-005).
 
 ---
 

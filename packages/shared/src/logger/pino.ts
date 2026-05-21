@@ -135,6 +135,24 @@ export const DEFAULT_REDACT_PATHS: readonly string[] = [
   "*.nationalId",
   "*.ip_address",
   "*.ipAddress",
+  // ---- PII nested deeper than one segment (T565 / matrix §4.3 amendment) ----
+  // Pino's `*` wildcard matches exactly one path segment — so `*.email`
+  // covers `payload.email` but NOT `payload.metadata.email`. These explicit
+  // two-segment paths close the audit-envelope gap surfaced by
+  // apps/worker/test/outbox/redaction.spec.ts (suite RD-4). The `*.X.Y`
+  // forms are defensive — they catch the case where a future call site
+  // binds the envelope under a different one-segment-prefix key
+  // (e.g., `{ event: { metadata: { email } } }`).
+  "actor_label",
+  "*.actor_label",
+  "payload.metadata.email",
+  "payload.metadata.phone",
+  "payload.metadata.full_name",
+  "payload.metadata.note",
+  "*.metadata.email",
+  "*.metadata.phone",
+  "*.metadata.full_name",
+  "*.metadata.note",
   // ---- PII-suspect (matrix §3.3) ----
   // Full request/response bodies are dropped by the per-emit-site
   // serializer for `req`/`res`/`err`, not redacted path-by-path here.
