@@ -7,7 +7,11 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-21 after PR #254 opened (RLS_CROSS_STORE_FIX in review).
+# Updated: 2026-05-21 after PR #254 merged. RLS_CROSS_STORE_FIX +
+# RLS_CROSS_STORE_RED_PROOF are on main at 483aae4. RLS_CROSS_STORE_READ_LEAK
+# is resolved. T340 is ready; T341-T344 chain-blocked on T340; T336 remains
+# blocked solely on the missing withStore helper. Map base advanced from
+# 696584c (PR #253) to 483aae4 (PR #254).
 
 spec: 003-catalog-foundation
 version: 1
@@ -19,22 +23,25 @@ base: origin/main
 findings:
   - id: RLS_CROSS_STORE_READ_LEAK
     summary: >
-      store_product_overrides and unknown_items declare two PERMISSIVE
+      store_product_overrides and unknown_items declared two PERMISSIVE
       SELECT policies per table (a tenant_isolation policy checking
       tenant_id only, and a store_read policy checking store_id-or-empty).
       PostgreSQL OR-combines PERMISSIVE policies, so the tenant_isolation
-      policy alone returns TRUE for every row of the active tenant
+      policy alone returned TRUE for every row of the active tenant
       regardless of store_id. A runtime principal with
-      app.current_tenant = Tenant A and app.current_store = Store X can
+      app.current_tenant = Tenant A and app.current_store = Store X could
       SELECT Tenant A / Store Y rows — a cross-store data leak inside a
-      tenant. Writes are unaffected (the FOR ALL _tenant_write policies
-      already AND tenant_id with store_id).
+      tenant. Writes were unaffected (the FOR ALL _tenant_write policies
+      already AND tenant_id with store_id). Closed by 0008_catalog_store_
+      read_isolation.sql which collapses the two SELECT policies into one
+      that AND-gates both scopes.
     affected:
       - store_product_overrides
       - unknown_items
     severity: medium
     proof: 3da993b  # RED Testcontainers spec at packages/db/__tests__/migration/catalog-rls-store-read.spec.ts
-    blocks:
+    blocks: []     # cleared — all previously blocked slices may proceed (subject to other deps)
+    previously_blocked:
       - T336
       - T340
       - T341
@@ -42,6 +49,32 @@ findings:
       - T343
       - T344
     resolved_by: RLS_CROSS_STORE_FIX
+    resolved_by_pr: 254
+    resolved_by_commit: 483aae4  # merge commit on main
+    resolved_at: 2026-05-21
+
+  - id: MISSING_WITHSTORE_HELPER
+    summary: >
+      The 003 spec (rls-test-matrix.md:464-465 and plan.md:210) claims
+      packages/db/src/helpers/with-store.ts ships from feature 001, but
+      the file does not exist on main. Only with-tenant.ts and
+      audit-insert.ts are present under packages/db/src/helpers/. T336
+      (Test the existing withStore helper against store_product_overrides)
+      cannot proceed without either (a) a new gated slice that authors
+      with-store.ts, or (b) reinterpreting T336 to test the store GUC
+      contract directly via runWithTenantContext + manual SET LOCAL
+      app.current_store. Resolution is out of scope for the catalog
+      foundation; either path needs explicit user authorization because
+      it touches the forbidden surface packages/db/src/helpers/**.
+    affected:
+      - packages/db/src/helpers/with-store.ts  # nonexistent
+    severity: low  # documentation/scaffolding mismatch, not a security defect
+    proof: >
+      `ls packages/db/src/helpers/` returns only audit-insert.ts and
+      with-tenant.ts on main @ 483aae4.
+    blocks:
+      - T336
+    resolved_by: null    # awaiting a separate authorized slice
 
 # ----------------------------------------------------------------------------
 # slices
@@ -158,7 +191,7 @@ slices:
   - id: RLS_CROSS_STORE_RED_PROOF
     task_ids: []
     type: test
-    status: in_review     # part of PR #254 (cherry-picked alongside the fix)
+    status: merged        # part of PR #254 merge commit 483aae4
     approval_required: false
     depends_on: [T330]
     blocks: []
@@ -167,27 +200,30 @@ slices:
       - packages/db/__tests__/migration/catalog-rls-store-read.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/catalog-rls-store-read.spec.ts"
-        expected: RED 2/2 (before fix); GREEN 2/2 (after RLS_CROSS_STORE_FIX)
+        expected: GREEN 2/2 (post-fix; was RED 2/2 before 0008 migration)
         docker_required: true
     stop: []
     report_fields:
       - changed_files
       - validation_results
     parallel_safety: safe
-    # Commit on local branch: 3da993b
-    # Cherry-picked into PR #254 as 8cf797a
+    merged_in_pr: 254
+    merged_at_commit: 483aae4
+    # Local proof commit: 3da993b
+    # Cherry-picked into PR #254 as 8cf797a, then squash-merged as 483aae4
 
-  # ===== Next gated slice — RLS fix (in review as PR #254) ==================
+  # ===== Closed gated slice — RLS fix (merged as PR #254 @ 483aae4) =========
 
   - id: RLS_CROSS_STORE_FIX
     task_ids: []
     type: fix
-    status: in_review     # PR #254 open against main
-    approval_required: true   # gated (SQL migration)
+    status: merged        # PR #254 squash-merged into main as 483aae4
+    approval_required: true   # gated (SQL migration) — approval granted prior to merge
     depends_on:
       - T330
       - RLS_CROSS_STORE_RED_PROOF
-    blocks:
+    blocks: []
+    previously_blocked:   # historical record — these were unblocked by the merge
       - T336
       - T340
       - T341
@@ -225,16 +261,18 @@ slices:
       - confirmation_no_unauthorized_git_ops
       - recommended_commit_message
     parallel_safety: unsafe   # gated SQL — serialize
+    merged_in_pr: 254
+    merged_at_commit: 483aae4
+    merged_at_date: 2026-05-21
 
-  # ===== Blocked by RLS_CROSS_STORE_READ_LEAK ===============================
+  # ===== Blocked by MISSING_WITHSTORE_HELPER (RLS leak resolved) ============
 
   - id: T336
     task_ids: [T336]
     type: test
-    status: blocked
+    status: blocked       # still blocked — but now solely on MISSING_WITHSTORE_HELPER, not the RLS leak (resolved by #254)
     approval_required: false
-    depends_on:
-      - RLS_CROSS_STORE_FIX
+    depends_on: []        # RLS_CROSS_STORE_FIX merged; no remaining slice-level deps
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -244,25 +282,25 @@ slices:
         expected: GREEN
         docker_required: true
     stop:
-      - withStore helper does not exist; consider whether to test
-        runWithTenantContext + manual store GUC instead, OR wait for a
-        separate slice to author withStore
+      - withStore helper does not exist; T336 needs either (a) a new
+        gated slice that authors packages/db/src/helpers/with-store.ts,
+        OR (b) reinterpretation to test the store GUC contract via
+        runWithTenantContext + manual SET LOCAL app.current_store
     report_fields:
       - changed_files
       - validation_results
     parallel_safety: safe
-    # NOTE: blocked by TWO things — the RLS leak proven by
-    # RLS_CROSS_STORE_READ_LEAK, AND the absence of a withStore helper.
-    # rls-test-matrix.md:464-465 claims withStore exists at
-    # packages/db/src/helpers/with-store.ts but the file is missing.
+    # See finding MISSING_WITHSTORE_HELPER for the full blocker context.
+
+  # ===== Ready / chain-blocked on T340 (RLS leak resolved) ==================
 
   - id: T340
     task_ids: [T340]
     type: test
-    status: blocked
+    status: ready         # was blocked on RLS_CROSS_STORE_FIX; that merged at 483aae4. No remaining slice-level deps; ready to dispatch.
     approval_required: false
     depends_on:
-      - RLS_CROSS_STORE_FIX
+      - T330              # 0007 catalog migration (long-merged)
     blocks:
       - T341
       - T342
@@ -305,18 +343,18 @@ slices:
   - id: T342
     task_ids: [T342]
     type: test
-    status: blocked
+    status: blocked       # chain-blocked on T340 only; RLS_CROSS_STORE_FIX dep satisfied (merged @ 483aae4)
     approval_required: false
     depends_on:
       - T340
-      - RLS_CROSS_STORE_FIX     # explicit — this test depends on the RLS fix landing
+    # RLS_CROSS_STORE_FIX removed from depends_on — merged 2026-05-21 (PR #254).
     blocks: []
     agent: sonnet-test
     allowed_files:
       - apps/api/test/catalog/isolation/cross-store-read.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-store-read"
-        expected: GREEN
+        expected: GREEN  # cross-store read denial verified at api integration layer (RLS guarantee from 0008)
         docker_required: true
     stop: []
     report_fields:
@@ -374,8 +412,8 @@ slices:
     status: proposed
     approval_required: false
     depends_on:
-      - RLS_CROSS_STORE_FIX
       - T340
+    # RLS_CROSS_STORE_FIX dropped — merged 2026-05-21 (PR #254 @ 483aae4).
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -397,8 +435,8 @@ slices:
     status: proposed
     approval_required: false
     depends_on:
-      - RLS_CROSS_STORE_FIX
       - T340
+    # RLS_CROSS_STORE_FIX dropped — merged 2026-05-21 (PR #254 @ 483aae4).
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -419,8 +457,8 @@ slices:
     status: proposed
     approval_required: false
     depends_on:
-      - RLS_CROSS_STORE_FIX
       - T340
+    # RLS_CROSS_STORE_FIX dropped — merged 2026-05-21 (PR #254 @ 483aae4).
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -441,8 +479,8 @@ slices:
     status: proposed
     approval_required: false
     depends_on:
-      - RLS_CROSS_STORE_FIX
       - T340
+    # RLS_CROSS_STORE_FIX dropped — merged 2026-05-21 (PR #254 @ 483aae4).
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -471,7 +509,8 @@ groups:
       - T383_PRODUCT_ALIASES_UNIQUENESS_RED
     parallel_safety: safe
     proposed: true
-    # Members touch disjoint apps/api/test/catalog/** paths. Eligible to
-    # run together once RLS_CROSS_STORE_FIX is merged and the
-    # db-integration suite on main is green. Not approved — awaiting user
-    # endorsement before dispatch.
+    # Members touch disjoint apps/api/test/catalog/** paths. Eligibility
+    # gates are now satisfied: RLS_CROSS_STORE_FIX merged 2026-05-21 (PR
+    # #254 @ 483aae4) and db-integration on main is green. Group is still
+    # `proposed: true` because parallel dispatch requires explicit user
+    # endorsement before Maestro schedules it.
