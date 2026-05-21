@@ -70,9 +70,16 @@
  *   - OTel propagation from API → worker — T303.
  *   - Real provider SDK — PQ-1.
  */
-import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
+import {
+  Injectable,
+  Module,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from "@nestjs/common";
 import { Worker as BullMqWorker, type WorkerOptions } from "bullmq";
 import { Pool } from "pg";
+
+import { registerOutboxPendingGauge } from "./observability/metrics/worker.metrics";
 
 import {
   EMAIL_ADAPTER,
@@ -390,6 +397,42 @@ export function outboxDrainerRunnerProviderFactory(
   return new OutboxDrainerRunner(drainer);
 }
 
+/**
+ * Nest-aware registrar for the `outbox_pending_total` ObservableGauge
+ * callback (T595 PR-B-2).
+ *
+ * Mirrors `OutboxDrainerRunner`'s lifecycle pattern:
+ *   - On `onModuleInit`, calls `registerOutboxPendingGauge` with the
+ *     shared `AuditDbPool.pool` (real `pg.Pool` in production, `null`
+ *     on the safe non-prod / no-DB path — registrar handles both).
+ *   - On `onModuleDestroy`, calls the returned `stop` handle so the
+ *     OTel callback is removed during graceful shutdown and does not
+ *     try to query a closed pool.
+ *
+ * The registrar is its own provider class (not folded into
+ * `OutboxDrainerRunner`) so its lifecycle is independent: the drainer's
+ * poll loop and the gauge callback start / stop on their own. The
+ * shared `AuditDbPool` wrapper owns pool teardown for both.
+ */
+@Injectable()
+export class OutboxPendingGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
+  private handle: { stop: () => void } | null = null;
+
+  constructor(private readonly wrapper: AuditDbPool) {}
+
+  onModuleInit(): void {
+    this.handle = registerOutboxPendingGauge({ pool: this.wrapper.pool });
+  }
+
+  onModuleDestroy(): void {
+    const h = this.handle;
+    this.handle = null;
+    if (h !== null) {
+      h.stop();
+    }
+  }
+}
+
 @Module({
   imports: [OutboxModule],
   providers: [
@@ -493,6 +536,14 @@ export function outboxDrainerRunnerProviderFactory(
       useFactory: outboxDrainerRunnerProviderFactory,
       inject: [OUTBOX_DRAINER],
     },
+
+    // ── Outbox pending-events gauge registrar (T595 PR-B-2) ───────────
+    //
+    // Registers the outbox_pending_total ObservableGauge callback against
+    // AuditDbPool on Nest init. Lifecycle is independent of the drainer
+    // (the gauge keeps emitting whether the drainer is in mid-tick or
+    // not). The no-DB path is handled inside the registrar itself.
+    OutboxPendingGaugeRegistrar,
   ],
   exports: [
     EmailWorker,
@@ -505,6 +556,7 @@ export function outboxDrainerRunnerProviderFactory(
     OutboxRetentionProcessor,
     OUTBOX_DRAINER,
     OutboxDrainerRunner,
+    OutboxPendingGaugeRegistrar,
   ],
 })
 export class WorkerModule {}
