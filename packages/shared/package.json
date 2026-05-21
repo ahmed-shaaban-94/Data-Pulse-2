@@ -4,17 +4,41 @@
   "private": true,
   "description": "Shared utilities: Zod base schemas, error envelope, pino logger, OTel setup. Backend-only; no DOM types.",
   "type": "commonjs",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./zod/base": "./src/zod/base.ts",
-    "./errors/envelope": "./src/errors/envelope.ts",
-    "./logger/pino": "./src/logger/pino.ts",
-    "./observability/otel": "./src/observability/otel.ts",
-    "./ids/uuid": "./src/ids/uuid.ts",
-    "./queues/queue-config": "./src/queues/queue.config.ts",
-    "./idempotency": "./src/idempotency/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./zod/base": {
+      "types": "./dist/zod/base.d.ts",
+      "default": "./dist/zod/base.js"
+    },
+    "./errors/envelope": {
+      "types": "./dist/errors/envelope.d.ts",
+      "default": "./dist/errors/envelope.js"
+    },
+    "./logger/pino": {
+      "types": "./dist/logger/pino.d.ts",
+      "default": "./dist/logger/pino.js"
+    },
+    "./observability/otel": {
+      "types": "./dist/observability/otel.d.ts",
+      "default": "./dist/observability/otel.js"
+    },
+    "./ids/uuid": {
+      "types": "./dist/ids/uuid.d.ts",
+      "default": "./dist/ids/uuid.js"
+    },
+    "./queues/queue-config": {
+      "types": "./dist/queues/queue.config.d.ts",
+      "default": "./dist/queues/queue.config.js"
+    },
+    "./idempotency": {
+      "types": "./dist/idempotency/index.d.ts",
+      "default": "./dist/idempotency/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

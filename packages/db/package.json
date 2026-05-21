@@ -4,13 +4,25 @@
   "private": true,
   "description": "Drizzle schema, explicit SQL migrations, migration runner CLI, tenant-scoped query helper, and DB session middleware.",
   "type": "commonjs",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema/index.ts",
-    "./helpers/with-tenant": "./src/helpers/with-tenant.ts",
-    "./middleware/tenant-context": "./src/middleware/tenant-context.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    },
+    "./helpers/with-tenant": {
+      "types": "./dist/helpers/with-tenant.d.ts",
+      "default": "./dist/helpers/with-tenant.js"
+    },
+    "./middleware/tenant-context": {
+      "types": "./dist/middleware/tenant-context.d.ts",
+      "default": "./dist/middleware/tenant-context.js"
+    }
   },
   "bin": {
     "data-pulse-migrate": "./dist/cli/migrate.js"
