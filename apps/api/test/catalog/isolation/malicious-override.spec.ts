@@ -73,6 +73,7 @@ import {
   STORE_A_Y,
   ACTOR_A,
   PRODUCT_A_ACTIVE,
+  PRODUCT_A_RETIRED,
 } from "../__support__/isolation-harness";
 
 // --------------------------------------------------------------------------
@@ -488,6 +489,10 @@ describe("T344 — malicious body override: positive control — matching identi
 
   it("price_history: INSERT with matching tenant_id succeeds", async () => {
     if (maybeSkip()) return;
+    // Use PRODUCT_A_RETIRED to avoid the
+    // `UQ_idx_price_history_tenant_open` partial-unique-index conflict with
+    // the harness seed (one open interval per `(tenant_id, product_id)` for
+    // active products). PRODUCT_A_RETIRED has no seeded open interval.
     let inserted = false;
     await runWithTenantContext(env!.app, ctx, async (client) => {
       const r = await client.query(
@@ -495,7 +500,7 @@ describe("T344 — malicious body override: positive control — matching identi
            (id, tenant_id, product_id, price, currency_code,
             effective_from, changed_by, correlation_id)
          VALUES ($1, $2, $3, 12.50, 'USD', now(), $4, $5)`,
-        [GOOD_PRICE_HIST, TENANT_A, PRODUCT_A_ACTIVE, ACTOR_A, GOOD_CORR],
+        [GOOD_PRICE_HIST, TENANT_A, PRODUCT_A_RETIRED, ACTOR_A, GOOD_CORR],
       );
       inserted = (r.rowCount ?? 0) === 1;
     });
@@ -509,13 +514,17 @@ describe("T344 — malicious body override: positive control — matching identi
 
   it("store_product_overrides: INSERT with matching tenant_id and store_id succeeds", async () => {
     if (maybeSkip()) return;
+    // Use PRODUCT_A_RETIRED to avoid the
+    // `UQ_idx_store_product_overrides_product_store` partial-unique-index
+    // conflict with the harness seed (one override per (tenant, store, product)
+    // for active products). PRODUCT_A_RETIRED has no seeded override.
     let inserted = false;
     await runWithTenantStoreContext(env!.app, ctxStore, async (client) => {
       const r = await client.query(
         `INSERT INTO store_product_overrides
            (id, tenant_id, store_id, product_id, is_active, created_by, updated_by)
          VALUES ($1, $2, $3, $4, true, $5, $5)`,
-        [GOOD_OVERRIDE, TENANT_A, STORE_A_X, PRODUCT_A_ACTIVE, ACTOR_A],
+        [GOOD_OVERRIDE, TENANT_A, STORE_A_X, PRODUCT_A_RETIRED, ACTOR_A],
       );
       inserted = (r.rowCount ?? 0) === 1;
     });
