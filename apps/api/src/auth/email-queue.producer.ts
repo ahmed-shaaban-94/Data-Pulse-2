@@ -237,5 +237,9 @@ export class EmailQueueProducer
  */
 export function deriveJobId(scope: string, rawToken: string): string {
   const hashHex = createHash("sha256").update(rawToken, "utf8").digest("hex");
-  return `${scope}:${hashHex.slice(0, 32)}`;
+  // Separator is "-" not ":" — BullMQ 5.x's Job.validateOptions rejects
+  // custom jobIds containing ":". The colon-form caused every successful
+  // authenticated invite / password-reset / email-verify request to
+  // return 500 from the enqueue boundary; see PR #287 §10.
+  return `${scope}-${hashHex.slice(0, 32)}`;
 }
