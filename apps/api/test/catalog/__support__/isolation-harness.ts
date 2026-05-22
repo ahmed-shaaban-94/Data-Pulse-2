@@ -325,18 +325,19 @@ export async function seedCatalogIsolationFixture(
   await admin.query(
     `INSERT INTO product_aliases
        (id, tenant_id, product_id, identifier_type, value,
-        source_system, store_id)
+        source_system, store_id, created_by)
      VALUES
-       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL),
-       ($4, $2, $3, 'external_pos_id', 'A-X-POS-001', 't340-pos', $5),
-       ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL),
-       ($9, $7, $8, 'external_pos_id', 'B-X-POS-001', 't340-pos', $10)
+       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL, $11),
+       ($4, $2, $3, 'external_pos_id', 'A-X-POS-001', 't340-pos', $5, $11),
+       ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL, $12),
+       ($9, $7, $8, 'external_pos_id', 'B-X-POS-001', 't340-pos', $10, $12)
      ON CONFLICT DO NOTHING`,
     [
       ALIAS_A_BARCODE, TENANT_A, PRODUCT_A_ACTIVE,
       ALIAS_A_X_POS, STORE_A_X,
       ALIAS_B_BARCODE, TENANT_B, PRODUCT_B_ACTIVE,
       ALIAS_B_X_POS, STORE_B_X,
+      ACTOR_A, ACTOR_B,
     ],
   );
 
