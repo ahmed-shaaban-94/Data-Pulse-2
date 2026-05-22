@@ -145,6 +145,7 @@ export function sanitizeErrorClass(
 
 assertMetricLabels("db_pool_in_use", []);
 assertMetricLabels("db_pool_waiters", []);
+assertMetricLabels("db_slow_query_total", ["query_class"]);
 assertMetricLabels("redis_command_duration_seconds", ["command"]);
 assertMetricLabels("queue_lag_seconds", ["queue"]);
 assertMetricLabels("queue_failed_total", ["queue", "error_class"]);
@@ -169,6 +170,12 @@ const meter = getMeter("worker");
 
 // DB pool — worker process observes its own AuditDbPool stats on port 9091.
 // The API process observes its pool independently on port 9464 via db.metrics.ts.
+const _dbSlowQuery: Counter = meter.createCounter("db_slow_query_total", {
+  description:
+    "Total DB queries exceeding the slow-query threshold (500 ms), labelled by " +
+    "parameterized-statement class. query_class is a hash of the SQL template — " +
+    "NEVER the rendered query text.",
+});
 const _dbPoolInUse: ObservableGauge = meter.createObservableGauge("db_pool_in_use", {
   description: "Number of connections currently checked out from the DB pool.",
 });
@@ -275,6 +282,10 @@ const _outboxDrainDuration: Histogram = meter.createHistogram(
 // that adds `tenant_id`, `store_id`, `user_id`, `actor_id`, `job_id`,
 // `correlation_id`, or any other forbidden key won't compile.
 
+export interface DbSlowQueryAttrs {
+  query_class: string;
+}
+
 export interface RedisCommandDurationAttrs {
   command: string;
 }
@@ -331,6 +342,21 @@ export interface OutboxDrainDurationAttrs {
 // ---------------------------------------------------------------------------
 // Emission helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Increment db_slow_query_total for a parameterized-statement class.
+ *
+ * The `query_class` value MUST be a stable hash of the parameterized SQL
+ * template (e.g. the first 8 hex digits of SHA-256 of the statement with
+ * `$1`/`$2` placeholders). It MUST NOT be the rendered query text, a
+ * parameter value, or any user-derived string (redaction matrix §3.3).
+ *
+ * Emission site: `InstrumentedPool.query` — fires when a `pg.Pool` query
+ * exceeds `SLOW_QUERY_THRESHOLD_SECONDS` (500 ms).
+ */
+export function recordDbSlowQuery(attrs: DbSlowQueryAttrs): void {
+  _dbSlowQuery.add(1, attrs as unknown as Attributes);
+}
 
 /**
  * Record a Redis command duration observation (seconds).
@@ -806,6 +832,9 @@ export const WORKER_METRIC_NAMES = [
   // `registerDbPoolGauges`, wired by WorkerDbPoolGaugeRegistrar on Nest init.
   "db_pool_in_use",
   "db_pool_waiters",
+  // P4 W5: slow-query counter — emitted by InstrumentedPool.query when a
+  // pg.Pool query exceeds SLOW_QUERY_THRESHOLD_SECONDS (500 ms).
+  "db_slow_query_total",
   "redis_command_duration_seconds",
   // P4 W2: queue lag gauge — wired by QueueLagGaugeRegistrar on Nest init.
   "queue_lag_seconds",

@@ -206,9 +206,9 @@ Per spec §7.3–§7.5:
 | API | `http_request_duration_seconds` | histogram | `route`, `method` (p95 + p99) |
 | API | `http_error_4xx_total` / `http_error_5xx_total` | counter | `route` |
 | API | `auth_failure_total` | counter | `cause` (`bad_password`, `bad_token`, `expired`, `missing`, `rate_limited`) |
-| API | `tenant_context_failure_total` | counter | `cause` (`missing`, `invalid`, `cross_tenant`) |
-| API | `validation_failure_total` | counter | `route`, `field_class` (no field name PII) |
-| API | `suspicious_login_total` | counter | `pattern` (`rapid_retry`, `geo_anomaly`) |
+| API | `tenant_context_failure_total` | counter | `reason` (`missing`, `invalid`, `cross_tenant`) |
+| API | `validation_failure_total` | counter | `route` |
+| API | `suspicious_login_total` | counter | `reason` (`rapid_retry`, `geo_anomaly`) |
 | API | `cross_tenant_rejection_total` | counter | `route` |
 | API (Track D) | `idempotency_replay_total` | counter | `route` |
 | API (Track D) | `idempotency_conflict_total` (409) | counter | `route` |
@@ -217,12 +217,12 @@ Per spec §7.3–§7.5:
 | DB | `db_slow_query_total` | counter | `query_class` (parameterized hash, no values) |
 | DB | `db_rls_context_failure_total` | counter | (none — alertable, never per-tenant) |
 | DB | `db_migration_status` | gauge | `state` (`pending`/`applied`/`failed`) |
-| Redis | `redis_command_duration_seconds` | histogram | `command_class` |
+| Redis | `redis_command_duration_seconds` | histogram | `command` (Redis verb; bounded set) |
 | BullMQ | `queue_lag_seconds` | gauge | `queue` |
 | BullMQ | `queue_failed_total` / `queue_dead_letter_total` | counter | `queue`, `error_class` |
 | BullMQ | `queue_retry_total` | counter | `queue` |
-| Worker | `worker_job_duration_seconds` | histogram | `job_type` |
-| Worker | `worker_processing_failure_total` | counter | `job_type`, `error_class` |
+| Worker | `worker_job_duration_seconds` | histogram | `job_name` (bounded set; one per declared job type) |
+| Worker | `worker_processing_failure_total` | counter | `job_name`, `error_class` |
 | Track C | `outbox_pending_total` / `outbox_dead_letter_total` | gauge / counter | `event_type` |
 | Track C | `outbox_drain_duration_seconds` | histogram | `event_type` |
 

@@ -39,6 +39,8 @@ import { Queue, type JobsOptions } from "bullmq";
 import { Pool } from "pg";
 import Redis from "ioredis";
 
+import { InstrumentedPool } from "../observability/instrumented-pool";
+
 import { DEFAULT_JOB_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 import { AuditEnqueuerModule } from "../audit/audit-enqueuer.module";
@@ -191,7 +193,7 @@ export class AlwaysAllowRedis implements RedisLike {
             "AuthModule: DATABASE_URL is not set; cannot create pg.Pool",
           );
         }
-        return new Pool({ connectionString: url });
+        return new InstrumentedPool({ connectionString: url });
       },
     },
     {
