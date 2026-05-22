@@ -2,33 +2,44 @@
 
 Multi-tenant SaaS rebuild for Data Pulse. The legacy `Data-Pulse` repo is reference only — never copy without re-spec'ing here.
 
+## Agent OS / Maestro operating mode
+
+**GitHub is the source of truth. Chat memory is advisory.**
+
+Short prompts must be expanded from repo files, not from repeated user instructions. The prompt `"Use Agent OS. Execute slice X. Stop before commit."` is complete — Maestro resolves the full brief from the execution map.
+
+Bootstrap read order for every agent session:
+
+1. `git fetch origin && git pull --ff-only origin main` — always start from latest `origin/main`.
+2. [.specify/memory/constitution.md](.specify/memory/constitution.md) — 14 Core Principles; source of truth for all design constraints.
+3. [docs/agent-os/standing-rules.md](docs/agent-os/standing-rules.md) — hard operating rules (branch hygiene, forbidden gates, git discipline, stop conditions, reporting).
+4. [docs/agent-os/maestro-playbook.md](docs/agent-os/maestro-playbook.md) — orchestration workflow (slice dispatch, parallel waves, post-merge closeout).
+5. Active spec's `execution-map.yaml` — slice state, allowed/forbidden files, validation contract.
+6. Active spec's `wave-status.md` — human-readable progress, findings, next recommended action.
+7. GitHub PRs / CI checks / CodeRabbit reviews — current authoritative state for in-flight work.
+
+Do not duplicate standing-rules content here. When in doubt about an operating rule, `standing-rules.md` governs.
+
 ## Constitution
 
-[.specify/memory/constitution.md](.specify/memory/constitution.md) (v3.0.0) is the source of truth for all 14 Core Principles. Read it when principle text matters — do not paraphrase from memory.
-
-Always-on highlights:
-- **§II Multi-tenant by default** — RLS fail-closed; cross-tenant returns safe 404; runtime DB role MUST NOT bypass RLS; workers establish tenant context before any DB access.
-- **§III Backend Authority** (NON-NEGOTIABLE) — server-side authz, DB constraints, uniform error envelope, exact-decimal money, POS payload preserved as received.
-- **§IV Contract-First** — `packages/contracts/openapi/` is canonical; stable `operationId`; no raw entities in responses.
-- **§VIII Reproducible Releases** — **no `package.json` / `pnpm-lock.yaml` / DB schema / SQL migration / OpenAPI / CI changes without explicit approval (`[GATED]`).**
-- **§XII Authorization & Object Safety** — IDs in bodies are not trusted; `tenant_id`/`store_id`/`role`/`status` are forbidden in request bodies (mass-assignment).
-- **§XIV PII Discipline** — logger-boundary redaction is mandatory; soft-delete is the default; no PII in metric labels (FR-B-006).
+[.specify/memory/constitution.md](.specify/memory/constitution.md) (v3.0.0) — read it when principle text matters; do not paraphrase from memory. Key principles: §II multi-tenant RLS, §III backend authority, §IV contract-first, §VIII reproducible releases (`[GATED]` required), §XII object safety, §XIV PII discipline.
 
 ## Active feature
 
-**`004-platform-production-readiness`** — k6 load testing, observability instrumentation, idempotency, outbox first slice, SDK strategy. See [docs/production-readiness/004-closeout-status.md](docs/production-readiness/004-closeout-status.md) for the authoritative phase-by-phase status (this supersedes the planning-phase P9 report).
+**`004-platform-production-readiness`** — observability instrumentation, idempotency, outbox, k6 load testing, SDK strategy. Authoritative phase-by-phase status: [docs/production-readiness/004-closeout-status.md](docs/production-readiness/004-closeout-status.md).
 
-Open work in 004:
-- **T483** — live `/metrics` operator scrape validation. Worker registration unblocked by PR #246; full validation blocked on emission call sites (T595/T596 + worker T460/T463–T466). See [docs/observability/operator-validation-report.md](docs/observability/operator-validation-report.md).
-- **T565** — close 5 `it.todo` worker redaction stubs (`actor_label`, `payload.metadata.{email,phone,full_name}`).
-- **T595/T596** — outbox + queue metric emission call sites (definitions exist; emission absent).
-- **T597–T600** — P7 exit-gate validation.
+Current state (as of last verified merge — confirm via GitHub before acting):
+- **T483** — `live /metrics` operator scrape validation: PARTIAL. Full signal-catalogue coverage (DB pool, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) not yet live-scraped. See [docs/observability/operator-validation-report.md](docs/observability/operator-validation-report.md).
+- **T565, T595, T596, T597–T600** — all merged (PRs #255, #251, #253, #259 and P7 exit-gate); refer to `004-closeout-status.md` for details.
 
-## Shipped / paused specs
+For slice state, always read the spec's `execution-map.yaml` and `wave-status.md` — do not rely on this file for task-level detail.
 
-- **`001-foundation-auth-tenant-store`** — shipped. Auth, tenant/store/memberships, audit pipeline, idempotency interceptor (memberships/invite), outbox first slice all merged. Reference: [specs/001-foundation-auth-tenant-store/](specs/001-foundation-auth-tenant-store/).
-- **`002-pos-operator-identity`** — specification + OpenAPI contracts only. POS app is a separate repo and integrates exclusively via `packages/contracts/openapi/`; never via the SaaS database. [specs/002-pos-operator-identity/](specs/002-pos-operator-identity/).
-- **`003-catalog-foundation`** — specification + plan + Drizzle schema modules and schema-shape tests merged (7 catalog tables: `global-products`, `tenant-products`, `store-product-overrides`, `product-aliases`, `tenant-product-categories`, `price-history`, `unknown-items`). **No SQL migrations yet** — tables are defined in code but do not exist in any DB. Runtime, contracts, and APIs intentionally paused while 004 closes. [specs/003-catalog-foundation/](specs/003-catalog-foundation/).
+## Specs summary
+
+- **`001-foundation-auth-tenant-store`** — shipped. Auth, tenant/store/memberships, audit pipeline, idempotency interceptor, outbox first slice all merged. [specs/001-foundation-auth-tenant-store/](specs/001-foundation-auth-tenant-store/)
+- **`002-pos-operator-identity`** — specification + OpenAPI contracts only. POS app is a separate repo integrating exclusively via `packages/contracts/openapi/`. [specs/002-pos-operator-identity/](specs/002-pos-operator-identity/)
+- **`003-catalog-foundation`** — schema modules, schema-shape tests, and SQL migrations (`0007_catalog.sql`, `0008` RLS cross-store fix) all merged. Runtime, contracts, and APIs paused while 004 closes. [specs/003-catalog-foundation/](specs/003-catalog-foundation/)
+- **`004-platform-production-readiness`** — active; see above and `004-closeout-status.md`.
 
 ## What this repo does NOT own
 
@@ -47,19 +58,11 @@ POS application (separate repo). This repo owns SaaS backend, admin/dashboard fr
 
 Dashboard / web frontend is a separate future feature. OpenAPI contracts produced here are the only thing the dashboard depends on.
 
-## Recent infrastructure notes (read if touching workspace wiring)
+## Working agreement
 
-- **PR #245** (`fix(runtime): resolve workspace package exports to dist`) — `packages/{shared,auth,db}/package.json` now point `main` / `types` / `exports` at `dist/*.{js,d.ts}` via conditional `{ types, default }` shape. Required so `node apps/{api,worker}/dist/main.js` works at all. **Implication**: workspace packages MUST be built before they can be required at runtime (`pnpm -r build`). ts-jest still resolves correctly via the `types` condition.
-- **PR #246** (`fix(worker): register worker metrics on startup`) — `apps/worker/src/main.ts` performs a side-effect import of `./observability/metrics/worker.metrics` immediately after `./instrumentation`. Without this, the worker's 10 platform signal families (signals.md §3) never register with the live OTel MeterProvider. Order is load-bearing — `./instrumentation` must remain first. Regression test: `apps/worker/test/observability/production-import-order.spec.ts`.
+See [docs/agent-os/standing-rules.md](docs/agent-os/standing-rules.md) for the full operating contract. Critical gates:
 
-## Working agreement (day-to-day)
-
-These are operating rules from the constitution's Working Agreement appendix — not Core Principles:
-
-- Start every slice from latest `origin/main`. Pre-flight plan first; do not implement until approved.
-- Thin slices. No combining unrelated work.
 - Never commit / stage / push / merge / open PR without explicit instruction.
-- Forbidden paths require `[GATED]` approval: `package.json`, `pnpm-lock.yaml`, DB schema, SQL migrations, `packages/contracts/openapi/**`, `.github/workflows/**`, `apps/**` source for observability-only slices, etc. (per task-specific brief).
-- Use Testcontainers for RLS / cross-tenant integration tests. Use `MIGRATION_TEST_ALLOW_SKIP=1` when Docker is unavailable locally.
-- Untracked `bin/` and `externals/` directories are not part of any slice — leave them alone.
-- Stop conditions in a brief mean stop and report. Do not silently expand scope.
+- Forbidden paths require `[GATED]` approval: `package.json`, `pnpm-lock.yaml`, SQL migrations, `packages/contracts/openapi/**`, `.github/**`.
+- Untracked `bin/` and `externals/` are not part of any slice — leave them alone.
+- Stop conditions in a slice brief mean stop and report. Do not silently expand scope.
