@@ -29,6 +29,41 @@ jest.mock("../../src/observability/metrics/worker.metrics", () => ({
   recordRedisCommandDuration: jest.fn(),
 }));
 
+// Mock BullMQ's `Worker` so `BullMqWorkerFactory.create()` can be invoked
+// without opening a real socket. The stub captures every constructor
+// invocation so tests can assert on the WorkerOptions the factory
+// actually hands to BullMQ — closing the gap CodeRabbit flagged where
+// a standalone probe could mask a regression in the factory's wiring.
+const bullMqWorkerCalls: Array<{
+  queueName: string;
+  processor: unknown;
+  options: { connection: Redis } & Record<string, unknown>;
+}> = [];
+
+jest.mock("bullmq", () => {
+  return {
+    Worker: jest
+      .fn()
+      .mockImplementation(function MockedWorker(
+        queueName: string,
+        processor: unknown,
+        options: { connection: Redis } & Record<string, unknown>,
+      ) {
+        bullMqWorkerCalls.push({ queueName, processor, options });
+        return {
+          on: jest.fn(),
+          close: jest.fn().mockResolvedValue(undefined),
+        };
+      }),
+    // `Queue` is imported at worker.module top level even when the
+    // factory test path does not exercise it; provide a no-op stub so
+    // module loading does not crash.
+    Queue: jest.fn().mockImplementation(function MockedQueue() {
+      return { close: jest.fn().mockResolvedValue(undefined) };
+    }),
+  };
+});
+
 const mockedRecord = recordRedisCommandDuration as jest.MockedFunction<
   typeof recordRedisCommandDuration
 >;
@@ -223,38 +258,55 @@ describe("InstrumentedRedis — BullMQ-compatible safe defaults", () => {
     // The worker boot regression originated here: the factory used to
     // construct `new InstrumentedRedis(this.redisUrl)` from a bare URL
     // string, leaving ioredis's default `maxRetriesPerRequest = 20` in
-    // place. BullMQ's `Worker` constructor then threw. We assert on the
-    // shape of the ioredis client that the factory hands to BullMQ via
-    // the WorkerOptions.connection slot — without booting a real BullMQ
-    // Worker (which would attempt a live socket connection).
+    // place. BullMQ's `Worker` constructor then threw at bootstrap.
     //
-    // We intercept the BullMQ `Worker` import in `worker.module` by
-    // shadowing `bullmq.Worker`'s prototype through a constructor stub.
-    // Simpler: read the option shape directly by triggering the factory
-    // on a known URL, then re-implement the relevant slice via a sibling
-    // call. The factory itself constructs the client BEFORE handing it
-    // to BullMQ, so we can observe via a constructor-level mock spy on
-    // InstrumentedRedis. Because the InstrumentedRedis subclass is
-    // imported by worker.module from the same file under test, the spy
-    // covers both call sites without a jest.mock reset dance.
-    it("constructs an ioredis client carrying BULLMQ_SAFE_REDIS_DEFAULTS", () => {
+    // To prove the factory itself wires the safe defaults, we invoke
+    // `factory.create()` with the BullMQ `Worker` constructor mocked at
+    // module scope (see the `jest.mock("bullmq", ...)` block at the
+    // top of this file). The mock captures every constructor invocation
+    // so we can read the exact `connection` instance the factory passes
+    // — closing the gap where a standalone probe could mask a
+    // regression in the factory's actual wiring.
+
+    beforeEach(() => {
+      bullMqWorkerCalls.length = 0;
+    });
+
+    it("passes BullMQ a connection carrying BULLMQ_SAFE_REDIS_DEFAULTS", async () => {
       const factory = new BullMqWorkerFactory("redis://127.0.0.1:6379");
-      // Construct the same client shape the factory uses internally.
-      // The factory `create()` call would also wire it into a live BullMQ
-      // Worker (which opens a socket); we instead verify the option
-      // contract directly. If a regression reintroduces a bare URL
-      // without the safe defaults, this assertion catches it because the
-      // factory's client construction path is identical to the one
-      // exercised here.
-      expect(factory).toBeInstanceOf(BullMqWorkerFactory);
-      const probe = new InstrumentedRedis("redis://127.0.0.1:6379", {
-        lazyConnect: true,
-      });
+      const handler = jest.fn();
+      const created = factory.create("test-queue", handler, {});
       try {
-        expect(probe.options.maxRetriesPerRequest).toBeNull();
-        expect(probe.options.enableReadyCheck).toBe(false);
+        expect(bullMqWorkerCalls).toHaveLength(1);
+        const call = bullMqWorkerCalls[0]!;
+        expect(call.queueName).toBe("test-queue");
+        // The factory passes its `client` as `options.connection`.
+        // Assert on the live ioredis instance, not a sibling probe.
+        const conn = call.options.connection as Redis;
+        expect(conn).toBeInstanceOf(InstrumentedRedis);
+        expect(conn.options.maxRetriesPerRequest).toBeNull();
+        expect(conn.options.enableReadyCheck).toBe(false);
       } finally {
-        probe.disconnect();
+        await created.close();
+      }
+    });
+
+    it("forwards caller-supplied worker options unchanged", async () => {
+      const factory = new BullMqWorkerFactory("redis://127.0.0.1:6379");
+      const handler = jest.fn();
+      const callerOpts = { concurrency: 4, lockDuration: 60_000 };
+      const created = factory.create("test-queue", handler, callerOpts);
+      try {
+        expect(bullMqWorkerCalls).toHaveLength(1);
+        const call = bullMqWorkerCalls[0]!;
+        expect(call.options).toMatchObject(callerOpts);
+        // Connection still carries the safe defaults regardless of
+        // caller-supplied WorkerOptions.
+        const conn = call.options.connection as Redis;
+        expect(conn.options.maxRetriesPerRequest).toBeNull();
+        expect(conn.options.enableReadyCheck).toBe(false);
+      } finally {
+        await created.close();
       }
     });
   });

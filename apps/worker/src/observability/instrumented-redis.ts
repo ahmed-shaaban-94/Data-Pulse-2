@@ -200,10 +200,13 @@ export class InstrumentedRedis extends Redis {
    * instrumented. Without this override, `duplicate()` returns a plain
    * `Redis` instance.
    *
-   * The constructor enforces `BULLMQ_SAFE_REDIS_DEFAULTS` regardless of
-   * what `this.options` carries, so the duplicated client is always
-   * BullMQ-compatible — even if a future refactor weakened the source
-   * client's options.
+   * The constructor merges `BULLMQ_SAFE_REDIS_DEFAULTS` before any
+   * caller-supplied options, so the duplicate inherits the safe defaults
+   * by default. If either `this.options` or `override` carries an
+   * explicit `maxRetriesPerRequest` / `enableReadyCheck`, that value
+   * still wins — the intentional escape hatch for non-BullMQ paths
+   * (admin tooling, ad-hoc clients). Production worker call sites must
+   * not override these keys; the test suite asserts the defaults shape.
    */
   override duplicate(override?: Partial<RedisOptions>): InstrumentedRedis {
     return new InstrumentedRedis({ ...this.options, ...override });
