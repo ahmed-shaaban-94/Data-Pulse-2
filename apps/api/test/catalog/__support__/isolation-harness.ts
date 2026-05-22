@@ -130,13 +130,6 @@ export const UNKNOWN_A_Y_CORR = "0a000000-0000-7000-8000-00000000a722";
 export const UNKNOWN_B_X_CORR = "0b000000-0000-7000-8000-00000000b721";
 export const UNKNOWN_B_Y_CORR = "0b000000-0000-7000-8000-00000000b722";
 
-// Correlation IDs for price_history (NOT NULL on that table per
-// 0007_catalog.sql:336). One per row.
-export const PRICE_HIST_A_TENANT_CORR = "0a000000-0000-7000-8000-00000000a631";
-export const PRICE_HIST_A_STORE_X_CORR = "0a000000-0000-7000-8000-00000000a632";
-export const PRICE_HIST_B_TENANT_CORR = "0b000000-0000-7000-8000-00000000b631";
-export const PRICE_HIST_B_STORE_X_CORR = "0b000000-0000-7000-8000-00000000b632";
-
 // Actors — `created_by` / `updated_by` are NOT NULL on tenant_products
 // and store_product_overrides but have no FK; any UUID is acceptable.
 export const ACTOR_A = "0a000000-0000-7000-8000-0000000000ac";
@@ -354,28 +347,26 @@ export async function seedCatalogIsolationFixture(
 
   // ---- 8. price_history ---------------------------------------------------
   // Two per tenant: a tenant-level baseline (store_id NULL) and a
-  // store-scoped X-store row. price_history uses `changed_by` (not
-  // `created_by`) and requires a NOT NULL `correlation_id` per
-  // 0007_catalog.sql:335-336.
+  // store-scoped X-store row. Required columns vary by what 0007
+  // declares; we set the common ones (tenant_id, product_id, price,
+  // currency_code, effective_from) and let any optional column default.
+  // If the schema rejects this shape on a future migration, the
+  // consumer spec will catch it.
   await admin.query(
     `INSERT INTO price_history
        (id, tenant_id, product_id, store_id, price, currency_code,
-        effective_from, changed_by, correlation_id)
+        effective_from, created_by)
      VALUES
-       ($1, $2, $3, NULL, 9.99, 'USD', now(), $4, $13),
-       ($5, $2, $3, $6, 10.49, 'USD', now(), $4, $14),
-       ($7, $8, $9, NULL, 8.50, 'USD', now(), $10, $15),
-       ($11, $8, $9, $12, 8.99, 'USD', now(), $10, $16)
+       ($1, $2, $3, NULL, 9.99, 'USD', now(), $4),
+       ($5, $2, $3, $6, 10.49, 'USD', now(), $4),
+       ($7, $8, $9, NULL, 8.50, 'USD', now(), $10),
+       ($11, $8, $9, $12, 8.99, 'USD', now(), $10)
      ON CONFLICT DO NOTHING`,
     [
       PRICE_HIST_A_TENANT, TENANT_A, PRODUCT_A_ACTIVE, ACTOR_A,
       PRICE_HIST_A_STORE_X, STORE_A_X,
       PRICE_HIST_B_TENANT, TENANT_B, PRODUCT_B_ACTIVE, ACTOR_B,
       PRICE_HIST_B_STORE_X, STORE_B_X,
-      PRICE_HIST_A_TENANT_CORR,
-      PRICE_HIST_A_STORE_X_CORR,
-      PRICE_HIST_B_TENANT_CORR,
-      PRICE_HIST_B_STORE_X_CORR,
     ],
   );
 
