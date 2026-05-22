@@ -1,21 +1,22 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-21 (post-#260 closeout)
+**Last updated:** 2026-05-22 (post-#268 closeout — T341 cross-tenant read isolation merged)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `5801369` (T335 tenant helper coverage — PR #260)
-**Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low severity; documentation/scaffolding mismatch, not a security defect)
+**Base:** `origin/main` at `263492a` (T341 — PR #268, 2026-05-21)
+**Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `HARNESS_SEED_BUGS` (medium; 3 latent seed errors verified on main @ f6a8075)
 **Resolved findings (kept for audit):** 1 — `RLS_CROSS_STORE_READ_LEAK` (resolved by PR #254 @ `483aae4`)
 
 ---
 
 ## TL;DR
 
-Catalog Phase 2 is fully cleaned up. The cross-store read leak (PR #254)
-and T335's tenant-helper coverage (PR #260) are both on `main`. **T340
-is ready to dispatch** — authoring the catalog isolation harness unlocks
-the entire T341–T344 read-sweep wave. T336 stays blocked solely on the
-missing `withStore` helper (`MISSING_WITHSTORE_HELPER` finding) and
-needs its own authorization path. No slice is currently `local_uncommitted`.
+T340 (isolation harness, PR #264) and T341 (cross-tenant read isolation, PR #268)
+are both merged. T342, T343, T344 are now **ready to dispatch**. A new finding —
+`HARNESS_SEED_BUGS` — records three latent constraint violations in the harness seed
+function (independently verified against main @ f6a8075 by static inspection and
+Testcontainers run). A **harness fix slice must land before T342 validation** — all
+three consume the same seeding function. T336 remains blocked on
+`MISSING_WITHSTORE_HELPER`. No slice is `local_uncommitted`.
 
 ---
 
@@ -31,7 +32,8 @@ needs its own authorization path. No slice is currently `local_uncommitted`.
 | `RLS_CROSS_STORE_RED_PROOF` | RED proof spec for the cross-store leak | merged in PR #254 @ `483aae4` |
 | `RLS_CROSS_STORE_FIX` | `0008_catalog_store_read_isolation.sql` + `.down.sql` | PR #254 @ `483aae4` |
 | `T335_TENANT_HELPER_COVERAGE` | `withTenant` catalog coverage spec for `tenant_products` via `runWithTenantContext` | PR #260 @ `5801369` |
-| `T340` | Catalog isolation harness (`apps/api/test/catalog/__support__/isolation-harness.ts`) | PR #264 @ `02cdf75` |
+| `T340` | Catalog isolation harness (`apps/api/test/catalog/__support__/isolation-harness.ts`) | PR #264 @ `02cdf75` — *see HARNESS_SEED_BUGS* |
+| `T341` | Cross-tenant read isolation (`apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`) — 29 assertions, Groups A–D | PR #268 @ `263492a` |
 
 ### Context from neighboring merges
 
@@ -51,6 +53,8 @@ These landed alongside the catalog work and affect the surrounding context, not 
 _None._
 
 All previously-local work is now on `main`:
+- `T341` — merged in PR #268 @ `263492a` (2026-05-21)
+- `T340` — merged in PR #264 @ `02cdf75` (2026-05-21)
 - `T335_TENANT_HELPER_COVERAGE` — merged in PR #260 @ `5801369`
 - `RLS_CROSS_STORE_RED_PROOF`, `RLS_CROSS_STORE_FIX` — merged in PR #254 @ `483aae4`
 
@@ -70,6 +74,16 @@ All previously-local work is now on `main`:
 
 ## Active findings
 
+### `HARNESS_SEED_BUGS` — fix slice required before T342 dispatch
+
+- **Summary:** Three latent constraint violations in `seedCatalogIsolationFixture` (`apps/api/test/catalog/__support__/isolation-harness.ts`) merged via PR #264. All three were independently verified by static inspection against `0007_catalog.sql` on main @ f6a8075 and confirmed by a Testcontainers run (WSL Docker, 2026-05-22 — 31/31 FAILED).
+  1. `product_aliases` INSERT column list omits `created_by` (NOT NULL per `0007_catalog.sql:275`).
+  2. `product_aliases` store-scoped rows use `identifier_type = 'external_pos_id'` with `store_id` set, violating the `product_aliases_store_scope_consistency` CHECK (`external_pos_id` must have `store_id NULL`, per `0007_catalog.sql:284-285`).
+  3. `price_history` INSERT uses column `created_by` (does not exist — correct column is `changed_by`, `0007_catalog.sql:335`) and omits `correlation_id` (NOT NULL, `0007_catalog.sql:336`).
+- **Severity:** medium — all T341–T344 validation runs will fail at seed time until fixed; no production impact.
+- **Blocks:** T342, T343, T344 validation (T341 is already merged but its GREEN run is also blocked until fixed).
+- **Resolution:** New fix slice targeting `isolation-harness.ts`. No gate required (non-forbidden path; test-only file).
+
 ### `MISSING_WITHSTORE_HELPER`
 
 - **Summary:** `rls-test-matrix.md:464-465` and `plan.md:210` claim `packages/db/src/helpers/with-store.ts` ships from feature 001, but the file does not exist on `main`. Only `with-tenant.ts` and `audit-insert.ts` are present.
@@ -87,6 +101,7 @@ All previously-local work is now on `main`:
 | Slice ID | Blocked by | Notes |
 |---|---|---|
 | `T336` | `MISSING_WITHSTORE_HELPER` finding | No remaining slice-level deps — `RLS_CROSS_STORE_FIX` cleared. Only the missing helper file blocks now. |
+| T342 validation | `HARNESS_SEED_BUGS` | Slice is `ready` (T340 dep cleared). Harness fix is a runtime prerequisite for GREEN — not a dispatch blocker, but validation will fail until resolved. Same applies to T343, T344. |
 
 ---
 
@@ -94,43 +109,41 @@ All previously-local work is now on `main`:
 
 | Slice ID | Type | Agent | Approval needed? | Notes |
 |---|---|---|---|---|
-| `T341` | test | `sonnet-test` | no | Cross-tenant read sweep at `apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`. T340 dep satisfied (PR #264). |
-| `T342` | test | `sonnet-test` | no | Cross-store read sweep at `apps/api/test/catalog/isolation/cross-store-read.spec.ts`. T340 dep satisfied (PR #264). |
-| `T343` | test | `sonnet-test` | no | RLS bypass probe at `apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts`. T340 dep satisfied (PR #264). |
-| `T344` | test | `sonnet-test` | no | Malicious body-override at `apps/api/test/catalog/isolation/malicious-override.spec.ts`. T340 dep satisfied (PR #264). |
+| `HARNESS_FIX` *(new, unregistered)* | fix | `sonnet-test` | no | Fix three seed bugs in `isolation-harness.ts` per `HARNESS_SEED_BUGS` finding. Must land before T342 dispatch to get GREEN. |
+| `T342` | test | `sonnet-test` | no | Cross-store read sweep. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
+| `T343` | test | `sonnet-test` | no | RLS bypass probe. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
+| `T344` | test | `sonnet-test` | no | Malicious body-override. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
 
 ---
 
 ## Proposed (awaiting approval)
 
-`PHASE3_RED_WAVE` — five RED test slices that can run in parallel because
-their `allowed_files` touch disjoint paths under `apps/api/test/catalog/**`:
+`PHASE3_RED_WAVE` — four RED test slices that can run in parallel because
+their `allowed_files` touch disjoint paths under `apps/api/test/catalog/**`
+(T340 removed — merged via PR #264):
 
-- `T340` — catalog isolation harness (also listed under Ready, since it's the harness others chain on)
 - `T350_TENANT_CATALOG_CREATE_RED`
 - `T360_GLOBAL_CATALOG_LIST_RED`
 - `T372_STORE_OVERRIDE_CREATE_RED`
 - `T383_PRODUCT_ALIASES_UNIQUENESS_RED`
 
-Eligibility gates for the group are **now satisfied** (RLS fix merged; CI
-on `main` green). Still `proposed: true` because parallel dispatch needs
-explicit user endorsement.
+Eligibility gates are **satisfied** (RLS fix merged; T340 and T341 merged; CI on
+`main` green). Still `proposed: true` because parallel dispatch needs explicit
+user endorsement.
 
 ---
 
 ## Next recommended action
 
-**T341 solo is the most conservative next step.** T340 is on `main`;
-T341–T344 are all ready. Running T341 first validates the harness in a
-real execution context and lands a concrete cross-tenant read coverage
-win. Sequential dispatch (T341 → T342 → T343 → T344) has the lowest
-cognitive load; parallel dispatch as a T341–T344 wave is available if
-you want higher throughput.
+**Fix the harness first.** T341 and T340 are on `main`. T342–T344 are ready to
+dispatch but all use `seedCatalogIsolationFixture` — the three bugs will cause
+seed-time failures until patched. The fix is three INSERT corrections in
+`isolation-harness.ts`, no gate required, and should land as a single commit
+before T342 is dispatched.
 
-T336 is the other still-blocked slice and needs an explicit decision on
-how to resolve `MISSING_WITHSTORE_HELPER` (author the missing helper,
-or reinterpret T336 to test the GUC contract directly). That decision
-is independent of the T341–T344 wave and can happen whenever.
+After the harness fix, T342–T344 can run sequentially or as a parallel wave
+(disjoint allowed files, independent test paths). T336 is independent and still
+needs an explicit decision on `MISSING_WITHSTORE_HELPER`.
 
 ---
 
@@ -163,20 +176,26 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
+Fix harness seed bugs (required before T342 dispatch):
+
 ```text
-Use Agent OS. Execute slice T341. Stop before commit.
+Use Agent OS.
+Fix finding HARNESS_SEED_BUGS in isolation-harness.ts.
+Spec: specs/003-catalog-foundation
+Allowed file: apps/api/test/catalog/__support__/isolation-harness.ts
+Stop before commit.
 ```
 
-To run all four isolation slices in parallel:
+After harness fix lands, dispatch the T342–T344 wave:
 
 ```text
-Use Agent OS. Schedule slices T341, T342, T343, T344 in parallel. Stop before dispatch.
+Use Agent OS. Execute slice T342. Stop before commit.
 ```
 
-Or, for the parallel wave (requires explicit endorsement):
+Or in parallel (requires explicit endorsement):
 
 ```text
-Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
+Use Agent OS. Schedule slices T342, T343, T344 in parallel. Stop before dispatch.
 ```
 
 For T336 specifically — only run this once you've authorized a resolution
