@@ -175,43 +175,22 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
     }
   });
 
-  it("store_product_overrides: Tenant A + Store A-X sees exactly 1 own row", async () => {
+  it("store_product_overrides: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
-    // The 0008 store-isolation policy requires a real store UUID;
-    // each store-bound context sees only that store's row. To prove
-    // the tenant-level invariant we check both stores in sequence.
-    const rowsAtX = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rowsAtX).toHaveLength(1);
-    expect(rowsAtX[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    expect(rowsAtX[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAX);
-    expect(rowsAtX[0]!.id).toBe(CATALOG_FIXTURE_IDS.overrideAX);
-  });
-
-  it("store_product_overrides: Tenant A + Store A-Y sees exactly 1 own row", async () => {
-    if (maybeSkip()) return;
-    const rowsAtY = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAY },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rowsAtY).toHaveLength(1);
-    expect(rowsAtY[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    expect(rowsAtY[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAY);
-    expect(rowsAtY[0]!.id).toBe(CATALOG_FIXTURE_IDS.overrideAY);
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard prevents ''::uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
+      );
+      return r.rows;
+    });
+    // 2 per tenant (one per store)
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.store_product_overrides / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    }
   });
 
   it("product_aliases: Tenant A sees exactly 2 rows (own tenant only)", async () => {
@@ -242,40 +221,21 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
     }
   });
 
-  it("unknown_items: Tenant A + Store A-X sees exactly 1 own row", async () => {
+  it("unknown_items: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
-    const rowsAtX = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rowsAtX).toHaveLength(1);
-    expect(rowsAtX[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    expect(rowsAtX[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAX);
-    expect(rowsAtX[0]!.id).toBe(CATALOG_FIXTURE_IDS.unknownAX);
-  });
-
-  it("unknown_items: Tenant A + Store A-Y sees exactly 1 own row", async () => {
-    if (maybeSkip()) return;
-    const rowsAtY = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAY },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rowsAtY).toHaveLength(1);
-    expect(rowsAtY[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    expect(rowsAtY[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAY);
-    expect(rowsAtY[0]!.id).toBe(CATALOG_FIXTURE_IDS.unknownAY);
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard prevents ''::uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.unknown_items / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    }
   });
 });
 
@@ -472,21 +432,21 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
     }
   });
 
-  it("store_product_overrides: Tenant B + Store B-X sees exactly 1 own row", async () => {
+  it("store_product_overrides: Tenant B context sees exactly 2 own rows", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeBX },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
-    expect(rows[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeBX);
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard prevents ''::uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.store_product_overrides / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    }
   });
 
   it("price_history: Tenant B context sees exactly 2 own rows", async () => {
@@ -517,21 +477,21 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
     }
   });
 
-  it("unknown_items: Tenant B + Store B-X sees only its own row", async () => {
+  it("unknown_items: Tenant B context sees only its own rows", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreContext(
-      env!.app,
-      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeBX },
-      async (client) => {
-        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
-          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
-        );
-        return r.rows;
-      },
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
-    expect(rows[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeBX);
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
+      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard prevents ''::uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      const r = await client.query<{ id: string; tenant_id: string }>(
+        `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
+      );
+      return r.rows;
+    });
+    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.unknown_items / 2);
+    for (const row of rows) {
+      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    }
   });
 
   it("unknown_items: Tenant B context cannot see Tenant A's Store-X item by known ID", async () => {

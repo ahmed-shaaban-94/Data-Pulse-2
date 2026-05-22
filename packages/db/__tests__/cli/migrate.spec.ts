@@ -120,6 +120,7 @@ describe("data-pulse-migrate CLI", () => {
     "0006_outbox_events",
     "0007_catalog",
     "0008_catalog_store_read_isolation",
+    "0009_catalog_store_empty_guc_fix",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
