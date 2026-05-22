@@ -288,7 +288,7 @@ parallel with, or after P4.
 - [ ] **T521** [P5] [Track D] [GATED] Author `@Idempotent(...)` decorator at `apps/api/src/idempotency/idempotent.decorator.ts` per research §10; opt-in only; route-level registration.
 - [ ] **T522** [P5] [Track D] [GATED] Add in-progress marker support to the idempotency module (Redis `SET NX EX 60`; reuse existing Redis connection from `IdempotencyKeyStore`); no schema change required.
 - [ ] **T523** [P5] [Track D] [GATED] Update `POST /api/v1/memberships/invite` controller (OpenAPI `operationId: createInvitation`) to use `@Idempotent('required')` per plan §3.4.5; emit the three observability counters.
-- [ ] **T524** [P5] [Track D] [GATED] Update OpenAPI contract at `packages/contracts/openapi/foundation/memberships.yaml` (or equivalent) to declare `x-idempotency: required` on the invitation endpoint (FR-D-008). This is the **only OpenAPI contract change** required by this slice.
+- [ ] **T524** [P5] [Track D] [GATED] Update OpenAPI contract at `packages/contracts/openapi/memberships.openapi.yaml` to declare `x-idempotency: required` on the invitation endpoint (FR-D-008). This is the **only OpenAPI contract change** required by this slice.
 - [ ] **T525** [P5] [Track D] [GATED] Update `IdempotencyKeyStore` default TTL from 24h to 72h via runtime config — no code constant change; reuse `defaultTtlMs` option (research §2).
 
 ### 8.4 Validation

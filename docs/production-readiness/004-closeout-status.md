@@ -8,6 +8,16 @@
 
 ## Changelog
 
+- **2026-05-22** (docs correction — T475/T476 status + §4.B cleanup) —
+  T475 (`cross_tenant_rejection_total`) and T476 (`db_rls_context_failure_total`)
+  confirmed wired at `apps/api/src/context/tenant-context.guard.ts:127,283`; status
+  updated from PARTIAL to DONE. §4.B items closed: T524 OpenAPI path corrected in
+  `tasks.md` (`foundation/memberships.yaml` → `memberships.openapi.yaml`); T453
+  label-name drift corrected in `plan.md §3.2.1` (`cause`→`reason` for
+  `tenant_context_failure_total`, `field_class` removed from `validation_failure_total`,
+  `pattern`→`reason` for `suspicious_login_total`, `job_type`→`job_name` for worker
+  signals, `command_class`→`command` for `redis_command_duration_seconds`).
+
 - **2026-05-21** (T483 P4 addCallback wiring — PRs #270 and #271) —
   Four previously-unwired ObservableGauge instruments are now wired.
   PR #270 (W1+W2): `ApiDbPoolGaugeRegistrar` (API) and `WorkerDbPoolGaugeRegistrar`
@@ -71,7 +81,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` addCallbacks wired (PRs #270/#271). Only `redis_command_duration_seconds` remains unwired. Full signal-catalogue live-scrape evidence (all four newly-wired signals + Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
+| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` addCallbacks wired (PRs #270/#271). Only `redis_command_duration_seconds` remains unwired (ioredis hook PR #273 open). Full signal-catalogue live-scrape evidence (all newly-wired signals + idempotency, auth-failure, suspicious-login, db-slow-query) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
 | P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
@@ -115,7 +125,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P4 | T474 | Structured-log fields (`request_id`, `tenant_id`, `store_id`, `actor_id`, `correlation_id`) | #222 | DONE | |
 | P4 | T460, T463–T466 | Signal-presence, RLS-failure, cross-tenant, worker, auth-failure signal tests | #222, #229 | PARTIAL | Not all test suites explicitly confirmed in PR evidence; T465 worker signals covered by PR #229 worker observability tests. |
 | P4 | T470–T472 | Metric definitions registered (API, DB, worker) | #229 | PARTIAL | PR #229 wires OTel metrics SDK and exposes `/metrics`; metric family definitions registered. Actual emission from DB and drainer call-sites still pending. |
-| P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | Not confirmed | PARTIAL | Not explicitly referenced in merged PR bodies. |
+| P4 | T475–T476 | Emit `cross_tenant_rejection_total` and `db_rls_context_failure_total` | #229 (definitions), confirmed 2026-05-22 | **DONE** | Emission call sites confirmed at `apps/api/src/context/tenant-context.guard.ts:127` (`cross_tenant_rejection_total`) and `:283` (`db_rls_context_failure_total`). Previously marked PARTIAL because no explicit PR body reference; wiring was present in source. |
 | P4 | T480–T482 | P4 validation suite GREEN | #227 | DONE | PR #227 closeout report at `docs/observability/p4-closeout-report.md` confirms T480–T482 GREEN. |
 | P4 | T483 | Live `/metrics` operator scrape validation | #229 (unblocks), PR #265 | **PASS (exercised paths) / PARTIAL (full catalogue)** | Operator-side run on 2026-05-21 against commit `678baa47`. Exercised API/worker/outbox metrics present in live scrape with expected label shapes. Verdict **PASS for exercised paths**. Full signal-catalogue coverage (DB pool, DB migration, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) **not yet live-proven** — see §4.C backlog and `docs/observability/operator-validation-report.md`. |
 | P4 | T483 addCallback wiring (W1–W3) | `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` ObservableGauge addCallback wiring | #270 (W1+W2), #271 (W3) | **DONE (wired; not yet live-scraped)** | PR #270: `ApiDbPoolGaugeRegistrar` + `WorkerDbPoolGaugeRegistrar` (pool counters); `QueueLagGaugeRegistrar` (5 BullMQ queues, clamped lag, re-entrancy guard). PR #271: `ApiDbMigrationStatusGaugeRegistrar` (applied/pending/failed state logic, `Number.MAX_SAFE_INTEGER` fallback on filesystem error). Unit tests for all four wiring paths. `redis_command_duration_seconds` ioredis hook remains the last unwired instrument. |
@@ -203,21 +213,14 @@ the scrape evidence and honest absences.)*
 
 ### B — Docs-Only Cleanup
 
-These require only documentation changes; no source, schema, or contract changes.
+~~1. **T524 path drift** — closed 2026-05-22: `tasks.md §8.3` corrected from
+   `packages/contracts/openapi/foundation/memberships.yaml` to
+   `packages/contracts/openapi/memberships.openapi.yaml`.~~
 
-1. **T524 path drift** — `tasks.md §8.3` references
-   `packages/contracts/openapi/foundation/memberships.yaml` as the OpenAPI file
-   for the idempotency contract. The actual file is
-   `packages/contracts/openapi/memberships.openapi.yaml`. The contract itself is
-   correct; only the task description is stale. Cleanup is a separate
-   `docs(spec)` PR.
-
-2. **T453 metric-label drift** — `plan.md §3.2.1` uses label names that differ
-   from those in `docs/observability/signals.md`: `cause` vs `reason` (for
-   `auth_failure_total`), `job_type` vs `job_name`, and `field_class` absent
-   from `validation_failure_total`. Documented as non-blocking in PR #201 and
-   PR #212. Cleanup is a separate `docs(spec)` PR; intentionally deferred from
-   this PR.
+~~2. **T453 metric-label drift** — closed 2026-05-22: `plan.md §3.2.1` corrected
+   to match `signals.md` (`reason` for `tenant_context_failure_total` and
+   `suspicious_login_total`; `route`-only for `validation_failure_total`;
+   `job_name` for worker signals; `command` for `redis_command_duration_seconds`).~~
 
 3. **P9 report stale for runtime status** — `docs/production-readiness/004-cross-track-validation.md`
    covers the planning phase only. This document supersedes it for runtime
@@ -264,17 +267,17 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
    | `db_migration_status` | addCallback wired (PR #271) | `ApiDbMigrationStatusGaugeRegistrar` queries `_drizzle_migrations COUNT(*)` at scrape time; applied/pending/failed states; not yet live-scraped. |
    | `db_pool_in_use` | addCallback wired (PR #270) | `ApiDbPoolGaugeRegistrar` (API) + `WorkerDbPoolGaugeRegistrar` (worker) read synchronous pool counters; not yet live-scraped. |
    | `db_pool_waiters` | addCallback wired (PR #270) | Same registrars as `db_pool_in_use`; not yet live-scraped. |
-   | `redis_command_duration_seconds` | Unwired / deferred | No ioredis instrumentation hook; last unwired instrument in the P4 catalogue. |
+   | `redis_command_duration_seconds` | ioredis hook wired (PR #273, open) | `InstrumentedRedis` subclass hooks `sendCommand`; KNOWN_REDIS_COMMANDS bounded set; `duplicate()` overridden; not yet live-scraped. |
    | `queue_lag_seconds` | addCallback wired (PR #270) | `QueueLagGaugeRegistrar` wired against 5 BullMQ queues in worker; re-entrancy guard; lag clamped ≥ 0; not yet live-scraped. |
-   | `db_slow_query_total` | Registered | No slow-query hook wired; threshold 500ms; not exercised in T483 run. |
-   | `auth_failure_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
-   | `suspicious_login_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
-   | `tenant_context_failure_total` | Unit/allowlist-tested | Emission call-site exists; not live-proven — requires authenticated request with bad tenant context. |
-   | `cross_tenant_rejection_total` | Unit/allowlist-tested (T475 PARTIAL) | Emission from `TenantContextGuard` not confirmed in merged PR evidence; not live-proven. |
-   | `db_rls_context_failure_total` | Unit/allowlist-tested (T476 PARTIAL) | Emission from DB instrumentation hook not confirmed in merged PR evidence; not live-proven. |
-   | `idempotency_replay_total` | Unit/allowlist-tested | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
-   | `idempotency_conflict_total` | Unit/allowlist-tested | Same as above. |
-   | `idempotency_in_progress_total` | Unit/allowlist-tested | Same as above. |
+   | `db_slow_query_total` | Registered | No pg.Pool slow-query hook wired; threshold 500ms; not exercised in T483 run. Requires pool-level instrumentation (future gated slice). |
+   | `auth_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
+   | `suspicious_login_total` | Production-emitting | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
+   | `tenant_context_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires authenticated request with bad tenant context. |
+   | `cross_tenant_rejection_total` | Production-emitting (T475 DONE 2026-05-22) | Emission confirmed at `tenant-context.guard.ts:127`; not live-proven — requires authenticated cross-tenant request. |
+   | `db_rls_context_failure_total` | Production-emitting (T476 DONE 2026-05-22) | Emission confirmed at `tenant-context.guard.ts:283`; not live-proven — requires DB bootstrap failure path. |
+   | `idempotency_replay_total` | Production-emitting | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
+   | `idempotency_conflict_total` | Production-emitting | Same as above. |
+   | `idempotency_in_progress_total` | Production-emitting | Same as above. |
 
    A future operator-validation slice must exercise these paths and record scrape
    evidence to move P4 to DONE.
