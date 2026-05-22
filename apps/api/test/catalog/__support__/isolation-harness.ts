@@ -130,6 +130,13 @@ export const UNKNOWN_A_Y_CORR = "0a000000-0000-7000-8000-00000000a722";
 export const UNKNOWN_B_X_CORR = "0b000000-0000-7000-8000-00000000b721";
 export const UNKNOWN_B_Y_CORR = "0b000000-0000-7000-8000-00000000b722";
 
+// Correlation IDs for price_history. The column is NOT NULL on that
+// table per 0007_catalog.sql:336 — one ID per row.
+export const PRICE_HIST_A_TENANT_CORR = "0a000000-0000-7000-8000-00000000a631";
+export const PRICE_HIST_A_STORE_X_CORR = "0a000000-0000-7000-8000-00000000a632";
+export const PRICE_HIST_B_TENANT_CORR = "0b000000-0000-7000-8000-00000000b631";
+export const PRICE_HIST_B_STORE_X_CORR = "0b000000-0000-7000-8000-00000000b632";
+
 // Actors — `created_by` / `updated_by` are NOT NULL on tenant_products
 // and store_product_overrides but have no FK; any UUID is acceptable.
 export const ACTOR_A = "0a000000-0000-7000-8000-0000000000ac";
@@ -320,48 +327,58 @@ export async function seedCatalogIsolationFixture(
 
   // ---- 7. product_aliases -------------------------------------------------
   // Two per tenant: a tenant-wide barcode (store_id NULL) and a
-  // store-scoped external_pos_id (store_id = the X store). The latter
-  // requires `source_system` to satisfy the external_pos_id CHECK.
+  // store-scoped sku (store_id = the X store). `external_pos_id`
+  // cannot be store-scoped per the
+  // `product_aliases_store_scope_consistency` CHECK
+  // (0007_catalog.sql:284-285 — external_pos_id rows must have
+  // store_id NULL); `sku` has no such restriction and no
+  // `source_system` requirement, so it cleanly exercises the
+  // store-scoped uniqueness path we need for cross-store assertions.
+  // `created_by` is NOT NULL on this table (0007_catalog.sql:275) —
+  // each row carries the tenant's actor ID.
   await admin.query(
     `INSERT INTO product_aliases
        (id, tenant_id, product_id, identifier_type, value,
-        source_system, store_id)
+        source_system, store_id, created_by)
      VALUES
-       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL),
-       ($4, $2, $3, 'external_pos_id', 'A-X-POS-001', 't340-pos', $5),
-       ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL),
-       ($9, $7, $8, 'external_pos_id', 'B-X-POS-001', 't340-pos', $10)
+       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL, $11),
+       ($4, $2, $3, 'sku', 'A-X-SKU-001', NULL, $5, $11),
+       ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL, $12),
+       ($9, $7, $8, 'sku', 'B-X-SKU-001', NULL, $10, $12)
      ON CONFLICT DO NOTHING`,
     [
       ALIAS_A_BARCODE, TENANT_A, PRODUCT_A_ACTIVE,
       ALIAS_A_X_POS, STORE_A_X,
       ALIAS_B_BARCODE, TENANT_B, PRODUCT_B_ACTIVE,
       ALIAS_B_X_POS, STORE_B_X,
+      ACTOR_A, ACTOR_B,
     ],
   );
 
   // ---- 8. price_history ---------------------------------------------------
   // Two per tenant: a tenant-level baseline (store_id NULL) and a
-  // store-scoped X-store row. Required columns vary by what 0007
-  // declares; we set the common ones (tenant_id, product_id, price,
-  // currency_code, effective_from) and let any optional column default.
-  // If the schema rejects this shape on a future migration, the
-  // consumer spec will catch it.
+  // store-scoped X-store row. price_history uses `changed_by`
+  // (NOT `created_by`) and requires a NOT NULL `correlation_id` per
+  // 0007_catalog.sql:335-336.
   await admin.query(
     `INSERT INTO price_history
        (id, tenant_id, product_id, store_id, price, currency_code,
-        effective_from, created_by)
+        effective_from, changed_by, correlation_id)
      VALUES
-       ($1, $2, $3, NULL, 9.99, 'USD', now(), $4),
-       ($5, $2, $3, $6, 10.49, 'USD', now(), $4),
-       ($7, $8, $9, NULL, 8.50, 'USD', now(), $10),
-       ($11, $8, $9, $12, 8.99, 'USD', now(), $10)
+       ($1, $2, $3, NULL, 9.99, 'USD', now(), $4, $13),
+       ($5, $2, $3, $6, 10.49, 'USD', now(), $4, $14),
+       ($7, $8, $9, NULL, 8.50, 'USD', now(), $10, $15),
+       ($11, $8, $9, $12, 8.99, 'USD', now(), $10, $16)
      ON CONFLICT DO NOTHING`,
     [
       PRICE_HIST_A_TENANT, TENANT_A, PRODUCT_A_ACTIVE, ACTOR_A,
       PRICE_HIST_A_STORE_X, STORE_A_X,
       PRICE_HIST_B_TENANT, TENANT_B, PRODUCT_B_ACTIVE, ACTOR_B,
       PRICE_HIST_B_STORE_X, STORE_B_X,
+      PRICE_HIST_A_TENANT_CORR,
+      PRICE_HIST_A_STORE_X_CORR,
+      PRICE_HIST_B_TENANT_CORR,
+      PRICE_HIST_B_STORE_X_CORR,
     ],
   );
 
