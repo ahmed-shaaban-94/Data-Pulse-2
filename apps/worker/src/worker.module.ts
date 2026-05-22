@@ -87,6 +87,7 @@ import {
   type WorkerQueueName,
 } from "./observability/metrics/worker.metrics";
 import { InstrumentedRedis } from "./observability/instrumented-redis";
+import { InstrumentedPool } from "./observability/instrumented-pool";
 
 import {
   EMAIL_ADAPTER,
@@ -282,7 +283,7 @@ export function pgPoolProviderFactory(): AuditDbPool {
   const isProd = process.env["NODE_ENV"] === "production";
 
   if (dbUrl) {
-    return new AuditDbPool(new Pool({ connectionString: dbUrl }));
+    return new AuditDbPool(new InstrumentedPool({ connectionString: dbUrl }));
   }
 
   // dbUrl is missing from here on.

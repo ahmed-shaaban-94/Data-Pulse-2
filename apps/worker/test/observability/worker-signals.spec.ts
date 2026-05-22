@@ -63,11 +63,13 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
     });
   }
 
-  it("WORKER_METRIC_NAMES covers the two P4-W1 DB pool signals, the seven base worker signals, and all three T595 outbox signals", () => {
+  it("WORKER_METRIC_NAMES covers the two P4-W1 DB pool signals, the P4-W5 slow-query counter, the seven base worker signals, and all three T595 outbox signals", () => {
     const expected = [
       // P4 W1: DB pool gauges (worker scrapes its own AuditDbPool on port 9091)
       "db_pool_in_use",
       "db_pool_waiters",
+      // P4 W5: slow-query counter
+      "db_slow_query_total",
       "redis_command_duration_seconds",
       // P4 W2: queue lag observable gauge
       "queue_lag_seconds",
