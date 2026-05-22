@@ -119,6 +119,7 @@ describe("data-pulse-migrate CLI", () => {
     "0005_audit_retention_privileges",
     "0006_outbox_events",
     "0007_catalog",
+    "0008_catalog_store_read_isolation",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
@@ -186,7 +187,8 @@ describe("data-pulse-migrate CLI", () => {
         EXPECTED_MIGRATIONS.slice(0, -1),
       );
 
-      // After rolling back the catalog migration, none of its tables remain.
+      // 0008 is a policy-only migration — rolling it back removes no tables.
+      // All seven catalog tables introduced by 0007 are still present.
       const catalogCount = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = ANY($1::text[])
@@ -199,7 +201,7 @@ describe("data-pulse-migrate CLI", () => {
         "price_history",
         "unknown_items",
       ]]);
-      expect(catalogCount.rows[0]?.count).toBe("0");
+      expect(catalogCount.rows[0]?.count).toBe("7");
 
       // outbox_events from 0006 is still present.
       const outboxTable = await env.admin.query<{ count: string }>(`
@@ -237,7 +239,8 @@ describe("data-pulse-migrate CLI", () => {
     const r = await runCli(["up"], { DATABASE_URL: env.adminUri });
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(new RegExp(`up: applying ${LATEST_MIGRATION}`));
-    // The catalog migration restored its seven tables.
+    // 0008 is policy-only — re-applying it leaves all seven catalog tables
+    // from 0007 intact; no new tables are created or dropped.
     const catalogCount = await env.admin.query<{ count: string }>(`
       SELECT COUNT(*)::text AS count FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name = ANY($1::text[])
