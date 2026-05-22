@@ -537,4 +537,251 @@ No source / test / package / lockfile / schema / migration / OpenAPI / CI change
 
 ---
 
+## 10. P4 Seeded Evidence Run — 2026-05-22 (PR #286)
+
+**Tested commit**: `de3bd9deeae9e9d4e4068aff58e497bb91dfc69d` —
+`feat(observability): wire auth_failure_total and suspicious_login_total to production call sites (#286)` on `main`.
+
+**PR #286 present on `main`**: **yes** (it is the HEAD commit of this run; previous run was on `857c178` which predated #286).
+
+**Trigger**: lit up the SAFE signal classification from PR #283 §9 absences — six business-path signals that the 2026-05-21 / 2026-05-22 §9 runs documented as production-emitting-but-not-live-proven were never going to fire without seeded fixtures. This run seeds the minimum fixture set, exercises the SAFE paths, and confirms emission.
+
+### 10.1 Verdicts
+
+- **Six previously-absent SAFE signals confirmed LIVE** this run: `auth_failure_total` (4 distinct `cause` values), `suspicious_login_total{reason="rapid_retry"}`, `cross_tenant_rejection_total`, `tenant_context_failure_total{reason="cross_tenant"}`, `idempotency_in_progress_total`, `worker_processing_failure_total`.
+- **Two SAFE signals NOT live-proven** this run — `idempotency_replay_total` and `idempotency_conflict_total`. Root cause is a separate **production defect** in `EmailQueueProducer.deriveJobId` that returns `${scope}:${hash}` containing a `:` character, which BullMQ 5.76.5 rejects (`Custom Id cannot contain :`). The defect surfaces as 500 on every successful invite path, which prevents the idempotency store from persisting a `tap.next` result — there is no result to replay. The interceptor wiring is otherwise correct (proven by `idempotency_in_progress_total` firing on the same endpoint with the same `route` label). See §10.6 for the defect detail.
+- **Bonus signal proven LIVE incidentally**: `http_error_5xx_total{route="/api/v1/memberships/invite",status="500"} 8`. The 2026-05-21 / §9 runs documented this signal as not exercisable without a forced crash. The `EmailQueueProducer` defect (§10.6) is the production-realistic 5xx that exercised it. Counter increments and `route` label binding to a real controller template are both confirmed.
+- **PR #286 emission proven LIVE**: `auth_failure_total{cause="bad_password"}` (5), `{cause="bad_token"}` (1), `{cause="missing"}` (1), `{cause="rate_limited"}` (3), and `suspicious_login_total{reason="rapid_retry"}` (3). All four documented `cause` values from PR #286 plus the pre-existing `bad_token`/`missing` paths now have live evidence.
+- **No fabricated emissions, no warm-up traffic, no faked successes.**
+- **P4 verdict remains PARTIAL** — `db_slow_query_total`, `db_rls_context_failure_total`, and the two idempotency replay/conflict signals are still absent; `db_migration_status` defect from §9.6 is unchanged. See §10.7 and `004-closeout-status.md §4.C`.
+
+### 10.2 Environment
+
+| Component | Detail |
+|---|---|
+| OS host | Windows 11; exercise driven through WSL Ubuntu |
+| Container runtime | Docker Desktop via WSL 2 |
+| Postgres | `dp2-postgres-dev` (postgres:16-alpine), port 5432, healthy 7h+ |
+| Redis | `dp2-redis-dev` (redis:7-alpine), port 6379, healthy 7h+ |
+| API process | `node apps/api/dist/main.js`, PID 2899738, listening `:3001` (HTTP) + `:9464` (metrics) |
+| Worker process | `node apps/worker/dist/main.js`, PID 2899739, listening `127.0.0.1:9091` (metrics) |
+| Migration ledger | 10 applied, 0 pending |
+
+### 10.3 Commands run
+
+```bash
+# Preflight
+git fetch origin
+git checkout main
+git pull --ff-only origin main          # -> de3bd9d
+git log --oneline main | head -5         # confirms PR #286 at HEAD
+
+# Build all workspaces
+pnpm -r build                            # clean tsc on shared/auth/db/api/worker
+
+# Apply pending migrations (idempotent)
+DATABASE_URL='postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2' \
+  node packages/db/dist/cli/migrate.js up                  # -> no pending migrations
+
+# Generate argon2id PHC for "correct-horse-battery"
+node -e 'require("./packages/auth/dist/index.js").hashPassword("correct-horse-battery").then(h=>process.stdout.write(h))' > /tmp/p4-phc.txt
+
+# Seed fixtures (see §10.4)
+docker exec -i dp2-postgres-dev psql -U dp2 -d data_pulse_2 -v ON_ERROR_STOP=1 < /tmp/p4-seed-final.sql
+
+# Boot
+bash bin/p4-boot.sh                      # backgrounds api + worker, both reach 'listening'
+
+# Baseline scrape
+curl -s http://127.0.0.1:9464/metrics > /tmp/p4/api-before.txt    # 14 lines
+curl -s http://127.0.0.1:9091/metrics > /tmp/p4/worker-before.txt # 213 lines
+
+# Exercise (see §10.5)
+bash bin/p4-exercise-v2.sh
+
+# Final scrape
+curl -s http://127.0.0.1:9464/metrics > /tmp/p4/api-after.txt
+curl -s http://127.0.0.1:9091/metrics > /tmp/p4/worker-after.txt
+```
+
+### 10.4 Fixture data seeded
+
+UUID prefix family `0e000001-…` through `0e000007-…` for easy cleanup; PHC injected at apply-time:
+
+| Prefix | Rows | Purpose |
+|---|---|---|
+| `0e000001-…001/002` | 2 users | T1 admin / T2 admin, both with PHC for `correct-horse-battery` |
+| `0e000002-…001/002` | 2 tenants | `evidence-t1`, `evidence-t2` |
+| `0e000003-…001/002` | 2 stores | one per tenant |
+| `0e000004-…001/002` | 2 owner roles | one per tenant (`code='owner'`) |
+| `0e000005-…001` | 1 membership | T1 admin → T1, `store_access_kind='all'` |
+| `0e000006-…001` | 1 session | T1 admin active in T1 (normal) |
+| `0e000006-…002` | 1 session | T1 admin active in T2 (**cross-tenant trap** — no T2 membership) |
+| `0e000007-…001` | 1 outbox row | `audit.event.created`, `attempts=8`, empty payload — drainer DLQ branch |
+
+The seed SQL file is `bin/p4-seed.sql` (template; runner substitutes `__PHC__`). Both files are untracked (`bin/` is excluded from the repo per the working agreement).
+
+### 10.5 Exercise summary — per signal
+
+All requests target `http://127.0.0.1:3001`; sessions are sent via `Cookie: dp2_session=<id>`.
+
+| # | Signal target | Exercise path | Calls | Observed HTTP | Outcome |
+|---|---|---|---|---|---|
+| 1 | `idempotency_in_progress_total` | 2 concurrent invites with same `Idempotency-Key` against `/api/v1/memberships/invite`; up to 3 race attempts | 6 (3 race rounds × 2 each) | race-A=500, race-B=425; race fired on attempt 2 | **Race observed**; counter +2 |
+| 2 | `idempotency_replay_total` | Same key, same body, twice | 2 | both 500 (first fails on email enqueue defect — see §10.6) → store never persists `tap.next` | **0 — blocked by §10.6 defect** |
+| 3 | `idempotency_conflict_total` | Same key, different body | 2 | 500, then 500 | **0 — blocked by §10.6 defect** |
+| 4 | `cross_tenant_rejection_total` + `tenant_context_failure_total{reason="cross_tenant"}` | Invite using cross-tenant trap session (T1 admin in T2 session, no T2 membership) | 1 attempt; 2 invocations across runs | 404 | **+2** on each counter |
+| 5 | `worker_processing_failure_total` | Direct BullMQ enqueue of `audit-fanout` job with empty data (Zod parse → `MalformedAuditJobError`) via `bin/p4-enqueue-bad-job.js` | 1 job | n/a (consumed by worker async) | **+1** with `job_name="audit-fanout"`, `error_class="UnknownError"` (sanitizer bucket) |
+| 6a | `auth_failure_total{cause="bad_password"}` | Sign-in to seeded T1-admin email with wrong password | 1 | 401 | **+1** |
+| 6b | `auth_failure_total{cause="missing"}` | `GET /api/v1/context/me` no credentials | 1 | 401 | **+1** |
+| 6c | `auth_failure_total{cause="bad_token"}` | `GET /api/v1/context/me` with bogus Bearer | 1 | 401 | **+1** |
+| 6d | `auth_failure_total{cause="rate_limited"}` + `suspicious_login_total{reason="rapid_retry"}` | 7 sign-in attempts on same seeded email within the 15-min window (limit=5) | 7 | 4× 401, then 3× 429 | **+3** to each |
+
+### 10.5.1 Scrape delta — custom metric families
+
+API scrape (`:9464`), before → after:
+
+| Family | Before | After | Delta | Notes |
+|---|---|---|---|---|
+| `auth_failure_total{cause="bad_password"}` | (absent) | 5 | +5 | 1 from step 6a + 4 from step 6d before rate-limit trips |
+| `auth_failure_total{cause="bad_token"}` | (absent) | 1 | +1 | step 6c |
+| `auth_failure_total{cause="missing"}` | (absent) | 1 | +1 | step 6b |
+| `auth_failure_total{cause="rate_limited"}` | (absent) | 3 | +3 | step 6d attempts 5/6/7 |
+| `suspicious_login_total{reason="rapid_retry"}` | (absent) | 3 | +3 | step 6d attempts 5/6/7 |
+| `cross_tenant_rejection_total{route="/api/v1/memberships/invite"}` | (absent) | 2 | +2 | step 4 invocations |
+| `tenant_context_failure_total{reason="cross_tenant"}` | (absent) | 2 | +2 | step 4 (paired increment per signals.md §1) |
+| `idempotency_in_progress_total{route="POST:/api/v1/memberships/invite"}` | (absent) | 2 | +2 | step 1 race winners |
+| `http_error_5xx_total{route="/api/v1/memberships/invite",status="500"}` | (absent) | 8 | +8 | unplanned — see §10.6 |
+| `http_error_4xx_total{route="/api/v1/memberships/invite",status="409"}` | (absent) | 3 | +3 | invitation `ConflictException` on duplicate email (downstream of idempotency interceptor) |
+| `http_error_4xx_total{route="/api/v1/auth/signin",status="429"}` | (absent) | 3 | +3 | step 6d |
+| `db_migration_status{state="applied"}` | 1 | 1 | 0 | PR #284 fix landed — gauge now correctly reports applied=1, pending=0, failed=0 (regression from §9.6 closed) |
+
+Worker scrape (`:9091`), before → after:
+
+| Family | Before | After | Delta | Notes |
+|---|---|---|---|---|
+| `worker_processing_failure_total{job_name="audit-fanout",error_class="UnknownError"}` | (absent) | 1 | +1 | step 5 BullMQ enqueue |
+| `queue_failed_total{queue="audit-fanout",error_class="UnknownError"}` | 2 | 2 | 0 | seeded outbox row processed during boot warm-up before baseline scrape — outbox path proven by §9 |
+| `queue_retry_total{queue="audit-fanout"}` | (absent) | 1 | +1 | BullMQ retry of the malformed direct-enqueued job |
+| `queue_dead_letter_total{queue="audit-fanout"}` | 1 | 1 | 0 | seeded outbox DLQ row consumed during boot |
+| `outbox_dead_letter_total{event_type="audit.event.created"}` | 1 | 1 | 0 | same as above |
+| `queue_lag_seconds` (5 queues) | live | live | 0 | unchanged; signal still live-scraped |
+| `outbox_pending_total{event_type=…}` | varies | 2 + 1 | n/a | ObservableGauge; values at scrape-time |
+
+**Note on baseline non-zero values**: the seeded outbox row (`0e000007-…001`, `attempts=8`) was consumed by the drainer during the ~10s window between worker boot and the baseline scrape, so the drainer-side DLQ + outbox dead-letter counters already showed +1 in the baseline. This is not a delta from this run — it is residual exercise from the boot warm-up. The corresponding signals were already proven LIVE in the 2026-05-21 / §9 runs; this run was about the BullMQ-side `worker_processing_failure_total` which is a different code path (`AuditFanoutProcessor.process` vs `DrainerProcessor.processRow`).
+
+### 10.5.2 Sample scrape lines (one per family observed)
+
+```
+auth_failure_total{cause="bad_password",otel_scope_name="api"} 5
+auth_failure_total{cause="bad_token",otel_scope_name="api"} 1
+auth_failure_total{cause="missing",otel_scope_name="api"} 1
+auth_failure_total{cause="rate_limited",otel_scope_name="api"} 3
+suspicious_login_total{reason="rapid_retry",otel_scope_name="api"} 3
+cross_tenant_rejection_total{route="/api/v1/memberships/invite",otel_scope_name="api"} 2
+tenant_context_failure_total{reason="cross_tenant",otel_scope_name="api"} 2
+idempotency_in_progress_total{route="POST:/api/v1/memberships/invite",otel_scope_name="api"} 2
+http_error_5xx_total{route="/api/v1/memberships/invite",status="500",otel_scope_name="api"} 8
+db_migration_status{state="applied",otel_scope_name="db"} 1
+db_migration_status{state="pending",otel_scope_name="db"} 0
+db_migration_status{state="failed",otel_scope_name="db"} 0
+worker_processing_failure_total{job_name="audit-fanout",error_class="UnknownError",otel_scope_name="worker"} 1
+```
+
+### 10.5.3 Cardinality + PII discipline check
+
+Direct scan of both post-exercise scrapes:
+
+- `grep -E "[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+"` → 0 matches (no emails in labels)
+- `grep -oE "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"` → 0 matches (no UUIDs in labels)
+- `route=` label values: only `{/api/v1/auth/signin, /api/v1/context/me, /api/v1/memberships/invite, POST:/api/v1/memberships/invite}` — all bounded controller templates; no raw IDs, no query strings, no path slashes followed by numeric segments
+- `cause`, `reason`, `event_type`, `queue`, `command`, `error_class`, `state` — all bounded enums per `signals.md`
+
+PII / mass-assignment / cardinality discipline (FR-B-006, §XIV) holds.
+
+#### Label-shape follow-up note
+
+`idempotency_in_progress_total{route="POST:/api/v1/memberships/invite"}` carries the route as `METHOD:PATH` while every other API metric uses `PATH` alone. This is bounded (still safe), but is an inter-signal label-shape inconsistency that PromQL / Grafana dashboards have to special-case. Track as a future polish item — does not block P4.
+
+### 10.6 New defect found — `EmailQueueProducer.deriveJobId` produces invalid BullMQ custom IDs
+
+**Observed**: every `POST /api/v1/memberships/invite` whose tenant context and authorization succeeds returns HTTP 500 from the email enqueue step. 8 such 500s were generated during this exercise (steps 1, 2, 3 — i.e. all idempotency tests).
+
+**Cause** (from API stderr / structured log):
+
+```
+"err": {
+  "type": "Error",
+  "message": "Custom Id cannot contain :",
+  "stack": "Error: Custom Id cannot contain :
+    at Job.validateOptions (.../bullmq@5.76.5/.../classes/job.js:1039:23)
+    at Job.addJob          (.../bullmq@5.76.5/.../classes/job.js:996:14)
+    at Job.create          (.../bullmq@5.76.5/.../classes/job.js:128:28)
+    at Queue.addJob        (.../bullmq@5.76.5/.../classes/queue.js:193:25)
+    at EmailQueueProducer.enqueueInvitation (apps/api/dist/auth/email-queue.producer.js:155:9)
+    at InvitationsService.invite           (apps/api/dist/memberships/invitations.service.js:103:9)
+    at InvitationsController.invite        (apps/api/dist/memberships/invitations.controller.js:34:35)"
+}
+```
+
+The offending helper is `apps/api/src/auth/email-queue.producer.ts:238-241`:
+
+```ts
+export function deriveJobId(scope: string, rawToken: string): string {
+  const hashHex = createHash("sha256").update(rawToken, "utf8").digest("hex");
+  return `${scope}:${hashHex.slice(0, 32)}`;
+}
+```
+
+BullMQ 5.x's `Job.validateOptions` rejects any custom `jobId` containing `:`. The `${scope}:${hash}` shape was presumably valid against an earlier BullMQ version; the 5.76.5 upgrade introduced the validator.
+
+**Affected paths**: `deriveJobId` is called by `enqueuePasswordReset` (`:175`), `enqueueEmailVerification` (`:187`), and `enqueueInvitation` (`:197`). All three success paths return 500 in production-realistic dev runs.
+
+**Operational impact**:
+- All three email-enqueue user-journey paths (membership invite, password reset, email verification) return 500 to the caller.
+- `idempotency_replay_total` and `idempotency_conflict_total` are reachable in principle but unreachable in practice from the `/api/v1/memberships/invite` endpoint, because the interceptor's `tap.next` store-save only triggers on success (`apps/api/src/idempotency/idempotency.interceptor.ts:271-285`). No success → no replay record → second call re-runs the handler and re-500s.
+- The 500s do, incidentally, light up `http_error_5xx_total` for the first time in any operator-validation run (previously documented as "needs a forced crash" in §4.2 of the 2026-05-21 run).
+
+**Not fixed in this run** — evidence-only; source / package / lockfile changes not allowed. Recommended follow-up: change the separator in `deriveJobId` from `:` to `-` (or `_`), or remove the helper entirely and rely on BullMQ's auto-generated jobId (the deduplication intent can be re-expressed via `removeOnComplete`/`removeOnFail` or an explicit Redis `SET NX` keyed on the hash). Add a unit test that calls `Job.validateOptions` on a derived ID to lock the contract.
+
+Track in `004-closeout-status.md §4.C` as a new entry.
+
+### 10.7 P4 verdict (unchanged: PARTIAL)
+
+Movement since 2026-05-22 / §9:
+
+| Signal | Status before this run | Status after this run |
+|---|---|---|
+| `auth_failure_total` (4 causes) | Production-emitting | **LIVE** (5 / 1 / 1 / 3) |
+| `suspicious_login_total{rapid_retry}` | Production-emitting | **LIVE** (3) |
+| `cross_tenant_rejection_total` | Production-emitting | **LIVE** (2) |
+| `tenant_context_failure_total{cross_tenant}` | Production-emitting | **LIVE** (2) |
+| `idempotency_in_progress_total` | Production-emitting | **LIVE** (2) |
+| `worker_processing_failure_total` | Production-emitting | **LIVE** (1) |
+| `http_error_5xx_total` | Not exercisable (per §4.2) | **LIVE** (incidentally, via §10.6 defect) |
+| `db_migration_status` | Live-scraped but DEFECTIVE (§9.6) | **LIVE and CORRECT** — PR #284 (`b5b8d1b`) closed §9.6; applied=1, pending=0, failed=0 |
+| `idempotency_replay_total` | Production-emitting | **STILL NOT LIVE** — blocked by §10.6 defect |
+| `idempotency_conflict_total` | Production-emitting | **STILL NOT LIVE** — blocked by §10.6 defect |
+| `db_slow_query_total` | Pool hook wired; not live-scraped | **STILL NOT LIVE** — no slow query exercised |
+| `db_rls_context_failure_total` | Production-emitting (T476 DONE) | **STILL NOT LIVE** — unreachable from HTTP without source change |
+
+**P4 verdict: PARTIAL.** All required SAFE signals from PR #283 §9 absences are LIVE except the two idempotency replay/conflict signals, which are blocked by a separate production defect (§10.6) — not by an observability wiring gap. The remaining DEFER signals (`db_slow_query_total`, `db_rls_context_failure_total`) match the §9 classification and require source paths that this evidence-only run cannot construct.
+
+### 10.8 Tear-down
+
+- API + worker processes killed (`pkill -f node\ apps/...`).
+- Fixture rows deleted (8 DELETE rows confirmed by psql): `outbox_events (1)`, `invitations (4)`, `idempotency_keys (0)`, `sessions (2)`, `memberships (1)`, `roles (2)`, `stores (2)`, `tenants (2)`, `users (2)`.
+- `dp2-postgres-dev` and `dp2-redis-dev` containers left running for subsequent slices.
+
+### 10.9 Files written in this seeded-evidence run
+
+- `docs/observability/operator-validation-report.md` (THIS file — appended §10)
+- `docs/production-readiness/004-closeout-status.md` (changelog entry + §4.C row updates)
+
+Helper scripts created under untracked `bin/` (not committed, per working agreement): `bin/p4-seed.sql`, `bin/p4-boot.sh`, `bin/p4-exercise.sh`, `bin/p4-exercise-v2.sh`, `bin/p4-enqueue-bad-job.js`.
+
+No source / test / package / lockfile / schema / migration / OpenAPI / CI changes.
+
+---
+
 *End of T483 operator validation report.*
