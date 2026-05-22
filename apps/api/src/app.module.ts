@@ -1,5 +1,5 @@
 import { Injectable, Module, type OnModuleDestroy, type OnModuleInit, Inject } from "@nestjs/common";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { Pool } from "pg";
 
@@ -50,15 +50,85 @@ class ApiDbPoolGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
 }
 
 /**
- * Count UP migration SQL files in `@data-pulse-2/db/drizzle/`.
- * Called once at module init — throws on any filesystem error so callers
- * can handle discovery failure explicitly rather than silently treating it
- * as "zero migrations" (which would incorrectly mark the gauge as applied).
+ * Walk upward from `startDir` looking for the pnpm workspace root.
+ * Returns the absolute path to the directory that contains
+ * `pnpm-workspace.yaml`, or `null` if no such ancestor exists.
+ *
+ * Exported for unit tests; not part of the public API surface.
  */
-async function countMigrationFiles(): Promise<number> {
-  // `require.resolve` is available in this CJS module (package type: commonjs).
-  const pkgJsonPath: string = require.resolve("@data-pulse-2/db/package.json");
-  const drizzleDir = resolve(dirname(pkgJsonPath), "drizzle");
+export async function findWorkspaceRoot(
+  startDir: string,
+): Promise<string | null> {
+  let current = resolve(startDir);
+  // Hard ceiling on traversal depth to avoid infinite loops on broken FS.
+  for (let i = 0; i < 32; i += 1) {
+    try {
+      const sentinel = resolve(current, "pnpm-workspace.yaml");
+      const s = await stat(sentinel);
+      if (s.isFile()) return current;
+    } catch {
+      // sentinel not present at this level — keep walking up
+    }
+    const parent = dirname(current);
+    if (parent === current) return null; // reached filesystem root
+    current = parent;
+  }
+  return null;
+}
+
+/**
+ * Resolve the directory holding up-migration `*.sql` files.
+ *
+ * Resolution order:
+ *   1. `DB_MIGRATIONS_DIR` env var, if set — used verbatim (absolute or
+ *      relative to `process.cwd()`).
+ *   2. Walk upward from `startDir` to the pnpm workspace root and resolve
+ *      `<root>/packages/db/drizzle/`.
+ *
+ * Returns `null` if neither path can be resolved. Callers MUST treat
+ * `null` as a discovery failure (never as "zero migrations").
+ *
+ * Exported for unit tests.
+ */
+export async function resolveMigrationsDir(
+  startDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const override = env["DB_MIGRATIONS_DIR"];
+  if (override !== undefined && override.length > 0) {
+    return resolve(override);
+  }
+  const root = await findWorkspaceRoot(startDir);
+  if (root === null) return null;
+  return resolve(root, "packages", "db", "drizzle");
+}
+
+/**
+ * Count UP migration SQL files in `<workspace>/packages/db/drizzle/`.
+ *
+ * Counting rules:
+ *   - Match `^\d{4}_.+\.sql$` (e.g. `0007_catalog.sql`).
+ *   - Exclude `*.down.sql` (rollback companions) so the count equals the
+ *     up-migration ledger.
+ *
+ * Throws on any filesystem error (directory missing, unreadable, …) so
+ * the caller can fall back to a safe "unknown total" state rather than
+ * silently emitting a false-healthy signal.
+ *
+ * Exported for unit tests.
+ */
+export async function countMigrationFiles(
+  startDir: string = __dirname,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  const drizzleDir = await resolveMigrationsDir(startDir, env);
+  if (drizzleDir === null) {
+    throw new Error(
+      "could not locate migrations directory: no DB_MIGRATIONS_DIR override " +
+        "and no pnpm-workspace.yaml found in any ancestor of " +
+        startDir,
+    );
+  }
   const files = await readdir(drizzleDir);
   return files.filter(
     (f) => /^\d{4}_.+\.sql$/.test(f) && !f.endsWith(".down.sql"),
