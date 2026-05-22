@@ -165,8 +165,11 @@ export class BullMqWorkerFactory implements WorkerFactory {
         return worker.on(event, listener);
       },
       async close(): Promise<void> {
-        await worker.close();
-        client.disconnect();
+        try {
+          await worker.close();
+        } finally {
+          client.disconnect();
+        }
       },
     };
   }

@@ -13,7 +13,8 @@
  *
  * Constitution §VII / FR-B-006 / P4 W4.
  */
-import { Redis, type Command } from "ioredis";
+import { Redis } from "ioredis";
+import type { Command } from "ioredis";
 
 import {
   InstrumentedRedis,
@@ -204,5 +205,21 @@ describe("InstrumentedRedis.sendCommand — recording", () => {
   it("normalises UPPERCASE command names to the bounded label set on resolve", async () => {
     await (redis.sendCommand(makeCommand("GET")) as Promise<unknown>);
     expect(mockedRecord).toHaveBeenCalledWith({ command: "get" }, expect.any(Number));
+  });
+
+  it("records duration and returns value when super.sendCommand returns a non-thenable (synchronous path)", () => {
+    superSpy.mockReturnValue("sync-value");
+    const result = redis.sendCommand(makeCommand("get"));
+    expect(result).toBe("sync-value");
+    expect(mockedRecord).toHaveBeenCalledTimes(1);
+    expect(mockedRecord).toHaveBeenCalledWith({ command: "get" }, expect.any(Number));
+  });
+
+  it("records duration and returns null when super.sendCommand returns null (synchronous path)", () => {
+    superSpy.mockReturnValue(null);
+    const result = redis.sendCommand(makeCommand("ping"));
+    expect(result).toBeNull();
+    expect(mockedRecord).toHaveBeenCalledTimes(1);
+    expect(mockedRecord).toHaveBeenCalledWith({ command: "ping" }, expect.any(Number));
   });
 });

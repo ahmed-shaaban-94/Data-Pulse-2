@@ -5,9 +5,11 @@
  * Design notes
  * ============
  * - Override point: `sendCommand` is the single ioredis method through which
- *   every Redis command flows (pipeline, multi, and standalone). Wrapping its
- *   return value (always a Promise) with `.then()` captures wall-clock
- *   duration from submission to resolution for both success and error paths.
+ *   every Redis command flows (pipeline, multi, and standalone). The return
+ *   value is typed `unknown`; most invocations resolve as Promises, but
+ *   pipeline/cluster contexts may return synchronous values. A thenable guard
+ *   ensures `.then()` is only called on actual Promises, recording duration
+ *   on both the synchronous and async paths.
  *
  * - Bounded label set: FR-B-006 forbids unbounded cardinality.
  *   `KNOWN_REDIS_COMMANDS` is the closed set of BullMQ-relevant command
@@ -112,14 +114,28 @@ export class InstrumentedRedis extends Redis {
    * Wraps the base-class `sendCommand` to record duration in seconds.
    * Duration is recorded on both resolve and reject — the metric tracks
    * total round-trip time regardless of outcome.
+   *
+   * A thenable guard handles the rare synchronous-return path (pipeline/
+   * cluster contexts) so that calling `.then()` on a non-Promise never
+   * throws a runtime error.
    */
   override sendCommand(
     command: Command,
     stream?: Parameters<Redis["sendCommand"]>[1],
   ): unknown {
     const start = performance.now();
-    const result = super.sendCommand(command, stream) as Promise<unknown>;
-    return result.then(
+    const result = super.sendCommand(command, stream);
+    if (
+      result === null ||
+      typeof (result as { then?: unknown }).then !== "function"
+    ) {
+      recordRedisCommandDuration(
+        { command: normalizeCommand(command.name) },
+        (performance.now() - start) / 1000,
+      );
+      return result;
+    }
+    return (result as Promise<unknown>).then(
       (v: unknown) => {
         recordRedisCommandDuration(
           { command: normalizeCommand(command.name) },
