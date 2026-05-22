@@ -266,4 +266,275 @@ No PII / payload leakage in the logs (verified `errorName` only).
 
 ---
 
+## 9. P4 Full-Catalogue Re-run — 2026-05-22
+
+**Tested commit**: `857c178bb4e2e3f4ea4c2b3a01c6f4e8a4ce0d5e` — `test(api): recalibrate coverage thresholds (#281)` on `main`.
+
+**Trigger**: re-run after the wire-up PRs landed:
+- PR #275 (`feat(observability): P4 W4+W5 — redis_command_duration_seconds + db_slow_query_total hooks`)
+- PR #278 (`fix(worker): make InstrumentedRedis BullMQ-compatible by default`) — unblocks worker `:9091` boot
+- PR #279 (`fix(catalog): harness seed bugs + 0009 store GUC CASE guard`) — adds migration 0009
+- PR #281 (coverage thresholds) — non-functional
+
+The prior run (§1–§8, 2026-05-21, commit `678baa47`) proved the API + DB side. The worker side was blocked by `:9091` refusing connection. This re-run validates that PR #278 unblocks worker boot and that PR #275 wires Redis + slow-query instruments.
+
+### 9.1 Verdicts
+
+- **Worker boot — UNBLOCKED**. `apps/worker/dist/main.js` reached `metrics_listening` (`:9091`) and `started` logs. Bootstrap completed cleanly with the InstrumentedRedis/BullMQ-compatible factory from PR #278.
+- **API side — PASS for exercised paths**, with the `route="unknown"` follow-up from §4.3 now **resolved** by PR #269 (PR-E) merged in `32aadad`. Error-path metrics now bind the canonical controller route template (see §9.5.2).
+- **Worker side — PASS for exercised paths** with newly-wired signals from PR #270, PR #271, PR #275 confirmed live in the Prometheus scrape (see §9.5.3).
+- **Full signal catalogue — STILL PARTIAL**. Eight signal families remain not live-proven because exercising them requires seeded auth, multi-attempt suspicious patterns, an `Idempotency-Key`-bearing authenticated invite, an authenticated cross-tenant request, or a forced slow query. These were not fabricated to chase evidence — see §9.5.5.
+- **P4 verdict — PARTIAL** (unchanged). One regression-class defect found: `db_migration_status` is wired but emits `pending=1` indefinitely because filesystem discovery throws against the `package.json` subpath that PR #245 restricted in the `@data-pulse-2/db` exports map (see §9.6).
+
+### 9.2 Environment
+
+| Component | Detail |
+|---|---|
+| OS host | Windows 11 (Bash via WSL Ubuntu) |
+| Container runtime | Docker Desktop via WSL 2 |
+| Postgres | `postgres:16-alpine` — container `dp2-postgres-dev`, port `5432`, db `data_pulse_2`, user `dp2`, healthy 5h+ at run start |
+| Redis | `redis:7-alpine` — container `dp2-redis-dev`, port `6379`, healthy 5h+ |
+| API process | `node apps/api/dist/main.js`, PID 10804, env: `DATABASE_URL=postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2`, `REDIS_URL=redis://127.0.0.1:6379`, `PORT=3001`, `METRICS_PORT=9464`, `LOG_LEVEL=info` |
+| Worker process | `node apps/worker/dist/main.js`, PID 24808, env: same DB/Redis URLs, `WORKER_METRICS_PORT=9091`, `WORKER_METRICS_BIND_HOST=127.0.0.1`, `LOG_LEVEL=info` |
+| Migration ledger before run | 9 applied; 1 pending (`0009_catalog_store_empty_guc_fix`) |
+| Migration ledger after run | 10 applied, 0 pending |
+
+### 9.3 Commands run
+
+```bash
+# Preflight
+git checkout main
+git pull --ff-only origin main          # -> 857c178
+
+# Build all 5 workspaces (clean tsc)
+pnpm --filter @data-pulse-2/shared run build
+pnpm --filter @data-pulse-2/auth   run build
+pnpm --filter @data-pulse-2/db     run build
+pnpm --filter @data-pulse-2/api    run build
+pnpm --filter @data-pulse-2/worker run build
+
+# Apply pending migrations (0009)
+DATABASE_URL='postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2' \
+  node packages/db/dist/cli/migrate.js up
+
+# Start API + worker (background)
+DATABASE_URL='postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2' \
+  REDIS_URL='redis://127.0.0.1:6379' PORT=3001 METRICS_PORT=9464 LOG_LEVEL=info \
+  node apps/api/dist/main.js &
+
+DATABASE_URL='postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2' \
+  REDIS_URL='redis://127.0.0.1:6379' WORKER_METRICS_PORT=9091 \
+  WORKER_METRICS_BIND_HOST=127.0.0.1 LOG_LEVEL=info \
+  node apps/worker/dist/main.js &
+
+# Confirm listeners
+ss -lntp | grep -E '3001|9091|9464'
+
+# Baseline scrape (pre-exercise)
+curl -s http://127.0.0.1:9464/metrics > /tmp/p4/api-metrics-before.txt   # 14 lines
+curl -s http://127.0.0.1:9091/metrics > /tmp/p4/worker-metrics-before.txt # 207 lines
+```
+
+#### 9.3.1 Representative API traffic
+
+```bash
+# 1. Bad signin missing fields            -> 400 ZodError
+curl -X POST http://127.0.0.1:3001/api/v1/auth/signin \
+  -H 'Content-Type: application/json' -d '{}'
+
+# 2. Bad signin invalid email             -> 400 ZodError
+curl -X POST http://127.0.0.1:3001/api/v1/auth/signin \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"not-an-email","password":""}'
+
+# 3. Signin unknown user                  -> 401 (UnauthorizedException)
+curl -X POST http://127.0.0.1:3001/api/v1/auth/signin \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"nobody@example.test","password":"AlongValidPass123"}'
+
+# 4. Unknown route                        -> 404 (Nest NotFoundException)
+curl http://127.0.0.1:3001/api/v1/does-not-exist
+
+# 5. Protected endpoint without auth      -> 401
+curl http://127.0.0.1:3001/api/v1/context/me
+
+# 6. Bearer with bogus opaque token       -> 401
+curl http://127.0.0.1:3001/api/v1/context/me \
+  -H 'Authorization: Bearer invalid-opaque-token-xyz'
+
+# 7. Invite without auth, with Idempotency-Key  -> 401
+curl -X POST http://127.0.0.1:3001/api/v1/memberships/invite \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: p4-eval-key-1' \
+  -d '{"email":"x@x.test","role":"member"}'
+```
+
+Observed exit codes: 400, 400, 401, 404, 401, 401, 401. All as expected — no faked successes.
+
+#### 9.3.2 Worker outbox fixtures (real Postgres rows)
+
+```sql
+-- Idempotent fixture tenant
+INSERT INTO tenants (id, slug, name) VALUES
+  ('0bd00000-0000-7000-8000-0000000aaaaa', 't483-tenant-p4', 'T483 Tenant P4')
+ON CONFLICT (id) DO NOTHING;
+
+-- Row 101: pending audit.event.created (drainer claim -> consumer throws on empty payload)
+-- Row 102: pending unrouted.event.type (no consumer -> Unroutable branch)
+-- Row 103: claimed audit.event.created (contributes to outbox_pending_total only)
+-- Row 104: pending audit.event.created, attempts=8 (drainer claim -> DLQ branch)
+INSERT INTO outbox_events (event_id, tenant_id, event_type, payload,
+                           delivery_state, attempts) VALUES
+  ('0bd11111-0000-4000-8000-000000000101', '0bd00000-0000-7000-8000-0000000aaaaa',
+   'audit.event.created', '{}'::jsonb, 'pending', 0),
+  ('0bd11111-0000-4000-8000-000000000102', '0bd00000-0000-7000-8000-0000000aaaaa',
+   'unrouted.event.type', '{}'::jsonb, 'pending', 0),
+  ('0bd11111-0000-4000-8000-000000000103', '0bd00000-0000-7000-8000-0000000aaaaa',
+   'audit.event.created', '{}'::jsonb, 'claimed', 1),
+  ('0bd11111-0000-4000-8000-000000000104', '0bd00000-0000-7000-8000-0000000aaaaa',
+   'audit.event.created', '{}'::jsonb, 'pending', 8);
+```
+
+After ~12s drainer ticks:
+
+| event_id | event_type | delivery_state | attempts |
+|---|---|---|---|
+| `...000101` | audit.event.created | failed | 1 |
+| `...000102` | unrouted.event.type | failed | 1 |
+| `...000103` | audit.event.created | claimed | 1 |
+| `...000104` | audit.event.created | **dead_lettered** | 9 |
+
+Fixture rows cleaned at end of run.
+
+#### 9.3.3 Final scrape
+
+```bash
+curl -s http://127.0.0.1:9464/metrics > /tmp/p4/api-metrics.txt    # 186 lines
+curl -s http://127.0.0.1:9091/metrics > /tmp/p4/worker-metrics.txt # 264 lines
+```
+
+### 9.4 API scrape — present custom metric families
+
+| Family | Sample line | Notes |
+|---|---|---|
+| `http_request_count_total` | `http_request_count_total{route="/api/v1/auth/signin",method="POST",status_class="4xx",otel_scope_name="api"} 3` | Three signin attempts (#1–#3); #4 (unknown route) does not flow through the LoggingInterceptor path. |
+| `http_request_duration_seconds_{count,sum,bucket}` | `..._count{route="/api/v1/auth/signin",method="POST",...} 3` / `..._sum{...} 0.0639256` | Histogram present. |
+| `http_error_4xx_total` | 5 distinct samples — see §9.5.2 | **PR-E fix LIVE**: route labels bound to real controller templates. |
+| `validation_failure_total` | `validation_failure_total{route="/api/v1/auth/signin",otel_scope_name="api"} 2` | Two ZodError requests. Route now correctly bound (was `route="unknown"` in 2026-05-21 run). |
+| `db_migration_status` | `db_migration_status{state="applied",...} 0` / `{state="pending",...} 1` / `{state="failed",...} 0` | **DEFECT** — wired but semantically incorrect; see §9.6. |
+| `db_pool_in_use` | `db_pool_in_use{otel_scope_name="db"} 0` | Synchronous pool counter, 0 because nothing was holding a client at scrape time. |
+| `db_pool_waiters` | `db_pool_waiters{otel_scope_name="db"} 0` | Same. |
+
+### 9.5 Worker scrape — present custom metric families
+
+| Family | Sample line | Notes |
+|---|---|---|
+| `redis_command_duration_seconds_{count,sum,bucket}` | `..._count{command="other",...} 73` / `..._count{command="eval",...} 10` / `..._count{command="evalsha",...} 51` / `..._count{command="hgetall",...} 2` | **NEW — PR #275 W4 LIVE**. Bounded `command` label set: `{other, eval, evalsha, hgetall}` observed. No high-cardinality leakage. |
+| `queue_lag_seconds` | 5 samples, queues = `{audit-fanout, soft-delete-sweep, email, session-revoke, audit-retention}` | **NEW — PR #270 W2 LIVE**. `audit-retention` reports lag=100.004 (no scheduled jobs in fresh container), all others 0. |
+| `queue_failed_total` | `queue_failed_total{queue="audit-fanout",error_class="UnknownError",otel_scope_name="worker"} 4` | T596. |
+| `queue_retry_total` | `queue_retry_total{queue="audit-fanout",otel_scope_name="worker"} 3` | T596. |
+| `queue_dead_letter_total` | `queue_dead_letter_total{queue="audit-fanout",otel_scope_name="worker"} 1` | T596. |
+| `worker_job_duration_seconds_{count,sum,bucket}` | `..._count{job_name="audit-fanout",...} 1` / `..._sum{...} 0.0184269` | T596 — BullMQ audit-fanout worker invoked once. |
+| `outbox_pending_total` | `{event_type="audit.event.created",...} 4` / `{event_type="unrouted.event.type",...} 2` | T595 PR-B-2 ObservableGauge. Cumulative across drainer ticks; reflects the scrape-time `addCallback` query. |
+| `outbox_dead_letter_total` | `outbox_dead_letter_total{event_type="audit.event.created",otel_scope_name="worker"} 1` | T595 PR-B-1 — row 104 budget-exhausted. |
+| `outbox_drain_duration_seconds_{count,sum,bucket}` | `..._count{event_type="audit.event.created",...} 3` / `..._count{event_type="unrouted.event.type",...} 1` | T595 PR-B-1 — per-row drain timer. |
+| `db_pool_in_use` | `db_pool_in_use{otel_scope_name="worker"} 0` | PR #270 W1 — worker-side gauge. |
+| `db_pool_waiters` | `db_pool_waiters{otel_scope_name="worker"} 0` | PR #270 W1 — worker-side gauge. |
+
+#### 9.5.1 Auto-instrumentation families also present
+
+The scrape also exposes OTel auto-instrumentation families: `db_client_connection_count`, `db_client_connection_pending_requests`, `db_client_operation_duration`, plus `http_client_duration`, `http_server_duration` on the API. These are the OTel SDK's standard instrumentation outputs (pg-protocol + http modules) and complement the custom platform signals listed above.
+
+#### 9.5.2 PR-E route-label fix — verified LIVE
+
+The 2026-05-21 run flagged that error-path metrics carried `route="unknown"` because `GlobalExceptionFilter` could not see controller metadata at the exception boundary. PR #269 (`feat/004-pr-e-exception-filter-route-label`, merged in `32aadad`) fixed this. Current scrape:
+
+```
+http_error_4xx_total{route="/api/v1/auth/signin",status="400",otel_scope_name="api"} 2
+http_error_4xx_total{route="/api/v1/auth/signin",status="401",otel_scope_name="api"} 1
+http_error_4xx_total{route="/api/v1/context/me",status="401",otel_scope_name="api"} 2
+http_error_4xx_total{route="/api/v1/memberships/invite",status="401",otel_scope_name="api"} 1
+http_error_4xx_total{route="unknown",status="404",otel_scope_name="api"} 1
+validation_failure_total{route="/api/v1/auth/signin",otel_scope_name="api"} 2
+```
+
+- All five non-404 error samples now bind the canonical controller route template.
+- The single remaining `route="unknown"` is on the `GET /api/v1/does-not-exist` 404 — correct behavior (no controller exists to bind a template).
+- §4.3 of the prior report is now **closed** by PR #269.
+
+#### 9.5.3 Newly-wired signals confirmed LIVE in this scrape
+
+| Signal | Wire-up PR | Status before re-run | Status after re-run |
+|---|---|---|---|
+| `redis_command_duration_seconds` | #275 (W4) | Hook merged; not yet live-scraped | **LIVE** — 4 bounded `command` buckets observed |
+| `queue_lag_seconds` | #270 (W2) | addCallback wired; not yet live-scraped | **LIVE** — 5 queues observed |
+| `db_pool_in_use` (worker) | #270 (W1) | addCallback wired; not yet live-scraped | **LIVE** |
+| `db_pool_waiters` (worker) | #270 (W1) | addCallback wired; not yet live-scraped | **LIVE** |
+| `db_pool_in_use` (API) | #270 (W1) | addCallback wired; not yet live-scraped | **LIVE** (observes 0 at idle, correct) |
+| `db_pool_waiters` (API) | #270 (W1) | addCallback wired; not yet live-scraped | **LIVE** (observes 0 at idle, correct) |
+| `db_migration_status` | #271 (W3) | addCallback wired; not yet live-scraped | **PRESENT BUT DEFECTIVE** — see §9.6 |
+
+#### 9.5.4 Cardinality / PII discipline
+
+Manual inspection of every label set in both scrapes:
+- No high-cardinality labels: `route` is bounded to controller templates (or the literal `"unknown"`); `queue` to the 5 registered BullMQ queues; `event_type` to `audit.event.created` and the fixture's `unrouted.event.type`; `command` to the bounded ioredis allowlist; `error_class` to `UnknownError`; `status_class` to `4xx`.
+- No PII, no SQL, no user IDs, no tenant IDs, no store IDs, no request IDs, no opaque tokens, no email addresses, no payload bytes.
+- All label values are statically-known strings or already-bucketed enums.
+
+This matches the FR-B-006 / §XIV constitutional discipline.
+
+#### 9.5.5 Signals NOT live-proven this run (honest absences)
+
+| Signal | Reason absent |
+|---|---|
+| `auth_failure_total` | Emission call-site exists; requires a seeded user + a real failure path (wrong password / blocked IP / expired token). The "unknown user" signin (request #3) returns 401 via the user-lookup-fail branch, which raises `UnauthorizedException` without incrementing `auth_failure_total`. Not fabricated. |
+| `suspicious_login_total` | Requires a multi-attempt suspicious pattern across seeded users; not in scope for an evidence-only run. |
+| `tenant_context_failure_total` | Requires an authenticated request with a malformed tenant header. All 401 requests in this run fail at the auth-token resolution step, before the tenant-context guard fires. |
+| `cross_tenant_rejection_total` | Requires an authenticated request crossing a tenant boundary. Same blocker as above. Emission site confirmed at `tenant-context.guard.ts:127`. |
+| `db_rls_context_failure_total` | Requires a DB call without `runWithTenantContext`. Emission site confirmed at `tenant-context.guard.ts:283`. Not safely triggerable without source change. |
+| `idempotency_replay_total`, `idempotency_conflict_total`, `idempotency_in_progress_total` | Require an authenticated `POST /api/v1/memberships/invite` with `Idempotency-Key`. The unauthenticated request (#7) failed at the auth guard before reaching the idempotency interceptor. |
+| `db_slow_query_total` | Pool-hook threshold is 500ms (PR #275 W5). None of the exercised queries (signin lookups, drainer claims, outbox COUNT) exceeded this threshold on a local container. |
+| `http_error_5xx_total` | No 500-class error was triggered. Would need a forced crash / DB outage. |
+| `worker_processing_failure_total` | The audit-fanout BullMQ worker invocation succeeded; the drainer's consumer throws are caught one layer up (`DrainerProcessor.processRow`), not by `AuditFanoutProcessor.process`. Same caveat as §5.2 of the prior run. |
+
+### 9.6 Defect found — `db_migration_status` reads `pending=1` permanently
+
+**Observed**: `db_migration_status{state="applied"} 0`, `{state="pending"} 1`, `{state="failed"} 0`, even though all 10 migrations have been applied (verified directly against `_drizzle_migrations`: `SELECT COUNT(*) -> 10`; FS `packages/db/drizzle/*.sql` excluding `.down.sql` -> 10).
+
+**Cause** (from API stderr at boot):
+
+```
+{"level":"warn","component":"migration.status.gauge",
+ "message":"could not count migration files; gauge will report pending until resolved",
+ "error":"Package subpath './package.json' is not defined by \"exports\" in
+          C:\\Users\\user\\Documents\\GitHub\\Data-Pulse-2\\apps\\api\\node_modules\\@data-pulse-2\\db\\package.json"}
+```
+
+The registrar at `apps/api/src/app.module.ts:60` calls `require.resolve("@data-pulse-2/db/package.json")`. PR #245 restructured workspace package `exports` maps so `./package.json` is no longer a publicly-exported subpath. The registrar correctly fails-safe to `totalMigrations = Number.MAX_SAFE_INTEGER`, which makes `applied >= totalMigrations` always false → `pending=1` is emitted in perpetuity.
+
+**Operational impact**: any alert that fires on `db_migration_status{state="pending"} == 1` will fire forever in production. The signal is **wired but not usable** in its current form.
+
+**Not fixed in this run** (evidence-only run; not allowed to edit source). Recommended follow-up: either add `"./package.json": "./package.json"` to the `exports` field in `packages/db/package.json`, or switch the registrar to a non-`require.resolve` discovery (e.g., resolve `@data-pulse-2/db` itself and `dirname` upward, or read the count from the `_drizzle_migrations` schema directly without an FS dependency). Track in `004-closeout-status.md §4.C`.
+
+### 9.7 Verdict (P4 re-run)
+
+**P4 status remains PARTIAL.** Movement since 2026-05-21:
+
+- **From "not yet live-scraped" to LIVE**: `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` (both API and worker scopes).
+- **From "open follow-up" to closed**: `route="unknown"` label gap on exception-filter metrics (resolved by PR #269 / PR-E).
+- **From "blocked" to "unblocked"**: worker `:9091` boot (resolved by PR #278).
+- **New defect surfaced**: `db_migration_status` reads pending=1 permanently due to FS-discovery exports-map issue (§9.6).
+- **Still not live-proven**: 8 signal families requiring seeded auth state, multi-attempt patterns, idempotency-keyed authenticated invite, slow-query breach, or 5xx error. These are not blockers — they are tracked as backlog in `004-closeout-status.md §4.C`.
+
+A future operator-validation slice that runs against a seeded environment can move these to LIVE without source change.
+
+### 9.8 Files written in this re-run
+
+- `docs/observability/operator-validation-report.md` (THIS file — appended §9)
+- `docs/production-readiness/004-closeout-status.md` (changelog entry + §4.C row updates for newly-LIVE signals + §4.C row added for `db_migration_status` defect)
+
+No source / test / package / lockfile / schema / migration / OpenAPI / CI changes.
+
+---
+
 *End of T483 operator validation report.*

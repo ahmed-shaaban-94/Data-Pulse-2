@@ -8,6 +8,29 @@
 
 ## Changelog
 
+- **2026-05-22** (P4 operator-evidence re-run — `857c178`) —
+  Re-ran P4 operator-evidence on `main` at `857c178` after PRs #275 (Redis +
+  slow-query hooks), #278 (worker InstrumentedRedis/BullMQ regression fix),
+  #279 (catalog T341 + migration 0009), and #281 (coverage thresholds) all
+  merged. **Worker `:9091` boot UNBLOCKED** — `apps/worker/dist/main.js`
+  reached `started` log. Four newly-wired signals confirmed LIVE in the
+  Prometheus scrape: `redis_command_duration_seconds` (PR #275 W4, bounded
+  `command` label set `{other,eval,evalsha,hgetall}`), `queue_lag_seconds`
+  (PR #270 W2, 5 queues), `db_pool_in_use` and `db_pool_waiters` (PR #270 W1,
+  both API and worker scopes). PR-E (#269) route-label fix confirmed LIVE —
+  `http_error_4xx_total` and `validation_failure_total` now bind canonical
+  controller route templates (was `route="unknown"` in 2026-05-21 run).
+  One defect surfaced: `db_migration_status` is wired (PR #271) but emits
+  `pending=1` permanently because `require.resolve("@data-pulse-2/db/package.json")`
+  in `apps/api/src/app.module.ts:60` is rejected by PR #245's restricted
+  `exports` map. The registrar correctly fails-safe to `MAX_SAFE_INTEGER`
+  but the signal is **wired-but-unusable** until exports are widened or the
+  discovery mechanism changes. Eight signal families remain not live-proven
+  (auth-failure, suspicious-login, tenant-context-failure, cross-tenant,
+  RLS-failure, idempotency-{replay,conflict,in-progress}, slow-query, 5xx).
+  P4 verdict remains **PARTIAL** — see §4.C. Evidence in
+  `docs/observability/operator-validation-report.md §9`.
+
 - **2026-05-22** (docs correction — T475/T476 status + §4.B cleanup) —
   T475 (`cross_tenant_rejection_total`) and T476 (`db_rls_context_failure_total`)
   confirmed wired at `apps/api/src/context/tenant-context.guard.ts:127,283`; status
@@ -81,7 +104,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. `db_pool_in_use`, `db_pool_waiters`, `queue_lag_seconds`, `db_migration_status` addCallbacks wired (PRs #270/#271). `db_slow_query_total` pool hook wired by PR #275 (`InstrumentedPool`, 500ms threshold, SHA-256 first-8-hex `query_class`). Only `redis_command_duration_seconds` remains unwired (ioredis hook PR #273 open). Full signal-catalogue live-scrape evidence (all newly-wired signals + idempotency, auth-failure, suspicious-login, db-slow-query) remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md`. |
+| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. PR #269 (PR-E) closed the `route="unknown"` exception-filter gap. **2026-05-22 re-run** on `857c178` (after PRs #275, #278, #279, #281): worker `:9091` boot UNBLOCKED by PR #278; `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` all now LIVE-SCRAPED with bounded labels. `db_migration_status` is live-scraped but **defective** — emits `pending=1` permanently due to PR #245 exports map blocking the registrar's FS discovery (fails safe; alerts unusable until fixed). `db_slow_query_total` pool hook wired (PR #275 W5) but not exercised — no query >500ms. Six business-path signals (auth-failure, suspicious-login, tenant-context-failure, idempotency-{replay,conflict,in-progress}) plus cross-tenant and RLS-failure remain production-emitting but not live-proven — require seeded auth state. P4 remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md §9`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
 | P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
@@ -264,12 +287,12 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 
    | Signal | Current tier | Blocker / note |
    |---|---|---|
-   | `db_migration_status` | addCallback wired (PR #271) | `ApiDbMigrationStatusGaugeRegistrar` queries `_drizzle_migrations COUNT(*)` at scrape time; applied/pending/failed states; not yet live-scraped. |
-   | `db_pool_in_use` | addCallback wired (PR #270) | `ApiDbPoolGaugeRegistrar` (API) + `WorkerDbPoolGaugeRegistrar` (worker) read synchronous pool counters; not yet live-scraped. |
-   | `db_pool_waiters` | addCallback wired (PR #270) | Same registrars as `db_pool_in_use`; not yet live-scraped. |
-   | `redis_command_duration_seconds` | ioredis hook wired (PR #273, open) | `InstrumentedRedis` subclass hooks `sendCommand`; KNOWN_REDIS_COMMANDS bounded set; `duplicate()` overridden; not yet live-scraped. |
-   | `queue_lag_seconds` | addCallback wired (PR #270) | `QueueLagGaugeRegistrar` wired against 5 BullMQ queues in worker; re-entrancy guard; lag clamped ≥ 0; not yet live-scraped. |
-   | `db_slow_query_total` | Pool hook wired (PR #275) | `InstrumentedPool` subclass instruments Promise-form `query()` in API and worker; 500ms threshold; `query_class` is SHA-256 first 8 hex chars; not yet live-scraped. |
+   | `db_migration_status` | **Live-scraped but DEFECTIVE** (PR #271 + 2026-05-22 re-run) | Family present in API scrape with three `state` samples. Emits `applied=0, pending=1, failed=0` permanently because `require.resolve("@data-pulse-2/db/package.json")` in `apps/api/src/app.module.ts:60` is rejected by PR #245's restricted `exports` map → registrar falls back to `Number.MAX_SAFE_INTEGER` → `applied >= totalMigrations` is always false. Fails-safe (never falsely reports applied) but unusable for alerts. Fix: widen `@data-pulse-2/db` exports to include `./package.json`, OR switch the registrar to a non-`require.resolve` discovery (e.g. read `_drizzle_migrations` count without FS). See report §9.6. |
+   | `db_pool_in_use` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | API + worker both observe synchronous pool counter; both reported 0 at idle scrape, which is correct. |
+   | `db_pool_waiters` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | Same as above. |
+   | `redis_command_duration_seconds` | **Live-scraped** (PR #275 W4 + 2026-05-22 re-run) | Worker scrape shows 4 bounded `command` buckets observed during boot + drainer ticks: `{other, eval, evalsha, hgetall}`. No high-cardinality leakage. PR #278 unblocked worker boot under InstrumentedRedis. |
+   | `queue_lag_seconds` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | Worker scrape shows all 5 BullMQ queue readers (`audit-fanout`, `soft-delete-sweep`, `email`, `session-revoke`, `audit-retention`). `audit-retention` reports lag=100s in a freshly-started worker, all others 0. |
+   | `db_slow_query_total` | Pool hook wired (PR #275 W5); not yet live-scraped | `InstrumentedPool` subclass instruments Promise-form `query()` in API and worker; 500ms threshold; `query_class` is SHA-256 first 8 hex chars. Re-run 2026-05-22 did not trigger emission — no exercised query exceeded 500ms on local dev. Requires a forced-slow query path to live-prove. |
    | `auth_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
    | `suspicious_login_total` | Production-emitting | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
    | `tenant_context_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires authenticated request with bad tenant context. |
@@ -356,10 +379,18 @@ must live-exercise every signal in `docs/observability/signals.md` and
 record scrape evidence for each. This requires:
 
 1. **Wiring unwired instruments** (source change, separate gated PR):
-   - ~~`db_migration_status` `addCallback`~~ — done (PR #271)
-   - ~~`db_pool_in_use` / `db_pool_waiters` `addCallback`~~ — done (PR #270)
-   - ~~`queue_lag_seconds` `addCallback`~~ — done (PR #270)
-   - `redis_command_duration_seconds` ioredis hook — **remaining**
+   - ~~`db_migration_status` `addCallback`~~ — done (PR #271). **Defective**:
+     reports `pending=1` permanently in live scrape (2026-05-22 re-run §9.6).
+     Fix gated separately; either widen `@data-pulse-2/db` exports map
+     (PR #245 restricted `./package.json` subpath) or replace `require.resolve`
+     with FS-independent discovery.
+   - ~~`db_pool_in_use` / `db_pool_waiters` `addCallback`~~ — done (PR #270);
+     live-scraped 2026-05-22.
+   - ~~`queue_lag_seconds` `addCallback`~~ — done (PR #270); live-scraped
+     2026-05-22.
+   - ~~`redis_command_duration_seconds` ioredis hook~~ — done (PR #275 W4 +
+     PR #278 worker boot fix); live-scraped 2026-05-22 with bounded `command`
+     label set.
 
 2. **Exercising unexercised paths** (operator run against a seeded environment):
    - Auth failures (seeded user + wrong password / blocked IP / expired token)
