@@ -201,8 +201,8 @@ describe("Idempotency / determinism of jobId derivation", () => {
       userId: USER_A,
     });
     expect(queue.calls[0]!.opts?.jobId).not.toBe(queue.calls[1]!.opts?.jobId);
-    expect(queue.calls[0]!.opts?.jobId).toMatch(/^pwreset:/);
-    expect(queue.calls[1]!.opts?.jobId).toMatch(/^verify:/);
+    expect(queue.calls[0]!.opts?.jobId).toMatch(/^pwreset-/);
+    expect(queue.calls[1]!.opts?.jobId).toMatch(/^verify-/);
   });
 });
 
@@ -225,13 +225,14 @@ describe("jobId carries no PII", () => {
     },
   );
 
-  it("jobId is exactly `<scope>:<32-hex-chars>`", async () => {
+  it("jobId is exactly `<scope>-<32-hex-chars>` (BullMQ 5.x rejects ':')", async () => {
     await producer.enqueuePasswordReset({
       email: EMAIL_A,
       rawToken: RAW_TOKEN_A,
       userId: USER_A,
     });
-    expect(queue.calls[0]!.opts?.jobId).toMatch(/^pwreset:[0-9a-f]{32}$/);
+    expect(queue.calls[0]!.opts?.jobId).toMatch(/^pwreset-[0-9a-f]{32}$/);
+    expect(queue.calls[0]!.opts?.jobId).not.toContain(":");
   });
 });
 
@@ -244,8 +245,8 @@ describe("deriveJobId — stable shape", () => {
 
   it("uses a 32-char hex hash slice", () => {
     const id = deriveJobId("verify", RAW_TOKEN_A);
-    expect(id.startsWith("verify:")).toBe(true);
-    expect(id.split(":")[1]).toMatch(/^[0-9a-f]{32}$/);
+    expect(id.startsWith("verify-")).toBe(true);
+    expect(id.split("-")[1]).toMatch(/^[0-9a-f]{32}$/);
   });
 });
 

@@ -14,7 +14,8 @@
  *   - enqueueInvitation: correct job name (memberships.invitation), payload, and jobId
  *   - queue.add() throws → error propagates to caller for all three methods
  *   - deriveJobId: deterministic hash, scope prefix isolation
- *   - jobId format: `<scope>:<32-hex-chars>` — no PII
+ *   - jobId format: `<scope>-<32-hex-chars>` — no PII; "-" not ":" because
+ *     BullMQ 5.x rejects custom jobIds containing ":"
  */
 
 import {
@@ -105,7 +106,7 @@ describe("EmailQueueProducer.enqueuePasswordReset", () => {
 
     const opts = queue.add.mock.calls[0]![2];
     expect(opts?.jobId).toBe(deriveJobId("pwreset", RAW_TOKEN));
-    expect(opts?.jobId).toMatch(/^pwreset:[0-9a-f]{32}$/);
+    expect(opts?.jobId).toMatch(/^pwreset-[0-9a-f]{32}$/);
   });
 
   it("EQP-U4: propagates errors thrown by queue.add", async () => {
@@ -154,7 +155,7 @@ describe("EmailQueueProducer.enqueueEmailVerification", () => {
 
     const opts = queue.add.mock.calls[0]![2];
     expect(opts?.jobId).toBe(deriveJobId("verify", RAW_TOKEN));
-    expect(opts?.jobId).toMatch(/^verify:[0-9a-f]{32}$/);
+    expect(opts?.jobId).toMatch(/^verify-[0-9a-f]{32}$/);
   });
 
   it("EQP-U8: propagates errors thrown by queue.add", async () => {
@@ -203,7 +204,7 @@ describe("EmailQueueProducer.enqueueInvitation", () => {
 
     const opts = queue.add.mock.calls[0]![2];
     expect(opts?.jobId).toBe(deriveJobId("invite", RAW_TOKEN));
-    expect(opts?.jobId).toMatch(/^invite:[0-9a-f]{32}$/);
+    expect(opts?.jobId).toMatch(/^invite-[0-9a-f]{32}$/);
   });
 
   it("EQP-U12: propagates errors thrown by queue.add", async () => {
@@ -230,8 +231,8 @@ describe("EmailQueueProducer — scope isolation across methods", () => {
     const jobId0 = queue.add.mock.calls[0]![2]?.jobId;
     const jobId1 = queue.add.mock.calls[1]![2]?.jobId;
     expect(jobId0).not.toBe(jobId1);
-    expect(jobId0).toMatch(/^pwreset:/);
-    expect(jobId1).toMatch(/^verify:/);
+    expect(jobId0).toMatch(/^pwreset-/);
+    expect(jobId1).toMatch(/^verify-/);
   });
 
   it("EQP-U14: invitation produces a jobId isolated from password-reset scope", async () => {
@@ -243,8 +244,8 @@ describe("EmailQueueProducer — scope isolation across methods", () => {
 
     const jobId0 = queue.add.mock.calls[0]![2]?.jobId;
     const jobId1 = queue.add.mock.calls[1]![2]?.jobId;
-    expect(jobId0).toMatch(/^pwreset:/);
-    expect(jobId1).toMatch(/^invite:/);
+    expect(jobId0).toMatch(/^pwreset-/);
+    expect(jobId1).toMatch(/^invite-/);
     expect(jobId0).not.toBe(jobId1);
   });
 });
@@ -278,11 +279,17 @@ describe("deriveJobId — unit assertions", () => {
     expect(a).toBe(b);
   });
 
-  it("EQP-U19: format is `<scope>:<32-hex-chars>` — exactly 32 lowercase hex after colon", () => {
+  it("EQP-U19: format is `<scope>-<32-hex-chars>` — exactly 32 lowercase hex after hyphen", () => {
     const id = deriveJobId("verify", RAW_TOKEN);
-    const [scope, hash] = id.split(":");
+    const [scope, hash] = id.split("-");
     expect(scope).toBe("verify");
     expect(hash).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("EQP-U19b: jobId does not contain a colon (BullMQ 5.x rejects ':' in custom jobIds)", () => {
+    expect(deriveJobId("pwreset", RAW_TOKEN)).not.toContain(":");
+    expect(deriveJobId("verify", RAW_TOKEN)).not.toContain(":");
+    expect(deriveJobId("invite", RAW_TOKEN)).not.toContain(":");
   });
 
   it("EQP-U20: jobId does NOT contain email, userId, or raw token (no PII)", async () => {
