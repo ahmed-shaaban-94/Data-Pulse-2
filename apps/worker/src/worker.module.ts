@@ -86,6 +86,7 @@ import {
   WORKER_QUEUE_NAMES,
   type WorkerQueueName,
 } from "./observability/metrics/worker.metrics";
+import { InstrumentedRedis } from "./observability/instrumented-redis";
 
 import {
   EMAIL_ADAPTER,
@@ -153,15 +154,24 @@ export class BullMqWorkerFactory implements WorkerFactory {
     handler: EmailJobHandler,
     options: WorkerStartOptions,
   ): WorkerLike {
-    const workerOpts: WorkerOptions = {
-      connection: { url: this.redisUrl },
-      ...options,
-    };
-    return new BullMqWorker(
+    const client = new InstrumentedRedis(this.redisUrl);
+    const worker = new BullMqWorker(
       queueName,
       async (job) => handler({ name: job.name, data: job.data }),
-      workerOpts,
+      { connection: client, ...options },
     );
+    return {
+      on(event: "error", listener: (err: Error) => void): unknown {
+        return worker.on(event, listener);
+      },
+      async close(): Promise<void> {
+        try {
+          await worker.close();
+        } finally {
+          client.disconnect();
+        }
+      },
+    };
   }
 }
 
@@ -452,6 +462,7 @@ export class WorkerDbPoolGaugeRegistrar implements OnModuleInit, OnModuleDestroy
 @Injectable()
 export class QueueLagGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
   private queues: Map<WorkerQueueName, Queue> | null = null;
+  private clients: InstrumentedRedis[] | null = null;
   private handle: { stop: () => void } | null = null;
 
   onModuleInit(): void {
@@ -459,12 +470,13 @@ export class QueueLagGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
     if (!redisUrl) {
       return;
     }
-    this.queues = new Map(
-      WORKER_QUEUE_NAMES.map((name) => [
-        name,
-        new Queue(name, { connection: { url: redisUrl } }),
-      ]),
-    );
+    const pairs = WORKER_QUEUE_NAMES.map((name) => {
+      const client = new InstrumentedRedis(redisUrl);
+      const queue = new Queue(name, { connection: client });
+      return { client, queue, name };
+    });
+    this.clients = pairs.map((p) => p.client);
+    this.queues = new Map(pairs.map((p) => [p.name, p.queue]));
     this.handle = registerQueueLagGauge({ queues: this.queues });
   }
 
@@ -478,6 +490,11 @@ export class QueueLagGaugeRegistrar implements OnModuleInit, OnModuleDestroy {
     this.queues = null;
     if (qs !== null) {
       await Promise.all([...qs.values()].map((q) => q.close().catch(() => undefined)));
+    }
+    const cs = this.clients;
+    this.clients = null;
+    if (cs !== null) {
+      await Promise.all(cs.map((c) => c.quit().catch(() => undefined)));
     }
   }
 }
