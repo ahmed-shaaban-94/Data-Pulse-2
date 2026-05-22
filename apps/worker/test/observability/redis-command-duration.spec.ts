@@ -17,15 +17,52 @@ import { Redis } from "ioredis";
 import type { Command } from "ioredis";
 
 import {
+  BULLMQ_SAFE_REDIS_DEFAULTS,
   InstrumentedRedis,
   normalizeCommand,
   KNOWN_REDIS_COMMANDS,
 } from "../../src/observability/instrumented-redis";
 import { recordRedisCommandDuration } from "../../src/observability/metrics/worker.metrics";
+import { BullMqWorkerFactory } from "../../src/worker.module";
 
 jest.mock("../../src/observability/metrics/worker.metrics", () => ({
   recordRedisCommandDuration: jest.fn(),
 }));
+
+// Mock BullMQ's `Worker` so `BullMqWorkerFactory.create()` can be invoked
+// without opening a real socket. The stub captures every constructor
+// invocation so tests can assert on the WorkerOptions the factory
+// actually hands to BullMQ — closing the gap CodeRabbit flagged where
+// a standalone probe could mask a regression in the factory's wiring.
+const bullMqWorkerCalls: Array<{
+  queueName: string;
+  processor: unknown;
+  options: { connection: Redis } & Record<string, unknown>;
+}> = [];
+
+jest.mock("bullmq", () => {
+  return {
+    Worker: jest
+      .fn()
+      .mockImplementation(function MockedWorker(
+        queueName: string,
+        processor: unknown,
+        options: { connection: Redis } & Record<string, unknown>,
+      ) {
+        bullMqWorkerCalls.push({ queueName, processor, options });
+        return {
+          on: jest.fn(),
+          close: jest.fn().mockResolvedValue(undefined),
+        };
+      }),
+    // `Queue` is imported at worker.module top level even when the
+    // factory test path does not exercise it; provide a no-op stub so
+    // module loading does not crash.
+    Queue: jest.fn().mockImplementation(function MockedQueue() {
+      return { close: jest.fn().mockResolvedValue(undefined) };
+    }),
+  };
+});
 
 const mockedRecord = recordRedisCommandDuration as jest.MockedFunction<
   typeof recordRedisCommandDuration
@@ -115,6 +152,163 @@ describe("InstrumentedRedis.duplicate", () => {
     expect(dup2).toBeInstanceOf(InstrumentedRedis);
     dup1.disconnect();
     dup2.disconnect();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3a. InstrumentedRedis — BullMQ-compatible safe defaults
+//
+// BullMQ's `Worker` constructor rejects any pre-built ioredis client whose
+// `maxRetriesPerRequest` is not `null`. ioredis's stock default is `20`, so
+// `new InstrumentedRedis(url)` without these defaults would throw at worker
+// boot:
+//   "BullMQ: Your redis options maxRetriesPerRequest must be null."
+// `InstrumentedRedis` centralises the defaults so every call site
+// (`BullMqWorkerFactory`, `QueueLagGaugeRegistrar`, duplicate()-spawned
+// blocking connections) inherits them.
+// ---------------------------------------------------------------------------
+
+describe("InstrumentedRedis — BullMQ-compatible safe defaults", () => {
+  it("BULLMQ_SAFE_REDIS_DEFAULTS sets the two BullMQ-required keys", () => {
+    expect(BULLMQ_SAFE_REDIS_DEFAULTS.maxRetriesPerRequest).toBeNull();
+    expect(BULLMQ_SAFE_REDIS_DEFAULTS.enableReadyCheck).toBe(false);
+  });
+
+  describe("constructor merges BullMQ-safe defaults", () => {
+    it("constructed from a URL string carries the safe defaults", () => {
+      // Use lazyConnect via a second arg so no socket open is attempted.
+      const r = new InstrumentedRedis("redis://127.0.0.1:6379", {
+        lazyConnect: true,
+      });
+      try {
+        expect(r.options.maxRetriesPerRequest).toBeNull();
+        expect(r.options.enableReadyCheck).toBe(false);
+      } finally {
+        r.disconnect();
+      }
+    });
+
+    it("constructed from an options object carries the safe defaults", () => {
+      const r = new InstrumentedRedis({ lazyConnect: true });
+      try {
+        expect(r.options.maxRetriesPerRequest).toBeNull();
+        expect(r.options.enableReadyCheck).toBe(false);
+      } finally {
+        r.disconnect();
+      }
+    });
+
+    it("an explicit maxRetriesPerRequest override wins over the safe default", () => {
+      const r = new InstrumentedRedis({
+        lazyConnect: true,
+        maxRetriesPerRequest: 5,
+      });
+      try {
+        expect(r.options.maxRetriesPerRequest).toBe(5);
+        // The other safe default is unaffected.
+        expect(r.options.enableReadyCheck).toBe(false);
+      } finally {
+        r.disconnect();
+      }
+    });
+
+    it("an explicit enableReadyCheck override wins over the safe default", () => {
+      const r = new InstrumentedRedis({
+        lazyConnect: true,
+        enableReadyCheck: true,
+      });
+      try {
+        expect(r.options.enableReadyCheck).toBe(true);
+        expect(r.options.maxRetriesPerRequest).toBeNull();
+      } finally {
+        r.disconnect();
+      }
+    });
+  });
+
+  describe("duplicate() preserves BullMQ-compatible defaults", () => {
+    it("duplicate of a default client is also BullMQ-compatible", () => {
+      const r = new InstrumentedRedis({ lazyConnect: true });
+      const dup = r.duplicate();
+      try {
+        expect(dup).toBeInstanceOf(InstrumentedRedis);
+        expect(dup.options.maxRetriesPerRequest).toBeNull();
+        expect(dup.options.enableReadyCheck).toBe(false);
+      } finally {
+        dup.disconnect();
+        r.disconnect();
+      }
+    });
+
+    it("duplicate({ override }) still produces a BullMQ-compatible client", () => {
+      const r = new InstrumentedRedis({ lazyConnect: true });
+      const dup = r.duplicate({ db: 3 });
+      try {
+        expect(dup.options.db).toBe(3);
+        expect(dup.options.maxRetriesPerRequest).toBeNull();
+        expect(dup.options.enableReadyCheck).toBe(false);
+      } finally {
+        dup.disconnect();
+        r.disconnect();
+      }
+    });
+  });
+
+  describe("BullMqWorkerFactory hands BullMQ a compatible client", () => {
+    // The worker boot regression originated here: the factory used to
+    // construct `new InstrumentedRedis(this.redisUrl)` from a bare URL
+    // string, leaving ioredis's default `maxRetriesPerRequest = 20` in
+    // place. BullMQ's `Worker` constructor then threw at bootstrap.
+    //
+    // To prove the factory itself wires the safe defaults, we invoke
+    // `factory.create()` with the BullMQ `Worker` constructor mocked at
+    // module scope (see the `jest.mock("bullmq", ...)` block at the
+    // top of this file). The mock captures every constructor invocation
+    // so we can read the exact `connection` instance the factory passes
+    // — closing the gap where a standalone probe could mask a
+    // regression in the factory's actual wiring.
+
+    beforeEach(() => {
+      bullMqWorkerCalls.length = 0;
+    });
+
+    it("passes BullMQ a connection carrying BULLMQ_SAFE_REDIS_DEFAULTS", async () => {
+      const factory = new BullMqWorkerFactory("redis://127.0.0.1:6379");
+      const handler = jest.fn();
+      const created = factory.create("test-queue", handler, {});
+      try {
+        expect(bullMqWorkerCalls).toHaveLength(1);
+        const call = bullMqWorkerCalls[0]!;
+        expect(call.queueName).toBe("test-queue");
+        // The factory passes its `client` as `options.connection`.
+        // Assert on the live ioredis instance, not a sibling probe.
+        const conn = call.options.connection as Redis;
+        expect(conn).toBeInstanceOf(InstrumentedRedis);
+        expect(conn.options.maxRetriesPerRequest).toBeNull();
+        expect(conn.options.enableReadyCheck).toBe(false);
+      } finally {
+        await created.close();
+      }
+    });
+
+    it("forwards caller-supplied worker options unchanged", async () => {
+      const factory = new BullMqWorkerFactory("redis://127.0.0.1:6379");
+      const handler = jest.fn();
+      const callerOpts = { concurrency: 4, lockDuration: 60_000 };
+      const created = factory.create("test-queue", handler, callerOpts);
+      try {
+        expect(bullMqWorkerCalls).toHaveLength(1);
+        const call = bullMqWorkerCalls[0]!;
+        expect(call.options).toMatchObject(callerOpts);
+        // Connection still carries the safe defaults regardless of
+        // caller-supplied WorkerOptions.
+        const conn = call.options.connection as Redis;
+        expect(conn.options.maxRetriesPerRequest).toBeNull();
+        expect(conn.options.enableReadyCheck).toBe(false);
+      } finally {
+        await created.close();
+      }
+    });
   });
 });
 
