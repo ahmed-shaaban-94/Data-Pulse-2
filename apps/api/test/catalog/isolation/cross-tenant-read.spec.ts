@@ -99,27 +99,6 @@ function maybeSkip(): boolean {
   return false;
 }
 
-// ---- Store-wide tenant context helper ----------------------------------
-//
-// `store_product_overrides` and `unknown_items` carry the post-0008 RLS
-// SELECT policy that ANDs `app.current_tenant` with
-// `(store_id = app.current_store OR app.current_store = '')`. The
-// runWithTenantContext middleware only sets the tenant GUC, so reads on
-// those two tables return zero rows unless `app.current_store` is
-// explicitly set. This suite tests cross-TENANT isolation (not
-// cross-store), so we set the empty-string carve-out — equivalent to a
-// tenant owner with no store restriction — before running the callback.
-async function runWithTenantStoreWide<T>(
-  pool: import("pg").Pool,
-  ctx: { tenantId: string; isPlatformAdmin: boolean },
-  work: (client: import("pg").PoolClient) => Promise<T>,
-): Promise<T> {
-  return runWithTenantContext(pool, ctx, async (client) => {
-    await client.query("SELECT set_config('app.current_store', '', true)");
-    return work(client);
-  });
-}
-
 // --------------------------------------------------------------------------
 // Group A — Tenant A context sees own rows only
 // --------------------------------------------------------------------------
@@ -158,7 +137,7 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
 
   it("store_product_overrides: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreWide(env!.app, ctx, async (client) => {
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
       );
@@ -201,7 +180,7 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
 
   it("unknown_items: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreWide(env!.app, ctx, async (client) => {
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
       );
@@ -391,7 +370,7 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
 
   it("store_product_overrides: Tenant B context sees exactly 2 own rows", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreWide(env!.app, ctx, async (client) => {
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
       );
@@ -433,7 +412,7 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
 
   it("unknown_items: Tenant B context sees only its own rows", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantStoreWide(env!.app, ctx, async (client) => {
+    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
       );
