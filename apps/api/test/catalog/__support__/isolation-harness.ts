@@ -320,17 +320,21 @@ export async function seedCatalogIsolationFixture(
 
   // ---- 7. product_aliases -------------------------------------------------
   // Two per tenant: a tenant-wide barcode (store_id NULL) and a
-  // store-scoped external_pos_id (store_id = the X store). The latter
-  // requires `source_system` to satisfy the external_pos_id CHECK.
+  // store-scoped sku (store_id = the X store). external_pos_id cannot
+  // be store-scoped per the `product_aliases_store_scope_consistency`
+  // CHECK (external_pos_id rows must have store_id NULL); sku has no
+  // such restriction, so it satisfies the store-scoped-uniqueness path
+  // we want to exercise. source_system stays NULL for non-external types
+  // per the `product_aliases_source_system_required` CHECK.
   await admin.query(
     `INSERT INTO product_aliases
        (id, tenant_id, product_id, identifier_type, value,
         source_system, store_id, created_by)
      VALUES
        ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL, $11),
-       ($4, $2, $3, 'external_pos_id', 'A-X-POS-001', 't340-pos', $5, $11),
+       ($4, $2, $3, 'sku', 'A-X-SKU-001', NULL, $5, $11),
        ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL, $12),
-       ($9, $7, $8, 'external_pos_id', 'B-X-POS-001', 't340-pos', $10, $12)
+       ($9, $7, $8, 'sku', 'B-X-SKU-001', NULL, $10, $12)
      ON CONFLICT DO NOTHING`,
     [
       ALIAS_A_BARCODE, TENANT_A, PRODUCT_A_ACTIVE,
