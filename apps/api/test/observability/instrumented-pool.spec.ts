@@ -29,7 +29,6 @@ jest.mock("../../src/observability/metrics/db.metrics", () => ({
   registerDbPoolGauges: jest.fn().mockReturnValue({ stop: jest.fn() }),
   registerDbMigrationStatusGauge: jest.fn().mockReturnValue({ stop: jest.fn() }),
   recordDbRlsContextFailure: jest.fn(),
-  recordDbSlowQuery: jest.fn(),
   DB_METRIC_NAMES: [],
   createDbMigrationStatusCallback: jest.fn(),
 }));

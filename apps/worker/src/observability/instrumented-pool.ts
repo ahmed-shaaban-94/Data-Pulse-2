@@ -28,6 +28,9 @@ export const SLOW_QUERY_THRESHOLD_SECONDS = 0.5;
 // Template hash helper
 // ---------------------------------------------------------------------------
 
+/** Pattern that every valid query_class label value must satisfy. */
+const QUERY_CLASS_PATTERN = /^[0-9a-f]{8}$/;
+
 /**
  * Stable 8-hex-char fingerprint of a parameterized SQL template.
  *
@@ -36,6 +39,15 @@ export const SLOW_QUERY_THRESHOLD_SECONDS = 0.5;
  */
 export function hashQueryTemplate(sql: string): string {
   return createHash("sha256").update(sql).digest("hex").slice(0, 8);
+}
+
+/**
+ * Returns true when `value` is a safe query_class label: exactly 8 lowercase
+ * hex characters. Anything else is rejected to prevent raw SQL fragments,
+ * error text, or PII from reaching the metric label (FR-B-006 / §XIV).
+ */
+export function isValidQueryClass(value: string): boolean {
+  return QUERY_CLASS_PATTERN.test(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -83,14 +95,20 @@ export class InstrumentedPool extends Pool {
       (result) => {
         const durationSeconds = (performance.now() - start) / 1000;
         if (durationSeconds >= SLOW_QUERY_THRESHOLD_SECONDS) {
-          recordDbSlowQuery({ query_class: hashQueryTemplate(text) });
+          const queryClass = hashQueryTemplate(text);
+          if (isValidQueryClass(queryClass)) {
+            recordDbSlowQuery({ query_class: queryClass });
+          }
         }
         return result;
       },
       (err: unknown) => {
         const durationSeconds = (performance.now() - start) / 1000;
         if (durationSeconds >= SLOW_QUERY_THRESHOLD_SECONDS) {
-          recordDbSlowQuery({ query_class: hashQueryTemplate(text) });
+          const queryClass = hashQueryTemplate(text);
+          if (isValidQueryClass(queryClass)) {
+            recordDbSlowQuery({ query_class: queryClass });
+          }
         }
         throw err;
       },
