@@ -1,22 +1,20 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-22 (post-#268 closeout — T341 cross-tenant read isolation merged)
+**Last updated:** 2026-05-22 (post-#279 closeout — HARNESS_FIX + 0009 store GUC CASE guard merged; T341 31/31 GREEN)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `263492a` (T341 — PR #268, 2026-05-21)
-**Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `HARNESS_SEED_BUGS` (medium; 3 latent seed errors verified on main @ f6a8075)
-**Resolved findings (kept for audit):** 1 — `RLS_CROSS_STORE_READ_LEAK` (resolved by PR #254 @ `483aae4`)
+**Base:** `origin/main` at `e33fd0e` (PR #279, 2026-05-22)
+**Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch)
+**Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
 
 ---
 
 ## TL;DR
 
-T340 (isolation harness, PR #264) and T341 (cross-tenant read isolation, PR #268)
-are both merged. T342, T343, T344 are now **ready to dispatch**. A new finding —
-`HARNESS_SEED_BUGS` — records three latent constraint violations in the harness seed
-function (independently verified against main @ f6a8075 by static inspection and
-Testcontainers run). A **harness fix slice must land before T342 validation** — all
-three consume the same seeding function. T336 remains blocked on
-`MISSING_WITHSTORE_HELPER`. No slice is `local_uncommitted`.
+T340 (PR #264), T341 (PR #268), HARNESS_FIX, and 0009_STORE_GUC_FIX (both PR #279)
+are all merged. T341 is now **GREEN 31/31** — the harness seed bugs and the empty-store
+GUC cast error are fixed. T342, T343, T344 are **ready to dispatch with no remaining
+prerequisites**. T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
+No slice is `local_uncommitted`.
 
 ---
 
@@ -32,8 +30,10 @@ three consume the same seeding function. T336 remains blocked on
 | `RLS_CROSS_STORE_RED_PROOF` | RED proof spec for the cross-store leak | merged in PR #254 @ `483aae4` |
 | `RLS_CROSS_STORE_FIX` | `0008_catalog_store_read_isolation.sql` + `.down.sql` | PR #254 @ `483aae4` |
 | `T335_TENANT_HELPER_COVERAGE` | `withTenant` catalog coverage spec for `tenant_products` via `runWithTenantContext` | PR #260 @ `5801369` |
-| `T340` | Catalog isolation harness (`apps/api/test/catalog/__support__/isolation-harness.ts`) | PR #264 @ `02cdf75` — *see HARNESS_SEED_BUGS* |
-| `T341` | Cross-tenant read isolation (`apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`) — 29 assertions, Groups A–D | PR #268 @ `263492a` |
+| `T340` | Catalog isolation harness (`apps/api/test/catalog/__support__/isolation-harness.ts`) | PR #264 @ `02cdf75` |
+| `T341` | Cross-tenant read isolation (`apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`) — 31 assertions, Groups A–D | PR #268 @ `263492a` |
+| `HARNESS_FIX` | Fix three seed constraint violations in `isolation-harness.ts`; T341 store GUC assertions corrected | PR #279 @ `e33fd0e` |
+| `0009_STORE_GUC_FIX` | `0009_catalog_store_empty_guc_fix.sql` — CASE guard for empty `app.current_store` cast on 3 RLS policies | PR #279 @ `e33fd0e` |
 
 ### Context from neighboring merges
 
@@ -62,6 +62,14 @@ All previously-local work is now on `main`:
 
 ## Resolved findings (audit trail)
 
+### `HARNESS_SEED_BUGS` — RESOLVED
+
+- **Resolved by:** `HARNESS_FIX` (PR #279 @ `e33fd0e`, merged 2026-05-22)
+- **Originally affected:** `apps/api/test/catalog/__support__/isolation-harness.ts`
+- **Mechanism of fix:** (1) Added `created_by` to `product_aliases` INSERT column list. (2) Changed `product_aliases` store-scoped rows from `identifier_type = 'external_pos_id'` to `'sku'` with `source_system = null` to satisfy the `product_aliases_store_scope_consistency` CHECK. (3) Renamed `created_by` → `changed_by` and added `correlation_id` to `price_history` INSERT. PR #279 also fixed `cross-tenant-read.spec.ts` to explicitly set `app.current_store = ''` on four tenant-owner count assertions (resolves `T341_MISSING_STORE_GUC`), bringing T341 from 29 to 31 assertions.
+- **Verification:** T341 GREEN 31/31 on Testcontainers (WSL Docker) after PR #279 merge.
+- **Audit kept because:** HARNESS_SEED_BUGS unblocked T342–T344 dispatch; the chain of proof is valuable context for future harness modifications.
+
 ### `RLS_CROSS_STORE_READ_LEAK` — RESOLVED
 
 - **Resolved by:** `RLS_CROSS_STORE_FIX` (PR #254 @ `483aae4`, merged 2026-05-21)
@@ -73,16 +81,6 @@ All previously-local work is now on `main`:
 ---
 
 ## Active findings
-
-### `HARNESS_SEED_BUGS` — fix slice required before T342 dispatch
-
-- **Summary:** Three latent constraint violations in `seedCatalogIsolationFixture` (`apps/api/test/catalog/__support__/isolation-harness.ts`) merged via PR #264. All three were independently verified by static inspection against `0007_catalog.sql` on main @ f6a8075 and confirmed by a Testcontainers run (WSL Docker, 2026-05-22 — 31/31 FAILED).
-  1. `product_aliases` INSERT column list omits `created_by` (NOT NULL per `0007_catalog.sql:275`).
-  2. `product_aliases` store-scoped rows use `identifier_type = 'external_pos_id'` with `store_id` set, violating the `product_aliases_store_scope_consistency` CHECK (`external_pos_id` must have `store_id NULL`, per `0007_catalog.sql:284-285`).
-  3. `price_history` INSERT uses column `created_by` (does not exist — correct column is `changed_by`, `0007_catalog.sql:335`) and omits `correlation_id` (NOT NULL, `0007_catalog.sql:336`).
-- **Severity:** medium — all T341–T344 validation runs will fail at seed time until fixed; no production impact.
-- **Blocks:** T342, T343, T344 validation (T341 is already merged but its GREEN run is also blocked until fixed).
-- **Resolution:** New fix slice targeting `isolation-harness.ts`. No gate required (non-forbidden path; test-only file).
 
 ### `MISSING_WITHSTORE_HELPER`
 
@@ -101,7 +99,6 @@ All previously-local work is now on `main`:
 | Slice ID | Blocked by | Notes |
 |---|---|---|
 | `T336` | `MISSING_WITHSTORE_HELPER` finding | No remaining slice-level deps — `RLS_CROSS_STORE_FIX` cleared. Only the missing helper file blocks now. |
-| T342 validation | `HARNESS_SEED_BUGS` | Slice is `ready` (T340 dep cleared). Harness fix is a runtime prerequisite for GREEN — not a dispatch blocker, but validation will fail until resolved. Same applies to T343, T344. |
 
 ---
 
@@ -109,10 +106,9 @@ All previously-local work is now on `main`:
 
 | Slice ID | Type | Agent | Approval needed? | Notes |
 |---|---|---|---|---|
-| `HARNESS_FIX` *(new, unregistered)* | fix | `sonnet-test` | no | Fix three seed bugs in `isolation-harness.ts` per `HARNESS_SEED_BUGS` finding. Must land before T342 dispatch to get GREEN. |
-| `T342` | test | `sonnet-test` | no | Cross-store read sweep. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
-| `T343` | test | `sonnet-test` | no | RLS bypass probe. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
-| `T344` | test | `sonnet-test` | no | Malicious body-override. T340 dep satisfied (PR #264). Requires harness fix for GREEN validation. |
+| `T342` | test | `sonnet-test` | no | Cross-store read sweep. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
+| `T343` | test | `sonnet-test` | no | RLS bypass probe. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
+| `T344` | test | `sonnet-test` | no | Malicious body-override. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
 
 ---
 
@@ -135,15 +131,11 @@ user endorsement.
 
 ## Next recommended action
 
-**Fix the harness first.** T341 and T340 are on `main`. T342–T344 are ready to
-dispatch but all use `seedCatalogIsolationFixture` — the three bugs will cause
-seed-time failures until patched. The fix is three INSERT corrections in
-`isolation-harness.ts`, no gate required, and should land as a single commit
-before T342 is dispatched.
-
-After the harness fix, T342–T344 can run sequentially or as a parallel wave
-(disjoint allowed files, independent test paths). T336 is independent and still
-needs an explicit decision on `MISSING_WITHSTORE_HELPER`.
+**Dispatch T342–T344.** All prerequisites are satisfied: T340 (PR #264), T341 (PR #268),
+HARNESS_FIX, and 0009_STORE_GUC_FIX (both PR #279) are on `main`. T342, T343, T344
+can run sequentially or as a parallel wave (disjoint allowed files, independent test
+paths). T336 is independent and still needs an explicit decision on
+`MISSING_WITHSTORE_HELPER`.
 
 ---
 
@@ -176,23 +168,13 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Fix harness seed bugs (required before T342 dispatch):
-
-```text
-Use Agent OS.
-Fix finding HARNESS_SEED_BUGS in isolation-harness.ts.
-Spec: specs/003-catalog-foundation
-Allowed file: apps/api/test/catalog/__support__/isolation-harness.ts
-Stop before commit.
-```
-
-After harness fix lands, dispatch the T342–T344 wave:
+Dispatch T342 (cross-store read sweep):
 
 ```text
 Use Agent OS. Execute slice T342. Stop before commit.
 ```
 
-Or in parallel (requires explicit endorsement):
+Or dispatch T342–T344 in parallel (requires explicit endorsement):
 
 ```text
 Use Agent OS. Schedule slices T342, T343, T344 in parallel. Stop before dispatch.

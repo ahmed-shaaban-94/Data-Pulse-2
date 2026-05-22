@@ -7,17 +7,18 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-22 after PRs #264 and #268 merged.
+# Updated: 2026-05-22 after PR #279 merged.
 # T340 (isolation harness) closed out: PR #264 @ 02cdf75 (2026-05-21).
 # T341 (cross-tenant read isolation) closed out: PR #268 @ 263492a (2026-05-21).
-# T342, T343, T344 transition from blocked -> ready (T340/T341 deps satisfied).
-# New finding HARNESS_SEED_BUGS recorded and independently verified on
-# main @ f6a8075: three latent constraint violations in isolation-harness.ts
-# merged via PR #264. Map base advanced to 263492a (PR #268).
+# HARNESS_FIX (seed constraint violations) closed out: PR #279 @ e33fd0e (2026-05-22).
+# 0009_STORE_GUC_FIX (empty-store cast CASE guard) closed out: PR #279 @ e33fd0e (2026-05-22).
+# HARNESS_SEED_BUGS finding resolved by PR #279 — T341 31/31 GREEN confirmed.
+# T342, T343, T344 remain ready; seed-bug prerequisite lifted (harness fix on main).
+# Map base advanced to e33fd0e (PR #279).
 
 spec: 003-catalog-foundation
 version: 1
-base: origin/main  # 263492a (PR #268, T341 merge)
+base: origin/main  # e33fd0e (PR #279, HARNESS_FIX + 0009 store GUC CASE guard)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -104,11 +105,15 @@ findings:
       Runtime: Testcontainers run (WSL Docker) on 2026-05-22 — 31/31 FAILED with
       "null value in column 'created_by' of relation 'product_aliases' violates
       not-null constraint".
-    blocks:
+    blocks: []          # cleared — all deps unblocked by PR #279
+    previously_blocked:
       - T342
       - T343
       - T344
-    resolved_by: null   # fix slice needed; no gate required (non-forbidden path)
+    resolved_by: HARNESS_FIX
+    resolved_by_pr: 279
+    resolved_by_commit: e33fd0e
+    resolved_at: 2026-05-22
 
 # ----------------------------------------------------------------------------
 # slices
@@ -329,7 +334,7 @@ slices:
     parallel_safety: safe
     # See finding MISSING_WITHSTORE_HELPER for the full blocker context.
 
-  # ===== Merged (T340 PR #264, T341 PR #268) / Ready (T342-T344 unblocked) ==
+  # ===== Merged (T340 PR #264, T341 PR #268, HARNESS_FIX + 0009 PR #279) / Ready ===
 
   - id: T340
     task_ids: [T340]
@@ -387,19 +392,98 @@ slices:
     merged_at_commit: 263492a
     merged_at_date: 2026-05-21
     notes: >
-      29 assertions across Groups A-D (own-rows, cross-tenant ID probe, Tenant B
-      symmetry, fail-closed). Spec is logically correct per manual review. GREEN
-      validation blocked by HARNESS_SEED_BUGS until harness fix lands.
+      31 assertions across Groups A-D (own-rows, cross-tenant ID probe, Tenant B
+      symmetry, fail-closed) — GREEN 31/31 confirmed after HARNESS_FIX (PR #279).
+      Four tenant-owner count assertions updated to explicitly set
+      app.current_store = '' (T341_MISSING_STORE_GUC resolved in PR #279).
+
+  - id: HARNESS_FIX
+    task_ids: []
+    type: fix
+    status: merged              # closed out 2026-05-22 via PR #279 @ e33fd0e
+    approval_required: false
+    depends_on:
+      - T340
+    blocks: []
+    previously_blocked: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/__support__/isolation-harness.ts
+      - apps/api/test/catalog/isolation/cross-tenant-read.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN 31/31
+        docker_required: true
+    stop: []
+    report_fields:
+      - changed_files
+      - validation_results
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    merged_in_pr: 279
+    merged_at_commit: e33fd0e
+    merged_at_date: 2026-05-22
+    notes: >
+      Resolved HARNESS_SEED_BUGS finding. Three seed constraint violations fixed:
+      (1) product_aliases created_by added; (2) product_aliases store-scoped rows
+      switched from external_pos_id to sku identifier_type; (3) price_history
+      created_by -> changed_by + correlation_id added. Also updated T341 spec
+      to explicitly set app.current_store = '' on four tenant-owner count assertions
+      (resolves T341_MISSING_STORE_GUC). T341 now GREEN 31/31.
+
+  - id: 0009_STORE_GUC_FIX
+    task_ids: []
+    type: fix
+    status: merged              # closed out 2026-05-22 via PR #279 @ e33fd0e
+    approval_required: true     # gated (SQL migration) — approval granted prior to merge
+    depends_on:
+      - RLS_CROSS_STORE_FIX
+    blocks: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.sql
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.down.sql
+      - packages/db/__tests__/cli/migrate.spec.ts
+    forbidden_files:
+      - packages/db/drizzle/0007_catalog.sql   # do not edit 0007
+      - packages/db/drizzle/0008_catalog_store_read_isolation.sql   # do not edit 0008
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN 31/31
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/catalog-rls-store-read.spec.ts"
+        expected: GREEN 2/2
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/0001-catalog.spec.ts"
+        expected: GREEN 27/27
+        docker_required: true
+    stop:
+      - if 0009 edits 0007 or 0008
+    report_fields:
+      - changed_files
+      - validation_results
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: unsafe   # gated SQL — serialize
+    merged_in_pr: 279
+    merged_at_commit: e33fd0e
+    merged_at_date: 2026-05-22
+    notes: >
+      Replaces the OR-cast expression in three RLS policies with a CASE guard
+      to prevent ''::uuid cast error when app.current_store = '' (the tenant-owner
+      carve-out path from rls-test-matrix.md §4.3). Affected policies:
+      store_product_overrides_select (0008), store_product_overrides_tenant_write
+      (0007 FOR ALL), unknown_items_select (0008). Down migration restores 0008 and
+      0007 policy bodies verbatim.
 
   - id: T342
     task_ids: [T342]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75; T341 merged PR #268 @ 263492a. Unblocked 2026-05-22.
+    status: ready         # T340 merged PR #264 @ 02cdf75; T341 merged PR #268 @ 263492a; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
     approval_required: false
     depends_on:
       - T340
     # RLS_CROSS_STORE_FIX removed from depends_on — merged 2026-05-21 (PR #254).
-    # NOTE: HARNESS_SEED_BUGS must be fixed before validation can succeed.
+    # HARNESS_SEED_BUGS resolved by PR #279 — no prerequisite blocker remains.
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -417,7 +501,7 @@ slices:
   - id: T343
     task_ids: [T343]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75. Unblocked 2026-05-22.
+    status: ready         # T340 merged PR #264 @ 02cdf75; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
     approval_required: false
     depends_on:
       - T340
@@ -438,7 +522,7 @@ slices:
   - id: T344
     task_ids: [T344]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75. Unblocked 2026-05-22.
+    status: ready         # T340 merged PR #264 @ 02cdf75; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
     approval_required: false
     depends_on:
       - T340
