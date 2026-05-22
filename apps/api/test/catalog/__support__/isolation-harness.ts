@@ -327,39 +327,37 @@ export async function seedCatalogIsolationFixture(
 
   // ---- 7. product_aliases -------------------------------------------------
   // Two per tenant: a tenant-wide barcode (store_id NULL) and a
-  // store-scoped sku (store_id = the X store). `external_pos_id`
-  // cannot be store-scoped per the
-  // `product_aliases_store_scope_consistency` CHECK
-  // (0007_catalog.sql:284-285 — external_pos_id rows must have
-  // store_id NULL); `sku` has no such restriction and no
-  // `source_system` requirement, so it cleanly exercises the
-  // store-scoped uniqueness path we need for cross-store assertions.
-  // `created_by` is NOT NULL on this table (0007_catalog.sql:275) —
-  // each row carries the tenant's actor ID.
+  // store-scoped sku (store_id = the X store).
+  //
+  // Constraint notes (0007_catalog.sql:284-285):
+  //   - product_aliases_store_scope_consistency: store_id IS NULL OR
+  //     identifier_type <> 'external_pos_id'. Store-scoped rows must NOT
+  //     use 'external_pos_id'; 'sku' is used instead.
+  //   - product_aliases_source_system_required: source_system is required
+  //     only for 'external_pos_id' rows; 'sku' rows must have it NULL.
+  //   - created_by is NOT NULL (0007_catalog.sql:275).
   await admin.query(
     `INSERT INTO product_aliases
        (id, tenant_id, product_id, identifier_type, value,
         source_system, store_id, created_by)
      VALUES
-       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL, $11),
-       ($4, $2, $3, 'sku', 'A-X-SKU-001', NULL, $5, $11),
-       ($6, $7, $8, 'barcode', 'T340-B-BAR-001', NULL, NULL, $12),
-       ($9, $7, $8, 'sku', 'B-X-SKU-001', NULL, $10, $12)
+       ($1, $2, $3, 'barcode', 'T340-A-BAR-001', NULL, NULL, $4),
+       ($5, $2, $3, 'sku', 'A-X-POS-001', NULL, $6, $4),
+       ($7, $8, $9, 'barcode', 'T340-B-BAR-001', NULL, NULL, $10),
+       ($11, $8, $9, 'sku', 'B-X-POS-001', NULL, $12, $10)
      ON CONFLICT DO NOTHING`,
     [
-      ALIAS_A_BARCODE, TENANT_A, PRODUCT_A_ACTIVE,
+      ALIAS_A_BARCODE, TENANT_A, PRODUCT_A_ACTIVE, ACTOR_A,
       ALIAS_A_X_POS, STORE_A_X,
-      ALIAS_B_BARCODE, TENANT_B, PRODUCT_B_ACTIVE,
+      ALIAS_B_BARCODE, TENANT_B, PRODUCT_B_ACTIVE, ACTOR_B,
       ALIAS_B_X_POS, STORE_B_X,
-      ACTOR_A, ACTOR_B,
     ],
   );
 
   // ---- 8. price_history ---------------------------------------------------
   // Two per tenant: a tenant-level baseline (store_id NULL) and a
-  // store-scoped X-store row. price_history uses `changed_by`
-  // (NOT `created_by`) and requires a NOT NULL `correlation_id` per
-  // 0007_catalog.sql:335-336.
+  // store-scoped X-store row. Both `changed_by` and `correlation_id`
+  // are NOT NULL on this table (0007_catalog.sql:335-336).
   await admin.query(
     `INSERT INTO price_history
        (id, tenant_id, product_id, store_id, price, currency_code,
