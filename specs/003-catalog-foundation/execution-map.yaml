@@ -115,6 +115,87 @@ findings:
     resolved_by_commit: e33fd0e
     resolved_at: 2026-05-22
 
+  - id: RLS_STORE_ABSENT_READ_LEAK
+    summary: >
+      The matrix prescribes "tenant set, app.current_store GUC absent (never set
+      in session) → 0 rows" for the two store-scoped tables (rls-test-matrix.md
+      §4.6 store_product_overrides and §7.6 unknown_items). Empirically (CI run
+      on PR #285 @ 30751989), the combination of (a) PG returning the empty
+      string `''` from current_setting('app.current_store', true) when the GUC
+      has never been set in the session — NOT NULL as the matrix author assumed
+      — and (b) the 0009 CASE guard's `WHEN '' THEN TRUE` carve-out branch
+      firing, produces visible rows instead of 0. Same family as the resolved
+      RLS_CROSS_STORE_READ_LEAK finding (PR #254) but on the "store GUC absent"
+      axis rather than the "two split SELECT policies" axis. Tenant-owner
+      cross-store reads (explicitly setting GUC to '' via set_config) still
+      work correctly — the defect is specific to the never-set path.
+    affected:
+      - store_product_overrides   # §4.6 SELECT under tenant-set / store-absent
+      - unknown_items             # §7.6 SELECT under tenant-set / store-absent
+    severity: medium    # data-visibility issue; same severity tier as the resolved cross-store leak
+    proof: >
+      CI failure on PR #285 (commit 30751989) — six test cases failing with
+      either "Expected '0', Received '2'" (carve-out branch fires) or
+      "invalid input syntax for type uuid: ''" (cast on FOR ALL USING).
+      Independent Postgres 16 probe (2026-05-22) confirms
+      current_setting('app.current_store', true) returns '' (empty string)
+      not NULL for a GUC never set in the session, contrary to the matrix's
+      design assumption.
+    blocks: []          # T342 and T343 land with deferred coverage; full §4.6/§7.6 GREEN waits on a future SQL slice
+    deferred_tests:
+      - apps/api/test/catalog/isolation/cross-store-read.spec.ts:T342 fail-closed (4 it.todo placeholders)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§4.6 store_product_overrides absent (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§7.6 unknown_items absent (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts no-GUC pool (2 it.todo)
+    resolution_paths:
+      - "(a) New gated SQL slice (e.g. 0010_*) extending 0009's CASE guard to distinguish 'GUC explicitly empty (carve-out)' from 'GUC never set (fail-closed)'. The current carve-out is keyed on the empty string but should be keyed on an explicit sentinel set only by the tenant-owner code path."
+      - "(b) Matrix amendment acknowledging that 'GUC never set' is observably indistinguishable from 'GUC = empty string' at the policy layer, and either re-specifying §4.6 / §7.6 to require an explicit unset (e.g. via DISCARD ALL) before the contract holds, or accepting the current behavior as the contract."
+    resolved_by: null   # awaiting a separate authorized slice (option a) or spec amendment (option b)
+
+  - id: RLS_UNSET_TENANT_GUC_CAST_ERROR
+    summary: >
+      The matrix prescribes "app.current_tenant unset / NULL → 0 rows" for
+      every tenant-scoped catalog table (rls-test-matrix.md §2.3, §3.3, §5.3,
+      §6.5, §7.6). Empirically (CI run on PR #285 @ 30751989), the policy's
+      USING clause `tenant_id = current_setting('app.current_tenant', true)::uuid`
+      throws SQLSTATE 22P02 ("invalid input syntax for type uuid: ''") on a
+      pooled connection where app.current_tenant has been observed as the empty
+      string rather than NULL. The matrix author assumed NULL semantics (where
+      `NULL::uuid` = NULL, and `tenant_id = NULL` evaluates to NULL → filtered
+      out → 0 rows). PG actually returns '' from current_setting(...,true)
+      for a missing custom GUC, and `''::uuid` raises before the policy
+      evaluates. Four SELECT test cases failed for this reason in CI.
+      The §2.3 tenant_products case passed in CI because the no-GUC pool
+      it uses is a freshly opened cold pool with no prior set_config bleed
+      — but the other suites (§3.3, §5.3, §6.5, §7.6) share withRawClient
+      against env.app where pool-scoped set_config bleed exposes the cast
+      error.
+    affected:
+      - tenant_products              # §2.3 — passes in CI via cold pool path, but matrix contract still fragile
+      - tenant_product_categories    # §3.3
+      - product_aliases              # §5.3
+      - price_history                # §6.5
+      - unknown_items                # §7.6 unset-tenant
+    severity: medium    # write-path RLS still enforces; this is a read-path fail-closed-semantics defect
+    proof: >
+      CI failure on PR #285 (commit 30751989) — five "§X.Y unset tenant GUC:
+      SELECT returns 0 rows" test cases failing with "invalid input syntax
+      for type uuid: ''". Postgres 16 probe (2026-05-22) confirms
+      current_setting('app.current_tenant', true) returns '' (not NULL) on
+      a session where the GUC was never assigned, and `''::uuid` raises
+      22P02.
+    blocks: []          # T343 lands with deferred coverage; full unset-tenant GREEN waits on a future SQL slice
+    deferred_tests:
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§3.3 (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§4.5 no-tenant-store-set (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§5.3 (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§6.5 (1 it.todo)
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§7.6 unset-tenant (1 it.todo)
+    resolution_paths:
+      - "(a) New gated SQL slice (e.g. 0010_*) adding a CASE guard around the tenant cast in every tenant-scoped policy, analogous to 0009's store-GUC guard. Body shape: `tenant_id = CASE WHEN current_setting('app.current_tenant', true) = '' THEN NULL ELSE current_setting('app.current_tenant', true)::uuid END` — preserves fail-closed (NULL match returns 0 rows) without throwing."
+      - "(b) Matrix amendment redefining the §2.3 / §3.3 / §5.3 / §6.5 / §7.6 expected result from '0 rows' to 'SQLSTATE 22P02 cast error (acceptable fail-closed behavior because the query throws before any data is returned)' — this is arguably stronger fail-closed semantics but would require coordinated test updates to assert the error code rather than row count."
+    resolved_by: null   # awaiting a separate authorized slice (option a) or spec amendment (option b)
+
 # ----------------------------------------------------------------------------
 # slices
 # ----------------------------------------------------------------------------
@@ -497,6 +578,11 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
+    notes: >
+      PR #285 ships T342 with §4.6 / §7.6 "fail-closed when store GUC absent"
+      coverage deferred as 4 it.todo placeholders — see finding
+      RLS_STORE_ABSENT_READ_LEAK. T342 cannot be considered fully complete
+      until that finding is resolved.
 
   - id: T343
     task_ids: [T343]
@@ -518,6 +604,16 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
+    notes: >
+      PR #285 ships T343 with deferred coverage:
+        - §3.3 / §5.3 / §6.5 / §7.6 unset-tenant SELECT + §4.5 no-tenant-store-set
+          (5 it.todo) tracked under RLS_UNSET_TENANT_GUC_CAST_ERROR.
+        - §4.6 / §7.6 absent-store SELECT + no-GUC pool §4.6 / §7.6 (4 it.todo)
+          tracked under RLS_STORE_ABSENT_READ_LEAK.
+      Three Class A "explicit empty-string tenant GUC" cases (§3.4, §5.4, §6.4)
+      DELETED in PR #285 — invented by the original draft, not prescribed by
+      the matrix. T343 cannot be considered fully complete until both findings
+      are resolved.
 
   - id: T344
     task_ids: [T344]

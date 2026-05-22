@@ -3,7 +3,7 @@
 **Last updated:** 2026-05-22 (post-#279 closeout — HARNESS_FIX + 0009 store GUC CASE guard merged; T341 31/31 GREEN)
 **Spec:** [`specs/003-catalog-foundation/`](.)
 **Base:** `origin/main` at `e33fd0e` (PR #279, 2026-05-22)
-**Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch)
+**Active findings:** 3 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (medium; matrix §2.3/§3.3/§5.3/§6.5/§7.6 fail-closed not delivered)
 **Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
 
 ---
@@ -82,6 +82,26 @@ All previously-local work is now on `main`:
 
 ## Active findings
 
+### `RLS_STORE_ABSENT_READ_LEAK` — discovered 2026-05-22
+
+- **Summary:** Matrix §4.6 and §7.6 prescribe "tenant set, `app.current_store` GUC absent (never set in session) → 0 rows" for `store_product_overrides` and `unknown_items`. CI on PR #285 (commit `30751989`) showed the contract is not delivered: PG returns `''` (empty string) — not NULL — from `current_setting('app.current_store', true)` when the GUC has never been set, and the 0009 CASE guard's `WHEN '' THEN TRUE` carve-out branch fires, returning all tenant rows instead of 0. Same family as the resolved `RLS_CROSS_STORE_READ_LEAK` but on the "store absent" axis.
+- **Severity:** medium (data-visibility issue on read path; same tier as the resolved cross-store leak).
+- **Proof:** CI failure (PR #285 @ `30751989`) — six test cases failing with "Expected '0', Received '2'" or `''::uuid` cast error. Independent PG 16 probe (2026-05-22) confirmed `current_setting('app.current_store', true)` returns `''` not NULL.
+- **Blocks:** No slice-level dispatch blocker. PR #285 ships T342 and T343 with §4.6 / §7.6 store-absent coverage deferred as `it.todo` placeholders. Full §4.6 / §7.6 GREEN waits on a future SQL slice.
+- **Resolution paths (either, with explicit user approval):**
+  1. New gated SQL slice (e.g. `0010_*`) extending 0009's CASE guard to distinguish "GUC explicitly empty (carve-out)" from "GUC never set (fail-closed)" — e.g. by keying the carve-out on a dedicated `app.current_store_owner_carveout` sentinel rather than the empty string.
+  2. Matrix amendment re-specifying §4.6 / §7.6 to require an explicit `DISCARD ALL` (or equivalent connection-reset) before the contract holds — i.e. accepting that the never-set behavior is "indistinguishable from explicit-empty" at the policy layer and revising the contract accordingly.
+
+### `RLS_UNSET_TENANT_GUC_CAST_ERROR` — discovered 2026-05-22
+
+- **Summary:** Matrix §2.3, §3.3, §5.3, §6.5, §7.6 prescribe "`app.current_tenant` unset / NULL → 0 rows" for every tenant-scoped catalog table. CI on PR #285 (commit `30751989`) showed five SELECT cases throwing `invalid input syntax for type uuid: ""` (SQLSTATE 22P02) instead of returning 0 rows. The matrix author assumed NULL semantics (`NULL::uuid = NULL`, policy `tenant_id = NULL` evaluates to NULL → 0 rows); PG actually returns `''` from `current_setting('app.current_tenant', true)` for a never-set GUC, and `''::uuid` raises before the policy evaluates. The §2.3 `tenant_products` case in the bypass-probe spec passed via a cold no-GUC pool path; the other four (§3.3, §5.3, §6.5, §7.6) failed because they share `withRawClient` against `env.app` where pool-scoped `set_config` bleed exposes the cast error.
+- **Severity:** medium (read-path fail-closed semantics defect; write-path RLS still enforces).
+- **Proof:** CI failure (PR #285 @ `30751989`) — five "unset tenant GUC: SELECT returns 0 rows" cases failing with `22P02`. PG 16 probe (2026-05-22) confirmed `current_setting('app.current_tenant', true)` returns `''` (not NULL) for a never-set GUC.
+- **Blocks:** No slice-level dispatch blocker. PR #285 ships T343 with five `it.todo` placeholders covering the deferred contract.
+- **Resolution paths (either, with explicit user approval):**
+  1. New gated SQL slice (e.g. `0010_*`) adding a CASE guard around the tenant cast in every tenant-scoped policy, analogous to 0009's store-GUC guard. Body shape: `tenant_id = CASE WHEN current_setting('app.current_tenant', true) = '' THEN NULL ELSE current_setting('app.current_tenant', true)::uuid END` — preserves fail-closed (NULL comparison returns no rows) without throwing.
+  2. Matrix amendment redefining §2.3 / §3.3 / §5.3 / §6.5 / §7.6 expected result from "0 rows" to "SQLSTATE 22P02 cast error" — arguably stronger fail-closed semantics (loud failure beats silent leak), but requires coordinated test updates to assert the error code rather than row count.
+
 ### `MISSING_WITHSTORE_HELPER`
 
 - **Summary:** `rls-test-matrix.md:464-465` and `plan.md:210` claim `packages/db/src/helpers/with-store.ts` ships from feature 001, but the file does not exist on `main`. Only `with-tenant.ts` and `audit-insert.ts` are present.
@@ -102,13 +122,13 @@ All previously-local work is now on `main`:
 
 ---
 
-## Ready / approved — next to dispatch
+## Ready / in-flight (PR #285 bundle)
 
 | Slice ID | Type | Agent | Approval needed? | Notes |
 |---|---|---|---|---|
-| `T342` | test | `sonnet-test` | no | Cross-store read sweep. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
-| `T343` | test | `sonnet-test` | no | RLS bypass probe. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
-| `T344` | test | `sonnet-test` | no | Malicious body-override. T340 dep + HARNESS_FIX both satisfied. No prerequisites remaining. |
+| `T342` | test | `sonnet-test` | no | Cross-store read sweep. PR #285 — ships with §4.6 / §7.6 store-absent coverage deferred as 4 `it.todo` against `RLS_STORE_ABSENT_READ_LEAK`. |
+| `T343` | test | `sonnet-test` | no | RLS bypass probe. PR #285 — ships with 5 unset-tenant + 4 store-absent `it.todo` deferred against the two new findings. Three Class A "explicit empty-string tenant GUC" cases removed (not in matrix). |
+| `T344` | test | `sonnet-test` | no | Malicious body-override. PR #285 — ships GREEN. Class C positive-control duplicate-key bug fixed via switch to `PRODUCT_A_RETIRED`. |
 
 ---
 
