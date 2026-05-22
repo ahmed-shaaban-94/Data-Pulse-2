@@ -25,6 +25,20 @@
  *   only a `command` label (see `assertMetricLabels` in worker.metrics.ts).
  *   Duration is recorded on both success and error paths regardless.
  *
+ * - BullMQ-compatible defaults: BullMQ's `Worker` constructor rejects any
+ *   pre-built ioredis client whose `maxRetriesPerRequest` is not `null`
+ *   (the BRPOPLPUSH path must be allowed to retry forever — a finite
+ *   per-command retry budget would corrupt job semantics). It also expects
+ *   `enableReadyCheck: false` on the blocking connection. ioredis's stock
+ *   defaults (`maxRetriesPerRequest: 20`, `enableReadyCheck: true`) cause
+ *   the worker process to throw at boot:
+ *     "BullMQ: Your redis options maxRetriesPerRequest must be null."
+ *   We centralise the two BullMQ-safe defaults inside the constructor so
+ *   every call site (`BullMqWorkerFactory`, `QueueLagGaugeRegistrar`,
+ *   `duplicate()`-spawned blocking connections, tests) inherits them
+ *   automatically. Caller-supplied options still win — pass an explicit
+ *   `maxRetriesPerRequest: 5` and the override is honoured.
+ *
  * Constitution §VII / FR-B-003 / FR-B-006 / P4 W4.
  */
 import { Redis, Command, type RedisOptions } from "ioredis";
@@ -87,6 +101,58 @@ export function normalizeCommand(name: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// BullMQ-compatible safe defaults
+// ---------------------------------------------------------------------------
+
+/**
+ * Options every `InstrumentedRedis` instance carries unless the caller
+ * explicitly overrides them. Centralising the two BullMQ requirements here
+ * prevents call-site drift (`new InstrumentedRedis(url)` is the natural
+ * shape; every site would otherwise have to remember the merge).
+ *
+ * - `maxRetriesPerRequest: null` — BullMQ rejects pre-built clients where
+ *   this is finite. ioredis defaults to `20`.
+ * - `enableReadyCheck: false` — BullMQ does its own readiness handshake;
+ *   the ioredis INFO-loop ready check races BullMQ's connect path on the
+ *   blocking connection. ioredis defaults to `true`.
+ */
+export const BULLMQ_SAFE_REDIS_DEFAULTS: Readonly<
+  Pick<RedisOptions, "maxRetriesPerRequest" | "enableReadyCheck">
+> = Object.freeze({
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+});
+
+/**
+ * Merge `BULLMQ_SAFE_REDIS_DEFAULTS` into the constructor argument list of
+ * an ioredis `Redis` overload. The defaults go FIRST so an explicit
+ * caller-supplied option (e.g. `{ maxRetriesPerRequest: 5 }`) wins.
+ *
+ * Heuristic for identifying the options object: ioredis's declared
+ * overloads place the `RedisOptions` argument last when present, and it
+ * is always a plain object literal (never `null`, never a `Buffer`, never
+ * an array, never a URL instance — none of those shapes are valid ioredis
+ * inputs). If the trailing arg fails the shape check we append a fresh
+ * defaults-only options object instead.
+ */
+function withBullMqSafeDefaults(args: unknown[]): unknown[] {
+  const last = args.length > 0 ? args[args.length - 1] : undefined;
+  const lastIsOptions =
+    last !== null &&
+    last !== undefined &&
+    typeof last === "object" &&
+    !Array.isArray(last) &&
+    !(last instanceof Date);
+  if (lastIsOptions) {
+    const merged = { ...BULLMQ_SAFE_REDIS_DEFAULTS, ...(last as RedisOptions) };
+    const copy = args.slice();
+    copy[copy.length - 1] = merged;
+    return copy;
+  }
+  return [...args, { ...BULLMQ_SAFE_REDIS_DEFAULTS }];
+}
+
+// ---------------------------------------------------------------------------
 // Instrumented subclass
 // ---------------------------------------------------------------------------
 
@@ -98,13 +164,46 @@ export function normalizeCommand(name: string): string {
  * accepts a `connection` option. BullMQ will use it for all non-blocking
  * commands, and `duplicate()` ensures the blocking connection carries the
  * same instrumentation.
+ *
+ * The constructor merges `BULLMQ_SAFE_REDIS_DEFAULTS` (`maxRetriesPerRequest:
+ * null`, `enableReadyCheck: false`) into the options object so any
+ * pre-built client handed to BullMQ boots cleanly without per-call-site
+ * boilerplate. Caller-supplied values for those keys still win.
  */
 export class InstrumentedRedis extends Redis {
+  // Mirror the ioredis overload set so call sites keep the same shapes.
+  // The single rest-parameter implementation forwards to `super` after
+  // injecting BullMQ-safe defaults into the options argument.
+  constructor(port: number, host: string, options: RedisOptions);
+  constructor(path: string, options: RedisOptions);
+  constructor(port: number, options: RedisOptions);
+  constructor(port: number, host: string);
+  constructor(options: RedisOptions);
+  constructor(port: number);
+  constructor(path: string);
+  constructor();
+  constructor(...args: unknown[]) {
+    // The variadic spread does not align with any single declared
+    // overload of `Redis` (each overload is fixed-arity), so TypeScript
+    // refuses `super(...args)` directly. ioredis's runtime parser
+    // accepts any of the documented shapes — we forward unchanged after
+    // injecting the BullMQ-safe defaults. The double-cast through
+    // `unknown` keeps this a typed escape rather than a wholesale `any`.
+    const finalArgs = withBullMqSafeDefaults(args);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    super(...(finalArgs as unknown as [any, any, any]));
+  }
+
   /**
    * Returns a new `InstrumentedRedis` with the same options so BullMQ's
    * blocking connection (created via `connection.duplicate()`) is also
    * instrumented. Without this override, `duplicate()` returns a plain
    * `Redis` instance.
+   *
+   * The constructor enforces `BULLMQ_SAFE_REDIS_DEFAULTS` regardless of
+   * what `this.options` carries, so the duplicated client is always
+   * BullMQ-compatible — even if a future refactor weakened the source
+   * client's options.
    */
   override duplicate(override?: Partial<RedisOptions>): InstrumentedRedis {
     return new InstrumentedRedis({ ...this.options, ...override });
