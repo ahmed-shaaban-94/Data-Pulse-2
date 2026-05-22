@@ -52,6 +52,21 @@ import {
   type SignInInput,
 } from "./dto";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import {
+  recordAuthFailure,
+  recordSuspiciousLogin,
+} from "../observability/metrics/api.metrics";
+
+/**
+ * Rate-limit bucket names that represent failed sign-in attempts. A 429 on
+ * one of these counts as both an auth failure (cause="rate_limited") and a
+ * suspicious-login event (reason="rapid_retry"). The pwreset bucket is NOT
+ * an authentication attempt and is intentionally excluded.
+ */
+const SIGNIN_RATE_LIMIT_BUCKETS = new Set<string>([
+  "signin_account",
+  "signin_ip",
+]);
 
 /** Conforms to OpenAPI `SignInResponse`. */
 interface SignInResponseBody {
@@ -231,7 +246,26 @@ export class AuthController {
     policy: { limit: number; windowMs: number },
   ): Promise<void> {
     const decision = await this.rateLimiter.check(bucket, identifier, policy);
-    if (!decision.allowed) throw RATE_LIMIT_429;
+    if (!decision.allowed) {
+      // T470 — observability: a 429 on a sign-in bucket is a failed auth
+      // attempt AND the existing rate-limit detector for rapid-retry
+      // suspicious-login activity. We do not invent new detection here —
+      // the rate-limit verdict IS the existing detector.
+      //
+      // Label sets (both bounded):
+      //   auth_failure_total.cause:  "bad_password" | "bad_token" | "expired"
+      //                              | "missing" | "rate_limited"
+      //   suspicious_login_total.reason: "rapid_retry" | "geo_anomaly"
+      //                                  | "unknown_device"
+      //
+      // The pwreset_ip bucket is intentionally NOT emitted as an auth
+      // failure: password-reset request is not an authentication attempt.
+      if (SIGNIN_RATE_LIMIT_BUCKETS.has(bucket)) {
+        recordAuthFailure({ cause: "rate_limited" });
+        recordSuspiciousLogin({ reason: "rapid_retry" });
+      }
+      throw RATE_LIMIT_429;
+    }
   }
 }
 

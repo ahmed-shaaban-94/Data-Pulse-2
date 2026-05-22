@@ -47,6 +47,7 @@ import {
   NoOpAuditJobEnqueuer,
 } from "../audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../audit/audit-job.types";
+import { recordAuthFailure } from "../observability/metrics/api.metrics";
 
 /**
  * Pre-computed argon2id PHC string used for the constant-time path when
@@ -180,6 +181,18 @@ export class AuthService {
     const passwordOk = await verifyPassword(phc, password);
 
     if (!userRow || userRow.passwordHash === null || !passwordOk) {
+      // T470 — observability: emit auth_failure_total{cause="bad_password"}
+      // for every credential-verify failure branch (unknown email, SSO-only
+      // null passwordHash, soft-deleted, wrong password). These branches are
+      // deliberately indistinguishable to the client per FR-ISO-4 (anti-
+      // enumeration); the metric mirrors that intent by emitting the same
+      // outcome-derived `cause` label for all of them. The label set is
+      // bounded by AuthFailureCause:
+      //   cause: "bad_password" | "bad_token" | "expired" | "missing" | "rate_limited"
+      // Emitted BEFORE the throw so a downstream catch can't suppress the
+      // metric without also suppressing the exception.
+      recordAuthFailure({ cause: "bad_password" });
+
       // T238 — emit anonymous-actor audit event AFTER the constant-time
       // verify path so timing is preserved across all failure modes
       // (unknown email, SSO-only, soft-deleted, wrong password). The

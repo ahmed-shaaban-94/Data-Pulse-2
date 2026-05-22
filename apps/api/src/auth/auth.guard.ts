@@ -33,6 +33,7 @@ import type { Request } from "express";
 import type { AuthTokenRow, BearerAuthScope, SessionRow } from "@data-pulse-2/db/schema";
 import { SessionRepository } from "./session.repository";
 import { AuthTokenRepository } from "./auth-token.repository";
+import { recordAuthFailure } from "../observability/metrics/api.metrics";
 
 export const SESSION_COOKIE_NAME = "dp2_session";
 const BEARER_PREFIX = "bearer ";
@@ -96,7 +97,19 @@ export class AuthGuard implements CanActivate {
     const sessionId = readSessionCookie(request);
     if (sessionId !== null) {
       const session = await this.sessions.findActiveById(sessionId);
-      if (!session) throw unauthorized();
+      if (!session) {
+        // T470 — observability: emit auth_failure_total{cause="bad_token"}.
+        // `findActiveById` returns null for every non-live row (missing,
+        // revoked, past absolute-expiry) without distinguishing between
+        // them — that's FR-ISO-4 by design. We therefore cannot emit the
+        // `expired` cause cleanly from this site without changing repo
+        // behaviour, so `bad_token` covers the whole "session cookie was
+        // presented but is not valid" outcome.
+        // Bounded enum (AuthFailureCause):
+        //   "bad_password" | "bad_token" | "expired" | "missing" | "rate_limited"
+        recordAuthFailure({ cause: "bad_token" });
+        throw unauthorized();
+      }
       request.principal = principalFromSession(session);
       return true;
     }
@@ -107,12 +120,24 @@ export class AuthGuard implements CanActivate {
       // Reject missing tokens AND single-use workflow tokens — both must
       // produce the same UnauthorizedException shape (FR-ISO-4).
       if (!token || !BEARER_AUTH_SCOPES.has(token.scope as BearerAuthScope)) {
+        // T470 — observability: emit auth_failure_total{cause="bad_token"}.
+        // Same FR-ISO-4 rationale as the session branch above —
+        // `findActiveByRawToken` returns null for missing/revoked/expired
+        // uniformly, plus we explicitly reject single-use workflow scopes
+        // (password_reset/email_verify) here. All such paths roll up to a
+        // single `bad_token` outcome.
+        recordAuthFailure({ cause: "bad_token" });
         throw unauthorized();
       }
       request.principal = principalFromToken(token);
       return true;
     }
 
+    // T470 — observability: emit auth_failure_total{cause="missing"}.
+    // No usable credential on the request: no session cookie AND no bearer
+    // header (or both were syntactically invalid: empty/whitespace cookie,
+    // header shorter than "bearer ", wrong prefix, empty-after-trim).
+    recordAuthFailure({ cause: "missing" });
     throw unauthorized();
   }
 }
