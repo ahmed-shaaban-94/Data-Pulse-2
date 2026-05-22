@@ -8,6 +8,34 @@
 
 ## Changelog
 
+- **2026-05-22** (P4 seeded-evidence run — `de3bd9d`, after PR #286) —
+  Ran a fully-seeded P4 operator-evidence pass on `main` at `de3bd9d`
+  (HEAD = PR #286: `feat(observability): wire auth_failure_total and
+  suspicious_login_total to production call sites`). Lit up six previously-absent
+  SAFE signals from the §9 "still not live-proven" list:
+  `auth_failure_total` (4 distinct `cause` values: `bad_password`, `bad_token`,
+  `missing`, `rate_limited`), `suspicious_login_total{reason="rapid_retry"}`,
+  `cross_tenant_rejection_total`, `tenant_context_failure_total{reason="cross_tenant"}`,
+  `idempotency_in_progress_total`, and `worker_processing_failure_total`.
+  PR #286 emission is therefore fully live-proven against production call-sites
+  (auth.guard + auth.service + auth.controller rate-limit branch). PR #284 fix
+  for `db_migration_status` confirmed LIVE — gauge now correctly reports
+  `applied=1, pending=0, failed=0` (closes §9.6 defect). Bonus signal proven
+  LIVE this run: `http_error_5xx_total` — incidentally exercised by a new defect
+  (see below). Two SAFE signals NOT live-proven: `idempotency_replay_total` and
+  `idempotency_conflict_total` — blocked by a separate production defect in
+  `EmailQueueProducer.deriveJobId` that returns `${scope}:${hashHex}` containing
+  a `:` which BullMQ 5.76.5 rejects with `Custom Id cannot contain :`. All three
+  email-enqueue paths (invite / password-reset / email-verify) return 500 on
+  the success branch; without a successful `tap.next`, the idempotency store
+  never persists a replay record. Interceptor wiring is otherwise correct —
+  proven by `idempotency_in_progress_total` firing on the same endpoint.
+  **P4 verdict remains PARTIAL** — `db_slow_query_total`,
+  `db_rls_context_failure_total`, and the two idempotency replay/conflict signals
+  remain absent; the latter two are now blocked on a separate code defect,
+  not on a wiring gap. Evidence in
+  `docs/observability/operator-validation-report.md §10`.
+
 - **2026-05-22** (P4 operator-evidence re-run — `857c178`) —
   Re-ran P4 operator-evidence on `main` at `857c178` after PRs #275 (Redis +
   slow-query hooks), #278 (worker InstrumentedRedis/BullMQ regression fix),
@@ -104,7 +132,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. PR #269 (PR-E) closed the `route="unknown"` exception-filter gap. **2026-05-22 re-run** on `857c178` (after PRs #275, #278, #279, #281): worker `:9091` boot UNBLOCKED by PR #278; `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` all now LIVE-SCRAPED with bounded labels. `db_migration_status` is live-scraped but **defective** — emits `pending=1` permanently due to PR #245 exports map blocking the registrar's FS discovery (fails safe; alerts unusable until fixed). `db_slow_query_total` pool hook wired (PR #275 W5) but not exercised — no query >500ms. Six business-path signals (auth-failure, suspicious-login, tenant-context-failure, idempotency-{replay,conflict,in-progress}) plus cross-tenant and RLS-failure remain production-emitting but not live-proven — require seeded auth state. P4 remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md §9`. |
+| P4 — Observability instrumentation | B | **PARTIAL** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. PR #269 (PR-E) closed the `route="unknown"` exception-filter gap. **2026-05-22 re-run** on `857c178`: worker `:9091` boot UNBLOCKED by PR #278; `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` all now LIVE-SCRAPED with bounded labels. **2026-05-22 seeded-evidence run** on `de3bd9d` (HEAD = PR #286): six previously-absent SAFE signals confirmed LIVE — `auth_failure_total` (4 distinct causes), `suspicious_login_total{rapid_retry}`, `cross_tenant_rejection_total`, `tenant_context_failure_total{cross_tenant}`, `idempotency_in_progress_total`, `worker_processing_failure_total`. Bonus signal LIVE incidentally: `http_error_5xx_total` (via EmailQueueProducer defect — see §4.C). PR #284 (`b5b8d1b`) closed the §9.6 `db_migration_status` defect — gauge now correctly reports `applied=1, pending=0, failed=0`. Four signals still NOT live-proven: `idempotency_replay_total` and `idempotency_conflict_total` (blocked by separate EmailQueueProducer `deriveJobId` defect — colons rejected by BullMQ 5.76.5), `db_slow_query_total` (no >500ms query exercised), `db_rls_context_failure_total` (unreachable from HTTP without source change). P4 remains PARTIAL — see §4.C and `docs/observability/operator-validation-report.md §10`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
 | P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
@@ -287,23 +315,28 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
 
    | Signal | Current tier | Blocker / note |
    |---|---|---|
-   | `db_migration_status` | **Live-scraped but DEFECTIVE** (PR #271 + 2026-05-22 re-run) | Family present in API scrape with three `state` samples. Emits `applied=0, pending=1, failed=0` permanently because `require.resolve("@data-pulse-2/db/package.json")` in `apps/api/src/app.module.ts:60` is rejected by PR #245's restricted `exports` map → registrar falls back to `Number.MAX_SAFE_INTEGER` → `applied >= totalMigrations` is always false. Fails-safe (never falsely reports applied) but unusable for alerts. Fix: widen `@data-pulse-2/db` exports to include `./package.json`, OR switch the registrar to a non-`require.resolve` discovery (e.g. read `_drizzle_migrations` count without FS). See report §9.6. |
+   | `db_migration_status` | **Live-scraped and CORRECT** (PR #271 wiring + PR #284 fix + 2026-05-22 seeded-evidence run) | The PR #245 exports-map regression from §9.6 was closed by PR #284 (`b5b8d1b` — `fix(observability): safe discovery for db_migration_status`). Scrape now correctly emits `applied=1, pending=0, failed=0` against an up-to-date ledger. |
    | `db_pool_in_use` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | API + worker both observe synchronous pool counter; both reported 0 at idle scrape, which is correct. |
    | `db_pool_waiters` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | Same as above. |
    | `redis_command_duration_seconds` | **Live-scraped** (PR #275 W4 + 2026-05-22 re-run) | Worker scrape shows 4 bounded `command` buckets observed during boot + drainer ticks: `{other, eval, evalsha, hgetall}`. No high-cardinality leakage. PR #278 unblocked worker boot under InstrumentedRedis. |
    | `queue_lag_seconds` | **Live-scraped** (PR #270 + 2026-05-22 re-run) | Worker scrape shows all 5 BullMQ queue readers (`audit-fanout`, `soft-delete-sweep`, `email`, `session-revoke`, `audit-retention`). `audit-retention` reports lag=100s in a freshly-started worker, all others 0. |
-   | `db_slow_query_total` | Pool hook wired (PR #275 W5); not yet live-scraped | `InstrumentedPool` subclass instruments Promise-form `query()` in API and worker; 500ms threshold; `query_class` is SHA-256 first 8 hex chars. Re-run 2026-05-22 did not trigger emission — no exercised query exceeded 500ms on local dev. Requires a forced-slow query path to live-prove. |
-   | `auth_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires seeded user + specific failure path. |
-   | `suspicious_login_total` | Production-emitting | Emission call-site exists; not live-proven in T483 (requires multi-attempt suspicious pattern with seeded users). |
-   | `tenant_context_failure_total` | Production-emitting | Emission call-site exists; not live-proven — requires authenticated request with bad tenant context. |
-   | `cross_tenant_rejection_total` | Production-emitting (T475 DONE 2026-05-22) | Emission confirmed at `tenant-context.guard.ts:127`; not live-proven — requires an authenticated cross-tenant request. |
-   | `db_rls_context_failure_total` | Production-emitting (T476 DONE 2026-05-22) | Emission confirmed at `tenant-context.guard.ts:283`; not live-proven — requires DB bootstrap failure path. |
-   | `idempotency_replay_total` | Production-emitting | Requires `POST /api/v1/memberships/invite` with `Idempotency-Key` + real authenticated context; out of scope for T483. |
-   | `idempotency_conflict_total` | Production-emitting | Same as above. |
-   | `idempotency_in_progress_total` | Production-emitting | Same as above. |
+   | `auth_failure_total` | **Live-scraped** (PR #286 + 2026-05-22 seeded-evidence run) | All four `cause` values observed in `:9464` scrape: `bad_password=5`, `bad_token=1`, `missing=1`, `rate_limited=3`. Bounded enum holds. See report §10.5. |
+   | `suspicious_login_total` | **Live-scraped** (PR #286 + 2026-05-22 seeded-evidence run) | `{reason="rapid_retry"} 3` observed via 7-attempt sign-in burst tripping the `signin_account` rate-limit policy (limit=5/15min). |
+   | `tenant_context_failure_total` | **Live-scraped** (T475/T476 wiring + 2026-05-22 seeded-evidence run) | `{reason="cross_tenant"} 2` observed via authenticated invite from cross-tenant trap session. Paired with `cross_tenant_rejection_total` per signals.md §1. |
+   | `cross_tenant_rejection_total` | **Live-scraped** (T475 DONE + 2026-05-22 seeded-evidence run) | `{route="/api/v1/memberships/invite"} 2` observed — emission call-site at `tenant-context.guard.ts:127`. |
+   | `idempotency_in_progress_total` | **Live-scraped** (T520 + 2026-05-22 seeded-evidence run) | `{route="POST:/api/v1/memberships/invite"} 2` observed via parallel curl race with same Idempotency-Key. Inter-signal label-shape note: this is the only API custom metric that uses `METHOD:PATH` rather than `PATH` for `route` — bounded but inconsistent; track as future polish. |
+   | `worker_processing_failure_total` | **Live-scraped** (T596 + 2026-05-22 seeded-evidence run) | `{job_name="audit-fanout", error_class="UnknownError"} 1` observed via direct BullMQ enqueue of malformed `audit-fanout` job. The processor threw `MalformedAuditJobError`; the bounded-label sanitizer correctly bucketed it as `UnknownError`. Polish opportunity: consider adding `MalformedAuditJobError` to `sanitizeErrorClass` allowlist for sharper alerting. |
+   | `http_error_5xx_total` | **Live-scraped** (2026-05-22 seeded-evidence run — incidental) | `{route="/api/v1/memberships/invite", status="500"} 8` observed. Exercised inadvertently by the new EmailQueueProducer defect (see new entry below). Counter increments and `route` template binding both confirmed. |
+   | `db_slow_query_total` | Pool hook wired (PR #275 W5); **NOT live-scraped** | `InstrumentedPool` subclass instruments Promise-form `query()` in API and worker; 500ms threshold; `query_class` is SHA-256 first 8 hex chars. Neither the §9 nor the §10 seeded-evidence runs triggered emission — no exercised query exceeded 500ms on local containers. Requires either a deliberately-slow query in a controlled endpoint, or a future production-side soak run. |
+   | `db_rls_context_failure_total` | Production-emitting (T476 DONE 2026-05-22); **NOT live-scraped** | Emission confirmed at `tenant-context.guard.ts:283`; not reachable from HTTP without source change (the `runWithTenantContext` boundary catches and re-raises HttpExceptions but the rls-failure detector fires only on non-HttpException error class). Deferred to a future slice that surfaces a controlled bootstrap-failure path. |
+   | `idempotency_replay_total` | Production-emitting; **BLOCKED — NOT live-scraped** | Wiring confirmed (`idempotency.interceptor.ts:239`). Cannot be live-proven via `/api/v1/memberships/invite` until the EmailQueueProducer defect below is fixed: the interceptor only persists a replay-able result on `tap.next` (success), but every success-branch invite currently 500s downstream of the interceptor. Same blocker applies to `idempotency_conflict_total`. |
+   | `idempotency_conflict_total` | Production-emitting; **BLOCKED — NOT live-scraped** | Same blocker as `idempotency_replay_total`. |
+   | **`EmailQueueProducer.deriveJobId` defect** (new — 2026-05-22 seeded-evidence run) | **Live production defect** | `apps/api/src/auth/email-queue.producer.ts:238-241` returns `${scope}:${hash}` containing `:`; BullMQ 5.76.5's `Job.validateOptions` rejects custom jobIds with `:`. Affects all three callers: `enqueueInvitation` (line 197), `enqueuePasswordReset` (line 175), `enqueueEmailVerification` (line 187). Every successful authenticated invite / password-reset / email-verify request returns 500. Recommended fix: change separator to `-` or `_`; add a unit test that runs the derived ID through `Job.validateOptions`. Side-effect: this defect is what exercised `http_error_5xx_total` for the first time in any operator-validation run. See report §10.6. |
 
-   A future operator-validation slice must exercise these paths and record scrape
-   evidence to move P4 to DONE.
+   A future operator-validation slice must exercise the remaining absent signals
+   (`db_slow_query_total`, `db_rls_context_failure_total`, and — after the
+   EmailQueueProducer defect is fixed — `idempotency_replay_total` /
+   `idempotency_conflict_total`) to move P4 to DONE.
 
 ### D — Future Schema / Migration Work
 
