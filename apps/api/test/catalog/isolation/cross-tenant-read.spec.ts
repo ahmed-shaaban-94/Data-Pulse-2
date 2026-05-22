@@ -23,7 +23,7 @@
  * - tenant_products              (two rows per tenant: 1 active + 1 retired)
  * - tenant_product_categories    (one row per tenant)
  * - store_product_overrides      (two rows per tenant: one per store)
- * - product_aliases              (two rows per tenant: barcode + store-scoped sku)
+ * - product_aliases              (two rows per tenant: barcode + external_pos_id)
  * - price_history                (two rows per tenant: tenant-level + store-X)
  * - unknown_items                (two rows per tenant: one per store)
  *
