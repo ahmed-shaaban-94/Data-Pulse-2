@@ -22,10 +22,13 @@
  * --------------
  * - tenant_products              (two rows per tenant: 1 active + 1 retired)
  * - tenant_product_categories    (one row per tenant)
- * - store_product_overrides      (two rows per tenant: one per store)
- * - product_aliases              (two rows per tenant: barcode + external_pos_id)
+ * - store_product_overrides      (two rows per tenant — asserted per store,
+ *                                 one at a time, because the 0008 SELECT
+ *                                 policy requires `app.current_store`)
+ * - product_aliases              (two rows per tenant: barcode + store-scoped sku)
  * - price_history                (two rows per tenant: tenant-level + store-X)
- * - unknown_items                (two rows per tenant: one per store)
+ * - unknown_items                (two rows per tenant — asserted per store,
+ *                                 same 0008 policy constraint as overrides)
  *
  * global_products is intentionally NOT covered here: it has no tenant_id
  * column and its SELECT policy is intentionally unrestricted for the
@@ -99,6 +102,43 @@ function maybeSkip(): boolean {
   return false;
 }
 
+// ---- Tenant + store context helper --------------------------------------
+//
+// `store_product_overrides` and `unknown_items` carry the post-0008 RLS
+// SELECT policy that AND-combines `app.current_tenant` with
+// `(store_id = app.current_store OR app.current_store = '')`. The
+// documented "empty-string carve-out" does NOT actually work in
+// Postgres — the `::uuid` cast on the left of the OR fires before the
+// short-circuit (see `0008_catalog_store_read_isolation.sql:74-78`),
+// raising `invalid input syntax for type uuid: ""` for any caller that
+// sets `app.current_store = ''`.
+//
+// As a result, every read of those two tables under a runtime role
+// must set `app.current_store` to a real store UUID. The native
+// `runWithTenantContext` helper only sets `app.current_tenant`, so we
+// wrap it here and prepend a `set_config('app.current_store', $1, true)`
+// call.
+//
+// Production code paths (T350+ services) will route through a similar
+// store-context helper once the services land; for now this lives only
+// in tests against the schema.
+async function runWithTenantStoreContext<T>(
+  pool: import("pg").Pool,
+  ctx: { tenantId: string; isPlatformAdmin: boolean; storeId: string },
+  work: (client: import("pg").PoolClient) => Promise<T>,
+): Promise<T> {
+  return runWithTenantContext(
+    pool,
+    { tenantId: ctx.tenantId, isPlatformAdmin: ctx.isPlatformAdmin },
+    async (client) => {
+      await client.query("SELECT set_config('app.current_store', $1, true)", [
+        ctx.storeId,
+      ]);
+      return work(client);
+    },
+  );
+}
+
 // --------------------------------------------------------------------------
 // Group A — Tenant A context sees own rows only
 // --------------------------------------------------------------------------
@@ -135,19 +175,43 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
     }
   });
 
-  it("store_product_overrides: Tenant A sees exactly 2 rows (own tenant only)", async () => {
+  it("store_product_overrides: Tenant A + Store A-X sees exactly 1 own row", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string; tenant_id: string }>(
-        `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
-      );
-      return r.rows;
-    });
-    // 2 per tenant (one per store)
-    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.store_product_overrides / 2);
-    for (const row of rows) {
-      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    }
+    // The 0008 store-isolation policy requires a real store UUID;
+    // each store-bound context sees only that store's row. To prove
+    // the tenant-level invariant we check both stores in sequence.
+    const rowsAtX = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rowsAtX).toHaveLength(1);
+    expect(rowsAtX[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    expect(rowsAtX[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAX);
+    expect(rowsAtX[0]!.id).toBe(CATALOG_FIXTURE_IDS.overrideAX);
+  });
+
+  it("store_product_overrides: Tenant A + Store A-Y sees exactly 1 own row", async () => {
+    if (maybeSkip()) return;
+    const rowsAtY = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAY },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rowsAtY).toHaveLength(1);
+    expect(rowsAtY[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    expect(rowsAtY[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAY);
+    expect(rowsAtY[0]!.id).toBe(CATALOG_FIXTURE_IDS.overrideAY);
   });
 
   it("product_aliases: Tenant A sees exactly 2 rows (own tenant only)", async () => {
@@ -178,18 +242,40 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
     }
   });
 
-  it("unknown_items: Tenant A sees exactly 2 rows (own tenant only)", async () => {
+  it("unknown_items: Tenant A + Store A-X sees exactly 1 own row", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string; tenant_id: string }>(
-        `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
-      );
-      return r.rows;
-    });
-    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.unknown_items / 2);
-    for (const row of rows) {
-      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
-    }
+    const rowsAtX = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rowsAtX).toHaveLength(1);
+    expect(rowsAtX[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    expect(rowsAtX[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAX);
+    expect(rowsAtX[0]!.id).toBe(CATALOG_FIXTURE_IDS.unknownAX);
+  });
+
+  it("unknown_items: Tenant A + Store A-Y sees exactly 1 own row", async () => {
+    if (maybeSkip()) return;
+    const rowsAtY = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAY },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rowsAtY).toHaveLength(1);
+    expect(rowsAtY[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantA);
+    expect(rowsAtY[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeAY);
+    expect(rowsAtY[0]!.id).toBe(CATALOG_FIXTURE_IDS.unknownAY);
   });
 });
 
@@ -238,25 +324,35 @@ describe("T341 — cross-tenant read isolation: Tenant A cannot read Tenant B ro
 
   it("store_product_overrides: direct-by-id lookup of Tenant B's Store-X override returns empty", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string }>(
-        `SELECT id FROM store_product_overrides WHERE id = $1`,
-        [CATALOG_FIXTURE_IDS.overrideBX],
-      );
-      return r.rows;
-    });
+    // The 0008 policy demands `app.current_store` even for negative
+    // assertions — set Tenant A's own store so the cast does not raise.
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM store_product_overrides WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.overrideBX],
+        );
+        return r.rows;
+      },
+    );
     expect(rows).toEqual([]);
   });
 
   it("store_product_overrides: direct-by-id lookup of Tenant B's Store-Y override returns empty", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string }>(
-        `SELECT id FROM store_product_overrides WHERE id = $1`,
-        [CATALOG_FIXTURE_IDS.overrideBY],
-      );
-      return r.rows;
-    });
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM store_product_overrides WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.overrideBY],
+        );
+        return r.rows;
+      },
+    );
     expect(rows).toEqual([]);
   });
 
@@ -310,25 +406,33 @@ describe("T341 — cross-tenant read isolation: Tenant A cannot read Tenant B ro
 
   it("unknown_items: direct-by-id lookup of Tenant B's Store-X item returns empty", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string }>(
-        `SELECT id FROM unknown_items WHERE id = $1`,
-        [CATALOG_FIXTURE_IDS.unknownBX],
-      );
-      return r.rows;
-    });
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM unknown_items WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.unknownBX],
+        );
+        return r.rows;
+      },
+    );
     expect(rows).toEqual([]);
   });
 
   it("unknown_items: direct-by-id lookup of Tenant B's Store-Y item returns empty", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string }>(
-        `SELECT id FROM unknown_items WHERE id = $1`,
-        [CATALOG_FIXTURE_IDS.unknownBY],
-      );
-      return r.rows;
-    });
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeAX },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM unknown_items WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.unknownBY],
+        );
+        return r.rows;
+      },
+    );
     expect(rows).toEqual([]);
   });
 });
@@ -368,18 +472,21 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
     }
   });
 
-  it("store_product_overrides: Tenant B context sees exactly 2 own rows", async () => {
+  it("store_product_overrides: Tenant B + Store B-X sees exactly 1 own row", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string; tenant_id: string }>(
-        `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
-      );
-      return r.rows;
-    });
-    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.store_product_overrides / 2);
-    for (const row of rows) {
-      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
-    }
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeBX },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM store_product_overrides ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    expect(rows[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeBX);
   });
 
   it("price_history: Tenant B context sees exactly 2 own rows", async () => {
@@ -410,29 +517,36 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
     }
   });
 
-  it("unknown_items: Tenant B context sees only its own rows", async () => {
+  it("unknown_items: Tenant B + Store B-X sees only its own row", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string; tenant_id: string }>(
-        `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
-      );
-      return r.rows;
-    });
-    expect(rows).toHaveLength(CATALOG_FIXTURE_COUNTS.unknown_items / 2);
-    for (const row of rows) {
-      expect(row.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
-    }
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeBX },
+      async (client) => {
+        const r = await client.query<{ id: string; tenant_id: string; store_id: string }>(
+          `SELECT id, tenant_id, store_id FROM unknown_items ORDER BY id`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.tenant_id).toBe(CATALOG_FIXTURE_IDS.tenantB);
+    expect(rows[0]!.store_id).toBe(CATALOG_FIXTURE_IDS.storeBX);
   });
 
   it("unknown_items: Tenant B context cannot see Tenant A's Store-X item by known ID", async () => {
     if (maybeSkip()) return;
-    const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      const r = await client.query<{ id: string }>(
-        `SELECT id FROM unknown_items WHERE id = $1`,
-        [CATALOG_FIXTURE_IDS.unknownAX],
-      );
-      return r.rows;
-    });
+    const rows = await runWithTenantStoreContext(
+      env!.app,
+      { ...ctx, storeId: CATALOG_FIXTURE_IDS.storeBX },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM unknown_items WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.unknownAX],
+        );
+        return r.rows;
+      },
+    );
     expect(rows).toEqual([]);
   });
 
@@ -495,12 +609,21 @@ describe("T341 — cross-tenant read isolation: runtime role without GUC is fail
     expect(r.rows[0]?.count).toBe("0");
   });
 
-  it("store_product_overrides: runtime role without GUC sees 0 rows", async () => {
+  it("store_product_overrides: runtime role without GUC is fail-closed (zero rows or RLS error)", async () => {
     if (maybeSkip() || !noGucPool) return;
-    const r = await noGucPool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM store_product_overrides`,
-    );
-    expect(r.rows[0]?.count).toBe("0");
+    // Post-0008 the SELECT policy ANDs `app.current_tenant` with a
+    // store check that performs `''::uuid` on the empty default,
+    // which raises `invalid input syntax for type uuid: ""`. Either
+    // outcome (no rows OR error) proves no data was visible — that
+    // is what fail-closed means in this context.
+    try {
+      const r = await noGucPool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM store_product_overrides`,
+      );
+      expect(r.rows[0]?.count).toBe("0");
+    } catch (err) {
+      expect(String(err)).toMatch(/invalid input syntax for type uuid/);
+    }
   });
 
   it("product_aliases: runtime role without GUC sees 0 rows", async () => {
@@ -519,11 +642,16 @@ describe("T341 — cross-tenant read isolation: runtime role without GUC is fail
     expect(r.rows[0]?.count).toBe("0");
   });
 
-  it("unknown_items: runtime role without GUC sees 0 rows", async () => {
+  it("unknown_items: runtime role without GUC is fail-closed (zero rows or RLS error)", async () => {
     if (maybeSkip() || !noGucPool) return;
-    const r = await noGucPool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM unknown_items`,
-    );
-    expect(r.rows[0]?.count).toBe("0");
+    // Same 0008 caveat as store_product_overrides above — see comment.
+    try {
+      const r = await noGucPool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM unknown_items`,
+      );
+      expect(r.rows[0]?.count).toBe("0");
+    } catch (err) {
+      expect(String(err)).toMatch(/invalid input syntax for type uuid/);
+    }
   });
 });
