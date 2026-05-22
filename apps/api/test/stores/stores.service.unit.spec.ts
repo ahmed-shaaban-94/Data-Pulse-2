@@ -35,6 +35,12 @@ import type { Pool, PoolClient } from "pg";
 
 jest.mock("@data-pulse-2/shared", () => ({
   newId: jest.fn(),
+  assertMetricLabels: jest.fn(),
+  getMeter: jest.fn(() => ({
+    createCounter: jest.fn(() => ({ add: jest.fn() })),
+    createHistogram: jest.fn(() => ({ record: jest.fn() })),
+    createObservableGauge: jest.fn(() => ({ addCallback: jest.fn(), removeCallback: jest.fn() })),
+  })),
 }));
 
 // ---------------------------------------------------------------------------
