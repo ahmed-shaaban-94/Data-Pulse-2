@@ -99,15 +99,17 @@ All 19 Wave 1 slices are at `status: proposed`. None have been approved for disp
 
 - **`005-WAVE1-POLISH`** (T560, T561, T562, T563, T564) — perf smoke test (SC-008), regression sweeps (T341/T342/T343/T344 + 001 idempotency + audit-fanout), header-name drift fixup, wave-status closeout.
 
-### Proposed parallel groups
+### Proposed phase cohorts
 
-| Group | Members | Notes |
+> **These are phase cohorts for human readability, NOT flat-dispatchable waves.** Runtime dispatch MUST honor each member slice's `depends_on` DAG in [`execution-map.yaml`](./execution-map.yaml). `parallel_safety: safe` on a group reflects the schema's file/fixture disjointness contract — it does not mean members are dependency-flat. See the `groups:` block header in `execution-map.yaml` for the full semantics.
+
+| Cohort | Members | Notes |
 |---|---|---|
-| `PHASE_1_2_PARALLEL` | SETUP + IDEMP-VERIFY + HARNESS | 3 slices, 5 tasks, no file overlap. Can dispatch as a wave after user endorsement. |
-| `PHASE_3_CAPTURE_RED_PARALLEL` | 6 RED test slices in Phase 3 | RED authoring only — GREEN impls serialize through shared `unknown-items.service.ts` and `unknown-items.controller.ts`. |
-| `PHASE_4_5_RED_PARALLEL` | 6 RED test slices in Phases 4+5 | Same caveat: RED parallel, GREEN serial. |
+| `PHASE_1_2_COHORT` | SETUP + IDEMP-VERIFY + HARNESS | Intra-cohort DAG: SETUP `blocks` the other two. After SETUP merges, IDEMP-VERIFY and HARNESS may dispatch in parallel worktrees (disjoint test paths). |
+| `PHASE_3_COHORT` | 7 capture/list slices | Intra-cohort DAG: CAPTURE-HAPPY is the root; descendants depend on it. RED test authoring is parallel-safe across disjoint spec files; GREEN impls serialize through shared `unknown-items.service.ts` and `unknown-items.controller.ts`. |
+| `PHASE_4_5_COHORT` | 7 idempotency/dismiss/audit/metrics slices | Intra-cohort DAG: IDEMP-WIRE `blocks` MISMATCH + EDGES; DISMISS `blocks` FR005 + AUDIT. RED tests where disjoint may dispatch in parallel; GREENs serialize through shared service/controller/filter files. |
 
-See [`execution-map.yaml`](./execution-map.yaml) `groups:` section for full member lists.
+See [`execution-map.yaml`](./execution-map.yaml) `groups:` section for full member lists, intra-cohort DAG notes, and the schema-anchored definition of what `parallel_safety: safe` means on a group.
 
 ---
 

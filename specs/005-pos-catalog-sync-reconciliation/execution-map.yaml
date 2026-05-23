@@ -558,51 +558,78 @@ slices:
     branch_template: "chore/005-wave1-polish"
 
 # ----------------------------------------------------------------------------
-# groups — proposed parallel waves
+# groups — phase cohorts (NOT flat-dispatchable waves)
 # ----------------------------------------------------------------------------
-# See tasks.md §10.3 for the source-of-truth parallel-set analysis. Groups
-# listed here are dispatch-actionable bundles.
+# Groups below are **phase cohorts** for human-readable navigation of slices
+# that share a phase boundary. They are **NOT flat-dispatchable bundles**.
+# Members may have intra-group `depends_on` edges; Maestro MUST topologically
+# sort by the per-slice `depends_on` DAG before dispatching any member.
+#
+# `parallel_safety: safe` on a group reflects the schema's file/fixture
+# disjointness contract (docs/agent-os/slice-schema.yaml §parallel_safety):
+# group members do not write to overlapping files and do not share test
+# fixture state. It does **NOT** mean the members are dependency-flat.
+#
+# Where two or more members are dependency-independent of each other AND
+# their predecessors are merged, those subsets MAY be dispatched in parallel
+# worktrees. Where members have intra-group dependencies (e.g., one member
+# blocks another), Maestro serializes them per the DAG.
+#
+# See tasks.md §10.3 for the source-of-truth parallel-set analysis at the
+# RED-authoring level.
 
 groups:
 
-  - id: PHASE_1_2_PARALLEL
+  - id: PHASE_1_2_COHORT
     members:
       - 005-WAVE1-SETUP
       - 005-WAVE1-IDEMP-VERIFY
       - 005-WAVE1-HARNESS
-    parallel_safety: safe
+    parallel_safety: safe   # file/fixture disjoint per schema
     proposed: true
-    # Notes: T500/T501 (SETUP) touches the module dir + api.metrics.ts. T505
-    # (IDEMP-VERIFY) is a single new spec file. T506/T507 (HARNESS) are two new
-    # files under apps/api/test/catalog/. No file overlap. Maestro may dispatch
-    # all three in parallel worktrees after user endorsement.
+    # Intra-group DAG: SETUP `blocks` IDEMP-VERIFY and HARNESS, so SETUP
+    # MUST land before the other two. After SETUP merges, IDEMP-VERIFY and
+    # HARNESS may dispatch in parallel worktrees (they touch disjoint test
+    # paths). File scope: SETUP edits the module dir + api.metrics.ts;
+    # IDEMP-VERIFY is one new spec file under .../idempotency/; HARNESS adds
+    # two new files under .../__support__/ and .../isolation/.
 
-  - id: PHASE_3_CAPTURE_RED_PARALLEL
+  - id: PHASE_3_COHORT
     members:
-      - 005-WAVE1-CAPTURE-RESOLVE   # T513 RED
-      - 005-WAVE1-CAPTURE-STORE-SCOPE   # T515 RED
-      - 005-WAVE1-CAPTURE-DEDUP   # T517 RED
-      - 005-WAVE1-VALIDATION   # T519 RED
-      - 005-WAVE1-NON-DISCLOSING   # T521 RED
-      - 005-WAVE1-LIST   # T523 RED
-    parallel_safety: safe
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-CAPTURE-RESOLVE
+      - 005-WAVE1-CAPTURE-STORE-SCOPE
+      - 005-WAVE1-CAPTURE-DEDUP
+      - 005-WAVE1-VALIDATION
+      - 005-WAVE1-NON-DISCLOSING
+      - 005-WAVE1-LIST
+    parallel_safety: safe   # RED spec files are disjoint per schema
     proposed: true
-    # Notes: only the RED test authoring is parallel-safe — each spec file is
-    # disjoint. The GREEN implementations must serialize through the shared
-    # unknown-items.service.ts and unknown-items.controller.ts files. See
-    # tasks.md §10.3.
+    # Intra-group DAG: CAPTURE-HAPPY is the root; CAPTURE-RESOLVE,
+    # VALIDATION, NON-DISCLOSING, LIST all `depends_on: CAPTURE-HAPPY`.
+    # CAPTURE-STORE-SCOPE and CAPTURE-DEDUP both `depends_on: CAPTURE-RESOLVE`.
+    # The group is NOT a flat dispatch wave. RED test authoring across
+    # members is parallel-safe (each spec file disjoint), but GREEN
+    # implementations serialize through unknown-items.service.ts and
+    # unknown-items.controller.ts. See tasks.md §10.3.
 
-  - id: PHASE_4_5_RED_PARALLEL
+  - id: PHASE_4_5_COHORT
     members:
-      - 005-WAVE1-IDEMP-WIRE   # T530 RED
-      - 005-WAVE1-IDEMP-MISMATCH   # T532 RED
-      - 005-WAVE1-IDEMP-EDGES   # T534/T535/T536 RED
-      - 005-WAVE1-DISMISS   # T540/T542 RED
-      - 005-WAVE1-AUDIT   # T546/T548/T550 RED
-      - 005-WAVE1-METRICS   # T552 RED
-    parallel_safety: safe
+      - 005-WAVE1-IDEMP-WIRE
+      - 005-WAVE1-IDEMP-MISMATCH
+      - 005-WAVE1-IDEMP-EDGES
+      - 005-WAVE1-DISMISS
+      - 005-WAVE1-FR005
+      - 005-WAVE1-AUDIT
+      - 005-WAVE1-METRICS
+    parallel_safety: safe   # RED spec files are disjoint per schema
     proposed: true
-    # Notes: same caveat as PHASE_3 — RED test files are disjoint, GREENs serialize.
+    # Intra-group DAG: IDEMP-WIRE `blocks` IDEMP-MISMATCH + IDEMP-EDGES.
+    # IDEMP-MISMATCH `blocks` AUDIT + METRICS. DISMISS `blocks` FR005 + AUDIT.
+    # See per-slice depends_on edges above. RED tests within disjoint spec
+    # files may dispatch in parallel where predecessors are merged; GREEN
+    # implementations serialize through the shared service/controller/filter
+    # files.
 
 # ----------------------------------------------------------------------------
 # Wave 2 — not yet enumerated
