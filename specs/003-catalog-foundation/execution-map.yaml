@@ -723,6 +723,89 @@ slices:
       cross-tenant-read 31/31; T342 cross-store-read 17 passed / 4 todo; 0001-catalog
       27/27; migrate.spec.ts 10/10.
 
+  # ===== Gated SQL slice — store carve-out sentinel fix ====================
+
+  - id: 0011_CATALOG_STORE_CARVEOUT_SENTINEL
+    task_ids: []
+    type: fix
+    status: in_progress
+    approval_required: true       # gated (SQL migration) — [GATED] approved 2026-05-23
+    depends_on:
+      - 0010_CATALOG_TENANT_GUC_CAST_FIX  # 0010 bodies are the baseline for down-migration
+    blocks: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/drizzle/0011_catalog_store_carveout_sentinel.sql         # [GATED]
+      - packages/db/drizzle/0011_catalog_store_carveout_sentinel.down.sql    # [GATED]
+      - specs/003-catalog-foundation/rls-test-matrix.md                      # §4.3/§4.6/§7.3/§7.6 sentinel docs
+      - apps/api/test/catalog/isolation/cross-store-read.spec.ts             # convert 4 it.todo
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts             # convert 4 it.todo
+      - apps/api/test/catalog/isolation/cross-tenant-read.spec.ts           # update 4 '' → '*' carve-out call sites
+      - packages/db/__tests__/cli/migrate.spec.ts                            # add 0011 to EXPECTED_MIGRATIONS
+      - specs/003-catalog-foundation/execution-map.yaml
+      - specs/003-catalog-foundation/wave-status.md
+    forbidden_files:
+      - packages/db/drizzle/0007_catalog.sql
+      - packages/db/drizzle/0007_catalog.down.sql
+      - packages/db/drizzle/0008_catalog_store_read_isolation.sql
+      - packages/db/drizzle/0008_catalog_store_read_isolation.down.sql
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.sql
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.down.sql
+      - packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.sql
+      - packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.down.sql
+      - packages/db/src/schema/**
+      - packages/contracts/openapi/**
+      - package.json
+      - pnpm-lock.yaml
+      - .github/**
+    sentinel: "'*'"   # app.current_store = '*' → tenant-owner cross-store carve-out (Option B, confirmed 2026-05-23)
+    migrations:
+      up:   packages/db/drizzle/0011_catalog_store_carveout_sentinel.sql
+      down: packages/db/drizzle/0011_catalog_store_carveout_sentinel.down.sql
+      predecessor_form: 0010   # down must restore exact 0010-form bodies for all 3 policies
+    sql_policy_targets:
+      - store_product_overrides_select          # SELECT USING — add WHEN '*' THEN TRUE before WHEN '' THEN FALSE
+      - store_product_overrides_tenant_write    # FOR ALL USING + WITH CHECK — same change
+      - unknown_items_select                    # SELECT USING — same change
+    deferred_tests:
+      total: 8   # 4 in cross-store-read.spec.ts + 4 in rls-bypass-probe.spec.ts
+      cross_store_read:
+        file: apps/api/test/catalog/isolation/cross-store-read.spec.ts
+        count: 4
+        lines: [502, 505, 508, 511]
+      rls_bypass_probe:
+        file: apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts
+        count: 4
+        lines: [472, 741, 867, 870]
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-store-read"
+        expected: 21 passed / 0 todo  (17 green + 4 formerly-todo §4.6/§7.6)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/rls-bypass-probe"
+        expected: 39 passed / 0 todo  (35 green + 4 formerly-todo §4.6/§7.6 + no-GUC pool)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN 31/31 (regression — T341 must stay green)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/0001-catalog.spec.ts"
+        expected: GREEN 27/27 (up->down->up round-trip preserved)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/cli/migrate.spec.ts"
+        expected: GREEN (EXPECTED_MIGRATIONS now includes 0011)
+        docker_required: true
+    stop:
+      - if any file outside allowed_files is touched
+      - if migration round-trip test fails (down does not restore 0010-form exactly)
+      - if any previously-green test regresses
+      - if sentinel value differs from '*' (confirmed in pre-flight 2026-05-23)
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe   # gated SQL — serialize
+
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 
   - id: T350_TENANT_CATALOG_CREATE_RED

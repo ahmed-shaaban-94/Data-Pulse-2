@@ -3,7 +3,7 @@
  *
  * Purpose
  * -------
- * Proves that common RLS bypass attempts FAIL against the 0007 + 0008 + 0009 + 0010
+ * Proves that common RLS bypass attempts FAIL against the 0007 + 0008 + 0009 + 0010 + 0011
  * migration stack. All probes run against the non-superuser `app_test` role,
  * using raw `SET LOCAL` / `set_config` calls inside explicit transactions so
  * GUC bleed between tests is impossible (LOCAL scope discards on ROLLBACK).
@@ -15,19 +15,20 @@
  * §3.3 + §3.4  — tenant_product_categories: wrong-tenant; unset-tenant DEFERRED
  * §4.5         — store_product_overrides: wrong-tenant, wrong-store (covered)
  * §4.6         — store_product_overrides: write under unset/wrong store GUC (covered);
- *                  SELECT under absent store GUC DEFERRED
+ *                  SELECT under absent store GUC — enforced by 0011 sentinel, now executable
  * §5.4         — product_aliases: wrong-tenant GUC → foreign rows only (covered)
  * §6.4         — price_history: wrong-tenant; UPDATE/DELETE immutability (covered)
  * §7.5         — unknown_items: wrong-tenant, wrong-store, '' carve-out (covered)
- * §7.6         — unknown_items: SELECT under absent store/tenant GUC DEFERRED
+ * §7.6         — unknown_items: SELECT under absent store GUC — enforced by 0011 sentinel, now executable; unset-tenant GUC covered
  *
- * Deferred coverage (RED-proof placeholders as `it.todo()`)
- * --------------------------------------------------------
+ * Previously deferred coverage (now executable)
+ * ----------------------------------------------
  * The matrix prescribes "tenant set + store GUC absent → 0 rows" (§4.6, §7.6).
- * This is tracked under finding RLS_STORE_ABSENT_READ_LEAK and remains deferred:
- * `current_setting('app.current_store', true)` returns '' for BOTH "never set"
- * AND "explicitly set to empty (carve-out)", making the two cases indistinguishable
- * at the policy layer without a sentinel GUC. Resolution requires slice 0011.
+ * Previously tracked under finding RLS_STORE_ABSENT_READ_LEAK. Migration 0011
+ * (0011_catalog_store_carveout_sentinel.sql) resolved this by introducing '*' as
+ * the explicit cross-store carve-out sentinel. '' (empty string / never-set) is
+ * now fail-closed. The four it.todo placeholders are now converted to executable
+ * assertions.
  *
  * The five tenant-axis cases (§3.3, §4.5, §5.3, §6.5, §7.6) that were previously
  * deferred under finding RLS_UNSET_TENANT_GUC_CAST_ERROR are now executable:
@@ -407,9 +408,9 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
         `SELECT set_config('app.current_tenant', $1, true)`,
         [TENANT_B],
       );
-      // Use '' for cross-store (tenant-owner carve-out) to see all stores of B
+      // Use '*' for cross-store (tenant-owner carve-out sentinel, migration 0011) to see all stores of B
       await client.query(
-        `SELECT set_config('app.current_store', '', true)`,
+        `SELECT set_config('app.current_store', '*', true)`,
       );
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
@@ -462,19 +463,27 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
     expect(count).toBe("0");
   });
 
-  // §4.6 — Tenant set, store GUC absent → 0 rows: DEFERRED.
-  // The matrix prescribes 0 rows (fail-closed). Observed behavior: the
-  // store-axis combination of (a) `current_setting('app.current_store', true)`
-  // returning '' for a never-set GUC on a pooled connection and (b) the 0009
-  // CASE guard's `WHEN '' THEN TRUE` branch produces visible rows instead of
-  // 0. Same family as RLS_CROSS_STORE_READ_LEAK (resolved 2026-05-21) but on
-  // the "store absent" axis rather than the "two split SELECT policies" axis.
-  it.todo(
-    "§4.6 store_product_overrides: tenant set, store GUC absent, SELECT returns 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
+  // §4.6 — Tenant set, store GUC absent → 0 rows.
+  // Migration 0011 introduced '*' as the explicit carve-out sentinel.
+  // '' (never-set) now resolves to THEN FALSE — fail-closed.
+  it("§4.6 store_product_overrides: tenant set, store GUC absent, SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      // app.current_store is NOT set — current_setting returns '' → THEN FALSE
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM store_product_overrides`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
-  // §4.6 — empty-string store GUC: tenant-owner carve-out → all tenant stores visible
-  it("§4.6 tenant set, store GUC = '': carve-out allows all-store read for that tenant", async () => {
+  // §4.6 — '*' sentinel store GUC: tenant-owner carve-out → all tenant stores visible
+  it("§4.6 tenant set, store GUC = '*': carve-out allows all-store read for that tenant", async () => {
     if (maybeSkip()) return;
     const rows = await withRawClient(async (client) => {
       await client.query(
@@ -482,7 +491,7 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
         [TENANT_A],
       );
       await client.query(
-        `SELECT set_config('app.current_store', '', true)`,
+        `SELECT set_config('app.current_store', '*', true)`,
       );
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
@@ -494,6 +503,45 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
     for (const row of rows) {
       expect(row.tenant_id).toBe(TENANT_A);
     }
+  });
+
+  // §4.6 — '*' sentinel write denial: carve-out is read-only; INSERT and DELETE must be rejected
+  it("§4.6 store GUC = '*': INSERT on store_product_overrides is denied by WITH CHECK", async () => {
+    if (maybeSkip()) return;
+    await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
+      // WITH CHECK has WHEN '*' THEN FALSE — INSERT must be rejected
+      await expectDeniedByPolicyOrCast(
+        client.query(
+          `INSERT INTO store_product_overrides
+             (id, tenant_id, store_id, product_id, is_active, created_by, updated_by)
+           VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $4)`,
+          [TENANT_A, STORE_A_X, PRODUCT_A_ACTIVE, ACTOR_A],
+        ),
+      );
+    });
+  });
+
+  it("§4.6 store GUC = '*': DELETE on store_product_overrides is denied by USING", async () => {
+    if (maybeSkip()) return;
+    await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
+      // USING has WHEN '*' THEN FALSE on the write policy — DELETE must match 0 rows
+      const r = await client.query<{ count: string }>(
+        `WITH del AS (
+           DELETE FROM store_product_overrides RETURNING id
+         ) SELECT COUNT(*)::text AS count FROM del`,
+      );
+      expect(r.rows[0]?.count).toBe("0");
+    });
   });
 
   // §4.6 — write under unset/wrong store GUC: INSERT rejected
@@ -694,9 +742,9 @@ describe("T343 §7 — unknown_items RLS bypass probes", () => {
         `SELECT set_config('app.current_tenant', $1, true)`,
         [TENANT_B],
       );
-      // '' carve-out to see all B stores
+      // '*' carve-out sentinel (migration 0011) to see all B stores
       await client.query(
-        `SELECT set_config('app.current_store', '', true)`,
+        `SELECT set_config('app.current_store', '*', true)`,
       );
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
@@ -732,17 +780,27 @@ describe("T343 §7 — unknown_items RLS bypass probes", () => {
     expect(rows).toEqual([]);
   });
 
-  // §7.6 — Tenant set, store GUC absent → 0 rows: DEFERRED.
-  // Same store-axis defect as §4.6: the 0009 CASE guard's `WHEN '' THEN TRUE`
-  // branch fires for a never-set store GUC because PG returns '' (not NULL)
-  // from current_setting(...,true). Resolution: a future gated SQL slice that
-  // distinguishes "GUC explicitly empty" from "GUC never set in session".
-  it.todo(
-    "§7.6 unknown_items: tenant set, store GUC absent, SELECT returns 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
+  // §7.6 — Tenant set, store GUC absent → 0 rows.
+  // Migration 0011 introduced '*' as the explicit carve-out sentinel.
+  // '' (never-set) now resolves to THEN FALSE — fail-closed.
+  it("§7.6 unknown_items: tenant set, store GUC absent, SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      // app.current_store is NOT set — current_setting returns '' → THEN FALSE
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM unknown_items`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
-  // §7.5 — cross-store carve-out ('' store GUC): all tenant items visible
-  it("§7.5 store GUC = '': carve-out allows all-store read for that tenant", async () => {
+  // §7.5 — '*' sentinel store GUC: all tenant items visible (cross-store carve-out)
+  it("§7.5 store GUC = '*': carve-out allows all-store read for that tenant", async () => {
     if (maybeSkip()) return;
     const rows = await withRawClient(async (client) => {
       await client.query(
@@ -750,7 +808,7 @@ describe("T343 §7 — unknown_items RLS bypass probes", () => {
         [TENANT_A],
       );
       await client.query(
-        `SELECT set_config('app.current_store', '', true)`,
+        `SELECT set_config('app.current_store', '*', true)`,
       );
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
@@ -858,16 +916,22 @@ describe("T343 — cross-suite: direct runtime-role pool with no GUC is fail-clo
     expect(r.rows[0]?.count).toBe("0");
   });
 
-  // CodeRabbit (PR #285) flagged the original "0 rows OR cast error" pattern
-  // as too lenient. The matrix prescribes deterministic 0 rows (matrix §4.6,
-  // §7.6). In practice a cold pool with no GUC set has current_setting → ''
-  // → ''::uuid raises before the policy evaluates. Same defect tracked by
-  // RLS_STORE_ABSENT_READ_LEAK on the store-scoped tables — deferred until
-  // the cast-guard migration lands.
-  it.todo(
-    "store_product_overrides: no-GUC pool returns 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
-  it.todo(
-    "unknown_items: no-GUC pool returns 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
+  // Migration 0011 resolved RLS_STORE_ABSENT_READ_LEAK: '' (never-set store GUC)
+  // is now fail-closed via THEN FALSE. A cold pool with no GUC set returns ''
+  // from current_setting → the new guard yields FALSE → 0 rows deterministically.
+  it("store_product_overrides: no-GUC pool returns 0 rows", async () => {
+    if (maybeSkip() || !noGucPool) return;
+    const r = await noGucPool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM store_product_overrides`,
+    );
+    expect(r.rows[0]?.count).toBe("0");
+  });
+
+  it("unknown_items: no-GUC pool returns 0 rows", async () => {
+    if (maybeSkip() || !noGucPool) return;
+    const r = await noGucPool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM unknown_items`,
+    );
+    expect(r.rows[0]?.count).toBe("0");
+  });
 });
