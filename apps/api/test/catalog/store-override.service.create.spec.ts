@@ -50,8 +50,6 @@ import {
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
-  APP_ROLE_NAME,
-  APP_ROLE_PASSWORD,
 } from "../_helpers/postgres-container";
 import {
   seedCatalogIsolationFixture,
@@ -105,19 +103,19 @@ beforeAll(async () => {
   await applyAllUpAndCreateAppRole(env);
   await seedCatalogIsolationFixture(env);
 
-  // Build a connection pool that authenticates as the runtime app role
-  // (RLS is enforced for this role — not bypassed like env.admin).
-  appPool = new Pool({
-    host: env.host,
-    port: env.port,
-    database: env.database,
-    user: APP_ROLE_NAME,
-    password: APP_ROLE_PASSWORD,
-  });
+  // Use the pre-built non-superuser app role pool from PgTestEnv.
+  // `PgTestEnv` does not expose `host`/`port`/`database` fields —
+  // the earlier hand-rolled `new Pool({...})` evaluated those as
+  // `undefined` and pg silently defaulted to `localhost:5432`,
+  // which is why CI saw `ECONNREFUSED 127.0.0.1:5432` on the
+  // self-hosted runner (no host Postgres listening). `env.app` is
+  // the canonical RLS-enforced pool wired by `startPgEnv`.
+  appPool = env.app;
 }, 180_000);
 
 afterAll(async () => {
-  if (appPool) await appPool.end();
+  // `appPool` is `env.app`; `stopPgEnv` closes it (and `env.admin`
+  // and the container). Don't end it twice.
   if (env) await stopPgEnv(env);
 }, 60_000);
 
