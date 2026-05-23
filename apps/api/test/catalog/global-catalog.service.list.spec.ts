@@ -108,19 +108,10 @@ let dockerSkipped = false;
 // ---- Lifecycle -----------------------------------------------------------
 
 beforeAll(async () => {
+  // Narrow MIGRATION_TEST_ALLOW_SKIP=1 to Docker-only failures so a real
+  // regression in migrations/seeds is not silently swallowed.
   try {
     env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
-    await seedCatalogIsolationFixture(env);
-
-    // Insert a retired global_product to exercise the active-only filter.
-    await env.admin.query(
-      `INSERT INTO global_products
-         (id, name, suggested_tax_category, retired_at, created_by)
-       VALUES ($1, 'T360 Retired Global Product', 'standard', now(), $2)
-       ON CONFLICT DO NOTHING`,
-      [RETIRED_GLOBAL_PRODUCT, PLATFORM_ACTOR],
-    );
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -133,6 +124,19 @@ beforeAll(async () => {
     }
     throw new Error(`Container start failed: ${msg}`);
   }
+
+  // Container is up — failures past this point are real and must not skip.
+  await applyAllUpAndCreateAppRole(env);
+  await seedCatalogIsolationFixture(env);
+
+  // Insert a retired global_product to exercise the active-only filter.
+  await env.admin.query(
+    `INSERT INTO global_products
+       (id, name, suggested_tax_category, retired_at, created_by)
+     VALUES ($1, 'T360 Retired Global Product', 'standard', now(), $2)
+     ON CONFLICT DO NOTHING`,
+    [RETIRED_GLOBAL_PRODUCT, PLATFORM_ACTOR],
+  );
 }, 180_000);
 
 afterAll(async () => {
