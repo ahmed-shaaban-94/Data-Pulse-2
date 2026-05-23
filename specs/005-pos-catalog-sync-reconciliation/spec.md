@@ -144,9 +144,9 @@ POS devices retry on transient failure. A retried submission of the same logical
 
 1. **Given** POS submits identifier I at tenant T, store S, **When** the same logical submission arrives again (identical identifier + identifier type + source system + store + tenant), **Then** the platform returns the existing unknown-item reference without creating a new record.
 2. **Given** POS submits identifier I and the network drops the response, **When** POS retries with a request-level idempotency token consistent with the existing POS contract from 002 (token scoped to `(tenant_id, device_id, token)`, honored for at least 24h), **Then** the platform honors the token: same record, same response, no duplicate side-effects.
+3. **Given** identifier I has already been *resolved* (linked or created-new) since the previous POS submission, **When** the POS submits I again, **Then** the platform returns the resolved-product outcome (not an unknown-item outcome). No new unknown-item record is created; no alias is mutated.
 4. **Given** a POS device reuses the same idempotency token within its 24h TTL **but** sends a different logical payload (different identifier, type, source system, or store), **When** the request arrives, **Then** the platform rejects it with a deterministic mismatch-conflict outcome distinct from `duplicate_alias_conflict`; no unknown-item record is created; no alias is mutated; the rejection is auditable.
 5. **Given** the same opaque token string is supplied by two different POS devices in the same tenant, **When** both requests arrive, **Then** each is treated as an independent idempotency key (no collision); both submissions process on their own merits.
-3. **Given** identifier I has already been *resolved* (linked or created-new) since the previous POS submission, **When** the POS submits I again, **Then** the platform returns the resolved-product outcome (not an unknown-item outcome). No new unknown-item record is created; no alias is mutated.
 
 ---
 
