@@ -1,20 +1,21 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-23 (refreshed after `005-WAVE1-SETUP` first-dispatch surfaced a cross-spec precondition gap)
+**Last updated:** 2026-05-23 (refreshed after PR #299 + #304 closeout — `005-WAVE1-METRICS-ALLOWLIST` and `005-WAVE1-SETUP` both merged)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `dd38594` (PR #298, 2026-05-23 — execution-map + wave-status authored)
-**Active findings:** 1 — `005-METRICS-ALLOWLIST-PRECONDITION` (high — see "Active findings" below)
-**Resolved findings:** 0
+**Base:** `origin/main` at `622e509` (PR #304, 2026-05-23 — `005-WAVE1-SETUP` merged)
+**Active findings:** 0 (1 resolved — see "Resolved findings" below)
+**Resolved findings:** 1
 
 ---
 
 ## TL;DR
 
-All 48 Wave 1 tasks across **20** candidate slices are at `status: proposed`. **No implementation slice has been dispatched, approved, or merged.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`.
+**2 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` via PR #299, `005-WAVE1-SETUP` via PR #304). **18 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
 
-**Wave 1's first dispatch is now `005-WAVE1-METRICS-ALLOWLIST`** — a small `[GATED]` schema-only slice that allowlists the three Wave 1 catalog counters in 004-owned observability files. This is a planning correction discovered during the first `005-WAVE1-SETUP` dispatch attempt; the original execution-map had `005-WAVE1-SETUP` as the first dispatch but T501 cannot succeed without the upstream allowlist extension first. See "Active findings" below for the full audit trail.
+**Next moves:**
 
-**After `005-WAVE1-METRICS-ALLOWLIST` merges**, dispatch `005-WAVE1-SETUP` (T500 + T501) as originally planned. The next gate after that is **`[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML).
+1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML). Once approved, this unblocks every Phase 3+ slice that needs an operationId. Bottleneck for Phase 3+.
+2. **In parallel** (non-gated, file-disjoint pair, both `depends_on: 005-WAVE1-SETUP` which is now merged): dispatch `005-WAVE1-IDEMP-VERIFY` (T505) and `005-WAVE1-HARNESS` (T506 + T507).
 
 **Wave 2** (reconciliation: link + create-new + alias-conflict) is **blocked on 003's `PHASE3_RED_WAVE`** — specifically T350 (`TenantCatalogService.create`) + T383 (`ProductAliasesService`). Wave 2's `tasks.md` will be generated *after* `PHASE3_RED_WAVE` merges to `main`; it is intentionally not enumerated here.
 
@@ -22,7 +23,12 @@ All 48 Wave 1 tasks across **20** candidate slices are at `status: proposed`. **
 
 ## Merged on `main`
 
-_No implementation slices merged yet._
+### Wave 1 slices merged
+
+| Stage | Subject | Reference |
+|---|---|---|
+| `005-WAVE1-METRICS-ALLOWLIST` (slice) | Schema-only allowlist extension for 3 catalog counters (`unknown_item_captured_total`, `unknown_item_resolved_total{action}`, `idempotency_token_mismatch_total`); resolved `005-METRICS-ALLOWLIST-PRECONDITION` finding | PR #299 @ `28d1a0d` |
+| `005-WAVE1-SETUP` (slice) | T500 module skeleton (`apps/api/src/catalog/unknown-items/unknown-items.module.ts`) + T501 counter registration in `api.metrics.ts`; introduced `CATALOG_METRIC_NAMES` sibling registry | PR #304 @ `622e509` |
 
 ### Planning artifacts merged (for context)
 
@@ -31,6 +37,7 @@ _No implementation slices merged yet._
 | Spec | POS Catalog Sync & Unknown Item Reconciliation — 5 user stories, 40 FRs, 7 SI requirements, 8 SCs, 12 edge cases, 5 clarifications | PR #293 @ `9d835eb` |
 | Plan + research + data-model + quickstart + contracts placeholder | Constitution check passes 14/14. Architecture Impact: High. 003 dependency readiness documented (data layer ✅; service layer ❌ — blocks Wave 2). | PR #294 @ `6895246` |
 | Wave 1 `tasks.md` | 48 tasks across 19 candidate slices. TDD pairing (RED-then-GREEN). Two reviewer findings caught: idempotency wrapper was unnecessary (existing primitive covers FR-021/021a/021b/021c directly); audit-subjects registry doesn't exist (use `@Auditable` decorator at site). | PR #296 @ `5179682` |
+| `execution-map.yaml` + `wave-status.md` (initial authoring) | Slice DAG, allowed/forbidden files, validation contracts, parallel-safety semantics, phase cohorts | PR #298 @ `dd38594` |
 
 ---
 
@@ -42,7 +49,17 @@ _None._
 
 ## Active findings
 
-### `005-METRICS-ALLOWLIST-PRECONDITION` (high)
+_None._
+
+**Other known issues** (planning-time decisions, not findings):
+- Header-name drift `Idempotency-Token` → `Idempotency-Key` in `spec.md` §5 and `quickstart.md` — fixup tracked in `tasks.md` T564.
+- `PHASE3_RED_WAVE` dependency for Wave 2 (T350 + T383 on spec 003) — tracked in `plan.md §4` and `tasks.md §12`.
+
+---
+
+## Resolved findings
+
+### `005-METRICS-ALLOWLIST-PRECONDITION` (high) — resolved
 
 **Discovered**: 2026-05-23, during the first dispatch attempt of `005-WAVE1-SETUP`.
 
@@ -55,23 +72,19 @@ _None._
 
 **Resolution path** (chosen by owner via path (b) on 2026-05-23):
 
-Add a new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` that touches only the two 004-owned files (`packages/shared/src/observability/metrics-labels.ts` and `docs/observability/signals.md` §1.1). `005-WAVE1-SETUP` gains a `depends_on: [005-WAVE1-METRICS-ALLOWLIST]` edge so T501 cannot dispatch until the allowlist lands on `main`.
+Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching only the 004-owned schema files (`packages/shared/src/observability/metrics-labels.ts`, `docs/observability/signals.md` §1.1, and the `expectedSignals` drift-contract in `apps/api/test/observability/cardinality.spec.ts`). `005-WAVE1-SETUP` gained a `depends_on: [005-WAVE1-METRICS-ALLOWLIST]` edge so T501 could not dispatch until the allowlist landed on `main`.
 
 **Why this path** (not the other two considered):
 - (a) "expand SETUP's `allowed_files` to include the 004 files" — mixes 004-owned schema edits into a 005 chore slice and gates a slice that was meant to be ungated. Rejected.
 - (c) "drop counter registration from Wave 1" — kicks the conversation downstream into T552/T553 and ships SETUP with only T500. Rejected because the user explicitly said "do not skip metric registration".
 - (b) "new prereq slice" — matches 004's existing gating discipline (every observability schema change is its own `[GATED]` slice), keeps SETUP itself ungated. Accepted.
 
-**Resolved by**: `005-WAVE1-METRICS-ALLOWLIST` slice (status: proposed, gated, awaiting approval + dispatch).
+**Resolved by**: `005-WAVE1-METRICS-ALLOWLIST` slice.
 
-**Audit fields** (filled in at closeout):
-- `resolved_by_pr`: _pending_
-- `resolved_at_commit`: _pending_
-- `resolved_at`: _pending_
-
-**Other known issues** (planning-time decisions, not findings):
-- Header-name drift `Idempotency-Token` → `Idempotency-Key` in `spec.md` §5 and `quickstart.md` — fixup tracked in `tasks.md` T564.
-- `PHASE3_RED_WAVE` dependency for Wave 2 (T350 + T383 on spec 003) — tracked in `plan.md §4` and `tasks.md §12`.
+**Audit fields**:
+- `resolved_by_pr`: 299
+- `resolved_at_commit`: `28d1a0d72725ffa93272dd2a2e9b912b11380cc4`
+- `resolved_at`: 2026-05-23
 
 ---
 
@@ -87,19 +100,13 @@ Add a new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` that touche
 
 _None._
 
-All 20 Wave 1 slices are at `status: proposed`. None have been approved for dispatch.
+18 Wave 1 slices remain at `status: proposed`. None of the 18 remaining have been approved for dispatch.
 
 ---
 
 ## Proposed (awaiting approval / dispatch)
 
-### Phase 0 — Cross-spec prerequisite (gated)
-
-- **`005-WAVE1-METRICS-ALLOWLIST`** (no `T#` ids — finding-driven slice) — `[GATED]` schema-only allowlist extension for the three Wave 1 catalog counters. Touches (and self-amends) **four** files: (1) `packages/shared/src/observability/metrics-labels.ts` (closed allowlist), (2) `docs/observability/signals.md` (new §1.1 "Catalog domain signals (005 Wave 1)"), (3) `apps/api/test/observability/cardinality.spec.ts` (drift-contract `expectedSignals` array — third source of truth alongside the allowlist + docs), and (4) this spec's `execution-map.yaml` + `wave-status.md` (self-amending: records the finding and adds the new slice + dependency edge). No instrument creation, no emission. **MUST land first** — see Active findings. **Recommended first dispatch.**
-
-### Phase 1 — Setup
-
-- **`005-WAVE1-SETUP`** (T500, T501) — module skeleton + 3 Prometheus counters. Non-gated. `parallel_safety: safe`. `depends_on: [005-WAVE1-METRICS-ALLOWLIST]`. Dispatch after the allowlist slice merges.
+_Phase 0 (cross-spec prerequisite) and Phase 1 (setup) complete; see "Merged on `main`."_
 
 ### Phase 2 — Foundational
 
@@ -140,7 +147,7 @@ All 20 Wave 1 slices are at `status: proposed`. None have been approved for disp
 
 | Cohort | Members | Notes |
 |---|---|---|
-| `PHASE_0_1_2_COHORT` | METRICS-ALLOWLIST + SETUP + IDEMP-VERIFY + HARNESS | Intra-cohort DAG (strict for first two, fanout after): METRICS-ALLOWLIST `blocks` SETUP `blocks` {IDEMP-VERIFY, HARNESS}. METRICS-ALLOWLIST is `[GATED]` and must merge first. After SETUP merges, IDEMP-VERIFY and HARNESS may dispatch in parallel worktrees (disjoint test paths). |
+| `PHASE_0_1_2_COHORT` | METRICS-ALLOWLIST + SETUP + IDEMP-VERIFY + HARNESS | METRICS-ALLOWLIST merged in PR #299; SETUP merged in PR #304. Remaining members IDEMP-VERIFY + HARNESS are dispatchable in parallel (both `depends_on: 005-WAVE1-SETUP`, which is merged; disjoint test paths). Cohort id retained in `execution-map.yaml` for traceability. |
 | `PHASE_3_COHORT` | 7 capture/list slices | Intra-cohort DAG: CAPTURE-HAPPY is the root; descendants depend on it. RED test authoring is parallel-safe across disjoint spec files; GREEN impls serialize through shared `unknown-items.service.ts` and `unknown-items.controller.ts`. |
 | `PHASE_4_5_COHORT` | 7 idempotency/dismiss/audit/metrics slices | Intra-cohort DAG: IDEMP-WIRE `blocks` MISMATCH + EDGES; DISMISS `blocks` FR005 + AUDIT. RED tests where disjoint may dispatch in parallel; GREENs serialize through shared service/controller/filter files. |
 
@@ -164,23 +171,25 @@ Once `PHASE3_RED_WAVE` merges on 003 main, a separate `/speckit-tasks` invocatio
 
 ## Next recommended action
 
-**Request `[GATED]` approval for `005-WAVE1-METRICS-ALLOWLIST`**, then dispatch it. Schema-only — two files touched, no instrument creation, no emission. Establishes the upstream allowlist entries so T501 (`005-WAVE1-SETUP`) can register its counters at module load without throwing.
+With `005-WAVE1-METRICS-ALLOWLIST` (PR #299) and `005-WAVE1-SETUP` (PR #304) both merged, two parallel tracks are now dispatchable:
 
-After `005-WAVE1-METRICS-ALLOWLIST` merges, the natural next moves are:
-
-1. **Dispatch `005-WAVE1-SETUP`** (T500 + T501). Non-gated, low-risk. Establishes the module skeleton at `apps/api/src/catalog/unknown-items/` and registers the three counters that the allowlist now permits.
-2. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504). Once approved, this unblocks every Phase 3+ slice that needs an operationId.
-3. **In parallel with the contract slice (if you want throughput)**: dispatch `005-WAVE1-IDEMP-VERIFY` (T505) and `005-WAVE1-HARNESS` (T506 + T507). These are test-only, non-gated, file-disjoint from the contract slice.
+1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`). Once approved, this unblocks every Phase 3+ slice that needs an operationId. Bottleneck for Phase 3+.
+2. **In parallel with the contract slice (if you want throughput)**: dispatch the non-gated, file-disjoint pair:
+   - `005-WAVE1-IDEMP-VERIFY` (T505) — single new verification spec under `apps/api/test/catalog/unknown-items/idempotency/`.
+   - `005-WAVE1-HARNESS` (T506 + T507) — two new files under `apps/api/test/catalog/__support__/` and `.../isolation/`.
 
 Reusable Maestro prompts (short form):
 
 ```text
-# First (gated):
-Use Agent OS. Execute slice 005-WAVE1-METRICS-ALLOWLIST. Stop before commit.
+# Gated — request approval first:
+Use Agent OS. Execute slice 005-WAVE1-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 
-# After the allowlist slice merges:
-Use Agent OS. Execute slice 005-WAVE1-SETUP. Stop before commit.
+# Non-gated parallel pair (both depends_on 005-WAVE1-SETUP, which is merged):
+Use Agent OS. Execute slice 005-WAVE1-IDEMP-VERIFY. Stop before commit.
+Spec: specs/005-pos-catalog-sync-reconciliation
+
+Use Agent OS. Execute slice 005-WAVE1-HARNESS. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
