@@ -90,7 +90,9 @@ export interface ProductAliasRecord {
   id: string;
   tenantId: string;
   productId: string;
-  identifierType: string;
+  // Narrow to the discriminated union so downstream callers get
+  // exhaustiveness under strict mode (CodeRabbit PR #303).
+  identifierType: AliasIdentifierType;
   value: string;
   sourceSystem: string | null;
   storeId: string | null;
@@ -101,12 +103,17 @@ export interface ProductAliasRecord {
  * PG returns NULL columns as `null`; absent columns from the SELECT list
  * are simply not present on the object. We pin the type to match the
  * SELECT list below so missing fields are a compile-time error.
+ *
+ * `identifier_type` is typed as the discriminated union to match the
+ * CHECK constraint on the table (`product_aliases_identifier_type_check`).
+ * The DB driver returns it as a plain string; we widen at the boundary
+ * via a cast in `mapRow` rather than mid-flight.
  */
 interface ProductAliasRow {
   id: string;
   tenant_id: string;
   product_id: string;
-  identifier_type: string;
+  identifier_type: AliasIdentifierType;
   value: string;
   source_system: string | null;
   store_id: string | null;
