@@ -107,6 +107,18 @@ beforeAll(async () => {
   await applyAllUpAndCreateAppRole(env);
   await seedCatalogIsolationFixture(env);
 
+  // Seed the actor user. `audit_events.actor_user_id` is FK→`users.id`,
+  // so the GREEN `TenantCatalogService.create` (which emits one audit
+  // event per create through the legacy queue path) needs the row to
+  // exist before any create runs. The catalog isolation harness only
+  // seeds tenants/stores/products — users are this spec's responsibility.
+  await env.admin.query(
+    `INSERT INTO users (id, email, password_hash)
+       VALUES ($1, $2, NULL)
+       ON CONFLICT (id) DO NOTHING`,
+    [ACTOR_T350_A, `t350-actor-${ACTOR_T350_A}@test.invalid`],
+  );
+
   // Instantiate the service under test.
   // T351 will define the constructor signature. The expectation is that
   // TenantCatalogService accepts a Postgres pool (or a Drizzle client) so it
