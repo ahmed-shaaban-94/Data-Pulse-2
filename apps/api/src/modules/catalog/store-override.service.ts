@@ -41,7 +41,7 @@
  *     propagate as-is. Mapping to nicer HTTP codes is a controller
  *     concern handled in later slices.
  */
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import { newId } from "@data-pulse-2/shared";
@@ -158,10 +158,29 @@ export class StoreOverrideService {
           [dto.storeId],
         );
 
-        // (5) INSERT … RETURNING — let Postgres enforce FK, RLS, and
-        // CHECK constraints. The RED suite's S4 relies on the FK to
-        // `tenant_products(id)` failing when the referenced product
-        // belongs to a different tenant (invisible under RLS).
+        // (4b) Cross-tenant product reference guard. The S4 contract
+        // requires that an override pointing to another tenant's product
+        // is rejected. The original design assumed PG would enforce this
+        // via the FK to `tenant_products(id)` under RLS, but PG's
+        // referential-integrity triggers explicitly bypass RLS (see
+        // PostgreSQL docs: "Referential integrity checks ... will always
+        // bypass row level security"). So we SELECT under the current
+        // tenant GUC first — the RLS policy on `tenant_products` hides
+        // cross-tenant rows, returning zero rows when `dto.productId`
+        // belongs to a different tenant, and we throw before INSERT.
+        const productProbe = await client.query<{ exists: 1 }>(
+          "SELECT 1 AS exists FROM tenant_products WHERE id = $1 LIMIT 1",
+          [dto.productId],
+        );
+        if (productProbe.rowCount === 0) {
+          throw new NotFoundException(
+            `tenant_products row not visible under current tenant (id=${dto.productId})`,
+          );
+        }
+
+        // (5) INSERT … RETURNING — Postgres enforces RLS WITH CHECK and
+        // table CHECK constraints. The cross-tenant product case has
+        // already been rejected above (step 4b).
         const res = await client.query<{
           id: string;
           tenant_id: string;
