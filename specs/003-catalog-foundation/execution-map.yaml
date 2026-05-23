@@ -7,7 +7,7 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-22 after PR #285 merged.
+# Updated: 2026-05-23 — 0010_CATALOG_TENANT_GUC_CAST_FIX slice authored.
 # T340 (isolation harness) closed out: PR #264 @ 02cdf75 (2026-05-21).
 # T341 (cross-tenant read isolation) closed out: PR #268 @ 263492a (2026-05-21).
 # HARNESS_FIX (seed constraint violations) closed out: PR #279 @ e33fd0e (2026-05-22).
@@ -15,6 +15,7 @@
 # HARNESS_SEED_BUGS finding resolved by PR #279 — T341 31/31 GREEN confirmed.
 # T342, T343, T344 closed out: PR #285 @ fd18598 (2026-05-22).
 # Map base advanced to fd18598 (PR #285).
+# 0010_CATALOG_TENANT_GUC_CAST_FIX — in_progress 2026-05-23 (branch fix/003-catalog-0010-tenant-guc-cast).
 
 spec: 003-catalog-foundation
 version: 1
@@ -194,7 +195,7 @@ findings:
     resolution_paths:
       - "(a) New gated SQL slice (e.g. 0010_*) adding a CASE guard around the tenant cast in every tenant-scoped policy, analogous to 0009's store-GUC guard. Body shape: `tenant_id = CASE WHEN current_setting('app.current_tenant', true) = '' THEN NULL ELSE current_setting('app.current_tenant', true)::uuid END` — preserves fail-closed (NULL match returns 0 rows) without throwing."
       - "(b) Matrix amendment redefining the §2.3 / §3.3 / §5.3 / §6.5 / §7.6 expected result from '0 rows' to 'SQLSTATE 22P02 cast error (acceptable fail-closed behavior because the query throws before any data is returned)' — this is arguably stronger fail-closed semantics but would require coordinated test updates to assert the error code rather than row count."
-    resolved_by: null   # awaiting a separate authorized slice (option a) or spec amendment (option b)
+    resolved_by: null   # path (a) — resolution authored in 0010_CATALOG_TENANT_GUC_CAST_FIX; set on merge
 
 # ----------------------------------------------------------------------------
 # slices
@@ -644,6 +645,74 @@ slices:
     merged_in_pr: 285
     merged_at_commit: fd18598
     merged_at_date: 2026-05-22
+
+  # ===== In-progress gated SQL slice — tenant GUC CASE guard ====================
+
+  - id: 0010_CATALOG_TENANT_GUC_CAST_FIX
+    task_ids: []
+    type: fix
+    status: in_progress           # branch fix/003-catalog-0010-tenant-guc-cast (worktree dp2-0010-tenant-guc-fix)
+    approval_required: true       # gated (SQL migration) — approval granted 2026-05-23
+    depends_on:
+      - 0009_STORE_GUC_FIX        # 0009 bodies are the baseline for Group B down-migration
+    blocks: []
+    previously_blocked: []
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.sql
+      - packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.down.sql
+      - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts
+      - packages/db/__tests__/cli/migrate.spec.ts
+      - specs/003-catalog-foundation/execution-map.yaml
+      - specs/003-catalog-foundation/wave-status.md
+    forbidden_files:
+      - packages/db/drizzle/0007_catalog.sql        # do not edit prior migrations
+      - packages/db/drizzle/0007_catalog.down.sql
+      - packages/db/drizzle/0008_catalog_store_read_isolation.sql
+      - packages/db/drizzle/0008_catalog_store_read_isolation.down.sql
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.sql
+      - packages/db/drizzle/0009_catalog_store_empty_guc_fix.down.sql
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/rls-bypass-probe"
+        expected: GREEN — 5 previously-todo tenant-axis assertions now execute
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN 31/31 (regression — T341 must stay green)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-store-read"
+        expected: GREEN (regression — T342 must stay green)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/catalog-rls-store-read.spec.ts"
+        expected: GREEN 2/2
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/migration/0001-catalog.spec.ts"
+        expected: GREEN 27/27 (up->down->up round-trip preserved)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/db test "__tests__/cli/migrate.spec.ts"
+        expected: GREEN (EXPECTED_MIGRATIONS now includes 0010)
+        docker_required: true
+    stop:
+      - if 0010 edits any prior migration (0007–0009)
+      - if store-axis it.todo items in rls-bypass-probe.spec.ts are converted (RLS_STORE_ABSENT_READ_LEAK is not resolved by this slice)
+      - if any regression in T341 / T342 / T344 suites
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe   # gated SQL — serialize
+    notes: >
+      Resolves finding RLS_UNSET_TENANT_GUC_CAST_ERROR. Adds CASE guard to 13 policy
+      bodies across 5 tenant-scoped tables: (Group A) tenant_product_categories,
+      tenant_products, product_aliases, price_history, unknown_items INSERT/UPDATE
+      policies in 0007-form; (Group B) store_product_overrides_select,
+      store_product_overrides_tenant_write, unknown_items_select in 0009-form
+      (store CASE guard preserved; tenant CASE guard added). Flips 5 it.todo items
+      in T343 rls-bypass-probe.spec.ts (§3.3, §4.5, §5.3, §6.5, §7.6 tenant-axis)
+      to executable assertions. Does NOT resolve RLS_STORE_ABSENT_READ_LEAK
+      (4 remaining it.todo items for store-axis). Down migration restores 0007 form
+      for Group A and 0009 form for Group B.
 
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 

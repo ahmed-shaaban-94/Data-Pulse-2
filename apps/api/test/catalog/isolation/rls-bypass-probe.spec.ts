@@ -3,7 +3,7 @@
  *
  * Purpose
  * -------
- * Proves that common RLS bypass attempts FAIL against the 0007 + 0008 + 0009
+ * Proves that common RLS bypass attempts FAIL against the 0007 + 0008 + 0009 + 0010
  * migration stack. All probes run against the non-superuser `app_test` role,
  * using raw `SET LOCAL` / `set_config` calls inside explicit transactions so
  * GUC bleed between tests is impossible (LOCAL scope discards on ROLLBACK).
@@ -23,20 +23,16 @@
  *
  * Deferred coverage (RED-proof placeholders as `it.todo()`)
  * --------------------------------------------------------
- * The matrix prescribes "unset / NULL tenant GUC → 0 rows" (§2.3, §3.3, §5.3,
- * §6.5, §7.6) and "tenant set + store GUC absent → 0 rows" (§4.6, §7.6). In
- * practice, Postgres `current_setting('app.current_tenant', true)` returns the
- * empty string for a GUC that was never set in the session (not NULL), and
- * `''::uuid` raises `invalid input syntax for type uuid: ""`. The matrix
- * contract is therefore NOT delivered by 0007 + 0008 + 0009.
+ * The matrix prescribes "tenant set + store GUC absent → 0 rows" (§4.6, §7.6).
+ * This is tracked under finding RLS_STORE_ABSENT_READ_LEAK and remains deferred:
+ * `current_setting('app.current_store', true)` returns '' for BOTH "never set"
+ * AND "explicitly set to empty (carve-out)", making the two cases indistinguishable
+ * at the policy layer without a sentinel GUC. Resolution requires slice 0011.
  *
- *   - Tenant-axis cases are tracked under finding RLS_UNSET_TENANT_GUC_CAST_ERROR.
- *   - Store-axis cases are tracked under finding RLS_STORE_ABSENT_READ_LEAK.
- *
- * Both findings need a future gated SQL slice (analogous to 0009) that wraps
- * the tenant ::uuid cast in a CASE guard. Test cases below remain as `it.todo()`
- * so the deferred contract stays visible in Jest output. Do NOT convert them
- * back to executable assertions until the migration lands.
+ * The five tenant-axis cases (§3.3, §4.5, §5.3, §6.5, §7.6) that were previously
+ * deferred under finding RLS_UNSET_TENANT_GUC_CAST_ERROR are now executable:
+ * migration 0010 wraps the tenant ::uuid cast in a CASE guard that returns NULL
+ * for an unset GUC, delivering fail-closed semantics without throwing 22P02.
  *
  * Intentionally omitted
  * ---------------------
@@ -348,12 +344,18 @@ describe("T343 §2 — tenant_products RLS bypass probes", () => {
 // ---------------------------------------------------------------------------
 
 describe("T343 §3 — tenant_product_categories RLS bypass probes", () => {
-  // §3.3 — Unset tenant GUC → 0 rows: DEFERRED (RLS_UNSET_TENANT_GUC_CAST_ERROR).
-  // CI surfaced `''::uuid` cast error from a pooled connection where the
-  // GUC has been observed as the empty string rather than NULL.
-  it.todo(
-    "§3.3 tenant_product_categories: unset tenant GUC SELECT returns 0 rows (deferred — see finding RLS_UNSET_TENANT_GUC_CAST_ERROR)",
-  );
+  // §3.3 — Unset tenant GUC → 0 rows (0010 CASE guard delivers this contract).
+  it("§3.3 tenant_product_categories: unset tenant GUC SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      // No GUC set — CASE guard returns NULL; NULL = tenant_id → NULL → 0 rows
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM tenant_product_categories`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
   it("§3.3 unset tenant GUC: INSERT is rejected by RLS", async () => {
     if (maybeSkip()) return;
@@ -443,13 +445,22 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
     }
   });
 
-  // §4.5 — No tenant GUC + store set: 0 rows: DEFERRED.
-  // Tenant cast fails when current_setting('app.current_tenant', true) is the
-  // empty string (pool-connection-scoped GUC behavior under set_config LOCAL).
-  // Same underlying defect as the other unset-tenant cases.
-  it.todo(
-    "§4.5 store_product_overrides: no tenant GUC, store set, SELECT returns 0 rows (deferred — see finding RLS_UNSET_TENANT_GUC_CAST_ERROR)",
-  );
+  // §4.5 — No tenant GUC + store set: 0 rows (0010 CASE guard delivers this contract).
+  it("§4.5 store_product_overrides: no tenant GUC, store set, SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      // Store GUC set but no tenant GUC — tenant CASE guard returns NULL → 0 rows
+      await client.query(
+        `SELECT set_config('app.current_store', $1, true)`,
+        [STORE_A_X],
+      );
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM store_product_overrides`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
   // §4.6 — Tenant set, store GUC absent → 0 rows: DEFERRED.
   // The matrix prescribes 0 rows (fail-closed). Observed behavior: the
@@ -534,10 +545,17 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
 // ---------------------------------------------------------------------------
 
 describe("T343 §5 — product_aliases RLS bypass probes", () => {
-  // §5.3 — Unset tenant GUC → 0 rows: DEFERRED (RLS_UNSET_TENANT_GUC_CAST_ERROR).
-  it.todo(
-    "§5.3 product_aliases: unset tenant GUC SELECT returns 0 rows (deferred — see finding RLS_UNSET_TENANT_GUC_CAST_ERROR)",
-  );
+  // §5.3 — Unset tenant GUC → 0 rows (0010 CASE guard delivers this contract).
+  it("§5.3 product_aliases: unset tenant GUC SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM product_aliases`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
   it("§5.3 unset tenant GUC: INSERT is rejected by RLS", async () => {
     if (maybeSkip()) return;
@@ -598,10 +616,17 @@ describe("T343 §6 — price_history RLS bypass probes", () => {
     }
   });
 
-  // §6.5 — Unset tenant GUC → 0 rows: DEFERRED (RLS_UNSET_TENANT_GUC_CAST_ERROR).
-  it.todo(
-    "§6.5 price_history: unset tenant GUC SELECT returns 0 rows (deferred — see finding RLS_UNSET_TENANT_GUC_CAST_ERROR)",
-  );
+  // §6.5 — Unset tenant GUC → 0 rows (0010 CASE guard delivers this contract).
+  it("§6.5 price_history: unset tenant GUC SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM price_history`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
   it("§6.5 unset tenant GUC: INSERT is rejected by RLS", async () => {
     if (maybeSkip()) return;
@@ -739,10 +764,17 @@ describe("T343 §7 — unknown_items RLS bypass probes", () => {
     }
   });
 
-  // §7.6 — Unset tenant GUC → 0 rows: DEFERRED (RLS_UNSET_TENANT_GUC_CAST_ERROR).
-  it.todo(
-    "§7.6 unknown_items: unset tenant GUC SELECT returns 0 rows (deferred — see finding RLS_UNSET_TENANT_GUC_CAST_ERROR)",
-  );
+  // §7.6 — Unset tenant GUC → 0 rows (0010 CASE guard delivers this contract).
+  it("§7.6 unknown_items: unset tenant GUC SELECT returns 0 rows", async () => {
+    if (maybeSkip()) return;
+    const count = await withRawClient(async (client) => {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM unknown_items`,
+      );
+      return r.rows[0]?.count;
+    });
+    expect(count).toBe("0");
+  });
 
   it("§7.6 unset tenant GUC: INSERT is rejected by RLS", async () => {
     if (maybeSkip()) return;
