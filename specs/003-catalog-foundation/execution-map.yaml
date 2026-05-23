@@ -74,14 +74,18 @@ findings:
       foundation; either path needs explicit user authorization because
       it touches the forbidden surface packages/db/src/helpers/**.
     affected:
-      - packages/db/src/helpers/with-store.ts  # nonexistent
+      - packages/db/src/helpers/with-store.ts  # nonexistent — path (a) explicitly NOT taken
     severity: low  # documentation/scaffolding mismatch, not a security defect
     proof: >
       `ls packages/db/src/helpers/` returns only audit-insert.ts and
       with-tenant.ts on main @ 483aae4.
-    blocks:
+    blocks: []   # cleared — T336 reinterpreted to exercise the underlying GUC contract
+    previously_blocked:
       - T336
-    resolved_by: null    # awaiting a separate authorized slice
+    resolved_by: T336    # path (b): T336 reinterpreted to test runWithTenantContext + manual SET LOCAL app.current_store, same pattern as T335_TENANT_HELPER_COVERAGE — no helper file authored
+    resolved_by_pr: null      # set on closeout once the slice merges
+    resolved_by_commit: null  # set on closeout once the slice merges
+    resolved_at: null         # set on closeout once the slice merges
 
   - id: HARNESS_SEED_BUGS
     summary: >
@@ -404,27 +408,44 @@ slices:
   - id: T336
     task_ids: [T336]
     type: test
-    status: blocked       # still blocked — but now solely on MISSING_WITHSTORE_HELPER, not the RLS leak (resolved by #254)
+    # Reinterpreted (path b of finding MISSING_WITHSTORE_HELPER, authorized
+    # by the user 2026-05-23): instead of testing a never-scaffolded
+    # `withStore(tx, tenantId, storeId)` helper, this slice tests the
+    # underlying store-axis GUC contract that any such helper would
+    # compile to — `runWithTenantContext` + manual
+    # `SELECT set_config('app.current_store', $1, true)` per transaction.
+    # Mirrors the T335_TENANT_HELPER_COVERAGE pattern exactly. The
+    # rejected path (a) would have authored
+    # `packages/db/src/helpers/with-store.ts` (forbidden surface — would
+    # need a separate `[GATED]` slice); that is explicitly NOT taken
+    # here.
+    status: proposed      # finding MISSING_WITHSTORE_HELPER resolved by this reinterpretation; awaiting dispatch/merge
     approval_required: false
     depends_on: []        # RLS_CROSS_STORE_FIX merged; no remaining slice-level deps
     blocks: []
     agent: sonnet-test
     allowed_files:
       - packages/db/__tests__/helpers/with-store-catalog.spec.ts
+    forbidden_files:
+      # Reinterpretation NEVER touches the would-be helper file.
+      - packages/db/src/helpers/with-store.ts
+      # And it does NOT modify the production tenant-context glue.
+      - packages/db/src/middleware/tenant-context.ts
     validation:
       - command: pnpm --filter @data-pulse-2/db test "__tests__/helpers/with-store-catalog.spec.ts"
-        expected: GREEN
+        expected: GREEN — 7 cases (A own-store, B sibling-store, C carve-out '*', D never-set fail-closed, E cross-tenant store id, F symmetry on tenant B, G runtime-role sanity)
         docker_required: true
     stop:
-      - withStore helper does not exist; T336 needs either (a) a new
-        gated slice that authors packages/db/src/helpers/with-store.ts,
-        OR (b) reinterpretation to test the store GUC contract via
-        runWithTenantContext + manual SET LOCAL app.current_store
+      - if the spec attempts to author packages/db/src/helpers/with-store.ts
+        (that is path (a) and was explicitly rejected by the slice owner)
+      - if the spec modifies runWithTenantContext or any production code
     report_fields:
       - changed_files
       - validation_results
     parallel_safety: safe
-    # See finding MISSING_WITHSTORE_HELPER for the full blocker context.
+    # Resolves finding MISSING_WITHSTORE_HELPER via path (b). On closeout,
+    # set the finding's resolved_by_pr / resolved_by_commit / resolved_at
+    # to this slice's merge audit fields.
 
   # ===== Merged (T340 PR #264, T341 PR #268, HARNESS_FIX + 0009 PR #279) / Ready ===
 
