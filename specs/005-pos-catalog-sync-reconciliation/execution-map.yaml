@@ -45,9 +45,10 @@ findings:
       editing 004-owned observability schema files — outside T501's
       `allowed_files` and forbidden to 005 by Standing Rules §3.
     evidence:
-      - packages/shared/src/observability/metrics-labels.ts:111-143 (closed allowlist contents)
+      - packages/shared/src/observability/metrics-labels.ts:111-150 (closed allowlist contents — source of truth #1)
       - apps/api/src/observability/metrics/api.metrics.ts:75-86 (load-time assertMetricLabels calls)
       - packages/shared/src/observability/metrics-labels.ts:177-211 (unregistered-metric throw path)
+      - apps/api/test/observability/cardinality.spec.ts:162-194 (drift-contract `expectedSignals` array — source of truth #3, discovered via CI failure on PR #299 first push 2026-05-23 when CI ran with a fresh `@data-pulse-2/shared` build while local jest had a stale dist symlink)
     resolution_path: |
       Path (b) chosen by owner: add a new `[GATED]` prerequisite slice
       `005-WAVE1-METRICS-ALLOWLIST` that touches only the 004-owned files
@@ -102,8 +103,9 @@ slices:
       - 005-WAVE1-SETUP        # T501 cannot register the counters until this lands
     agent: sonnet-api
     allowed_files:
-      - packages/shared/src/observability/metrics-labels.ts                  # [GATED] — closed allowlist extension
-      - docs/observability/signals.md                                        # [GATED] — signal catalogue extension (new §1.1)
+      - packages/shared/src/observability/metrics-labels.ts                  # [GATED] — closed allowlist extension (source of truth #1)
+      - docs/observability/signals.md                                        # [GATED] — signal catalogue extension, new §1.1 (source of truth #2)
+      - apps/api/test/observability/cardinality.spec.ts                      # [GATED] — `expectedSignals` drift-contract array (source of truth #3 — discovered via CI failure on PR #299 first push)
       - specs/005-pos-catalog-sync-reconciliation/execution-map.yaml         # self-amending: add this slice + the finding + SETUP depends_on edge
       - specs/005-pos-catalog-sync-reconciliation/wave-status.md             # self-amending: surface the finding + new first dispatch
     forbidden_files:

@@ -98,6 +98,7 @@ they are not part of the original T444 platform catalogue.
 | `idempotency_token_mismatch_total` | counter | (none) | 005 FR-021c, FR-082 — POS replay with same `Idempotency-Key` but a different payload. Increments alongside the existing platform-level `idempotency_conflict_total{route}` (§1) — the platform counter is route-bucketed; this one is catalog-domain bucketed |
 
 ### Notes
+
 - **No `route` label** on `unknown_item_captured_total` / `unknown_item_resolved_total`.
   These counters are *domain-keyed*, not *route-keyed*. The HTTP route is
   already captured by §1's `http_request_count{route,method,status_class}`;

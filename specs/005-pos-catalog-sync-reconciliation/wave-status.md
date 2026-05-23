@@ -87,7 +87,7 @@ Add a new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` that touche
 
 _None._
 
-All 19 Wave 1 slices are at `status: proposed`. None have been approved for dispatch.
+All 20 Wave 1 slices are at `status: proposed`. None have been approved for dispatch.
 
 ---
 
@@ -95,7 +95,7 @@ All 19 Wave 1 slices are at `status: proposed`. None have been approved for disp
 
 ### Phase 0 — Cross-spec prerequisite (gated)
 
-- **`005-WAVE1-METRICS-ALLOWLIST`** (no `T#` ids — finding-driven slice) — `[GATED]` schema-only allowlist extension for the three Wave 1 catalog counters. Touches `packages/shared/src/observability/metrics-labels.ts` (closed allowlist) and `docs/observability/signals.md` (new §1.1 "Catalog domain signals (005 Wave 1)"). No instrument creation, no emission. **MUST land first** — see Active findings. **Recommended first dispatch.**
+- **`005-WAVE1-METRICS-ALLOWLIST`** (no `T#` ids — finding-driven slice) — `[GATED]` schema-only allowlist extension for the three Wave 1 catalog counters. Touches (and self-amends) **four** files: (1) `packages/shared/src/observability/metrics-labels.ts` (closed allowlist), (2) `docs/observability/signals.md` (new §1.1 "Catalog domain signals (005 Wave 1)"), (3) `apps/api/test/observability/cardinality.spec.ts` (drift-contract `expectedSignals` array — third source of truth alongside the allowlist + docs), and (4) this spec's `execution-map.yaml` + `wave-status.md` (self-amending: records the finding and adds the new slice + dependency edge). No instrument creation, no emission. **MUST land first** — see Active findings. **Recommended first dispatch.**
 
 ### Phase 1 — Setup
 

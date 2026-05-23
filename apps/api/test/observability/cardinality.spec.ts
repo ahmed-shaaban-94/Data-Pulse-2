@@ -191,6 +191,10 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "outbox_pending_total",
     "outbox_dead_letter_total",
     "outbox_drain_duration_seconds",
+    // Catalog domain — 005 Wave 1 (signals.md §1.1, registered via 005-WAVE1-METRICS-ALLOWLIST)
+    "unknown_item_captured_total",
+    "unknown_item_resolved_total",
+    "idempotency_token_mismatch_total",
   ];
 
   for (const name of expectedSignals) {
