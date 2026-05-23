@@ -505,6 +505,45 @@ describe("T343 §4 — store_product_overrides RLS bypass probes", () => {
     }
   });
 
+  // §4.6 — '*' sentinel write denial: carve-out is read-only; INSERT and DELETE must be rejected
+  it("§4.6 store GUC = '*': INSERT on store_product_overrides is denied by WITH CHECK", async () => {
+    if (maybeSkip()) return;
+    await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
+      // WITH CHECK has WHEN '*' THEN FALSE — INSERT must be rejected
+      await expectDeniedByPolicyOrCast(
+        client.query(
+          `INSERT INTO store_product_overrides
+             (id, tenant_id, store_id, product_id, is_active, created_by, updated_by)
+           VALUES (gen_random_uuid(), $1, $2, $3, true, $4, $4)`,
+          [TENANT_A, STORE_A_X, PRODUCT_A_ACTIVE, ACTOR_A],
+        ),
+      );
+    });
+  });
+
+  it("§4.6 store GUC = '*': DELETE on store_product_overrides is denied by USING", async () => {
+    if (maybeSkip()) return;
+    await withRawClient(async (client) => {
+      await client.query(
+        `SELECT set_config('app.current_tenant', $1, true)`,
+        [TENANT_A],
+      );
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
+      // USING has WHEN '*' THEN FALSE on the write policy — DELETE must match 0 rows
+      const r = await client.query<{ count: string }>(
+        `WITH del AS (
+           DELETE FROM store_product_overrides RETURNING id
+         ) SELECT COUNT(*)::text AS count FROM del`,
+      );
+      expect(r.rows[0]?.count).toBe("0");
+    });
+  });
+
   // §4.6 — write under unset/wrong store GUC: INSERT rejected
   it("§4.6 write with tenant set but store unset: INSERT is rejected by RLS", async () => {
     if (maybeSkip()) return;

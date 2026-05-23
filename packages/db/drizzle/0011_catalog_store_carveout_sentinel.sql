@@ -35,15 +35,22 @@
 -- The tenant-axis CASE guard from 0010 is PRESERVED unchanged in all three
 -- policies.
 --
--- WITH CHECK clarification for store_product_overrides_tenant_write
--- -----------------------------------------------------------------
--- The USING clause gets the three-way guard above (tenant-owners can read
--- cross-store, callers-without-store-GUC are fail-closed).
--- The WITH CHECK clause intentionally differs:
---   WHEN '*' THEN FALSE                    -- carve-out read is allowed; cross-store WRITE is not
---   WHEN '' THEN FALSE                     -- never-set is fail-closed (same as 0010)
--- A '*' sentinel in WITH CHECK is excluded because tenant-owner cross-store
--- reads are permitted but writes must always be store-scoped.
+-- WITH CHECK and USING clarification for store_product_overrides_tenant_write
+-- ---------------------------------------------------------------------------
+-- Both USING and WITH CHECK use THEN FALSE for '*' and ''.
+--
+-- FOR ALL USING governs SELECT, UPDATE, and DELETE visibility. If USING
+-- returned TRUE for '*', a tenant-owner could DELETE rows from any store
+-- they don't own — a cross-store write leak via the DELETE path.
+-- By returning FALSE for '*' in USING, cross-store reads are handled
+-- exclusively by the separate store_product_overrides_select policy
+-- (SELECT only), which correctly returns TRUE for '*'. The write policy
+-- therefore never permits cross-store access on any command.
+--
+--   USING:      WHEN '*' THEN FALSE  -- no cross-store SELECT/UPDATE/DELETE via write policy
+--               WHEN '' THEN FALSE   -- fail-closed
+--   WITH CHECK: WHEN '*' THEN FALSE  -- no cross-store INSERT/UPDATE via write policy
+--               WHEN '' THEN FALSE   -- fail-closed
 --
 -- Migration layering
 -- ------------------
@@ -102,7 +109,7 @@ CREATE POLICY store_product_overrides_tenant_write
     END
     AND CASE
       WHEN current_setting('app.current_store', true) = '*'
-        THEN TRUE
+        THEN FALSE
       WHEN current_setting('app.current_store', true) = ''
         THEN FALSE
       ELSE

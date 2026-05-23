@@ -104,14 +104,15 @@ function maybeSkip(): boolean {
 
 // ---- Tenant + store context helper --------------------------------------
 //
-// `store_product_overrides` and `unknown_items` carry the post-0008 RLS
-// SELECT policy that AND-combines `app.current_tenant` with
-// `(store_id = app.current_store OR app.current_store = '*')`. The
-// sentinel value `'*'` is the tenant-owner all-stores carve-out
-// introduced in migration 0009 — the CASE guard in the policy handles
-// it explicitly without performing a `::uuid` cast, avoiding the
-// `invalid input syntax for type uuid` error that the old `''` sentinel
-// would trigger (see `0009_catalog_store_carveout_sentinel.sql`).
+// `store_product_overrides` and `unknown_items` carry the post-0011 RLS
+// store-axis CASE guard (`0011_catalog_store_carveout_sentinel.sql`).
+// The three-way guard distinguishes:
+//   '*'    → TRUE  (tenant-owner cross-store carve-out)
+//   ''     → FALSE (GUC never set → fail-closed)
+//   <uuid> → store_id equality (store-scoped)
+// Callers that want cross-store visibility must set
+// `app.current_store = '*'` — the old `''` sentinel is no longer the
+// carve-out signal and is now fail-closed.
 //
 // As a result, every read of those two tables under a runtime role
 // must set `app.current_store` to a real store UUID. The native
