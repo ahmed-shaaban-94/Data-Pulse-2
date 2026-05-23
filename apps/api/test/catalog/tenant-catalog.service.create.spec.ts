@@ -84,18 +84,12 @@ let dockerSkipped = false;
 // ---- Lifecycle ------------------------------------------------------------
 
 beforeAll(async () => {
+  // Narrow MIGRATION_TEST_ALLOW_SKIP=1 to Docker-only failures so a real
+  // regression in migrations/seeds is not silently swallowed.
+  // env is assigned only after startPgEnv() succeeds; if env is still null
+  // when caught, container startup is the culprit (Docker unavailable).
   try {
     env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
-    await seedCatalogIsolationFixture(env);
-
-    // Instantiate the service under test.
-    // T351 will define the constructor signature. The expectation is that
-    // TenantCatalogService accepts a Postgres pool (or a Drizzle client) so it
-    // can write to `tenant_products`. The admin pool is passed here so the test
-    // can exercise the write path directly; store-context assertions use
-    // env.app (the non-superuser pool that RLS applies to).
-    service = new TenantCatalogService(env.admin);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -108,6 +102,18 @@ beforeAll(async () => {
     }
     throw new Error(`Container start failed: ${msg}`);
   }
+
+  // Container is up — failures past this point are real and must not skip.
+  await applyAllUpAndCreateAppRole(env);
+  await seedCatalogIsolationFixture(env);
+
+  // Instantiate the service under test.
+  // T351 will define the constructor signature. The expectation is that
+  // TenantCatalogService accepts a Postgres pool (or a Drizzle client) so it
+  // can write to `tenant_products`. The admin pool is passed here so the test
+  // can exercise the write path directly; store-context assertions use
+  // env.app (the non-superuser pool that RLS applies to).
+  service = new TenantCatalogService(env.admin);
 }, 180_000);
 
 afterAll(async () => {
@@ -185,7 +191,7 @@ describe("T350 — TenantCatalogService.create: body-supplied tenant_id ignored"
         taxCategory: "standard",
         // Attempt to inject a foreign tenant ID — must be silently discarded.
         tenantId: maliciousTenantId,
-      } as Parameters<typeof service.create>[1]);
+      } as Parameters<TenantCatalogService["create"]>[1]);
 
       // The persisted tenant_id MUST match the principal, not the payload.
       expect(result.tenantId).toBe(principalTenantId);
@@ -257,7 +263,7 @@ describe("T350 — TenantCatalogService.create: required-field validation", () =
       service!.create(principal, {
         // name intentionally omitted
         taxCategory: "standard",
-      } as Parameters<typeof service.create>[1]),
+      } as Parameters<TenantCatalogService["create"]>[1]),
     ).rejects.toThrow();
   });
 
@@ -273,7 +279,7 @@ describe("T350 — TenantCatalogService.create: required-field validation", () =
       service!.create(principal, {
         name: "T350 Missing Tax Category",
         // taxCategory intentionally omitted
-      } as Parameters<typeof service.create>[1]),
+      } as Parameters<TenantCatalogService["create"]>[1]),
     ).rejects.toThrow();
   });
 });
