@@ -1,8 +1,8 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-23 (0011_CATALOG_STORE_CARVEOUT_SENTINEL merged — PR #295 @ `2f7554d`)
+**Last updated:** 2026-05-23 (PHASE3_RED_WAVE — all four RED+GREEN pairs merged: PR #300/#301/#302/#303)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `2f7554d` (PR #295, 2026-05-23)
+**Base:** `origin/main` at `454a7ae` (PR #303, 2026-05-23 — last of four PHASE3_RED_WAVE merges)
 **Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch)
 **Resolved findings (kept for audit):** 4 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`), `RLS_STORE_ABSENT_READ_LEAK` (resolved PR #295 @ `2f7554d`)
 
@@ -10,17 +10,20 @@
 
 ## TL;DR
 
-Slice `0011_CATALOG_STORE_CARVEOUT_SENTINEL` **merged** in PR #295 @ `2f7554d`
-(2026-05-23). Resolves finding `RLS_STORE_ABSENT_READ_LEAK`. Introduces sentinel `'*'`
-to distinguish tenant-owner cross-store carve-out (→ `TRUE` on SELECT) from never-set
-GUC (→ `FALSE`, fail-closed). The 8 deferred `it.todo` items in T342/T343 (4 in
-`cross-store-read.spec.ts` §4.6/§7.6, 4 in `rls-bypass-probe.spec.ts` §4.6/§7.6 +
-no-GUC pool) are now executable assertions. CodeRabbit security fix: the write policy
-USING clause uses `WHEN '*' THEN FALSE` to block cross-store DELETE via the FOR ALL
-policy. Down migration restores exact 0010-form bodies.
+**PHASE3_RED_WAVE complete.** All four catalog service-layer RED+GREEN pairs landed on
+`main` 2026-05-23 in independent squash PRs (each pair shipped together; the original
+plan was RED-first then GREEN-later, but the slice owners paired them in-branch):
 
-Only remaining active finding: `MISSING_WITHSTORE_HELPER` (low severity).
-T336 remains blocked on that finding.
+- **PR #300** @ `2bf7e27` — `TenantCatalogService.create` (T350 RED + T351 GREEN)
+- **PR #301** @ `f577570` — `GlobalCatalogService.list` (T360 RED + T361 GREEN)
+- **PR #302** @ `c4147b0` — `StoreOverrideService.create` (T372 RED + T373 GREEN) — added
+  service-level cross-tenant product probe at merge time, since PG FK triggers bypass RLS
+  per [PostgreSQL docs](https://www.postgresql.org/docs/16/ddl-rowsecurity.html) and the
+  original assumption ("FK to `tenant_products(id)` will fail under RLS") was wrong.
+- **PR #303** @ `454a7ae` — `ProductAliasesService.create` (T383 RED + T384 GREEN)
+
+Phase 3's service-layer surface is now committed. Only remaining active finding:
+`MISSING_WITHSTORE_HELPER` (low severity). `T336` remains blocked on that finding.
 
 ---
 
@@ -45,6 +48,10 @@ T336 remains blocked on that finding.
 | `T344` | Malicious body-override sweep (`apps/api/test/catalog/isolation/malicious-override.spec.ts`) — GREEN, no deferred coverage | PR #285 @ `fd18598` |
 | `0010_CATALOG_TENANT_GUC_CAST_FIX` | `0010_catalog_tenant_empty_guc_fix.sql` — CASE guard for empty `app.current_tenant` cast across 13 policies on 5 tables; 5 T343 `it.todo` unblocked | PR #292 @ `6adf6df` |
 | `0011_CATALOG_STORE_CARVEOUT_SENTINEL` | `0011_catalog_store_carveout_sentinel.sql` — sentinel `'*'` for store carve-out; three-way CASE guard on 3 RLS policies; 8 `it.todo` items converted; write-denial regression tests added | PR #295 @ `2f7554d` |
+| `T350_TENANT_CATALOG_CREATE_RED` | `TenantCatalogService.create` RED+GREEN — 4 cases (S1 happy path, S5 forbidden tenant-id ignored, S7 cross-tenant non-disclosure, audit emission). Closeout fix: seeded actor user to satisfy `audit_events.actor_user_id` FK. | PR #300 @ `2bf7e27` |
+| `T360_GLOBAL_CATALOG_LIST_RED` | `GlobalCatalogService.list` RED+GREEN — active-only filter, identical visibility across tenants. Closeout fix: runtime guard on `@Optional()` `PG_POOL` (CodeRabbit §XII object-safety). | PR #301 @ `f577570` |
+| `T372_STORE_OVERRIDE_CREATE_RED` | `StoreOverrideService.create` RED+GREEN — S1 create, S2 cross-store deny, S3 cross-tenant deny, **S4 cross-tenant product probe** (service-level pre-INSERT check since PG FKs bypass RLS), S5 Q8 forbidden fields via `hasOwnProperty`. Closeout fixes: `env.app` (was reading undefined `env.host` → ECONNREFUSED) + CodeRabbit hygiene. | PR #302 @ `c4147b0` |
+| `T383_PRODUCT_ALIASES_UNIQUENESS_RED` | `ProductAliasesService.create` RED+GREEN — eight groups (tenant-wide uniq, cross-tenant ok, external_pos_id scoping, store-scoped uniq, store+tenant coexistence, FK/CHECK violations). Closeout fix: consolidated `isUniqueViolation` (collapsed cause-recursion branch) to close global branch-coverage gap (89.97% → ≥90%). | PR #303 @ `454a7ae` |
 
 ### Context from neighboring merges
 
@@ -137,32 +144,30 @@ _None — no slices are currently in-progress or locally-committed._
 
 ## Proposed (awaiting approval)
 
-`PHASE3_RED_WAVE` — four RED test slices that can run in parallel because
-their `allowed_files` touch disjoint paths under `apps/api/test/catalog/**`
-(T340 removed — merged via PR #264):
-
-- `T350_TENANT_CATALOG_CREATE_RED`
-- `T360_GLOBAL_CATALOG_LIST_RED`
-- `T372_STORE_OVERRIDE_CREATE_RED`
-- `T383_PRODUCT_ALIASES_UNIQUENESS_RED`
-
-Eligibility gates are **satisfied** (RLS fix merged; T340 and T341 merged; CI on
-`main` green). Still `proposed: true` because parallel dispatch needs explicit
-user endorsement.
+_None._ `PHASE3_RED_WAVE` is fully merged — see "Merged on `main`" above.
 
 ---
 
 ## Next recommended action
 
-**No medium-severity findings remain.** The only active finding is `MISSING_WITHSTORE_HELPER`
-(low severity; blocks `T336` only). Both RLS-axis findings are resolved:
-`RLS_STORE_ABSENT_READ_LEAK` (PR #295) and `RLS_UNSET_TENANT_GUC_CAST_ERROR` (PR #292).
+**Phase 3's service-layer surface is on `main`.** Downstream consumers (the 005 Wave 2
+reconciliation slices in particular) can now reference
+`TenantCatalogService.create`, `GlobalCatalogService.list`, `StoreOverrideService.create`,
+and `ProductAliasesService.create` as committed contracts.
 
-**Recommended next step:** Endorse the `PHASE3_RED_WAVE` to advance catalog feature
-implementation. All four proposed RED test slices have satisfied eligibility gates.
+**Recommended next steps:**
 
-`T336` is independent and still needs an explicit decision on `MISSING_WITHSTORE_HELPER`
-before it can run.
+1. **Unblock 005 Wave 2 authoring.** With T350 + T383 now on `main`, the dependency
+   note in [`specs/005-pos-catalog-sync-reconciliation/wave-status.md`](../005-pos-catalog-sync-reconciliation/wave-status.md)
+   is cleared. Run `/speckit-tasks` for spec 005 to extend its `tasks.md` and
+   `execution-map.yaml` with the Wave 2 reconciliation slices (`005-WAVE2-*`).
+2. **`T336`** (RLS bypass-probe coverage on `store_product_overrides`) — still
+   independent and still blocked on `MISSING_WITHSTORE_HELPER`. Decide between
+   (a) author a new `[GATED]` slice for `packages/db/src/helpers/with-store.ts`, or
+   (b) reinterpret T336 to use `runWithTenantContext` + manual `SET LOCAL
+   app.current_store` (matching the `T335_TENANT_HELPER_COVERAGE` pattern).
+
+No medium-severity findings remain.
 
 ---
 
@@ -195,13 +200,16 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Endorse the Phase-3 RED wave to advance catalog feature implementation:
+Hand off to 005 to author the now-unblocked Wave 2 reconciliation slices:
 
 ```text
-Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
+Use Agent OS. Author Wave 2 reconciliation tasks.
+Spec: specs/005-pos-catalog-sync-reconciliation
+Dependency cleared: 003 PHASE3_RED_WAVE merged (PR #300/#301/#302/#303).
+Stop before commit.
 ```
 
-For T336 — only run this once you've authorized a resolution path for `MISSING_WITHSTORE_HELPER`:
+For `T336` — only run this once you've authorized a resolution path for `MISSING_WITHSTORE_HELPER`:
 
 ```text
 Use Agent OS. Resolve finding MISSING_WITHSTORE_HELPER. Stop before commit.
