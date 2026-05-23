@@ -233,11 +233,13 @@ function mapRow(row: ProductAliasRow): ProductAliasRecord {
  * that nest the underlying `pg.DatabaseError` don't defeat the check.
  */
 function isUniqueViolation(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
+  if (!err || typeof err !== "object") return false;
   const e = err as { code?: string; cause?: unknown };
-  if (e.code === "23505") return true;
-  if (e.cause && typeof e.cause === "object") {
-    return isUniqueViolation(e.cause);
-  }
-  return false;
+  // `||` short-circuits and `isUniqueViolation` re-runs the `!err` /
+  // `typeof !== "object"` guard, so passing through `e.cause` blindly
+  // is safe even when it's `undefined`. This consolidation removes the
+  // separate `e.cause && typeof e.cause === "object"` predicate, whose
+  // two sub-branches were uncovered (only real PG `23505` flows are
+  // exercised by the RED suite — no ORM-wrapped cause path).
+  return e.code === "23505" || isUniqueViolation(e.cause);
 }
