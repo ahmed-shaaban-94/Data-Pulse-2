@@ -1,24 +1,26 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-23 (0010_CATALOG_TENANT_GUC_CAST_FIX merged — PR #292 @ `6adf6df`)
+**Last updated:** 2026-05-23 (0011_CATALOG_STORE_CARVEOUT_SENTINEL merged — PR #295 @ `2f7554d`)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `6adf6df` (PR #292, 2026-05-23)
-**Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered)
-**Resolved findings (kept for audit):** 3 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`)
+**Base:** `origin/main` at `2f7554d` (PR #295, 2026-05-23)
+**Active findings:** 1 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch)
+**Resolved findings (kept for audit):** 4 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`), `RLS_STORE_ABSENT_READ_LEAK` (resolved PR #295 @ `2f7554d`)
 
 ---
 
 ## TL;DR
 
-Slice `0010_CATALOG_TENANT_GUC_CAST_FIX` **merged** in PR #292 @ `6adf6df`
-(2026-05-23). Resolves finding `RLS_UNSET_TENANT_GUC_CAST_ERROR`. The 5 tenant-axis
-`it.todo` items in T343 (`rls-bypass-probe.spec.ts` §3.3/§4.5/§5.3/§6.5/§7.6) are
-now executable assertions. Validation: 35 passed / 4 todo / 39 total on T343;
-T341 31/31; T342 17/4 todo (store-axis unchanged); migration round-trip 27/27; CLI
-spec 10/10.
+Slice `0011_CATALOG_STORE_CARVEOUT_SENTINEL` **merged** in PR #295 @ `2f7554d`
+(2026-05-23). Resolves finding `RLS_STORE_ABSENT_READ_LEAK`. Introduces sentinel `'*'`
+to distinguish tenant-owner cross-store carve-out (→ `TRUE` on SELECT) from never-set
+GUC (→ `FALSE`, fail-closed). The 8 deferred `it.todo` items in T342/T343 (4 in
+`cross-store-read.spec.ts` §4.6/§7.6, 4 in `rls-bypass-probe.spec.ts` §4.6/§7.6 +
+no-GUC pool) are now executable assertions. CodeRabbit security fix: the write policy
+USING clause uses `WHEN '*' THEN FALSE` to block cross-store DELETE via the FOR ALL
+policy. Down migration restores exact 0010-form bodies.
 
-T342 still carries 4 `it.todo` items for store-axis (RLS_STORE_ABSENT_READ_LEAK).
-T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
+Only remaining active finding: `MISSING_WITHSTORE_HELPER` (low severity).
+T336 remains blocked on that finding.
 
 ---
 
@@ -42,6 +44,7 @@ T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
 | `T343` | RLS bypass probe (`apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts`) — 9 `it.todo` deferred against RLS_STORE_ABSENT_READ_LEAK + RLS_UNSET_TENANT_GUC_CAST_ERROR | PR #285 @ `fd18598` |
 | `T344` | Malicious body-override sweep (`apps/api/test/catalog/isolation/malicious-override.spec.ts`) — GREEN, no deferred coverage | PR #285 @ `fd18598` |
 | `0010_CATALOG_TENANT_GUC_CAST_FIX` | `0010_catalog_tenant_empty_guc_fix.sql` — CASE guard for empty `app.current_tenant` cast across 13 policies on 5 tables; 5 T343 `it.todo` unblocked | PR #292 @ `6adf6df` |
+| `0011_CATALOG_STORE_CARVEOUT_SENTINEL` | `0011_catalog_store_carveout_sentinel.sql` — sentinel `'*'` for store carve-out; three-way CASE guard on 3 RLS policies; 8 `it.todo` items converted; write-denial regression tests added | PR #295 @ `2f7554d` |
 
 ### Context from neighboring merges
 
@@ -86,6 +89,14 @@ All previously-local work is now on `main`:
 - **Verification:** T343 rls-bypass-probe 35 passed / 4 todo (5 formerly-todo tenant-axis assertions now execute); T341 31/31 regression GREEN; T342 17 passed / 4 todo (store-axis unchanged); migration round-trip 27/27; CLI spec 10/10.
 - **Audit kept because:** documents the `''` vs NULL GUC semantics gotcha and the CASE-guard pattern used — valuable context for any future policy author.
 
+### `RLS_STORE_ABSENT_READ_LEAK` — RESOLVED
+
+- **Resolved by:** `0011_CATALOG_STORE_CARVEOUT_SENTINEL` (PR #295 @ `2f7554d`, merged 2026-05-23)
+- **Originally affected:** `store_product_overrides` (§4.6), `unknown_items` (§7.6) — read path returned all-tenant rows when `app.current_store` GUC was never set, because `current_setting('app.current_store', true)` returns `''` (not NULL) for a never-set GUC, which matched the 0009 `WHEN '' THEN TRUE` carve-out.
+- **Mechanism of fix:** Introduced sentinel value `'*'`. Tenant-owner cross-store code paths now call `set_config('app.current_store', '*', true)`. The three store-axis CASE guards are three-way: `WHEN '*' THEN TRUE/FALSE` (carve-out), `WHEN '' THEN FALSE` (fail-closed for never-set), `ELSE store_id = ...::uuid`. The write policy (FOR ALL) uses `WHEN '*' THEN FALSE` in USING to block cross-store DELETE — cross-store reads go through the SELECT-only policy. 8 call sites in the test suite updated from `''` to `'*'`.
+- **Verification:** 8 previously-`it.todo` assertions in T342/T343 are now executable. CI on PR #295 passed.
+- **Audit kept because:** documents the `''` vs "never set" GUC ambiguity and the sentinel pattern — valuable context for any future policy author or caller setting `app.current_store`.
+
 ### `RLS_CROSS_STORE_READ_LEAK` — RESOLVED
 
 - **Resolved by:** `RLS_CROSS_STORE_FIX` (PR #254 @ `483aae4`, merged 2026-05-21)
@@ -97,16 +108,6 @@ All previously-local work is now on `main`:
 ---
 
 ## Active findings
-
-### `RLS_STORE_ABSENT_READ_LEAK` — discovered 2026-05-22
-
-- **Summary:** Matrix §4.6 and §7.6 prescribe "tenant set, `app.current_store` GUC absent (never set in session) → 0 rows" for `store_product_overrides` and `unknown_items`. CI on PR #285 (commit `30751989`) showed the contract is not delivered: PG returns `''` (empty string) — not NULL — from `current_setting('app.current_store', true)` when the GUC has never been set, and the 0009 CASE guard's `WHEN '' THEN TRUE` carve-out branch fires, returning all tenant rows instead of 0. Same family as the resolved `RLS_CROSS_STORE_READ_LEAK` but on the "store absent" axis.
-- **Severity:** medium (data-visibility issue on read path; same tier as the resolved cross-store leak).
-- **Proof:** CI failure (PR #285 @ `30751989`) — six test cases failing with "Expected '0', Received '2'" or `''::uuid` cast error. Independent PG 16 probe (2026-05-22) confirmed `current_setting('app.current_store', true)` returns `''` not NULL.
-- **Blocks:** No slice-level dispatch blocker. PR #285 ships T342 and T343 with §4.6 / §7.6 store-absent coverage deferred as `it.todo` placeholders. Full §4.6 / §7.6 GREEN waits on a future SQL slice.
-- **Resolution paths (either, with explicit user approval):**
-  1. New gated SQL slice (e.g. `0010_*`) extending 0009's CASE guard to distinguish "GUC explicitly empty (carve-out)" from "GUC never set (fail-closed)" — e.g. by keying the carve-out on a dedicated `app.current_store_owner_carveout` sentinel rather than the empty string.
-  2. Matrix amendment re-specifying §4.6 / §7.6 to require an explicit `DISCARD ALL` (or equivalent connection-reset) before the contract holds — i.e. accepting that the never-set behavior is "indistinguishable from explicit-empty" at the policy layer and revising the contract accordingly.
 
 ### `MISSING_WITHSTORE_HELPER`
 
@@ -153,16 +154,15 @@ user endorsement.
 
 ## Next recommended action
 
-**Resolve `RLS_STORE_ABSENT_READ_LEAK`** — the remaining medium-severity finding
-(4 `it.todo` items in T342/T343 for store-axis §4.6/§7.6). Resolution requires a
-new gated SQL slice `0011_CATALOG_STORE_CARVEOUT_SENTINEL` that distinguishes
-"GUC explicitly empty (tenant-owner carve-out)" from "GUC never set (fail-closed)"
-by introducing a sentinel value or a separate GUC flag. Explicit user approval
-required (SQL migration — gated surface).
+**No medium-severity findings remain.** The only active finding is `MISSING_WITHSTORE_HELPER`
+(low severity; blocks `T336` only). Both RLS-axis findings are resolved:
+`RLS_STORE_ABSENT_READ_LEAK` (PR #295) and `RLS_UNSET_TENANT_GUC_CAST_ERROR` (PR #292).
 
-Alternatively, endorse the Phase-3 RED wave (`PHASE3_RED_WAVE`) to advance catalog
-feature implementation. T336 is independent and still needs an explicit decision on
-`MISSING_WITHSTORE_HELPER`.
+**Recommended next step:** Endorse the `PHASE3_RED_WAVE` to advance catalog feature
+implementation. All four proposed RED test slices have satisfied eligibility gates.
+
+`T336` is independent and still needs an explicit decision on `MISSING_WITHSTORE_HELPER`
+before it can run.
 
 ---
 
@@ -195,14 +195,7 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Resolve the store-absent finding (next SQL migration slice):
-
-```text
-Use Agent OS. Execute slice 0011_CATALOG_STORE_CARVEOUT_SENTINEL. Stop before commit.
-Spec: specs/003-catalog-foundation
-```
-
-Or endorse the Phase-3 RED wave to advance catalog feature implementation:
+Endorse the Phase-3 RED wave to advance catalog feature implementation:
 
 ```text
 Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
