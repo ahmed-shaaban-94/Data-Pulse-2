@@ -24,13 +24,48 @@ base: origin/main  # 5179682 (PR #296, Wave 1 tasks.md)
 # ----------------------------------------------------------------------------
 # findings
 # ----------------------------------------------------------------------------
-# No findings yet — no implementation work has been dispatched. The known
-# dependencies (PHASE3_RED_WAVE for Wave 2, header-name drift between
-# spec/quickstart and the existing interceptor) are planning-time decisions
-# already documented in plan.md §4 and tasks.md preamble; they are not
-# defects discovered during work.
+# Planning-time gaps surface here when they are non-trivial and require a
+# dedicated slice or amendment. Pre-implementation product decisions (e.g.,
+# PHASE3_RED_WAVE for Wave 2, header-name drift between spec/quickstart and
+# the existing interceptor) are recorded in plan.md §4 and tasks.md preamble,
+# not here.
 
-findings: []
+findings:
+  - id: 005-METRICS-ALLOWLIST-PRECONDITION
+    severity: high
+    discovered_in_slice_attempt: 005-WAVE1-SETUP   # first dispatch attempt, 2026-05-23
+    summary: |
+      T501 (register three Wave 1 catalog counters in api.metrics.ts) cannot
+      succeed within its declared `allowed_files`. The closed allowlist
+      `ALLOWED_METRIC_LABELS` in packages/shared/src/observability/metrics-labels.ts
+      gates every counter registration via `assertMetricLabels()` at module
+      load. None of `unknown_item_captured_total`,
+      `unknown_item_resolved_total`, or `idempotency_token_mismatch_total`
+      were allowlisted at tasks.md authoring time. Adding them requires
+      editing 004-owned observability schema files — outside T501's
+      `allowed_files` and forbidden to 005 by Standing Rules §3.
+    evidence:
+      - packages/shared/src/observability/metrics-labels.ts:111-150 (closed allowlist contents — source of truth #1)
+      - apps/api/src/observability/metrics/api.metrics.ts:75-86 (load-time assertMetricLabels calls)
+      - packages/shared/src/observability/metrics-labels.ts:177-211 (unregistered-metric throw path)
+      - apps/api/test/observability/cardinality.spec.ts:162-194 (drift-contract `expectedSignals` array — source of truth #3, discovered via CI failure on PR #299 first push 2026-05-23 when CI ran with a fresh `@data-pulse-2/shared` build while local jest had a stale dist symlink)
+    resolution_path: |
+      Path (b) chosen by owner: add a new `[GATED]` prerequisite slice
+      `005-WAVE1-METRICS-ALLOWLIST` that touches only the 004-owned files
+      (`packages/shared/src/observability/metrics-labels.ts` and
+      `docs/observability/signals.md`). 005-WAVE1-SETUP gains a
+      `depends_on: [005-WAVE1-METRICS-ALLOWLIST]` edge so T501 cannot
+      dispatch until the allowlist lands on `main`.
+    resolved_by_slice: 005-WAVE1-METRICS-ALLOWLIST
+    resolved_by_pr: null   # filled in at closeout
+    resolved_at_commit: null
+    resolved_at: null
+    notes: |
+      Planning fix only — no Wave 1 task IDs change. tasks.md T501's
+      acceptance criteria already assumed the counters would be registered;
+      the gap was that tasks.md didn't enumerate the upstream allowlist
+      precondition. The new slice is a planning correction, not a new
+      product requirement.
 
 # ----------------------------------------------------------------------------
 # slices — Wave 1 (capture path)
@@ -46,6 +81,68 @@ findings: []
 
 slices:
 
+  # ===== Phase 0: Cross-spec prerequisite (gated) ===========================
+  # The three Wave 1 catalog metrics (`unknown_item_captured_total`,
+  # `unknown_item_resolved_total{action}`, `idempotency_token_mismatch_total`)
+  # cannot be registered in `apps/api/src/observability/metrics/api.metrics.ts`
+  # (T501) without first allowlisting them in 004's closed metric-label
+  # registry. The registry's `assertMetricLabels` throws at module load on
+  # any unallowlisted metric name, which would fail the entire API test
+  # suite. This slice does the schema-only allowlist extension first.
+  #
+  # Discovered: 2026-05-23 during the first 005-WAVE1-SETUP dispatch
+  # attempt. See wave-status.md "Active findings" for the audit trail.
+
+  - id: 005-WAVE1-METRICS-ALLOWLIST
+    task_ids: []   # No task ids in tasks.md — this is a planning correction added after tasks.md merged. Tracked as a finding-driven slice.
+    type: docs
+    status: proposed
+    approval_required: true   # [GATED] — touches 004-owned observability schema (packages/shared/src/observability/** and docs/observability/**)
+    depends_on: []
+    blocks:
+      - 005-WAVE1-SETUP        # T501 cannot register the counters until this lands
+    agent: sonnet-api
+    allowed_files:
+      - packages/shared/src/observability/metrics-labels.ts                  # [GATED] — closed allowlist extension (source of truth #1)
+      - docs/observability/signals.md                                        # [GATED] — signal catalogue extension, new §1.1 (source of truth #2)
+      - apps/api/test/observability/cardinality.spec.ts                      # [GATED] — `expectedSignals` drift-contract array (source of truth #3 — discovered via CI failure on PR #299 first push)
+      - specs/005-pos-catalog-sync-reconciliation/execution-map.yaml         # self-amending: add this slice + the finding + SETUP depends_on edge
+      - specs/005-pos-catalog-sync-reconciliation/wave-status.md             # self-amending: surface the finding + new first dispatch
+    forbidden_files:
+      - apps/api/src/observability/metrics/api.metrics.ts          # belongs to T501 / 005-WAVE1-SETUP
+      - apps/api/src/catalog/**                                    # no instrument creation or emission in this slice
+      - .specify/memory/redaction-matrix.md                        # not touched — new counters have no labels that need redaction-matrix entries
+      - docs/observability/dashboards/**                           # dashboards extension is out of scope for this slice
+      - docs/observability/alerts/**                               # alerts extension is out of scope for this slice
+      - specs/005-pos-catalog-sync-reconciliation/spec.md          # product surface — not amended by this slice
+      - specs/005-pos-catalog-sync-reconciliation/plan.md          # product surface — not amended by this slice
+      - specs/005-pos-catalog-sync-reconciliation/tasks.md         # task list — T501's acceptance text already assumed registration; not amended here
+      - specs/005-pos-catalog-sync-reconciliation/research.md      # not amended
+      - specs/005-pos-catalog-sync-reconciliation/data-model.md    # not amended
+      - specs/005-pos-catalog-sync-reconciliation/quickstart.md    # not amended
+      - specs/005-pos-catalog-sync-reconciliation/contracts/**     # not amended
+      - specs/003-catalog-foundation/**                            # 003 is read-only for 005
+      - specs/004-platform-production-readiness/**                 # 004 spec docs not amended (only its owned observability files in allowed_files above)
+    validation:
+      - command: pnpm --filter @data-pulse-2/shared test "observability/metrics-labels"
+        expected: GREEN — new entries pass the closed-allowlist invariants (snake_case keys, no forbidden labels, no duplicates, every value is an array)
+        docker_required: false
+      - command: pnpm --filter @data-pulse-2/api test "observability/cardinality"
+        expected: GREEN — `apps/api/test/observability/cardinality.spec.ts` (T461) still passes; new entries are disjoint from FORBIDDEN_METRIC_LABELS
+        docker_required: false
+    stop:
+      - if any file outside allowed_files is modified
+      - if any existing entry in `ALLOWED_METRIC_LABELS` is altered
+      - if any new label is added that is not in the closed `action` set {linked, created, dismissed}
+      - if the docs section disturbs §1's existing T444 table (must add new §1.1, not edit §1)
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: unsafe   # gated cross-spec schema change — serialize before anything that consumes it
+    branch_template: "feat/005-wave1-metrics-allowlist"
+
   # ===== Phase 1: Setup ====================================================
 
   - id: 005-WAVE1-SETUP
@@ -53,7 +150,8 @@ slices:
     type: chore
     status: proposed
     approval_required: false
-    depends_on: []
+    depends_on:
+      - 005-WAVE1-METRICS-ALLOWLIST   # T501 requires the three new counters allowlisted upstream first
     blocks:
       - 005-WAVE1-CAPTURE-HAPPY
       - 005-WAVE1-IDEMP-VERIFY
@@ -65,6 +163,8 @@ slices:
     forbidden_files:
       - apps/api/src/catalog/unknown-items/unknown-items.service.ts          # belongs to T511
       - apps/api/src/catalog/unknown-items/unknown-items.controller.ts       # belongs to T512
+      - packages/shared/src/observability/metrics-labels.ts                  # done in 005-WAVE1-METRICS-ALLOWLIST (predecessor)
+      - docs/observability/signals.md                                        # done in 005-WAVE1-METRICS-ALLOWLIST (predecessor)
     validation:
       - command: pnpm --filter @data-pulse-2/api typecheck
         expected: GREEN
@@ -75,6 +175,7 @@ slices:
     stop:
       - if any file outside allowed_files is modified
       - if existing counters (`recordIdempotencyConflict`, `recordIdempotencyReplay`, `recordIdempotencyInProgress`) are altered
+      - if 005-WAVE1-METRICS-ALLOWLIST is not yet merged on origin/main (the assertMetricLabels call at module load will throw on unallowlisted counters)
     report_fields:
       - changed_files
       - validation_results
@@ -580,19 +681,25 @@ slices:
 
 groups:
 
-  - id: PHASE_1_2_COHORT
+  - id: PHASE_0_1_2_COHORT
     members:
+      - 005-WAVE1-METRICS-ALLOWLIST   # [GATED] — must land first
       - 005-WAVE1-SETUP
       - 005-WAVE1-IDEMP-VERIFY
       - 005-WAVE1-HARNESS
     parallel_safety: safe   # file/fixture disjoint per schema
     proposed: true
-    # Intra-group DAG: SETUP `blocks` IDEMP-VERIFY and HARNESS, so SETUP
-    # MUST land before the other two. After SETUP merges, IDEMP-VERIFY and
+    # Intra-group DAG (strict serialization for the first two, then fanout):
+    #   METRICS-ALLOWLIST  blocks  SETUP  blocks  {IDEMP-VERIFY, HARNESS}
+    # METRICS-ALLOWLIST is [GATED] and must merge first (T501's assertion
+    # call at module load would otherwise throw on unallowlisted counters).
+    # After METRICS-ALLOWLIST merges and SETUP merges, IDEMP-VERIFY and
     # HARNESS may dispatch in parallel worktrees (they touch disjoint test
-    # paths). File scope: SETUP edits the module dir + api.metrics.ts;
-    # IDEMP-VERIFY is one new spec file under .../idempotency/; HARNESS adds
-    # two new files under .../__support__/ and .../isolation/.
+    # paths). File scope: METRICS-ALLOWLIST edits two 004-owned files only
+    # (metrics-labels.ts + signals.md §1.1); SETUP edits the catalog module
+    # dir + api.metrics.ts; IDEMP-VERIFY is one new spec file under
+    # .../idempotency/; HARNESS adds two new files under .../__support__/
+    # and .../isolation/.
 
   - id: PHASE_3_COHORT
     members:

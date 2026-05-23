@@ -140,6 +140,14 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   outbox_pending_total: ["event_type"],
   outbox_dead_letter_total: ["event_type"],
   outbox_drain_duration_seconds: ["event_type"],
+  // ---- Catalog domain — 005 Wave 1 (signals.md §1.1) ----
+  // Schema-only registration; emission lands in 005-WAVE1-SETUP (T501) and
+  // 005-WAVE1-METRICS (T552/T553). `action` is bounded to the closed set
+  // {linked, created, dismissed}; Wave 1 only emits `dismissed`. Wave 2
+  // (link, create-new) will exercise the remaining two values.
+  unknown_item_captured_total: [],
+  unknown_item_resolved_total: ["action"],
+  idempotency_token_mismatch_total: [],
 };
 
 /**
