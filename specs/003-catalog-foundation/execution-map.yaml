@@ -16,10 +16,13 @@
 # T342, T343, T344 closed out: PR #285 @ fd18598 (2026-05-22).
 # RLS_UNSET_TENANT_GUC_CAST_ERROR finding resolved by PR #292 @ 6adf6df (2026-05-23).
 # Map base advanced to 6adf6df (PR #292).
+# 0011_CATALOG_STORE_CARVEOUT_SENTINEL closed out: PR #295 @ 2f7554d (2026-05-23).
+# RLS_STORE_ABSENT_READ_LEAK finding resolved by PR #295 @ 2f7554d (2026-05-23).
+# Map base advanced to 2f7554d (PR #295).
 
 spec: 003-catalog-foundation
 version: 1
-base: origin/main  # 6adf6df (PR #292, 0010 tenant GUC cast fix)
+base: origin/main  # 2f7554d (PR #295, 0011 store carve-out sentinel)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -142,7 +145,8 @@ findings:
       current_setting('app.current_store', true) returns '' (empty string)
       not NULL for a GUC never set in the session, contrary to the matrix's
       design assumption.
-    blocks: []          # T342 and T343 land with deferred coverage; full §4.6/§7.6 GREEN waits on a future SQL slice
+    blocks: []
+    previously_blocked: []   # no slice-level dispatch blockers were set; deferred tests unblocked by 0011
     deferred_tests:
       - apps/api/test/catalog/isolation/cross-store-read.spec.ts:T342 fail-closed (4 it.todo placeholders)
       - apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts:§4.6 store_product_overrides absent (1 it.todo)
@@ -151,7 +155,10 @@ findings:
     resolution_paths:
       - "(a) New gated SQL slice (e.g. 0010_*) extending 0009's CASE guard to distinguish 'GUC explicitly empty (carve-out)' from 'GUC never set (fail-closed)'. The current carve-out is keyed on the empty string but should be keyed on an explicit sentinel set only by the tenant-owner code path."
       - "(b) Matrix amendment acknowledging that 'GUC never set' is observably indistinguishable from 'GUC = empty string' at the policy layer, and either re-specifying §4.6 / §7.6 to require an explicit unset (e.g. via DISCARD ALL) before the contract holds, or accepting the current behavior as the contract."
-    resolved_by: null   # awaiting a separate authorized slice (option a) or spec amendment (option b)
+    resolved_by: 0011_CATALOG_STORE_CARVEOUT_SENTINEL
+    resolved_by_pr: 295
+    resolved_by_commit: 2f7554d
+    resolved_at: 2026-05-23
 
   - id: RLS_UNSET_TENANT_GUC_CAST_ERROR
     summary: >
@@ -728,7 +735,7 @@ slices:
   - id: 0011_CATALOG_STORE_CARVEOUT_SENTINEL
     task_ids: []
     type: fix
-    status: in_progress
+    status: merged                # closed out 2026-05-23 via PR #295 @ 2f7554d
     approval_required: true       # gated (SQL migration) — [GATED] approved 2026-05-23
     depends_on:
       - 0010_CATALOG_TENANT_GUC_CAST_FIX  # 0010 bodies are the baseline for down-migration
@@ -805,6 +812,23 @@ slices:
       - confirmation_no_unauthorized_git_ops
       - recommended_commit_message
     parallel_safety: unsafe   # gated SQL — serialize
+    merged_in_pr: 295
+    merged_at_commit: 2f7554d
+    merged_at_date: 2026-05-23
+    notes: >
+      Resolves finding RLS_STORE_ABSENT_READ_LEAK. Introduces sentinel '*' to
+      distinguish tenant-owner cross-store carve-out from never-set GUC fail-closed.
+      Three-way CASE guard on three store-axis RLS policies:
+        - store_product_overrides_select (SELECT USING): '*' → TRUE, '' → FALSE, else uuid match.
+        - store_product_overrides_tenant_write (FOR ALL USING + WITH CHECK): '*' → FALSE (prevents
+          cross-store DELETE/INSERT via write policy), '' → FALSE, else uuid match.
+        - unknown_items_select (SELECT USING): '*' → TRUE, '' → FALSE, else uuid match.
+      Converts 8 it.todo items to executable assertions (4 in cross-store-read.spec.ts,
+      4 in rls-bypass-probe.spec.ts). Updates 8 carve-out call sites from '' → '*'
+      (cross-store-read.spec.ts x5, rls-bypass-probe.spec.ts x4, cross-tenant-read.spec.ts x4).
+      CodeRabbit security fix: write policy USING uses WHEN '*' THEN FALSE (not TRUE) to
+      prevent cross-store DELETE — cross-store reads are served by the SELECT-only policy only.
+      Down migration restores exact 0010-form bodies.
 
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 
