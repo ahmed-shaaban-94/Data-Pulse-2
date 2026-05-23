@@ -1,20 +1,26 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-22 (post-#285 closeout — T342, T343, T344 isolation specs merged)
+**Last updated:** 2026-05-23 (0010_CATALOG_TENANT_GUC_CAST_FIX authored — in_progress, stop before commit)
 **Spec:** [`specs/003-catalog-foundation/`](.)
 **Base:** `origin/main` at `fd18598` (PR #285, 2026-05-22)
-**Active findings:** 3 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (medium; matrix §2.3/§3.3/§5.3/§6.5/§7.6 fail-closed not delivered)
+**Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered)
+**In-progress resolution:** `RLS_UNSET_TENANT_GUC_CAST_ERROR` — SQL migration + tests authored on branch `fix/003-catalog-0010-tenant-guc-cast`; awaiting CI and merge
 **Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
 
 ---
 
 ## TL;DR
 
-T342, T343, T344 merged in PR #285 @ `fd18598` (2026-05-22). All three isolation
-specs are on `main`. T344 is **fully GREEN**. T342 and T343 each carry `it.todo`
-deferred coverage against the two active findings (`RLS_STORE_ABSENT_READ_LEAK` and
-`RLS_UNSET_TENANT_GUC_CAST_ERROR`). T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
-No slice is `local_uncommitted`.
+Slice `0010_CATALOG_TENANT_GUC_CAST_FIX` is **in_progress** on branch
+`fix/003-catalog-0010-tenant-guc-cast` (worktree `dp2-0010-tenant-guc-fix`).
+Stop-before-commit reached — slice is authored and locally validated (Docker-skip
+path: 35 passed, 4 todo, 39 total). Awaiting Docker/WSL CI run and user commit
+authorization.
+
+T342, T343, T344 merged in PR #285 @ `fd18598` (2026-05-22). T344 is **fully GREEN**.
+T342 still carries 4 `it.todo` items for store-axis (RLS_STORE_ABSENT_READ_LEAK).
+T343 had 5 tenant-axis `it.todo` items — all 5 flipped to executable by this slice.
+T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
 
 ---
 
@@ -127,7 +133,15 @@ All previously-local work is now on `main`:
 
 ## Ready / in-flight
 
-_None._ T342, T343, and T344 merged in PR #285 @ `fd18598` (2026-05-22). No slices are currently in-flight.
+`0010_CATALOG_TENANT_GUC_CAST_FIX` — **in_progress** on branch
+`fix/003-catalog-0010-tenant-guc-cast` (worktree `dp2-0010-tenant-guc-fix`).
+Stop-before-commit reached 2026-05-23. Awaiting Docker/WSL CI confirmation and
+user commit authorization. Files:
+- `packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.sql` ← new
+- `packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.down.sql` ← new
+- `apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts` ← 5 `it.todo` → executable
+- `packages/db/__tests__/cli/migrate.spec.ts` ← `EXPECTED_MIGRATIONS` + 1
+- `specs/003-catalog-foundation/execution-map.yaml` ← slice entry + finding update
 
 ---
 
@@ -150,13 +164,18 @@ user endorsement.
 
 ## Next recommended action
 
-**Resolve the two active medium-severity findings** (`RLS_STORE_ABSENT_READ_LEAK` and
-`RLS_UNSET_TENANT_GUC_CAST_ERROR`) or accept option (b) (matrix amendment) for each.
-The recommended path for both is a single gated SQL slice `0010_*` adding CASE guards
-for the unset GUC paths to both the store-scoped and tenant-scoped RLS policies — this
-unblocks the deferred `it.todo` coverage in T342 and T343. Alternatively, endorse the
-Phase-3 RED wave (`PHASE3_RED_WAVE`) to advance catalog feature implementation.
-T336 is independent and still needs an explicit decision on `MISSING_WITHSTORE_HELPER`.
+**Authorize commit and PR for `0010_CATALOG_TENANT_GUC_CAST_FIX`** — slice is fully
+authored and locally validated. Run the full Docker/Testcontainers validation on WSL
+then commit and open PR. This resolves `RLS_UNSET_TENANT_GUC_CAST_ERROR` and
+unblocks 5 deferred `it.todo` assertions in T343.
+
+After 0010 merges, the remaining medium-severity finding is `RLS_STORE_ABSENT_READ_LEAK`
+(store-axis, 4 `it.todo` items in T342/T343). Resolution requires slice `0011` with a
+sentinel GUC — deferred until after 0010 is on `main`.
+
+Alternatively, endorse the Phase-3 RED wave (`PHASE3_RED_WAVE`) to advance catalog
+feature implementation. T336 is independent and still needs an explicit decision on
+`MISSING_WITHSTORE_HELPER`.
 
 ---
 
@@ -189,10 +208,19 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Resolve the store-absent and unset-tenant GUC findings with a new SQL migration slice:
+Authorize commit and PR for the in-progress slice (requires Docker/WSL CI first):
 
 ```text
-Use Agent OS. Execute slice 0010_RLS_GUC_CAST_FIX. Stop before commit.
+Use Agent OS. Close out slice 0010_CATALOG_TENANT_GUC_CAST_FIX. Commit and open PR.
+Spec: specs/003-catalog-foundation
+Branch: fix/003-catalog-0010-tenant-guc-cast
+```
+
+After 0010 merges — resolve the store-absent finding:
+
+```text
+Use Agent OS. Execute slice 0011_CATALOG_STORE_CARVEOUT_SENTINEL. Stop before commit.
+Spec: specs/003-catalog-foundation
 ```
 
 Or endorse the Phase-3 RED wave to advance catalog feature implementation:
