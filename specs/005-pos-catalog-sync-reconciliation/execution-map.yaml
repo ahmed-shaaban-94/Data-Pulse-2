@@ -251,7 +251,11 @@ slices:
   - id: 005-WAVE1-IDEMP-VERIFY
     task_ids: [T505]
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 306
+    merged_at_commit: 4c16451860f4108e7c85eb4a77ad9bc3751da960
+    merged_at_date: 2026-05-23
+    previously_blocked: []   # was always non-blocking (verification spec)
     approval_required: false
     depends_on:
       - 005-WAVE1-SETUP
@@ -277,7 +281,24 @@ slices:
   - id: 005-WAVE1-HARNESS
     task_ids: [T506, T507]
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 307
+    merged_at_commit: e7c41b04bacd75c594a10d52409b4946cadac0cf
+    merged_at_date: 2026-05-23
+    previously_blocked:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-CAPTURE-RESOLVE
+      - 005-WAVE1-CAPTURE-STORE-SCOPE
+      - 005-WAVE1-CAPTURE-DEDUP
+      - 005-WAVE1-LIST
+      - 005-WAVE1-DISMISS
+      - 005-WAVE1-NON-DISCLOSING
+    # Closeout note: T507's cross-tenant RED suite uses soft-skip
+    # (`serviceMissing()` returns early) instead of throwing — so CI on
+    # this branch stayed green while UnknownItemsService is absent. Once
+    # T511 ships the service, `serviceModuleError === null` flips the
+    # gate off and the assertions execute for real. The seed fixture and
+    # container lifecycle are exercised on every run regardless.
     approval_required: false
     depends_on:
       - 005-WAVE1-SETUP

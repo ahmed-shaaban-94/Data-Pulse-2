@@ -833,9 +833,13 @@ slices:
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 
   - id: T350_TENANT_CATALOG_CREATE_RED
-    task_ids: [T350]
+    task_ids: [T350]   # paired GREEN T351 (TenantCatalogService.create) landed in the same squash
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 300
+    merged_at_commit: 2bf7e27c4eb01e7f5f38fb6e40641e28002e508b
+    merged_at_date: 2026-05-23
+    previously_blocked: []
     approval_required: false
     depends_on:
       - T340
@@ -856,9 +860,13 @@ slices:
     parallel_safety: safe
 
   - id: T360_GLOBAL_CATALOG_LIST_RED
-    task_ids: [T360]
+    task_ids: [T360]   # paired GREEN T361 (GlobalCatalogService.list) landed in the same squash
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 301
+    merged_at_commit: f577570d9c661d7805318a0ad07c4b0c933ff6a2
+    merged_at_date: 2026-05-23
+    previously_blocked: []
     approval_required: false
     depends_on:
       - T340
@@ -878,9 +886,13 @@ slices:
     parallel_safety: safe
 
   - id: T372_STORE_OVERRIDE_CREATE_RED
-    task_ids: [T372]
+    task_ids: [T372]   # paired GREEN T373 (StoreOverrideService.create) landed in the same squash; cross-tenant product probe added at merge time (PG FKs bypass RLS)
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 302
+    merged_at_commit: c4147b03adc6fe417000b1843a3289059a5b3d23
+    merged_at_date: 2026-05-23
+    previously_blocked: []
     approval_required: false
     depends_on:
       - T340
@@ -900,9 +912,13 @@ slices:
     parallel_safety: safe
 
   - id: T383_PRODUCT_ALIASES_UNIQUENESS_RED
-    task_ids: [T383]
+    task_ids: [T383]   # paired GREEN T384 (ProductAliasesService.create) landed in the same squash
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 303
+    merged_at_commit: 454a7ae23cd855a69af7ba332db4318c1ce7b78b
+    merged_at_date: 2026-05-23
+    previously_blocked: []
     approval_required: false
     depends_on:
       - T340
@@ -934,9 +950,8 @@ groups:
       - T372_STORE_OVERRIDE_CREATE_RED
       - T383_PRODUCT_ALIASES_UNIQUENESS_RED
     parallel_safety: safe
-    proposed: true
-    # Members touch disjoint apps/api/test/catalog/** paths. Eligibility
-    # gates are now satisfied: RLS_CROSS_STORE_FIX merged 2026-05-21 (PR
-    # #254 @ 483aae4) and db-integration on main is green. Group is still
-    # `proposed: true` because parallel dispatch requires explicit user
-    # endorsement before Maestro schedules it.
+    proposed: false
+    # All four RED slices merged 2026-05-23 in independent PRs (#300/#301/
+    # #302/#303), each carrying its paired GREEN. T340 was already merged
+    # earlier (PR #264 @ 02cdf75). Group retained here for traceability;
+    # member status now lives on the individual slice entries above.
