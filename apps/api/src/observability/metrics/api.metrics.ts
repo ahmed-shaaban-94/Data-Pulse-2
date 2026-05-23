@@ -65,6 +65,23 @@ export type SuspiciousLoginReason = (typeof SUSPICIOUS_LOGIN_REASONS)[number];
 export const HTTP_STATUS_CLASSES = ["2xx", "3xx", "4xx", "5xx"] as const satisfies readonly string[];
 export type HttpStatusClass = (typeof HTTP_STATUS_CLASSES)[number];
 
+/**
+ * Bounded terminal-state actions for `unknown_item_resolved_total`.
+ *
+ * Owner: 005 spec §6 (FR-002 resolution states). Cardinality is closed at
+ * three values; any expansion requires an FR change. Wave 1 emits only
+ * `dismissed`; `linked` and `created` land in Wave 2 (blocked on 003
+ * PHASE3_RED_WAVE — see specs/005-pos-catalog-sync-reconciliation/plan.md §4).
+ *
+ * Cardinality review (FR-B-012): closed set, not forbidden, not PII-adjacent.
+ */
+export const UNKNOWN_ITEM_RESOLVED_ACTIONS = [
+  "linked",
+  "created",
+  "dismissed",
+] as const satisfies readonly string[];
+export type UnknownItemResolvedAction = (typeof UNKNOWN_ITEM_RESOLVED_ACTIONS)[number];
+
 // ---------------------------------------------------------------------------
 // Module-load label-policy validation
 // ---------------------------------------------------------------------------
@@ -84,6 +101,10 @@ assertMetricLabels("cross_tenant_rejection_total", ["route"]);
 assertMetricLabels("idempotency_replay_total", ["route"]);
 assertMetricLabels("idempotency_conflict_total", ["route"]);
 assertMetricLabels("idempotency_in_progress_total", ["route"]);
+// Catalog domain — 005 Wave 1 (signals.md §1.1; registry CATALOG_METRIC_NAMES below)
+assertMetricLabels("unknown_item_captured_total", []);
+assertMetricLabels("unknown_item_resolved_total", ["action"]);
+assertMetricLabels("idempotency_token_mismatch_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -136,6 +157,25 @@ const _idempotencyInProgress: Counter = meter.createCounter(
   "idempotency_in_progress_total",
   { description: "In-flight idempotency collisions (425) by route." },
 );
+// Catalog domain — 005 Wave 1 (signals.md §1.1)
+const _unknownItemCaptured: Counter = meter.createCounter(
+  "unknown_item_captured_total",
+  { description: "Successful POS captures of an unknown item into the unknown_items review queue." },
+);
+const _unknownItemResolved: Counter = meter.createCounter(
+  "unknown_item_resolved_total",
+  {
+    description:
+      "Terminal-state transitions out of unknown_items.resolution_status='pending'. Labels: action ∈ {linked, created, dismissed}. Wave 1 emits only `dismissed`.",
+  },
+);
+const _idempotencyTokenMismatch: Counter = meter.createCounter(
+  "idempotency_token_mismatch_total",
+  {
+    description:
+      "Catalog-domain idempotency-key replay with mismatched payload (FR-021c). Co-increments with platform idempotency_conflict_total{route} on the catalog capture route.",
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Attribute types — TypeScript compile-time label enforcement (FR-B-006)
@@ -181,6 +221,16 @@ export interface CrossTenantRejectionAttrs {
 
 export interface IdempotencyRouteAttrs {
   route: string;
+}
+
+/**
+ * Attributes for `unknown_item_resolved_total`. The only catalog-domain
+ * counter that carries a label — the bounded `action` discriminator.
+ * `unknown_item_captured_total` and `idempotency_token_mismatch_total`
+ * are unlabeled (domain-keyed, not route-keyed; see signals.md §1.1 Notes).
+ */
+export interface UnknownItemResolvedAttrs {
+  action: UnknownItemResolvedAction;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +326,37 @@ export function recordIdempotencyInProgress(attrs: IdempotencyRouteAttrs): void 
   _idempotencyInProgress.add(1, attrs as unknown as Attributes);
 }
 
+/**
+ * Increment unknown_item_captured_total (005 FR-081).
+ * Emission site: UnknownItemsService.captureUnknownItem success path
+ * (lands in 005-WAVE1-CAPTURE-HAPPY / T511).
+ */
+export function recordUnknownItemCaptured(): void {
+  _unknownItemCaptured.add(1);
+}
+
+/**
+ * Increment unknown_item_resolved_total{action} (005 FR-081).
+ * Emission sites (lands in subsequent Wave 1 / Wave 2 slices):
+ *   - action="dismissed" → UnknownItemsService.dismissUnknownItem (T541, Wave 1)
+ *   - action="linked"    → reconciliation link path (Wave 2)
+ *   - action="created"   → reconciliation create-new path (Wave 2)
+ */
+export function recordUnknownItemResolved(attrs: UnknownItemResolvedAttrs): void {
+  _unknownItemResolved.add(1, attrs as unknown as Attributes);
+}
+
+/**
+ * Increment idempotency_token_mismatch_total (005 FR-021c, FR-082).
+ * Emission site: IdempotencyMismatchFilter on the catalog capture route
+ * (lands in 005-WAVE1-IDEMP-MISMATCH / T533). Co-increments with the
+ * platform-level recordIdempotencyConflict — both are intentional;
+ * see signals.md §1.1 Notes.
+ */
+export function recordIdempotencyTokenMismatch(): void {
+  _idempotencyTokenMismatch.add(1);
+}
+
 // ---------------------------------------------------------------------------
 // Signal-name registry — used by T460 signal-presence tests
 // ---------------------------------------------------------------------------
@@ -302,3 +383,21 @@ export const API_METRIC_NAMES = [
 ] as const satisfies readonly string[];
 
 export type ApiMetricName = (typeof API_METRIC_NAMES)[number];
+
+/**
+ * Canonical names of catalog-domain signals registered by this module
+ * for 005 Wave 1. Sibling of `API_METRIC_NAMES` (Track B platform signals)
+ * and `DB_METRIC_NAMES` (in db.metrics.ts). The per-track registry pattern
+ * keeps each spec's drift contract self-contained — extending this list
+ * does NOT change `API_METRIC_NAMES`, which is locked at 12 entries
+ * (nine base + three idempotency) per T444 cataloging.
+ *
+ * Owner: 005-pos-catalog-sync-reconciliation. See signals.md §1.1.
+ */
+export const CATALOG_METRIC_NAMES = [
+  "unknown_item_captured_total",
+  "unknown_item_resolved_total",
+  "idempotency_token_mismatch_total",
+] as const satisfies readonly string[];
+
+export type CatalogMetricName = (typeof CATALOG_METRIC_NAMES)[number];
