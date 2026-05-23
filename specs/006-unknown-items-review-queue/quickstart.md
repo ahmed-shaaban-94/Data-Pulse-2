@@ -53,7 +53,7 @@ After this scenario:
 - `pending` count in T = 0.
 - `resolved` count = 4 (2 linked, 2 created), `dismissed` count = 2.
 - Audit log contains 6 success events + the implicit transactional events from the create-new path.
-- No cross-tenant data was touched. (Verified by the isolation harness in the future Wave A test extension.)
+- No cross-tenant data was touched. (Verified by the isolation harness in the future the future API feature test extension.)
 
 ---
 
@@ -78,13 +78,16 @@ After this scenario:
    - **Behavior** (spec US7 #4, SI-004): Non-disclosing not-found. The dismiss attempt is auditable as a failed attempt (FR-111).
 
 5. **Bob attempts to reopen an item that was dismissed at S1 (within his scope).**
-   - **Behavior** (spec US8 #4, FR-062a): **Refused** with a non-disclosing authority outcome — store-scoped operators MUST NOT reopen, even within their own scope. The rejection is auditable (FR-111).
-   - **What Bob is told**: a deterministic message indicating he lacks authority for this specific action. He is NOT told whether the dismissed item exists in a way that distinguishes "exists but cannot reopen" from "does not exist."
+   - **Behavior** (spec US8 #4, FR-062a): **Refused** with the `forbidden` category (FR-100) — store-scoped operators MUST NOT reopen, even within their own scope. The rejection is auditable (FR-111).
+   - **What Bob is told**: a deterministic message indicating he lacks the authority for this specific action ("tenant-wide authority required"). Because Bob already has read authority for the row (it's at S1), Constitution §II / §XII permit a `forbidden` rather than the `not-found` non-disclosure used for out-of-scope cases.
+
+6. **Bob attempts to reopen an item that was dismissed at S2 (outside his scope).**
+   - **Behavior** (spec US8 #5, FR-062a + SI-004): **Refused** with the `not-found` category — Bob has no read authority for S2, so the response cannot distinguish "exists but you can't reopen" from "does not exist."
 
 ### Validation
 
 - Bob's view never exposed any S2/S3 detail by any means.
-- Bob's attempted dismiss / reopen on out-of-scope or authority-restricted actions both resulted in non-disclosing outcomes.
+- Bob's dismiss / reopen attempts surfaced two distinct categories that match Bob's authority state: `not-found` for out-of-scope, `forbidden` for in-scope-no-role.
 - Audit log records Bob's failed attempts as well as his successes.
 
 ---
@@ -144,7 +147,7 @@ If P1 is an in-scope product for Alice but somehow out-of-scope for Carol (rare,
    - **Behavior**: First submission succeeds (200 dismissed, 200 audit events). Second submission succeeds (50 dismissed, 50 audit events). Total: 250 dismissed.
 
 3. **Within the 200-item submission, one item had been reconciled by a sibling admin moments earlier.**
-   - **Behavior** (spec SC-008): That one item is reported as `already-reconciled` (or `already-terminal` if it was already in a terminal state). The other 199 are dismissed successfully. The mixed-success outcome is reported per FR-100.
+   - **Behavior** (spec SC-008): That one item is reported as `already-reconciled` — if the sibling admin's action made it terminal, the response carries `details.prior_state` indicating that. The other 199 are dismissed successfully. The mixed-success outcome is reported per FR-100.
 
 ---
 
@@ -152,6 +155,6 @@ If P1 is an in-scope product for Alice but somehow out-of-scope for Carol (rare,
 
 - **For stakeholders**: read through Scenarios 1–3. They cover the happy path, the isolation safety floor, and the recovery path. Confirm the spec produces the experience you expect.
 - **For future UI designers (Impeccable shape)**: each scenario is a *flow* the UI must support. Visual treatment, copy, motion, and density are your call — the spec only fixes the safety boundaries the design must respect.
-- **For future Wave A API authors**: each scenario maps to one or more operationIds in [contracts/README.md](./contracts/README.md). Each scenario's "what the platform does NOT do" lines are conformance tests Wave A's contract slice must add.
+- **For future the future API feature API authors**: each scenario maps to one or more operationIds in [contracts/README.md](./contracts/README.md). Each scenario's "what the platform does NOT do" lines are conformance tests the future API feature's contract slice must add.
 
 This quickstart does not replace spec §5 — it complements it. When in doubt, the spec governs.

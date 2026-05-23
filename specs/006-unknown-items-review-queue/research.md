@@ -30,8 +30,8 @@
 
 **Implication for downstream features**:
 
-- Wave A (future API feature) must verify, at *its* planning time, that 005 Wave 2's service surface (`TenantCatalogService.create`, `ProductAliasesService`, reconciliation services) is mergeable.
-- Wave B (future UI feature) must verify that Wave A's contracts are merged and stable before opening Impeccable rounds.
+- the future API feature (future API feature) must verify, at *its* planning time, that 005 Wave 2's service surface (`TenantCatalogService.create`, `ProductAliasesService`, reconciliation services) is mergeable.
+- the future UI feature (future UI feature) must verify that the future API feature's contracts are merged and stable before opening Impeccable rounds.
 
 ---
 
@@ -54,15 +54,15 @@
 
 **Implication**:
 
-- When Wave B opens, it loads spec.md + quickstart.md, then runs `/impeccable shape`. No 006-side prep work is required.
+- When the future UI feature opens, it loads spec.md + quickstart.md, then runs `/impeccable shape`. No 006-side prep work is required.
 
 ---
 
 ## R3 — Test harness extension obligations
 
-**Question**: What test surfaces will the future API feature (Wave A) need to extend in order to validate 006's product-level guarantees?
+**Question**: What test surfaces will the future API feature (the future API feature) need to extend in order to validate 006's product-level guarantees?
 
-**Decision**: Wave A inherits and extends three existing harnesses. Each gets a new test file family scoped to the review queue's operations. The list below is **prescriptive for Wave A's plan**, not for 006:
+**Decision**: the future API feature inherits and extends three existing harnesses. Each gets a new test file family scoped to the review queue's operations. The list below is **prescriptive for the future API feature's plan**, not for 006:
 
 1. **Isolation harness** (003 T340 pattern, located at `apps/api/test/catalog/__support__/isolation-harness.ts`) — extend with review-queue cases:
    - Cross-tenant queue list (SC-002): tenant T's admin cannot list T''s unknown items by any means.
@@ -74,9 +74,10 @@
 2. **Audit-query harness** (001's audit-fanout test surface, located at `apps/worker/test/audit/**` and `apps/api/test/audit/**`) — extend with review-queue subjects:
    - All six audit subjects 005 plan §3.3 anticipates (`unknown_item.resolved.linked`, `unknown_item.resolved.created`, `unknown_item.dismissed`, `unknown_item.reconciliation_conflict_rejected`, plus the implicit `unknown_item.captured` from a reopen-triggered fresh-pending creation).
    - Reopen action: the reopen audit event and the fresh-pending capture event are both linkable to the same `correlation_id` (US8 #6).
-   - `already-terminal` rejection (FR-100): audit emits as a failed-attempt subject (per FR-111).
+   - Static-state-mismatch rejection on dismiss / reopen of a terminal row: surfaced as `already-reconciled` with `details.prior_state` per FR-100 (revised 2026-05-24); audit emits as a failed-attempt subject per FR-111.
+   - In-scope authority failure on reopen by a store-scoped operator: surfaced as `forbidden` per FR-062a + FR-100; audit emits as a failed-attempt subject per FR-111.
 
-3. **Contract harness** (per Constitution §IV / 005 plan §3.2 row VI) — Wave A's `[GATED]` contract slice will need contract conformance tests for each of the operationIDs 006 plan §4.3 anticipates. 006 itself contributes the **failure-category vocabulary** that those contract tests must validate against (per [contracts/README.md](./contracts/README.md)).
+3. **Contract harness** (per Constitution §IV / 005 plan §3.2 row VI) — the future API feature's `[GATED]` contract slice will need contract conformance tests for each of the operationIDs 006 plan §4.3 anticipates. 006 itself contributes the **failure-category vocabulary** that those contract tests must validate against (per [contracts/README.md](./contracts/README.md)).
 
 **Rationale**:
 
@@ -89,19 +90,19 @@
 
 **Implication**:
 
-- Wave A's tasks.md must include a slice for each of the three harness extensions before any service code lands (RED-then-GREEN per Constitution §VI).
+- the future API feature's tasks.md must include a slice for each of the three harness extensions before any service code lands (RED-then-GREEN per Constitution §VI).
 
 ---
 
 ## R4 — Failure category vocabulary
 
-**Question**: Is the failure category set 006 commits to (FR-100: `validation`, `target-unavailable`, `alias-conflict`, `idempotency-token-mismatch`, `already-reconciled`, `already-terminal`, `not-found`, `system-failure`) consistent with Constitution §III's canonical error envelope and 005 FR-091's set?
+**Question**: Is the failure category set 006 commits to (FR-100) consistent with Constitution §III's canonical error envelope and 005 FR-091's set?
 
-**Decision**: Consistent. 006 inherits 005 FR-091's seven categories verbatim and adds **one** category (`already-terminal`) that the future API feature must encode in the canonical envelope's `error.code` field. No envelope-shape change is needed; only the closed set of `error.code` values grows.
+**Decision** *(revised 2026-05-24 after external review)*: Consistent. 006 inherits 005 FR-091's seven categories verbatim and adds **exactly one** new category: `forbidden`. The originally proposed `already-terminal` category was **collapsed back into `already-reconciled`** with a `details` discriminator (see "Revision history" below for the reasoning). No envelope-shape change is needed; only the closed set of `error.code` values grows by one value.
 
 **Rationale**:
 
-- Constitution §III mandates `{ error: { code, message, request_id, details? } }` as the canonical envelope. The category vocabulary lives in `error.code`. Adding a new category enum value is additive and forward-compatible.
+- Constitution §III mandates `{ error: { code, message, request_id, details? } }` as the canonical envelope. The category vocabulary lives in `error.code`; the `details?` field is the right place for variant data within a category. Adding a new category enum value is additive and forward-compatible.
 - 005 FR-091's seven categories are:
   1. `validation`
   2. `target-unavailable`
@@ -111,22 +112,26 @@
   6. `not-found`
   7. `system-failure`
 - 006 adds:
-  - 8. `already-terminal` — emitted when a dismiss or reopen action targets a row already in a terminal state (US7 #3, US8 #3). Distinct from `already-reconciled` because the latter signals a concurrent-write race (somebody else got there first), while `already-terminal` signals a static state mismatch (the row was already `dismissed` or `resolved` before the action was attempted).
-- The two categories are user-actionable differently:
-  - `already-reconciled` → "refresh and see the new state, then decide if further action is needed."
-  - `already-terminal` → "this row has been in a terminal state since before your action; consider whether you want to act on a sibling pending record (created via reopen, or via POS resubmission per 005 FR-005)."
-- Both must emit through 005 FR-082's failed-attempt audit path (per FR-111).
+  - 8. `forbidden` — emitted when an actor is authenticated, has a resolved tenant context, and has read authority for the target row, but lacks the specific role required for the requested action. The canonical example is FR-062a: a store-scoped operator attempting to reopen an in-scope dismissed item. Constitution §II / §XII explicitly permit `403` semantics in this case ("insufficient-role within an already-resolved active tenant"). For out-of-scope targets, the platform still returns `not-found` per SI-004 — `forbidden` is used only when the actor has already proven they can see the row.
+- `already-reconciled` now absorbs two sub-cases (the concurrent-write race AND the static-state-mismatch on dismiss/reopen of an already-terminal row). The response MAY carry a `details` object indicating prior state (`details.prior_state ∈ {resolved, dismissed}`) so clients can distinguish, but the closed-set vocabulary stays at one value. From the user's perspective both cases admit the same remedy (refresh, observe new state, decide if a sibling action applies), so a single category with optional discriminator is the right granularity.
+- All categories continue to emit through 005 FR-082's failed-attempt audit path (per FR-111).
 
 **Alternatives considered**:
 
-- *Reuse `already-reconciled` for both cases*: rejected. The user-actionability is genuinely different; merging them would push UX guidance into the message string and break testability.
-- *Reuse `validation` for `already-terminal`*: rejected. `validation` is for malformed input; `already-terminal` is for valid input against a row in the wrong state. Confusing them would muddy the contract.
+- *Keep `already-terminal` as a distinct category*: rejected on external-review reconsideration. The case admits the same user remedy as `already-reconciled`; propagating a distinct enum value through every contract consumer (controller, conformance test, error-mapping table) is cost without benefit.
+- *Reuse `validation` for the in-scope authority failure (FR-062a)*: rejected. `validation` is for malformed input; FR-062a's case is well-formed input against an authorization gate. Constitution §III's mapping is explicit on this — 403 belongs to authorization failures, not validation.
+- *Reuse `not-found` for both out-of-scope AND in-scope-no-authority cases*: rejected. The in-scope case is observable to the actor (they just listed the row), so a `not-found` would contradict the actor's own evidence. Using `forbidden` is the constitutionally-sanctioned alternative.
 
 **Implication**:
 
-- Wave A's contract slice must add `already-terminal` to the dashboard-facing error-code enum.
-- Wave A's audit tests must verify `already-terminal` rejections emit a failed-attempt audit event with the action subject (`unknown_item.dismiss_rejected.already_terminal` or `unknown_item.reopen_rejected.already_terminal` — exact subject naming is a Wave A decision, not 006's).
-- 006's spec FR-100 already lists `already-terminal` in the canonical set; this research confirms it integrates cleanly with Constitution §III.
+- the future API feature's contract slice must add `forbidden` to the dashboard-facing error-code enum.
+- the future API feature's audit tests must verify both `forbidden` and `already-reconciled` rejections emit failed-attempt audit events with appropriate subjects.
+- 006's spec FR-100 (revised) lists eight categories: 005 FR-091's seven + `forbidden`.
+
+**Revision history**:
+
+- *2026-05-23 (initial)*: introduced `already-terminal` as an 8th category, kept FR-062a using `validation`.
+- *2026-05-24 (external review)*: collapsed `already-terminal` into `already-reconciled` with `details` discriminator; replaced `validation` with `forbidden` for FR-062a's in-scope authority case; added `forbidden` to the closed set. Net: still +1 category vs 005, but a more honest one.
 
 ---
 
@@ -136,7 +141,7 @@
 |---|---|---|
 | R1 | 005 Wave 1 / Wave 2 readiness | Resolved — 005 spec stable; Wave 2 is the downstream implementation gate |
 | R2 | Impeccable workflow integration | Resolved — spec.md + quickstart.md are the inputs; no additional handoff doc |
-| R3 | Test harness extension obligations | Resolved — three harness extensions enumerated for Wave A |
-| R4 | Failure category vocabulary | Resolved — `already-terminal` is the only addition; canonical envelope unchanged |
+| R3 | Test harness extension obligations | Resolved — three harness extensions enumerated for the future API feature |
+| R4 | Failure category vocabulary | Resolved (revised 2026-05-24) — `forbidden` is the only category addition; `already-terminal` collapsed into `already-reconciled` with `details.prior_state`; canonical envelope unchanged |
 
 No `NEEDS CLARIFICATION` markers remain. All Phase 0 research items are resolved.

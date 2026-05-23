@@ -5,13 +5,13 @@
 **Plan**: [../plan.md](../plan.md)
 **Created**: 2026-05-23
 
-> **No OpenAPI YAML in 006.** Per the spec's product-level discipline (spec §0, §3) and the plan's deferral (plan §9), the dashboard-facing contracts that the review queue requires are authored in a **separate future API feature** ("Wave A") on its own `[GATED]` slice under `packages/contracts/openapi/`. This README documents the **obligations** that Wave A's contracts must honor, derived from spec §5–§7. Nothing here is a contract definition; everything here is a contract constraint Wave A's contracts will be reviewed against.
+> **No OpenAPI YAML in 006.** Per the spec's product-level discipline (spec §0, §3) and the plan's deferral (plan §9), the dashboard-facing contracts that the review queue requires are authored in a **separate future API feature** ("the future API feature") on its own `[GATED]` slice under `packages/contracts/openapi/`. This README documents the **obligations** that the future API feature's contracts must honor, derived from spec §5–§7. Nothing here is a contract definition; everything here is a contract constraint the future API feature's contracts will be reviewed against.
 
 ---
 
-## 1. Anticipated operationIDs (Wave A authors them)
+## 1. Anticipated operationIDs (the future API feature authors them)
 
-Wave A's contract slice is expected to introduce, at minimum, the following dashboard-facing operationIDs (exact YAML paths, request schemas, and response schemas are Wave A's decision):
+the future API feature's contract slice is expected to introduce, at minimum, the following dashboard-facing operationIDs (exact YAML paths, request schemas, and response schemas are the future API feature's decision):
 
 | operationId (anticipated) | Spec source | Purpose |
 |---|---|---|
@@ -25,7 +25,7 @@ Wave A's contract slice is expected to introduce, at minimum, the following dash
 | `tenantAdminListResolvedUnknownItems` | FR-001, FR-001a | Filtered list of `resolved` items; product-identity suppression per actor authority. |
 | `tenantAdminListDismissedUnknownItems` | FR-001, FR-001a | Filtered list of `dismissed` items. |
 
-Wave A MAY merge several of these into a single endpoint with state filters (e.g., a unified list operationId with a `state` query parameter). 006 takes no position on shape — only on safety boundaries below.
+the future API feature MAY merge several of these into a single endpoint with state filters (e.g., a unified list operationId with a `state` query parameter). 006 takes no position on shape — only on safety boundaries below.
 
 ---
 
@@ -46,33 +46,33 @@ Wave A MAY merge several of these into a single endpoint with state filters (e.g
 
 ### 2.3 Canonical error envelope (Constitution §III)
 
-Per Constitution §III, every error MUST use the envelope `{ error: { code, message, request_id, details? } }`. The `code` field MUST be one of the following closed set (06 contributes the additional `already-terminal` value — see [../research.md §R4](../research.md)):
+Per Constitution §III, every error MUST use the envelope `{ error: { code, message, request_id, details? } }`. The `code` field MUST be one of the following closed set (revised 2026-05-24 per [../research.md §R4](../research.md) — 006 contributes one new value `forbidden`; the originally proposed `already-terminal` was collapsed into `already-reconciled` with a `details.prior_state` discriminator):
 
-| `error.code` | Status code (anticipated) | When |
+| `error.code` | Status class | When |
 |---|---|---|
-| `validation` | 400 | Malformed body, unknown keys, body exceeds bulk-dismiss ceiling (FR-070), invalid product fields on create-new. |
-| `target-unavailable` | 409 (or 422) | Target product is retired / deleted / inactive (FR-051). |
-| `alias-conflict` | 409 | Reconciliation would violate alias uniqueness (FR-041, 005 §6.5). |
-| `idempotency-token-mismatch` | 409 | 001's idempotency token reused with a different payload (rare for dashboard surface; 005-style). |
-| `already-reconciled` | 409 | Concurrent reconciliation race; another actor won. |
-| `already-terminal` | 409 (or 422) | Dismiss / reopen target is already in a terminal state (US7 #3, US8 #3). |
-| `not-found` | 404 | Cross-tenant or out-of-scope lookup; OR resource genuinely does not exist. **MUST be indistinguishable from cross-tenant access per SI-004.** |
-| `system-failure` | 500 (or 503) | Internal failure; safe to retry (per FR-102 + Constitution §III). |
+| `validation` | 4xx (client) | Malformed body, unknown keys, body exceeds bulk-dismiss ceiling (FR-070), invalid product fields on create-new. |
+| `target-unavailable` | 4xx (client) | Target product is retired / deleted / inactive (FR-051). |
+| `alias-conflict` | 4xx (client) | Reconciliation would violate alias uniqueness (FR-041, 005 §6.5). |
+| `idempotency-token-mismatch` | 4xx (client) | 001's idempotency token reused with a different payload (rare for dashboard surface; 005-style). |
+| `already-reconciled` | 4xx (client) | Two cases — disambiguated via optional `details.prior_state` ∈ `{resolved, dismissed}`: (1) concurrent reconciliation race; another actor won. (2) dismiss / reopen attempt against a row already in a terminal state (US7 #3, US8 #3). |
+| `not-found` | 4xx (client) | Cross-tenant or out-of-scope lookup; OR resource genuinely does not exist. **MUST be indistinguishable from cross-tenant access per SI-004.** |
+| `forbidden` | 4xx (client) | Actor is authenticated, has resolved tenant context, has read authority for the target, but lacks the role required for the action. Canonical case: FR-062a in-scope reopen by a store-scoped operator. Constitution §II / §XII explicitly permit this status class for "insufficient-role within an already-resolved active tenant." |
+| `system-failure` | 5xx (server) | Internal failure; safe to retry (per FR-102 + Constitution §III). |
 
-The exact HTTP status code mapping is Wave A's contract decision; the closed `code` vocabulary is fixed here.
+The exact HTTP status code (e.g., 400 vs 409 vs 422 vs 403; 500 vs 503) is the future API feature's contract decision. 006 fixes only (a) the closed `code` vocabulary above, (b) the 4xx-vs-5xx class, and (c) the constitutional mappings (`forbidden` → 403-class, `not-found` → 404 per Constitution §II / SI-004).
 
 ### 2.4 Audit emission (Constitution §XIII + spec FR-110..113)
 
-Every successful action AND every failed action whose category 005 FR-082 audits (conflict, target-unavailable, race-loser, `already-terminal` per FR-111) MUST emit through the existing audit pipe with at minimum:
+Every successful action AND every failed action whose category 005 FR-082 audits (conflict, target-unavailable, race-loser, static-state-mismatch `already-reconciled` per FR-111, `forbidden` per FR-062a) MUST emit through the existing audit pipe with at minimum:
 
 - `tenant_id`, `store_id` (when applicable)
 - `actor` (`user_id` + `actor_type`)
-- `subject` (per 005 plan §3.3 — one of `unknown_item.resolved.linked`, `unknown_item.resolved.created`, `unknown_item.dismissed`, `unknown_item.reconciliation_conflict_rejected`, plus reopen-related subjects Wave A names)
+- `subject` (per 005 plan §3.3 — one of `unknown_item.resolved.linked`, `unknown_item.resolved.created`, `unknown_item.dismissed`, `unknown_item.reconciliation_conflict_rejected`, plus reopen-related subjects the future API feature names)
 - `target` (`unknown_item_id` and target product reference where applicable)
 - `correlation_id` (propagated from `request_id`)
 - `timestamp`, `outcome` (success / failure + reason class)
 
-006 introduces **no new audit subject** — Wave A names any reopen-specific subject if it chooses to, but the audit pipe is unchanged.
+006 introduces **no new audit subject** — the future API feature names any reopen-specific subject if it chooses to, but the audit pipe is unchanged.
 
 ### 2.5 Idempotency (Constitution §XI + spec §6)
 
@@ -101,11 +101,11 @@ Per FR-021a / FR-022, the v1 contract MUST NOT expose any field derived from `un
 
 - Enforce a hard maximum of 200 items per submission.
 - Reject above-ceiling submissions with `validation` (per §2.3 and FR-070); no partial-success at the ceiling boundary.
-- Within a ≤ 200 submission, per-item failures (already-terminal, out-of-scope, etc.) are reported per FR-100 alongside the successful sibling outcomes (per SC-008).
+- Within a ≤ 200 submission, per-item failures (`already-reconciled` for already-terminal siblings via `details.prior_state`, `not-found` for out-of-scope siblings, etc.) are reported per FR-100 alongside the successful sibling outcomes (per SC-008).
 
 ---
 
-## 3. What Wave A's contract slice MUST NOT do
+## 3. What the future API feature's contract slice MUST NOT do
 
 To stay consistent with 006:
 
@@ -118,9 +118,9 @@ To stay consistent with 006:
 
 ---
 
-## 4. Conformance testing obligations (for Wave A)
+## 4. Conformance testing obligations (for the future API feature)
 
-Per Constitution §IV "conformance MUST be enforced by automated contract tests," Wave A's contract slice MUST land contract tests that verify:
+Per Constitution §IV "conformance MUST be enforced by automated contract tests," the future API feature's contract slice MUST land contract tests that verify:
 
 1. Every operationId returns the canonical error envelope on every error path.
 2. The closed set of `error.code` values matches §2.3 — no rogue codes.
@@ -129,10 +129,10 @@ Per Constitution §IV "conformance MUST be enforced by automated contract tests,
 5. Cross-tenant lookups return `not-found` indistinguishably from genuine not-founds.
 6. Response schemas declare no `sale_context` or descriptive-metadata field.
 
-These conformance tests are Wave A's responsibility — 006 only enumerates them as obligations.
+These conformance tests are the future API feature's responsibility — 006 only enumerates them as obligations.
 
 ---
 
 ## Summary
 
-006 produces **zero contract YAML**. Wave A's `[GATED]` contract slice will author the YAML against the obligations above. This README is the bridge: it gives Wave A's contract author a complete checklist of what 006's product-level spec requires the contracts to encode, and a complete checklist of what the contracts MUST NOT do.
+006 produces **zero contract YAML**. the future API feature's `[GATED]` contract slice will author the YAML against the obligations above. This README is the bridge: it gives the future API feature's contract author a complete checklist of what 006's product-level spec requires the contracts to encode, and a complete checklist of what the contracts MUST NOT do.

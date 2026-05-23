@@ -99,16 +99,27 @@ Constitution v3.0.1 ([../../.specify/memory/constitution.md](../../.specify/memo
 | **X. Retail Temporal Semantics** | Reopen is modeled as fresh-`pending`-record creation per 005 FR-005, not lifecycle reversal (FR-061). No prior records are rewritten. Terminal-item detail surface (FR-001a) shows historical detail without mutation. | Pass |
 | **XI. Idempotency & External IDs** | The future API feature MAY apply 001's idempotency token primitive to review-action writes; 006 takes no position. The product-level race semantic (`already-reconciled`, FR-100) is consumed from 005 US3 #3. | Pass with delegation noted |
 | **XII. Authorization & Object Safety** | Default deny per 005 / 001. Mass-assignment N/A at the product spec level — the future API feature must enforce. Non-disclosing 404 for cross-tenant lookups (SI-004, FR-090). FR-062a tightens reopen authority to tenant-wide actors only, consuming the existing membership model. | Pass |
-| **XIII. Auditability & Provenance** | Every state transition is audited via 005's existing pipe (FR-110–FR-113). No parallel surface (FR-112). The `already-terminal` failure category 006 introduces (FR-100) is a user-facing rejection variant — it must emit through 005 FR-082's failed-attempt audit path. | Pass |
+| **XIII. Auditability & Provenance** | Every state transition is audited via 005's existing pipe (FR-110–FR-113). No parallel surface (FR-112). The `forbidden` failure category 006 introduces (FR-100, post-review-revision 2026-05-24) and the static-state-mismatch variant of `already-reconciled` (also FR-100) are user-facing rejection variants — they must emit through 005 FR-082's failed-attempt audit path. | Pass |
 | **XIV. PII & Data Lifecycle Discipline** | Identifier values remain catalog reference data (not PII). v1 explicitly **does not surface** descriptive metadata from `unknown_items.sale_context jsonb` (FR-021a) — this strengthens the redaction posture rather than weakening it. No new redaction surface. | Pass |
 
 **Initial gate verdict**: All 14 principles pass; no violations to justify in Complexity Tracking (§11).
 
 ### 3.2 Post-design re-check
 
-After writing Phase 1 outputs ([data-model.md](./data-model.md), [contracts/README.md](./contracts/README.md), [quickstart.md](./quickstart.md)):
+After writing Phase 1 outputs ([data-model.md](./data-model.md), [contracts/README.md](./contracts/README.md), [quickstart.md](./quickstart.md)) and applying the 2026-05-24 external-review revisions to the spec:
 
-**Post-design verdict**: No deltas from §3.1. Phase 1 outputs introduce no new principles touched, no new gates triggered. The Architecture Impact Map (§4) confirms 006 is a **Low**-impact planning artifact.
+| Principle | Phase 1 obligation introduced | Re-check verdict |
+|---|---|---|
+| **III. Backend Authority** | `contracts/README.md §2.3` pins the closed `error.code` set (revised 8 categories: 005 FR-091's seven + `forbidden`; `already-terminal` collapsed into `already-reconciled` with `details.prior_state`). The future API feature's contract must encode this exact set. | Pass — set is additive vs Constitution §III's envelope; `forbidden` use is constitutionally sanctioned per §II / §XII. |
+| **IV. Contract-First** | `contracts/README.md §3` forbids "force-link" / "override-conflict" / `sale_context` fields / parallel lifecycle states; obligates conformance tests. The future API feature's contract slice consumes this checklist. | Pass — 006 still authors no YAML; obligations are testable on the future API feature's slice. |
+| **VI. Test-First** | `research.md §R3` enumerates three harness extensions (isolation, audit-query, contract) the future API feature must add before service code lands. Spec §5 acceptance scenarios are the seed material. | Pass — RED-then-GREEN seed identified; no code seeded by 006 itself. |
+| **VII. Observable** | `data-model.md §5` confirms 006 introduces no new audit subjects beyond 005's anticipated set. The optional reopen-specific subject is the future API feature's call. | Pass — observability surface unchanged. |
+| **IX. Source-of-Truth** | `data-model.md §1` confirms 006 introduces no schema; queue is a projection over 005 + 003 entities. `quickstart.md` Scenarios 1–5 all use existing 005 lifecycle transitions. | Pass — no parallel source of catalog truth. |
+| **XII. Object Safety** | `contracts/README.md §2.1` enumerates the mass-assignment-forbidden field list (`tenant_id`, `store_id`, `lifecycle_state`, audit fields, etc.). FR-062a + `forbidden` category formalise the in-scope authority case. | Pass — the future API feature's controllers will be bound by this list. |
+| **XIII. Auditability** | `contracts/README.md §2.4` re-pins audit emission obligations against the existing 005 pipe (no parallel channel). The revised category set still emits via 005 FR-082's failed-attempt path. | Pass — audit posture unchanged. |
+| **XIV. PII Discipline** | `data-model.md §1` + `contracts/README.md §2.7` lock the prohibition on surfacing `unknown_items.sale_context jsonb` fields in v1 — conformance test 6 in §4 verifies this. | Pass — posture strengthened, not weakened. |
+
+**Post-design verdict**: No deltas from §3.1's initial Pass verdicts. All Phase 1 obligations and the 2026-05-24 revisions land within the constitutional envelope. Architecture Impact (§4) remains **Low**. No Complexity Tracking entries needed.
 
 ---
 
@@ -157,7 +168,7 @@ Per Working Agreement appendix and [`.specify/memory/architecture-impact.md`](..
 
 **None.** Per FR-110–FR-113 the review queue rides 005's existing audit and metric surface.
 
-The user-facing `already-terminal` failure category (FR-100) is a new category at the **product-level vocabulary**, but it emits through 005 FR-082's existing failed-attempt audit subject (one of `unknown_item.reconciliation_conflict_rejected` or a sibling), not as a new metric. If the future API feature determines that `already-terminal` rejections warrant a distinct metric name, that decision lands there with its own Architecture Impact entry.
+The user-facing `forbidden` failure category 006 introduces (FR-100, post-review-revision 2026-05-24) and the static-state-mismatch variant of `already-reconciled` (also FR-100) are new at the **product-level vocabulary**, but they emit through 005 FR-082's existing failed-attempt audit subjects (one of `unknown_item.reconciliation_conflict_rejected` or a sibling), not as new metrics. If the future API feature determines either rejection class warrants a distinct metric name, that decision lands there with its own Architecture Impact entry.
 
 ---
 
@@ -253,7 +264,7 @@ specs/006-unknown-items-review-queue/
 - **R1 — 005 Wave 1 / Wave 2 readiness**: confirms 005's merged status, identifies the 005 Wave 2 path 006's downstream features will consume.
 - **R2 — Impeccable workflow integration**: confirms the routing rule in spec §11, identifies what artifacts the eventual /impeccable shape brief will need from 006.
 - **R3 — Test harness extension obligations**: enumerates the isolation harness (003 T340 pattern), audit-query, and acceptance-scenario test surfaces the future API feature will need to extend in order to validate 006's product-level guarantees.
-- **R4 — Failure category vocabulary**: confirms 005 FR-091 + the `already-terminal` extension 006 introduces (FR-100) is consistent with Constitution §III's canonical error envelope; identifies where the future API feature must encode it.
+- **R4 — Failure category vocabulary**: confirms 005 FR-091 + the `forbidden` extension 006 introduces (FR-100, post-review-revision 2026-05-24) is consistent with Constitution §III's canonical error envelope; identifies where the future API feature must encode it.
 
 **Output**: [research.md](./research.md) with all four research items resolved as Decision / Rationale / Alternatives.
 
@@ -283,7 +294,7 @@ CLAUDE.md does not currently use `<!-- SPECKIT START --> / <!-- SPECKIT END -->`
 
 This is the single most important phasing decision in this plan: **006 itself produces no implementation slices.** Implementation happens in two follow-up feature specs, neither of which is in scope here.
 
-### 9.1 Wave A — Future API feature (separate spec, separate branch, separate PR)
+### 9.1 Future API feature (separate spec, separate branch, separate PR)
 
 Not scheduled by this plan. When opened, that feature will:
 
@@ -293,12 +304,12 @@ Not scheduled by this plan. When opened, that feature will:
 - Extend the existing isolation harness (003 T340 pattern, 005's extensions) for the queue surface — see [research.md §R3](./research.md).
 - Gate its implementability on 005 Wave 2 (per §5.3).
 
-### 9.2 Wave B — Future UI feature (separate spec, separate branch, separate PR)
+### 9.2 Future UI feature (separate spec, separate branch, separate PR)
 
 Not scheduled by this plan. When opened, that feature will:
 
 - Be routed through Impeccable **before** any UI code lands: `/impeccable shape` → `/impeccable critique` → `/impeccable audit` → `/impeccable polish` → `/impeccable clarify` (spec §11).
-- Consume the API contracts from Wave A.
+- Consume the API contracts from the future API feature.
 - Carry its own spec / clarify / plan / tasks artifacts.
 
 ### 9.3 What this plan does NOT schedule
@@ -309,7 +320,7 @@ Not scheduled by this plan. When opened, that feature will:
 - No schema migrations.
 - No worker changes.
 - No React components, routes, pages, modals, CSS, design tokens.
-- No Impeccable rounds (they fire in Wave B).
+- No Impeccable rounds (they fire in the future UI feature).
 - No CI / package / lockfile changes.
 
 ### 9.4 Gated paths touched by **this plan**
@@ -318,7 +329,7 @@ Not scheduled by this plan. When opened, that feature will:
 
 ### 9.5 `/speckit-tasks` for 006 — likely not required
 
-Because 006 schedules no implementation, `/speckit-tasks` against 006 would produce either (a) zero tasks or (b) administrative tasks (cross-link to downstream features, update CLAUDE.md when downstream features open). The plan owner MAY skip `/speckit-tasks` for 006 entirely, or MAY run it to generate a minimal **dependency-tracking** tasks.md (e.g., "Confirm 005 Wave 2 readiness before opening Wave A spec"). Both are acceptable; the decision is operational, not architectural.
+Because 006 schedules no implementation, `/speckit-tasks` against 006 would produce either (a) zero tasks or (b) administrative tasks (cross-link to downstream features, update CLAUDE.md when downstream features open). The plan owner MAY skip `/speckit-tasks` for 006 entirely, or MAY run it to generate a minimal **dependency-tracking** tasks.md (e.g., "Confirm 005 Wave 2 readiness before opening the future API feature spec"). Both are acceptable; the decision is operational, not architectural.
 
 ---
 
@@ -334,7 +345,7 @@ Because 006 schedules no implementation, `/speckit-tasks` against 006 would prod
 - Analytics, dbt, ClickHouse, Dagster, reports, billing, observability dashboards.
 - `tasks.md` from this plan (see §9.5).
 
-If any of the above appear necessary while implementing a future Wave A / Wave B feature, that need lands in **that** feature's spec — not by amending 006.
+If any of the above appear necessary while implementing a future the future API feature / the future UI feature feature, that need lands in **that** feature's spec — not by amending 006.
 
 ---
 
