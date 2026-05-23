@@ -8,6 +8,15 @@
 
 ## Changelog
 
+- **2026-05-23** (P4 deferrals accepted — P4 marked DONE) —
+  Accepted explicit deferrals for `db_slow_query_total` (wired; no >500ms query
+  exercised on local containers — will emit correctly in production under load)
+  and `db_rls_context_failure_total` (wired at `tenant-context.guard.ts:283`;
+  unreachable from HTTP without source change — deferred to a future slice that
+  exposes a controlled RLS-failure path). All other P4 signals are LIVE-PROVEN
+  or LIVE-SCRAPED. All instrumentation defects resolved (PR #288, PR #289).
+  **P4 verdict: DONE.**
+
 - **2026-05-23** (P4 final focused evidence — `89c23aa`, after PR #289) —
   Ran final focused re-run on `main` at `89c23aa`
   (PR #289: `fix(observability): guard GlobalExceptionFilter against post-response ERR_HTTP_HEADERS_SENT race`).
@@ -172,7 +181,7 @@ are partial, and which remain in the backlog, based on merged PR evidence.
 | P1 — Planning closeout | — | **DONE** | tasks.md, spec, plan, research, and checklist all present and cross-referenced. |
 | P2 — k6 load testing | A | **DONE** (T437 needs operator validation) | Scripts and README merged; live smoke-run against non-prod not yet recorded. |
 | P3 — Observability docs | B | **DONE** | Redaction matrix and signal catalogue merged; signal-label drift documented as non-blocking. |
-| P4 — Observability instrumentation | B | **PARTIAL-with-explicit-deferrals** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. PR #269 (PR-E) closed the `route="unknown"` exception-filter gap. **2026-05-22 re-run** on `857c178`: worker `:9091` boot UNBLOCKED by PR #278; `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` all now LIVE-SCRAPED with bounded labels. **2026-05-22 seeded-evidence run** on `de3bd9d` (HEAD = PR #286): six previously-absent SAFE signals confirmed LIVE — `auth_failure_total` (4 distinct causes), `suspicious_login_total{rapid_retry}`, `cross_tenant_rejection_total`, `tenant_context_failure_total{cross_tenant}`, `idempotency_in_progress_total`, `worker_processing_failure_total`. PR #284 (`b5b8d1b`) closed the §9.6 `db_migration_status` defect. **2026-05-23 focused re-run** on `2bc8ba7` (PR #288): `idempotency_replay_total` and `idempotency_conflict_total` now LIVE-PROVEN. **2026-05-23 final evidence** on `89c23aa` (PR #289): `http_error_5xx_total` no-regression check **PASSED** (0 → 0) — post-response race resolved by `headersSent` guard. All instrumentation defects closed. Two signals explicitly deferred: `db_slow_query_total` (no >500ms query exercised; metric will fire correctly when threshold crossed) and `db_rls_context_failure_total` (wired but unreachable from HTTP without source change). See §4.C and `docs/observability/operator-validation-report.md §12`. |
+| P4 — Observability instrumentation | B | **DONE** | Redaction and structured logging wired (T473/T474). API custom metrics emitting for exercised paths (PR #248). Worker job + queue metrics emitting (PR #251 / T596). Outbox metrics emitting (PR #253 PR-B-1 + PR #259 PR-B-2 / T595). `cross_tenant_rejection_total` and `db_rls_context_failure_total` emission confirmed wired at `tenant-context.guard.ts` (T475/T476 DONE). T483 exercised-path operator scrape **PASSED** 2026-05-21 for API/worker/outbox signals. PR #269 (PR-E) closed the `route="unknown"` exception-filter gap. **2026-05-22 re-run** on `857c178`: worker `:9091` boot UNBLOCKED by PR #278; `redis_command_duration_seconds`, `queue_lag_seconds`, `db_pool_in_use`, `db_pool_waiters` all now LIVE-SCRAPED with bounded labels. **2026-05-22 seeded-evidence run** on `de3bd9d` (HEAD = PR #286): six previously-absent SAFE signals confirmed LIVE — `auth_failure_total` (4 distinct causes), `suspicious_login_total{rapid_retry}`, `cross_tenant_rejection_total`, `tenant_context_failure_total{cross_tenant}`, `idempotency_in_progress_total`, `worker_processing_failure_total`. PR #284 (`b5b8d1b`) closed the §9.6 `db_migration_status` defect. **2026-05-23 focused re-run** on `2bc8ba7` (PR #288): `idempotency_replay_total` and `idempotency_conflict_total` now LIVE-PROVEN. **2026-05-23 final evidence** on `89c23aa` (PR #289): `http_error_5xx_total` no-regression check **PASSED** (0 → 0) — post-response race resolved by `headersSent` guard. All instrumentation defects closed. Two signals explicitly deferred: `db_slow_query_total` (no >500ms query exercised; metric will fire correctly when threshold crossed) and `db_rls_context_failure_total` (wired but unreachable from HTTP without source change). See §4.C and `docs/observability/operator-validation-report.md §12`. |
 | P5 — Idempotency | D | **DONE** | Strategy docs and full implementation for `POST /api/v1/memberships/invite` merged. |
 | P6 — Outbox design validation | C | **DONE** | All four outbox design docs merged; spike branches not merged to main (correct). |
 | P7 — Outbox first slice | C | **DONE / OPEN: future admin writes** | Schema, drainer, producer, consumer, retention, DI swap, outbox metrics emission (T595 PR-B-1/-B-2, T596), worker logger redaction (T565), exit-gate validation (T597–T600) all complete. T483 exercised-path operator scrape evidence (PASS, 2026-05-21) confirms P7 outbox observability is live — this is P7 scope, not full P4 signal-catalogue scope. Per-consumer dedup projection and T591 admin write endpoints (retry/requeue/acknowledge) remain explicitly deferred to future slices. |
@@ -375,12 +384,10 @@ These require a separate approval PR per `plan.md §5` and touch `apps/**`,
    | ~~Post-response `ERR_HTTP_HEADERS_SENT` race~~ (§11.7 — closed by PR #289) | ~~Residual open defect~~ — **RESOLVED** | PR #289 (`89c23aa`) adds `if (response.headersSent) return;` guard to `GlobalExceptionFilter.catch()` immediately after `getResponse()`. When `tap.next` commits a 201/409 to the wire and an async throw subsequently reaches the filter, the guard short-circuits before any metric call or `res.json()` attempt. Confirmed by 2026-05-23 final evidence: `http_error_5xx_total` absent post-exercise; API stderr clean (zero `ERR_HTTP_HEADERS_SENT`). See report §12. |
 
    All instrumentation defects are resolved. The two remaining absent signals
-   (`db_slow_query_total` and `db_rls_context_failure_total`) are explicitly
-   deferred — they have correct wiring but require either a synthetically-slow query
-   or a non-HTTP bootstrap-failure path to exercise. A future operator-validation
-   slice may close these deferrals if acceptance criteria require live-scrape
-   evidence for all signals. Until then, P4 stands as
-   **PARTIAL-with-explicit-deferrals**.
+   (`db_slow_query_total` and `db_rls_context_failure_total`) have accepted
+   explicit deferrals: wiring is correct in both cases; live-scrape evidence
+   is deferred to production-side soak / a future slice respectively.
+   **P4 verdict: DONE** (deferrals accepted 2026-05-23).
 
 ### D — Future Schema / Migration Work
 
