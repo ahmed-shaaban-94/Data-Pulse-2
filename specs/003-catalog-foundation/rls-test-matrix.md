@@ -230,7 +230,7 @@ store write policy. Full matrix including store-scoped sub-cases applies.
 | Actor | GUC `app.current_store` | Target row `store_id` | Operation | Expected result | Task anchor |
 |---|---|---|---|---|---|
 | Tenant A / Store X principal | Store X UUID | Store X | SELECT | Rows returned | T342 (planned) |
-| Tenant A (Tenant Owner / Admin — cross-store read) | `''` (empty string) | Any store of Tenant A | SELECT | Rows returned for all Tenant A stores — `app.current_store = ''` allows cross-store reads by tenant owners | T342 (planned) |
+| Tenant A (Tenant Owner / Admin — cross-store read) | `'*'` (sentinel) | Any store of Tenant A | SELECT | Rows returned for all Tenant A stores — as of migration 0011, callers MUST set `app.current_store = '*'` (not `''`) for the cross-store carve-out; `''` is now fail-closed | T342 (planned) |
 
 ### §4.4 — Cross-store override read denied
 
@@ -253,7 +253,7 @@ store write policy. Full matrix including store-scoped sub-cases applies.
 | GUC state | Operation | Expected result | Task anchor |
 |---|---|---|---|
 | `app.current_tenant` unset / NULL | SELECT | 0 rows | T343 (planned) |
-| `app.current_store` unset (tenant-owner cross-store read with `''`) | SELECT | Rows for that tenant — permitted by design | T342 (planned) |
+| `app.current_store` unset / `''`; `app.current_tenant` set | SELECT | 0 rows — as of migration 0011, `''` (never-set) is fail-closed; cross-store reads require `'*'` (explicit sentinel) | T342, T343 (0011) |
 | `app.current_store` unset; `app.current_tenant` set | INSERT | Policy block (write requires both GUCs) | T343 (planned) |
 
 ---
@@ -410,7 +410,7 @@ no DELETE policy. Records are permanent (non-soft-deleted) once written; their
 | Actor | GUC `app.current_store` | Target row `store_id` | Operation | Expected result | Task anchor |
 |---|---|---|---|---|---|
 | Tenant A / Store X principal | Store X UUID | Store X | SELECT | Rows returned | T342 (planned) |
-| Tenant A (Tenant Owner / Admin) | `''` (empty string) | Any store of Tenant A | SELECT | All Tenant A unknown items returned — `app.current_store = ''` allows cross-store reads by tenant owners | T342 (planned) |
+| Tenant A (Tenant Owner / Admin) | `'*'` (sentinel) | Any store of Tenant A | SELECT | All Tenant A unknown items returned — as of migration 0011, callers MUST set `app.current_store = '*'` (not `''`) for the cross-store carve-out; `''` is now fail-closed | T342 (planned) |
 
 ### §7.4 — Cross-store read denied
 
@@ -427,7 +427,7 @@ no DELETE policy. Records are permanent (non-soft-deleted) once written; their
 | Wrong-tenant GUC | `SET LOCAL app.current_tenant = '<tenant-b-uuid>'; SELECT * FROM unknown_items;` | Only Tenant B rows visible | T343 (planned) |
 | Wrong-store GUC | `SET LOCAL app.current_store = '<store-y-uuid>'; SELECT * FROM unknown_items;` | Only Store Y rows visible | T343 (planned) |
 | No tenant GUC | `SET LOCAL app.current_tenant = ''; SELECT * FROM unknown_items;` | 0 rows | T343 (planned) |
-| No store GUC (tenant-owner cross-store read) | `SET LOCAL app.current_tenant = '<tenant-a-uuid>'; SET LOCAL app.current_store = ''; SELECT * FROM unknown_items;` | All Tenant A unknown items (cross-store allowed for empty store GUC) | T342 (planned) |
+| Tenant-owner cross-store read | `SET LOCAL app.current_tenant = '<tenant-a-uuid>'; SELECT set_config('app.current_store', '*', true); SELECT * FROM unknown_items;` | All Tenant A unknown items (cross-store allowed for `'*'` sentinel; `''` is now fail-closed as of 0011) | T342 (planned) |
 
 ### §7.6 — Unset GUC — fail-closed
 
@@ -435,7 +435,7 @@ no DELETE policy. Records are permanent (non-soft-deleted) once written; their
 |---|---|---|---|
 | `app.current_tenant` unset / NULL | SELECT | 0 rows | T343 (planned) |
 | `app.current_tenant` unset / NULL | INSERT | Policy block | T343 (planned) |
-| `app.current_store` unset; `app.current_tenant` set | SELECT | 0 rows (store isolation policy returns no match when store GUC absent) | T343 (planned) |
+| `app.current_store` unset / `''`; `app.current_tenant` set | SELECT | 0 rows — as of migration 0011, `''` (never-set) is fail-closed; cross-store reads require `'*'` (explicit sentinel) | T342, T343 (0011) |
 
 ### §7.7 — Malicious body-override probe
 

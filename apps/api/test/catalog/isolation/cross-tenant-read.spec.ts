@@ -106,12 +106,12 @@ function maybeSkip(): boolean {
 //
 // `store_product_overrides` and `unknown_items` carry the post-0008 RLS
 // SELECT policy that AND-combines `app.current_tenant` with
-// `(store_id = app.current_store OR app.current_store = '')`. The
-// documented "empty-string carve-out" does NOT actually work in
-// Postgres — the `::uuid` cast on the left of the OR fires before the
-// short-circuit (see `0008_catalog_store_read_isolation.sql:74-78`),
-// raising `invalid input syntax for type uuid: ""` for any caller that
-// sets `app.current_store = ''`.
+// `(store_id = app.current_store OR app.current_store = '*')`. The
+// sentinel value `'*'` is the tenant-owner all-stores carve-out
+// introduced in migration 0009 — the CASE guard in the policy handles
+// it explicitly without performing a `::uuid` cast, avoiding the
+// `invalid input syntax for type uuid` error that the old `''` sentinel
+// would trigger (see `0009_catalog_store_carveout_sentinel.sql`).
 //
 // As a result, every read of those two tables under a runtime role
 // must set `app.current_store` to a real store UUID. The native
@@ -178,9 +178,9 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
   it("store_product_overrides: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
-      // after 0009: the CASE guard prevents ''::uuid cast error.
-      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      // '*' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard handles the '*' sentinel without a uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
       );
@@ -224,9 +224,9 @@ describe("T341 — cross-tenant read isolation: Tenant A sees own rows only", ()
   it("unknown_items: Tenant A sees exactly 2 rows (own tenant only)", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
-      // after 0009: the CASE guard prevents ''::uuid cast error.
-      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      // '*' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard handles the '*' sentinel without a uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
       );
@@ -435,9 +435,9 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
   it("store_product_overrides: Tenant B context sees exactly 2 own rows", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
-      // after 0009: the CASE guard prevents ''::uuid cast error.
-      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      // '*' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard handles the '*' sentinel without a uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM store_product_overrides ORDER BY id`,
       );
@@ -480,9 +480,9 @@ describe("T341 — cross-tenant read isolation: Tenant B symmetry", () => {
   it("unknown_items: Tenant B context sees only its own rows", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(env!.app, ctx, async (client) => {
-      // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
-      // after 0009: the CASE guard prevents ''::uuid cast error.
-      await client.query(`SELECT set_config('app.current_store', '', true)`);
+      // '*' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3). Safe
+      // after 0009: the CASE guard handles the '*' sentinel without a uuid cast error.
+      await client.query(`SELECT set_config('app.current_store', '*', true)`);
       const r = await client.query<{ id: string; tenant_id: string }>(
         `SELECT id, tenant_id FROM unknown_items ORDER BY id`,
       );

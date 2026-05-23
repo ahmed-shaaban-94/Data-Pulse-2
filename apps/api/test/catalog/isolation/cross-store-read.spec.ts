@@ -26,18 +26,18 @@
  * ----------------
  * (A) Own-store visibility: Tenant A / Store X sees only Store X rows.
  * (B) Cross-store denial: Tenant A / Store X cannot see Store Y rows (same tenant).
- * (C) Tenant-owner carve-out: Tenant A / store='' sees ALL Tenant A rows in both
- *     tables. Exercises the 0009 CASE guard — `app.current_store = ''` no longer
- *     raises an invalid uuid cast error.
+ * (C) Tenant-owner carve-out: Tenant A / store='*' sees ALL Tenant A rows in both
+ *     tables. Exercises the 0011 sentinel — `app.current_store = '*'` is the
+ *     explicit cross-store carve-out; `''` is now fail-closed (never-set).
  * (D) Fail-closed on unset store GUC: Tenant A principal without `app.current_store`
  *     set sees 0 rows from the store-scoped tables.
  *
  * RLS matrix references
  * ---------------------
- * §4.3  — Same-store override read + tenant-owner carve-out (store_product_overrides)
+ * §4.3  — Same-store override read + tenant-owner carve-out ('*' sentinel, store_product_overrides)
  * §4.4  — Cross-store override read denied
  * §4.6  — Unset GUC fail-closed
- * §7.3  — Same-store read + tenant-owner carve-out (unknown_items)
+ * §7.3  — Same-store read + tenant-owner carve-out ('*' sentinel, unknown_items)
  * §7.4  — Cross-store read denied
  * §7.6  — Unset GUC fail-closed
  */
@@ -354,29 +354,29 @@ describe("T342 — cross-store read isolation: cross-store denial (Store X → S
 });
 
 // --------------------------------------------------------------------------
-// Group C — Tenant-owner carve-out: app.current_store='' sees all tenant rows
+// Group C — Tenant-owner carve-out: app.current_store='*' sees all tenant rows
 //
-// This group exercises the 0009 CASE guard (rls-test-matrix.md §4.3 / §7.3).
-// When app.current_store = '', the CASE branch fires TRUE, making all stores
-// of the active tenant visible. Before 0009 this path raised
-// "invalid input syntax for type uuid: """'. After 0009 it works cleanly.
+// This group exercises the 0011 sentinel (rls-test-matrix.md §4.3 / §7.3).
+// When app.current_store = '*', the CASE branch fires TRUE, making all stores
+// of the active tenant visible. Migration 0011 introduced '*' as the explicit
+// carve-out sentinel; '' (empty string / never-set) is now fail-closed.
 // --------------------------------------------------------------------------
 
-describe("T342 — cross-store read isolation: tenant-owner carve-out (app.current_store = '')", () => {
+describe("T342 — cross-store read isolation: tenant-owner carve-out (app.current_store = '*')", () => {
   const tenantACtx = {
     tenantId: CATALOG_FIXTURE_IDS.tenantA,
     isPlatformAdmin: false,
   };
 
-  it("store_product_overrides: empty-store carve-out sees both Store X and Store Y rows", async () => {
+  it("store_product_overrides: '*' carve-out sees both Store X and Store Y rows", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(
       env!.app,
       tenantACtx,
       async (client) => {
-        // '' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3).
-        // Safe after 0009: the CASE guard prevents ''::uuid cast error.
-        await client.query(`SELECT set_config('app.current_store', '', true)`);
+        // '*' = tenant-owner all-stores carve-out (rls-test-matrix.md §4.3).
+        // Migration 0011: '*' is the explicit sentinel; '' is now fail-closed.
+        await client.query(`SELECT set_config('app.current_store', '*', true)`);
         const r = await client.query<{ id: string; store_id: string }>(
           `SELECT id, store_id FROM store_product_overrides ORDER BY id`,
         );
@@ -393,13 +393,13 @@ describe("T342 — cross-store read isolation: tenant-owner carve-out (app.curre
     expect(visibleIds).not.toContain(CATALOG_FIXTURE_IDS.overrideBY);
   });
 
-  it("unknown_items: empty-store carve-out sees both Store X and Store Y items", async () => {
+  it("unknown_items: '*' carve-out sees both Store X and Store Y items", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(
       env!.app,
       tenantACtx,
       async (client) => {
-        await client.query(`SELECT set_config('app.current_store', '', true)`);
+        await client.query(`SELECT set_config('app.current_store', '*', true)`);
         const r = await client.query<{ id: string; store_id: string }>(
           `SELECT id, store_id FROM unknown_items ORDER BY id`,
         );
@@ -416,13 +416,13 @@ describe("T342 — cross-store read isolation: tenant-owner carve-out (app.curre
     expect(visibleIds).not.toContain(CATALOG_FIXTURE_IDS.unknownBY);
   });
 
-  it("store_product_overrides: empty-store carve-out sees Store X override by known ID", async () => {
+  it("store_product_overrides: '*' carve-out sees Store X override by known ID", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(
       env!.app,
       tenantACtx,
       async (client) => {
-        await client.query(`SELECT set_config('app.current_store', '', true)`);
+        await client.query(`SELECT set_config('app.current_store', '*', true)`);
         const r = await client.query<{ id: string }>(
           `SELECT id FROM store_product_overrides WHERE id = $1`,
           [CATALOG_FIXTURE_IDS.overrideAX],
@@ -433,13 +433,13 @@ describe("T342 — cross-store read isolation: tenant-owner carve-out (app.curre
     expect(rows).toHaveLength(1);
   });
 
-  it("store_product_overrides: empty-store carve-out sees Store Y override by known ID", async () => {
+  it("store_product_overrides: '*' carve-out sees Store Y override by known ID", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(
       env!.app,
       tenantACtx,
       async (client) => {
-        await client.query(`SELECT set_config('app.current_store', '', true)`);
+        await client.query(`SELECT set_config('app.current_store', '*', true)`);
         const r = await client.query<{ id: string }>(
           `SELECT id FROM store_product_overrides WHERE id = $1`,
           [CATALOG_FIXTURE_IDS.overrideAY],
@@ -450,13 +450,13 @@ describe("T342 — cross-store read isolation: tenant-owner carve-out (app.curre
     expect(rows).toHaveLength(1);
   });
 
-  it("unknown_items: empty-store carve-out sees Store Y item by known ID", async () => {
+  it("unknown_items: '*' carve-out sees Store Y item by known ID", async () => {
     if (maybeSkip()) return;
     const rows = await runWithTenantContext(
       env!.app,
       tenantACtx,
       async (client) => {
-        await client.query(`SELECT set_config('app.current_store', '', true)`);
+        await client.query(`SELECT set_config('app.current_store', '*', true)`);
         const r = await client.query<{ id: string }>(
           `SELECT id FROM unknown_items WHERE id = $1`,
           [CATALOG_FIXTURE_IDS.unknownAY],
@@ -471,44 +471,83 @@ describe("T342 — cross-store read isolation: tenant-owner carve-out (app.curre
 // --------------------------------------------------------------------------
 // Group D — Fail-closed: Tenant A context without app.current_store sees 0 rows
 //
-// `runWithTenantContext` sets only `app.current_tenant`. When `app.current_store`
-// is never set (NULL), the 0009 CASE guard's ELSE branch evaluates
-// `store_id = NULL::uuid` which is NULL — so the policy denies all rows.
-// This proves the store-scoped tables are fail-closed when the store GUC
-// is absent (rls-test-matrix.md §4.6 / §7.6).
+// `runWithTenantContext` sets only `app.current_tenant`; `app.current_store`
+// is never set in the session. Migration 0011 changed the store-axis CASE
+// guard so that `''` (the value returned by current_setting when the GUC
+// was never set) resolves to THEN FALSE — fail-closed.
+// Previously (0009/0010) `WHEN '' THEN TRUE` fired here, leaking rows.
+// (rls-test-matrix.md §4.6 / §7.6).
 // --------------------------------------------------------------------------
 
-// DEFERRED — RLS_STORE_ABSENT_READ_LEAK
-//
-// The four cases below probe matrix §4.6 and §7.6: "tenant set, store GUC
-// absent → 0 rows (fail-closed)" for `store_product_overrides` and
-// `unknown_items`. Empirically (CI run on PR #285, commit 30751989), the
-// store-axis combination of:
-//   (a) PG returning '' (not NULL) from `current_setting('app.current_store', true)`
-//       when the GUC has never been set in the session, and
-//   (b) the 0009 CASE guard's `WHEN '' THEN TRUE` carve-out branch firing,
-// produces visible rows instead of 0. Same family as the resolved
-// RLS_CROSS_STORE_READ_LEAK finding (PR #254) but on the "store absent"
-// rather than the "two split SELECT policies" axis.
-//
-// Resolution requires a future gated SQL slice that distinguishes
-// "GUC explicitly empty (tenant-owner carve-out)" from "GUC never set
-// in session (must fail-closed)". Until that lands, these tests stay as
-// `it.todo()` so the deferred contract remains visible in Jest output.
-//
-// DO NOT convert these back to executable assertions or accept "rows OR
-// no rows" matchers — both would silently mask the underlying defect.
 describe("T342 — cross-store read isolation: fail-closed when app.current_store unset", () => {
-  it.todo(
-    "§4.6 store_product_overrides: Tenant A without store GUC sees 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
-  it.todo(
-    "§7.6 unknown_items: Tenant A without store GUC sees 0 rows (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
-  it.todo(
-    "§4.6 store_product_overrides: Tenant A without store GUC cannot read known Store X override ID (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
-  it.todo(
-    "§7.6 unknown_items: Tenant A without store GUC cannot read known Store X item ID (deferred — see finding RLS_STORE_ABSENT_READ_LEAK)",
-  );
+  const tenantACtx = {
+    tenantId: CATALOG_FIXTURE_IDS.tenantA,
+    isPlatformAdmin: false,
+  };
+
+  it("§4.6 store_product_overrides: Tenant A without store GUC sees 0 rows", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(
+      env!.app,
+      tenantACtx,
+      async (client) => {
+        // app.current_store is NOT set — current_setting returns '' → THEN FALSE
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM store_product_overrides`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("§7.6 unknown_items: Tenant A without store GUC sees 0 rows", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(
+      env!.app,
+      tenantACtx,
+      async (client) => {
+        // app.current_store is NOT set — current_setting returns '' → THEN FALSE
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM unknown_items`,
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("§4.6 store_product_overrides: Tenant A without store GUC cannot read known Store X override ID", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(
+      env!.app,
+      tenantACtx,
+      async (client) => {
+        // app.current_store is NOT set — policy denies the row
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM store_product_overrides WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.overrideAX],
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("§7.6 unknown_items: Tenant A without store GUC cannot read known Store X item ID", async () => {
+    if (maybeSkip()) return;
+    const rows = await runWithTenantContext(
+      env!.app,
+      tenantACtx,
+      async (client) => {
+        // app.current_store is NOT set — policy denies the row
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM unknown_items WHERE id = $1`,
+          [CATALOG_FIXTURE_IDS.unknownAX],
+        );
+        return r.rows;
+      },
+    );
+    expect(rows).toEqual([]);
+  });
 });
