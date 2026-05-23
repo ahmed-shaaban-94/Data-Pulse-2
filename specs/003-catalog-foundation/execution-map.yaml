@@ -409,7 +409,7 @@ slices:
     task_ids: [T336]
     type: test
     # Reinterpreted (path b of finding MISSING_WITHSTORE_HELPER, authorized
-    # by the user 2026-05-24): instead of testing a never-scaffolded
+    # by the user 2026-05-23): instead of testing a never-scaffolded
     # `withStore(tx, tenantId, storeId)` helper, this slice tests the
     # underlying store-axis GUC contract that any such helper would
     # compile to — `runWithTenantContext` + manual

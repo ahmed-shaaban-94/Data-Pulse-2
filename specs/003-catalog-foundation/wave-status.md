@@ -1,6 +1,6 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-24 (T336 reinterpreted to resolve `MISSING_WITHSTORE_HELPER` via path (b); slice authored on `test/003-t336-store-guc-coverage`, awaiting commit/merge)
+**Last updated:** 2026-05-23 (T336 reinterpreted to resolve `MISSING_WITHSTORE_HELPER` via path (b); slice authored on `test/003-t336-store-guc-coverage`, awaiting commit/merge)
 **Spec:** [`specs/003-catalog-foundation/`](.)
 **Base:** `origin/main` at `bbb9beb` (PR #309 docs closeout, 2026-05-23)
 **Active findings:** 0
@@ -22,7 +22,7 @@ plan was RED-first then GREEN-later, but the slice owners paired them in-branch)
   original assumption ("FK to `tenant_products(id)` will fail under RLS") was wrong.
 - **PR #303** @ `454a7ae` — `ProductAliasesService.create` (T383 RED + T384 GREEN)
 
-**`MISSING_WITHSTORE_HELPER` finding resolved 2026-05-24** via path (b) of the user's
+**`MISSING_WITHSTORE_HELPER` finding resolved 2026-05-23** via path (b) of the user's
 authorized resolution options: T336 reinterpreted to test the store-axis GUC contract
 directly via `runWithTenantContext` + manual `SET LOCAL app.current_store`, mirroring
 the T335 tenant-axis pattern. No `packages/db/src/helpers/with-store.ts` file authored
@@ -131,7 +131,7 @@ All previously-local work is now on `main`:
 
 ## Active findings
 
-_None._ The previously-active `MISSING_WITHSTORE_HELPER` was resolved 2026-05-24 via T336 reinterpretation — see Resolved findings above.
+_None._ The previously-active `MISSING_WITHSTORE_HELPER` was resolved 2026-05-23 via T336 reinterpretation — see Resolved findings above.
 
 ---
 
