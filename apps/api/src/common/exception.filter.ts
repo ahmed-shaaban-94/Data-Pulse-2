@@ -84,6 +84,13 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const request = http.getRequest<Request & { requestId?: string }>();
     const response = http.getResponse<Response>();
+    // Post-response race: IdempotencyInterceptor (and similar) can emit a
+    // response via tap.next before an async throw reaches this filter.
+    // Attempting res.json() on an already-committed response raises
+    // ERR_HTTP_HEADERS_SENT and falsely increments http_error_5xx_total.
+    if (response.headersSent) {
+      return;
+    }
     const requestId = request.requestId ?? newId();
     // In an HTTP transport, the host Nest passes here is structurally an
     // ExecutionContext, but at the exception-filter boundary

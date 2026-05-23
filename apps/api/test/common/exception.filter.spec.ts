@@ -44,13 +44,19 @@ interface FakeRequest {
 interface FakeResponse {
   status: jest.Mock;
   json: jest.Mock;
+  headersSent: boolean;
 }
 
-function makeHost(req: FakeRequest, captured: CapturedResponse): {
+function makeHost(
+  req: FakeRequest,
+  captured: CapturedResponse,
+  headersSent = false,
+): {
   host: ArgumentsHost;
   res: FakeResponse;
 } {
   const res: FakeResponse = {
+    headersSent,
     status: jest.fn(function status(code: number) {
       captured.statusCode = code;
       return res;
@@ -332,6 +338,42 @@ describe("GlobalExceptionFilter", () => {
         route: "unknown",
         status: "404",
       });
+    });
+  });
+
+  // ---- headersSent guard — post-response race (fix for ERR_HTTP_HEADERS_SENT) ----
+  // When IdempotencyInterceptor (or any tap.next) commits a response before an
+  // async throw reaches this filter, response.headersSent is already true.
+  // The filter must return without emitting a second response or recording a
+  // spurious http_error_5xx_total increment.
+
+  describe("headersSent guard — post-response race", () => {
+    it("returns without calling status/json or recording any metric when headersSent=true and exception is an Error", () => {
+      const filter = new GlobalExceptionFilter();
+      const captured: CapturedResponse = {};
+      const { host, res } = makeHost({ requestId: REQ_ID }, captured, true);
+      filter.catch(new Error("async post-response throw"), host);
+
+      expect(res.status).not.toHaveBeenCalled();
+      expect(res.json).not.toHaveBeenCalled();
+      expect(recordHttp5xxError).not.toHaveBeenCalled();
+      expect(recordHttp4xxError).not.toHaveBeenCalled();
+      expect(recordValidationFailure).not.toHaveBeenCalled();
+      expect(captured.statusCode).toBeUndefined();
+      expect(captured.body).toBeUndefined();
+    });
+
+    it("returns without calling status/json or recording any metric when headersSent=true and exception is an HttpException 5xx", () => {
+      const filter = new GlobalExceptionFilter();
+      const captured: CapturedResponse = {};
+      const { host, res } = makeHost({ requestId: REQ_ID }, captured, true);
+      filter.catch(new HttpException("upstream down", HttpStatus.BAD_GATEWAY), host);
+
+      expect(res.status).not.toHaveBeenCalled();
+      expect(res.json).not.toHaveBeenCalled();
+      expect(recordHttp5xxError).not.toHaveBeenCalled();
+      expect(recordHttp4xxError).not.toHaveBeenCalled();
+      expect(captured.statusCode).toBeUndefined();
     });
   });
 });
