@@ -784,4 +784,217 @@ No source / test / package / lockfile / schema / migration / OpenAPI / CI change
 
 ---
 
+## 11. P4 Focused Idempotency Re-run — 2026-05-23 (PR #288)
+
+**Tested commit**: `2bc8ba7` —
+`fix(auth): use '-' separator in EmailQueueProducer jobId for BullMQ 5.x`
+(branch `fix/email-queue-jobid-bullmq-compat`; merged to `main` as `d49f28b` PR #288).
+
+**Trigger**: PR #288 replaces the `:` separator in `EmailQueueProducer.deriveJobId`
+with `-`, resolving the BullMQ 5.76.5 `Custom Id cannot contain :` rejection
+documented in §10.6. This is the specific blocker that prevented
+`idempotency_replay_total` and `idempotency_conflict_total` from being live-proven
+in the §10 run. This focused re-run confirms those two signals are now live,
+and verifies the invite success path with the fix applied.
+
+### 11.1 Verdicts
+
+- **`idempotency_replay_total` — LIVE-PROVEN** (value 1, route `POST:/api/v1/memberships/invite`).
+- **`idempotency_conflict_total` — LIVE-PROVEN** (value 1, same route).
+- **5xx no-regression check — FAILED**. Baseline 0 → post-exercise 2 on
+  `{route="/api/v1/memberships/invite",status="500"}`. Client-visible responses
+  were 201 (invite), 201 (replay), 409 (conflict) — all correct. The 500s are
+  produced by a **residual post-response race in `GlobalExceptionFilter`**, distinct
+  from the BullMQ colon-separator defect PR #288 fixed (see §11.7 for detail).
+- **PR #288 BullMQ fix confirmed effective**: invite success path now reaches
+  `tap.next`, the idempotency store persists the replay record, and the replay +
+  conflict interceptor paths both fire. The `EmailQueueProducer.deriveJobId` defect
+  from §10.6 is closed for the invite path.
+- **P4 verdict remains PARTIAL** — `idempotency_replay_total` and
+  `idempotency_conflict_total` are now LIVE; `db_slow_query_total` and
+  `db_rls_context_failure_total` remain not live-proven; the post-response 5xx race
+  is a new explicit blocker (see §11.7).
+
+### 11.2 Environment
+
+| Component | Detail |
+|---|---|
+| OS host | Windows 11; exercise driven via Claude Code Bash (WSL) |
+| Container runtime | Docker Desktop via WSL 2 |
+| Postgres | `dp2-postgres-dev` (postgres:16-alpine), port 5432, `data_pulse_2`, user `dp2`, healthy |
+| Redis | `dp2-redis-dev` (redis:7-alpine), port 6379, healthy |
+| API process | `node apps/api/dist/main.js`, PID 25004, built from `2bc8ba7` (`fix/email-queue-jobid-bullmq-compat`), env: `PORT=3001`, `METRICS_PORT=9464`, `DATABASE_URL=postgresql://dp2:dp2_dev_password@127.0.0.1:5432/data_pulse_2`, `REDIS_URL=redis://127.0.0.1:6379`, `LOG_LEVEL=info` |
+| Worker process | `node apps/worker/dist/main.js`, env: same DB/Redis URLs, `WORKER_METRICS_PORT=9091`, `WORKER_METRICS_BIND_HOST=127.0.0.1` |
+| Migration ledger | 10 applied, 0 pending |
+| Seed script | `bin/p4-seed-288.sql` — UUID prefix family `0f000001-…` through `0f000006-…`, users/tenants/stores/roles/memberships/sessions |
+
+### 11.3 Fixture data seeded
+
+Seed SQL: `bin/p4-seed-288.sql` (untracked, per working agreement). Applied via
+`wsl docker exec -i dp2-postgres-dev psql -U dp2 -d data_pulse_2`.
+
+| Prefix | Table | Purpose |
+|---|---|---|
+| `0f000001-…001` | `users` | T1 admin; password `correct-horse-battery` (argon2id PHC) |
+| `0f000001-…002` | `users` | T2 admin (not used in invite exercise; present for isolation) |
+| `0f000002-…001/002` | `tenants` | `evidence288-t1`, `evidence288-t2` |
+| `0f000003-…001/002` | `stores` | one per tenant |
+| `0f000004-…001/002` | `roles` | `owner` per tenant |
+| `0f000005-…001` | `memberships` | T1 admin → T1, `store_access_kind='all'` |
+| `0f000006-…001` | `sessions` | T1 admin active in T1 (used for invite exercises) |
+| `0f000006-…002` | `sessions` | T1 admin active in T2 (cross-tenant trap; not used in this run) |
+
+### 11.4 Commands run
+
+```bash
+# Baseline scrape (clean — 14 lines, zero idempotency / 5xx metrics)
+curl -s http://localhost:9464/metrics > bin/api-before-clean3.txt
+
+# Exercise 1 — fresh invite (POST, sequential, no race)
+curl -s -X POST http://localhost:3001/api/v1/memberships/invite \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: dp2_session=0f000006-0000-7000-8000-000000000001' \
+  -H 'Idempotency-Key: e288-clean-key-003' \
+  -d '{"email":"p4-e288-invitee-003@example.test","role_code":"owner","store_access_kind":"all"}'
+# -> HTTP 201, invitation ID 019e5462-6266-7229-9c2a-25e3c31d2370
+
+# Exercise 2 — replay (same key + same body)
+curl -s -X POST http://localhost:3001/api/v1/memberships/invite \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: dp2_session=0f000006-0000-7000-8000-000000000001' \
+  -H 'Idempotency-Key: e288-clean-key-003' \
+  -d '{"email":"p4-e288-invitee-003@example.test","role_code":"owner","store_access_kind":"all"}'
+# -> HTTP 201, same invitation ID 019e5462-6266-7229-9c2a-25e3c31d2370 (cached replay)
+
+# Exercise 3 — conflict (same key + different body)
+curl -s -X POST http://localhost:3001/api/v1/memberships/invite \
+  -H 'Content-Type: application/json' \
+  -H 'Cookie: dp2_session=0f000006-0000-7000-8000-000000000001' \
+  -H 'Idempotency-Key: e288-clean-key-003' \
+  -d '{"email":"p4-e288-different-payload@example.test","role_code":"owner","store_access_kind":"all"}'
+# -> HTTP 409 ConflictException (idempotency conflict: same key, different body)
+
+# Post-exercise scrapes
+curl -s http://localhost:9464/metrics > bin/api-after-clean3.txt    # 218 lines
+curl -s http://localhost:9091/metrics > bin/worker-after-clean3.txt # 177 lines
+```
+
+Pino request log (from API stdout, `bin/api5.out.log`):
+
+```json
+{"level":"info","time":"2026-05-23T10:29:54.429Z","service":"api","method":"POST",
+ "route":"/api/v1/memberships/invite","status":201,"latency_ms":42,
+ "tenant_id":"0f000002-0000-7000-8000-000000000001",
+ "user_id":"0f000001-0000-7000-8000-000000000001"}
+```
+
+### 11.5 Scrape delta — idempotency signals
+
+API scrape (`:9464`), before → after:
+
+| Family | Before | After | Delta | Notes |
+|---|---|---|---|---|
+| `idempotency_replay_total{route="POST:/api/v1/memberships/invite"}` | (absent) | **1** | **+1** | Exercise 2 — same key + same body; interceptor served cached result |
+| `idempotency_conflict_total{route="POST:/api/v1/memberships/invite"}` | (absent) | **1** | **+1** | Exercise 3 — same key + different body |
+| `http_error_5xx_total{route="/api/v1/memberships/invite",status="500"}` | 0 | **2** | **+2** | Post-response race — see §11.7 |
+
+### 11.6 Sample scrape lines (from `bin/api-after-clean3.txt`)
+
+```
+idempotency_replay_total{route="POST:/api/v1/memberships/invite",otel_scope_name="api"} 1
+idempotency_conflict_total{route="POST:/api/v1/memberships/invite",otel_scope_name="api"} 1
+http_error_5xx_total{route="/api/v1/memberships/invite",status="500",otel_scope_name="api"} 2
+```
+
+### 11.7 Residual defect — `ERR_HTTP_HEADERS_SENT` post-response race
+
+**Observed**: `http_error_5xx_total` increased from 0 to 2 after 3 clean sequential
+exercises. API stderr (`bin/api5.err.log`) shows 1 × `ERR_HTTP_HEADERS_SENT` stack
+trace:
+
+```
+Error [ERR_HTTP_HEADERS_SENT]: Cannot set headers after they are sent to the client
+    at ServerResponse.setHeader (node:_http_outgoing:699:11)
+    at ServerResponse.header (.../express/lib/response.js:686:10)
+    at ServerResponse.json (.../express/lib/response.js:252:15)
+    at GlobalExceptionFilter.catch (apps/api/dist/common/exception.filter.js:127:68)
+```
+
+**Cause**: after the idempotency interceptor's `tap.next` fires (emitting 201 to
+the wire), an async side-effect downstream of the route handler throws — either
+the email enqueue itself or a post-emit hook. Because the 201 has already been
+committed to the HTTP response, `GlobalExceptionFilter.catch` attempts to call
+`res.json(500 body)` on a closed response, triggering the Node.js
+`ERR_HTTP_HEADERS_SENT` error and incrementing `http_error_5xx_total`.
+
+**Client-visible responses**: 201 (exercise 1 — invite), 201 (exercise 2 — replay),
+409 (exercise 3 — conflict). The client received correct semantics in all three
+cases. The 500s are server-internal only — the exception filter fires after the
+response is already on the wire.
+
+**This defect is distinct from the BullMQ colon-separator issue PR #288 fixed.**
+PR #288 corrects `deriveJobId` so that the invite's email-enqueue step no longer
+rejects the custom `jobId`. The post-response race is an architectural issue in how
+`GlobalExceptionFilter` handles exceptions that occur after `tap.next` has emitted
+the response — it does not result in a failed response to the caller, but does
+incorrectly increment `http_error_5xx_total`.
+
+**Discrepancy note**: 1 `ERR_HTTP_HEADERS_SENT` trace in stderr vs. 2 × 500 in
+metrics. The second 500 does not produce a second `ERR_HTTP_HEADERS_SENT` trace
+in the captured log window; its source was not identified from the available stderr.
+
+**Operational impact**:
+- `http_error_5xx_total` no-regression criterion for this run: **FAILED** (0 → 2).
+- All client-visible responses were correct (201 / 201 / 409).
+- The root cause is a separate open defect, not the BullMQ jobId colon issue PR #288 targeted.
+
+**Recommended follow-up**: audit `GlobalExceptionFilter.catch` for a guard against
+already-sent responses (`res.headersSent` check before calling `res.json(...)`), and
+identify the async throw source (likely `EmailQueueProducer.enqueueInvitation` firing
+after `tap.next`). Track as a separate fix; does not revert the replay/conflict
+evidence above.
+
+### 11.8 Cardinality + PII discipline
+
+Direct scan of `bin/api-after-clean3.txt`:
+
+- No email addresses, UUIDs, request IDs, query strings, or raw error messages in any label value.
+- `route` values: `{/api/v1/auth/signin, /api/v1/memberships/invite, POST:/api/v1/memberships/invite}` — all bounded controller templates.
+- `cause`, `reason`, `status`, `state` — all bounded enums per `signals.md`.
+
+PII / cardinality discipline (FR-B-006, §XIV) holds.
+
+### 11.9 P4 verdict movement
+
+| Signal | Status before this run (after §10) | Status after this run |
+|---|---|---|
+| `idempotency_replay_total` | Production-emitting; BLOCKED by §10.6 defect | **LIVE-PROVEN** (value 1) |
+| `idempotency_conflict_total` | Production-emitting; BLOCKED by §10.6 defect | **LIVE-PROVEN** (value 1) |
+| `http_error_5xx_total` | Live-scraped (§10 incidental) | Live-scraped; **new residual post-response race defect found** |
+| `db_slow_query_total` | Pool hook wired; not live-scraped | **STILL NOT LIVE** — no query exceeded 500ms threshold |
+| `db_rls_context_failure_total` | Production-emitting; not live-scraped | **STILL NOT LIVE** — unreachable from HTTP without source change |
+| `EmailQueueProducer.deriveJobId` defect (§10.6) | Live production defect | **FIXED** by PR #288 (`2bc8ba7`) — separator changed from `:` to `-` |
+
+**P4 verdict: PARTIAL (updated blockers).** `idempotency_replay_total` and
+`idempotency_conflict_total` are now LIVE-PROVEN. The §10.6 BullMQ colon-separator
+defect is resolved. Remaining absent signals: `db_slow_query_total` (no slow
+query exercised), `db_rls_context_failure_total` (unreachable from HTTP). New
+explicit open item: post-response `ERR_HTTP_HEADERS_SENT` race in
+`GlobalExceptionFilter` causing `http_error_5xx_total` to increment on invite
+success paths — requires a separate source fix.
+
+### 11.10 Files written in this run
+
+- `docs/observability/operator-validation-report.md` (THIS file — appended §11)
+- `docs/production-readiness/004-closeout-status.md` (changelog entry + §4.C row updates)
+
+Helper and seed files written under untracked `bin/` (not committed, per working
+agreement): `bin/p4-seed-288.sql`, `bin/p4-boot.sh`, `bin/api-before-clean3.txt`,
+`bin/api-after-clean3.txt`, `bin/worker-after-clean3.txt`, `bin/api5.out.log`,
+`bin/api5.err.log`.
+
+No source / test / package / lockfile / schema / migration / OpenAPI / CI changes.
+
+---
+
 *End of T483 operator validation report.*
