@@ -1,8 +1,8 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-22 (post-#279 closeout — HARNESS_FIX + 0009 store GUC CASE guard merged; T341 31/31 GREEN)
+**Last updated:** 2026-05-22 (post-#285 closeout — T342, T343, T344 isolation specs merged)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `e33fd0e` (PR #279, 2026-05-22)
+**Base:** `origin/main` at `fd18598` (PR #285, 2026-05-22)
 **Active findings:** 3 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (medium; matrix §2.3/§3.3/§5.3/§6.5/§7.6 fail-closed not delivered)
 **Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
 
@@ -10,10 +10,10 @@
 
 ## TL;DR
 
-T340 (PR #264), T341 (PR #268), HARNESS_FIX, and 0009_STORE_GUC_FIX (both PR #279)
-are all merged. T341 is now **GREEN 31/31** — the harness seed bugs and the empty-store
-GUC cast error are fixed. T342, T343, T344 are **ready to dispatch with no remaining
-prerequisites**. T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
+T342, T343, T344 merged in PR #285 @ `fd18598` (2026-05-22). All three isolation
+specs are on `main`. T344 is **fully GREEN**. T342 and T343 each carry `it.todo`
+deferred coverage against the two active findings (`RLS_STORE_ABSENT_READ_LEAK` and
+`RLS_UNSET_TENANT_GUC_CAST_ERROR`). T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
 No slice is `local_uncommitted`.
 
 ---
@@ -34,6 +34,9 @@ No slice is `local_uncommitted`.
 | `T341` | Cross-tenant read isolation (`apps/api/test/catalog/isolation/cross-tenant-read.spec.ts`) — 31 assertions, Groups A–D | PR #268 @ `263492a` |
 | `HARNESS_FIX` | Fix three seed constraint violations in `isolation-harness.ts`; T341 store GUC assertions corrected | PR #279 @ `e33fd0e` |
 | `0009_STORE_GUC_FIX` | `0009_catalog_store_empty_guc_fix.sql` — CASE guard for empty `app.current_store` cast on 3 RLS policies | PR #279 @ `e33fd0e` |
+| `T342` | Cross-store read sweep (`apps/api/test/catalog/isolation/cross-store-read.spec.ts`) — §4.6/§7.6 store-absent deferred as `it.todo` (RLS_STORE_ABSENT_READ_LEAK) | PR #285 @ `fd18598` |
+| `T343` | RLS bypass probe (`apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts`) — 9 `it.todo` deferred against RLS_STORE_ABSENT_READ_LEAK + RLS_UNSET_TENANT_GUC_CAST_ERROR | PR #285 @ `fd18598` |
+| `T344` | Malicious body-override sweep (`apps/api/test/catalog/isolation/malicious-override.spec.ts`) — GREEN, no deferred coverage | PR #285 @ `fd18598` |
 
 ### Context from neighboring merges
 
@@ -122,13 +125,9 @@ All previously-local work is now on `main`:
 
 ---
 
-## Ready / in-flight (PR #285 bundle)
+## Ready / in-flight
 
-| Slice ID | Type | Agent | Approval needed? | Notes |
-|---|---|---|---|---|
-| `T342` | test | `sonnet-test` | no | Cross-store read sweep. PR #285 — ships with §4.6 / §7.6 store-absent coverage deferred as 4 `it.todo` against `RLS_STORE_ABSENT_READ_LEAK`. |
-| `T343` | test | `sonnet-test` | no | RLS bypass probe. PR #285 — ships with 5 unset-tenant + 4 store-absent `it.todo` deferred against the two new findings. Three Class A "explicit empty-string tenant GUC" cases removed (not in matrix). |
-| `T344` | test | `sonnet-test` | no | Malicious body-override. PR #285 — ships GREEN. Class C positive-control duplicate-key bug fixed via switch to `PRODUCT_A_RETIRED`. |
+_None._ T342, T343, and T344 merged in PR #285 @ `fd18598` (2026-05-22). No slices are currently in-flight.
 
 ---
 
@@ -151,11 +150,13 @@ user endorsement.
 
 ## Next recommended action
 
-**Dispatch T342–T344.** All prerequisites are satisfied: T340 (PR #264), T341 (PR #268),
-HARNESS_FIX, and 0009_STORE_GUC_FIX (both PR #279) are on `main`. T342, T343, T344
-can run sequentially or as a parallel wave (disjoint allowed files, independent test
-paths). T336 is independent and still needs an explicit decision on
-`MISSING_WITHSTORE_HELPER`.
+**Resolve the two active medium-severity findings** (`RLS_STORE_ABSENT_READ_LEAK` and
+`RLS_UNSET_TENANT_GUC_CAST_ERROR`) or accept option (b) (matrix amendment) for each.
+The recommended path for both is a single gated SQL slice `0010_*` adding CASE guards
+for the unset GUC paths to both the store-scoped and tenant-scoped RLS policies — this
+unblocks the deferred `it.todo` coverage in T342 and T343. Alternatively, endorse the
+Phase-3 RED wave (`PHASE3_RED_WAVE`) to advance catalog feature implementation.
+T336 is independent and still needs an explicit decision on `MISSING_WITHSTORE_HELPER`.
 
 ---
 
@@ -188,20 +189,19 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Dispatch T342 (cross-store read sweep):
+Resolve the store-absent and unset-tenant GUC findings with a new SQL migration slice:
 
 ```text
-Use Agent OS. Execute slice T342. Stop before commit.
+Use Agent OS. Execute slice 0010_RLS_GUC_CAST_FIX. Stop before commit.
 ```
 
-Or dispatch T342–T344 in parallel (requires explicit endorsement):
+Or endorse the Phase-3 RED wave to advance catalog feature implementation:
 
 ```text
-Use Agent OS. Schedule slices T342, T343, T344 in parallel. Stop before dispatch.
+Use Agent OS. Schedule group PHASE3_RED_WAVE. Stop before dispatch.
 ```
 
-For T336 specifically — only run this once you've authorized a resolution
-path for `MISSING_WITHSTORE_HELPER`:
+For T336 — only run this once you've authorized a resolution path for `MISSING_WITHSTORE_HELPER`:
 
 ```text
 Use Agent OS. Resolve finding MISSING_WITHSTORE_HELPER. Stop before commit.

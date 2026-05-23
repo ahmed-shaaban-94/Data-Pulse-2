@@ -7,18 +7,18 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-22 after PR #279 merged.
+# Updated: 2026-05-22 after PR #285 merged.
 # T340 (isolation harness) closed out: PR #264 @ 02cdf75 (2026-05-21).
 # T341 (cross-tenant read isolation) closed out: PR #268 @ 263492a (2026-05-21).
 # HARNESS_FIX (seed constraint violations) closed out: PR #279 @ e33fd0e (2026-05-22).
 # 0009_STORE_GUC_FIX (empty-store cast CASE guard) closed out: PR #279 @ e33fd0e (2026-05-22).
 # HARNESS_SEED_BUGS finding resolved by PR #279 — T341 31/31 GREEN confirmed.
-# T342, T343, T344 remain ready; seed-bug prerequisite lifted (harness fix on main).
-# Map base advanced to e33fd0e (PR #279).
+# T342, T343, T344 closed out: PR #285 @ fd18598 (2026-05-22).
+# Map base advanced to fd18598 (PR #285).
 
 spec: 003-catalog-foundation
 version: 1
-base: origin/main  # e33fd0e (PR #279, HARNESS_FIX + 0009 store GUC CASE guard)
+base: origin/main  # fd18598 (PR #285, T342-T344 isolation specs bundled)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -559,7 +559,7 @@ slices:
   - id: T342
     task_ids: [T342]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75; T341 merged PR #268 @ 263492a; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
+    status: merged              # closed out 2026-05-22 via PR #285 @ fd18598
     approval_required: false
     depends_on:
       - T340
@@ -578,6 +578,9 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
+    merged_in_pr: 285
+    merged_at_commit: fd18598
+    merged_at_date: 2026-05-22
     notes: >
       PR #285 ships T342 with §4.6 / §7.6 "fail-closed when store GUC absent"
       coverage deferred as 4 it.todo placeholders — see finding
@@ -587,7 +590,7 @@ slices:
   - id: T343
     task_ids: [T343]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
+    status: merged              # closed out 2026-05-22 via PR #285 @ fd18598
     approval_required: false
     depends_on:
       - T340
@@ -604,6 +607,9 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
+    merged_in_pr: 285
+    merged_at_commit: fd18598
+    merged_at_date: 2026-05-22
     notes: >
       PR #285 ships T343 with deferred coverage:
         - §3.3 / §5.3 / §6.5 / §7.6 unset-tenant SELECT + §4.5 no-tenant-store-set
@@ -618,7 +624,7 @@ slices:
   - id: T344
     task_ids: [T344]
     type: test
-    status: ready         # T340 merged PR #264 @ 02cdf75; HARNESS_FIX merged PR #279 @ e33fd0e. Ready to dispatch.
+    status: merged              # closed out 2026-05-22 via PR #285 @ fd18598
     approval_required: false
     depends_on:
       - T340
@@ -635,6 +641,9 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
+    merged_in_pr: 285
+    merged_at_commit: fd18598
+    merged_at_date: 2026-05-22
 
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 
