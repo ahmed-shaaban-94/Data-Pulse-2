@@ -78,6 +78,52 @@ layer.
 
 ---
 
+## 1.1 Catalog domain signals (005 Wave 1)
+
+**Ref**: `specs/005-pos-catalog-sync-reconciliation/spec.md` §6 FR-080 / FR-081 / FR-082; tasks.md T501 / T533 / T552 / T553.
+**Owner**: 005 (POS Catalog Sync & Unknown Item Reconciliation).
+**Slice that registered them**: `005-WAVE1-METRICS-ALLOWLIST` (schema-only).
+**Slice that emits them**: `005-WAVE1-SETUP` (T501 — instrument creation in `api.metrics.ts`) plus the emission sites in `005-WAVE1-CAPTURE-HAPPY`, `005-WAVE1-DISMISS`, and `005-WAVE1-IDEMP-MISMATCH`.
+
+These three signals are domain extensions added by feature 005. They are
+API-layer counters (emitted from controller / exception-filter call sites
+in `apps/api/src/catalog/unknown-items/`) and follow the same naming +
+cardinality rules as §1. Listed in their own subsection so it is obvious
+they are not part of the original T444 platform catalogue.
+
+| Signal | Type | Labels (low-cardinality only) | Source FR / spec |
+|---|---|---|---|
+| `unknown_item_captured_total` | counter | (none) | 005 FR-081, plan §3.4 — successful POS capture into `unknown_items` table |
+| `unknown_item_resolved_total` | counter | `action` ∈ {`linked`, `created`, `dismissed`} | 005 FR-081, plan §3.4 — terminal-state transition out of `pending`. Wave 1 only emits `dismissed`; `linked` and `created` are Wave 2 (blocked on 003 PHASE3_RED_WAVE) |
+| `idempotency_token_mismatch_total` | counter | (none) | 005 FR-021c, FR-082 — POS replay with same `Idempotency-Key` but a different payload. Increments alongside the existing platform-level `idempotency_conflict_total{route}` (§1) — the platform counter is route-bucketed; this one is catalog-domain bucketed |
+
+### Notes
+- **No `route` label** on `unknown_item_captured_total` / `unknown_item_resolved_total`.
+  These counters are *domain-keyed*, not *route-keyed*. The HTTP route is
+  already captured by §1's `http_request_count{route,method,status_class}`;
+  duplicating it on the domain counter would not add information and would
+  forbid future emission from non-route surfaces (e.g., a worker repair
+  job that resolves a stale pending row).
+- **`action` cardinality is closed at three values** — explicitly enumerated
+  above. The set is owned by 005's spec §6 (FR-002 resolution states); any
+  expansion requires an FR change. Cardinality review (FR-B-012) passes
+  trivially (bounded, not forbidden, not PII-adjacent).
+- **`idempotency_token_mismatch_total` is *not* redundant with `idempotency_conflict_total`.**
+  The platform counter (`idempotency_conflict_total{route}`) is owned by
+  the platform-level interceptor and increments on *every* 409 emitted from
+  it. The catalog-domain counter increments specifically when the offending
+  route is the unknown-items capture route AND the catalog-domain audit
+  subject `unknown_item.idempotency_mismatch_rejected` was emitted. They
+  always co-increment for a catalog-route mismatch; they diverge when the
+  platform interceptor returns 409 on a non-catalog route (only the
+  platform counter increments). Both are intentional.
+- **Naming convention.** `unknown_item_*` and `idempotency_token_mismatch_total`
+  follow snake_case + `_total` per Prometheus naming. `unknown_item_*`
+  uses the singular form because each increment is one item; the
+  collection is `unknown_items` (plural in the DB table name only).
+
+---
+
 ## 2. Database signals (T445)
 
 Per spec §7.4 and plan §3.2.1. All emitted at the Drizzle/pg layer.
@@ -260,8 +306,13 @@ To keep the surface honest, this section enumerates signals that are
 **out of scope** for the first slice. Each is owned by a separate
 future feature.
 
-- **Reconciliation mismatch rate** (Constitution §VII bullet 3): future
-  feature once a reconciliation pipeline exists.
+- **Reconciliation mismatch rate** (Constitution §VII bullet 3): partially
+  addressed for the POS-capture surface by 005's `unknown_item_resolved_total`
+  + `idempotency_token_mismatch_total` (see §1.1). The full
+  reconciliation pipeline (link / create-new across stores, alias
+  conflict resolution) is still future work — when it lands, additional
+  signals will extend §1.1 with the corresponding `action` values and
+  any new conflict-class counters.
 - **Duplicate event rate at consumer** (separate from `idempotency_replay_total`):
   emitted once Track C's idempotent consumer projection (per-consumer
   `processed_events`) is built; counter name will be defined at that
