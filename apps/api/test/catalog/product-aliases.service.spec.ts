@@ -74,6 +74,8 @@
  * MIGRATION_TEST_ALLOW_SKIP=1 to skip on machines without Docker.
  */
 
+import { HttpException } from "@nestjs/common";
+
 import {
   applyAllUpAndCreateAppRole,
   startPgEnv,
@@ -95,16 +97,66 @@ import { ProductAliasesService } from "../../src/modules/catalog/product-aliases
 
 /**
  * Returns true if the error indicates a uniqueness / conflict violation.
- * Accepts: Postgres code 23505, NestJS ConflictException (409), or message
- * matching duplicate/unique/conflict/already exists.
+ * Accepts:
+ *   (a) NestJS HttpException with getStatus() === 409
+ *   (b) Postgres unique-violation: code === '23505'
+ *   (c) Generic message matching /duplicate|unique|conflict|already exists/i
  */
 function isConflictError(err: unknown): boolean {
-  if (err == null || typeof err !== "object") return false;
+  if (err == null) return false;
+
+  // (a) NestJS HttpException — use the public API. ConflictException
+  // (status 409) extends HttpException; getStatus() is the only stable
+  // way to read the HTTP status.
+  if (err instanceof HttpException) {
+    if (err.getStatus() === 409) return true;
+    const resp = err.getResponse();
+    if (
+      typeof resp === "object" &&
+      resp !== null &&
+      "statusCode" in resp &&
+      (resp as { statusCode: unknown }).statusCode === 409
+    ) {
+      return true;
+    }
+  }
+
+  if (typeof err !== "object") return false;
   const e = err as Record<string, unknown>;
+
+  // (b) Postgres unique-violation surfaced directly.
   if (e["code"] === "23505") return true;
-  if (typeof e["status"] === "number" && e["status"] === 409) return true;
+
+  // (c) Generic message match — last-resort fallback.
   const msg = typeof e["message"] === "string" ? e["message"] : "";
   return /duplicate|unique|conflict|already exists/i.test(msg);
+}
+
+/**
+ * Awaits `fn()` expecting it to reject with a conflict error. Replaces the
+ * jest-extended `.rejects.toSatisfy(isConflictError)` pattern which is not
+ * registered in this repo's Jest 29 config (no setupFilesAfterEnv,
+ * no expect.extend, no jest-extended dep).
+ */
+async function expectConflictRejection(
+  fn: () => Promise<unknown>,
+): Promise<void> {
+  let captured: unknown = undefined;
+  try {
+    await fn();
+  } catch (err) {
+    captured = err;
+  }
+  if (captured === undefined) {
+    throw new Error("expected a conflict rejection, but the call resolved");
+  }
+  if (!isConflictError(captured)) {
+    throw new Error(
+      `expected a conflict error, got: ${
+        captured instanceof Error ? captured.message : String(captured)
+      }`,
+    );
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -135,13 +187,10 @@ const { actorA, actorB } = CATALOG_FIXTURE_IDS;
 // --------------------------------------------------------------------------
 
 beforeAll(async () => {
+  // Narrow MIGRATION_TEST_ALLOW_SKIP=1 to Docker-only failures so a real
+  // regression in migrations/seeds is not silently swallowed.
   try {
     env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
-    await seedCatalogIsolationFixture(env);
-    // T384 will make this construction valid. For now the import above
-    // fails before we ever reach here — the RED is at module-load time.
-    service = new ProductAliasesService(env.admin);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -154,6 +203,13 @@ beforeAll(async () => {
     }
     throw new Error(`Container start failed: ${msg}`);
   }
+
+  // Container is up — failures past this point are real and must not skip.
+  await applyAllUpAndCreateAppRole(env);
+  await seedCatalogIsolationFixture(env);
+  // T384 will make this construction valid. For now the import above
+  // fails before we ever reach here — the RED is at module-load time.
+  service = new ProductAliasesService(env.admin);
 }, 180_000);
 
 afterAll(async () => {
@@ -244,7 +300,7 @@ describe("T383-B — tenant-wide uniqueness collision: duplicate barcode within 
 
   it("second create with same (tenant_id, identifier_type, value) fails with a conflict error", async () => {
     if (maybeSkip()) return;
-    await expect(
+    await expectConflictRejection(() =>
       service!.create(
         {
           tenantId: CATALOG_FIXTURE_IDS.tenantA,
@@ -256,7 +312,7 @@ describe("T383-B — tenant-wide uniqueness collision: duplicate barcode within 
         },
         actorA,
       ),
-    ).rejects.toSatisfy(isConflictError);
+    );
   });
 });
 
@@ -369,7 +425,7 @@ describe("T383-E — external_pos_id uniqueness scoped by source_system", () => 
 
   it("duplicate (tenant_id, source_system, value) rejected — same pos system", async () => {
     if (maybeSkip()) return;
-    await expect(
+    await expectConflictRejection(() =>
       service!.create(
         {
           tenantId: CATALOG_FIXTURE_IDS.tenantA,
@@ -381,7 +437,7 @@ describe("T383-E — external_pos_id uniqueness scoped by source_system", () => 
         },
         actorA,
       ),
-    ).rejects.toSatisfy(isConflictError);
+    );
   });
 
   it("same value with different source_system is allowed — no collision", async () => {
@@ -428,7 +484,7 @@ describe("T383-F — store-scoped alias uniqueness", () => {
 
   it("duplicate (tenant_id, store_id, identifier_type, value) in same store is rejected", async () => {
     if (maybeSkip()) return;
-    await expect(
+    await expectConflictRejection(() =>
       service!.create(
         {
           tenantId: CATALOG_FIXTURE_IDS.tenantA,
@@ -440,7 +496,7 @@ describe("T383-F — store-scoped alias uniqueness", () => {
         },
         actorA,
       ),
-    ).rejects.toSatisfy(isConflictError);
+    );
   });
 
   it("same (identifier_type, value) in a different store of the same tenant is allowed", async () => {
