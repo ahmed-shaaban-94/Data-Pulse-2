@@ -86,14 +86,19 @@ Per Constitution §IV "API responses MUST NOT return raw database entities," eve
 
 Per FR-021a / FR-022, the v1 contract MUST NOT expose any field derived from `unknown_items.sale_context jsonb` — not in listing, not in inspection, not in any nested object. This is testable: a contract conformance test SHOULD assert that the response schema for `tenantAdminGetUnknownItem` does not declare a `sale_context` or descriptive-metadata field.
 
-### 2.8 Candidate-match hint surface (FR-080)
+### 2.8 Candidate-match hint surface (FR-080 — optional in v1)
 
-`tenantAdminGetUnknownItem`'s response MUST include a `candidate_matches` array (possibly empty) sourced strictly within the actor's authorized scope. The contract:
+Per FR-080 (revised 2026-05-24), the **decision to surface** the candidate-match hint is MAY — the future API + UI features decide v1 vs v2 inclusion. The contract therefore treats `candidate_matches` as **optional** for v1:
 
-- MUST declare the field as an array (never null when no candidates exist — empty array per FR-080).
-- MUST NOT include a "no candidates found globally" indicator.
-- MUST NOT rank candidates using any out-of-scope signal.
-- MUST be advisory: the contract MUST NOT carry a pre-selection field; the client must explicitly call `tenantAdminLinkUnknownItem` with a chosen `target_product_id` to commit.
+- The response schema MAY include a `candidate_matches` field. If the field is omitted from the response, that MUST NOT be interpreted as "no candidates exist" — it MUST be interpreted as "this v1 surface does not expose the hint."
+- **When the field IS present** in the response, all of the following safety boundaries MUST hold (these are MUST regardless of whether the field is wired in v1 or v2):
+  - The field MUST be an array, never null. An empty array means "no in-scope candidates" — it MUST NOT be reinterpreted as "no candidates globally" and MUST NOT hint at out-of-scope state.
+  - Candidates MUST be sourced strictly from products / aliases the actor is authorized to see (per spec FR-041 + 005 SI-004).
+  - The array MUST NOT include any product / alias from a store or tenant outside the actor's scope.
+  - The contract MUST NOT rank candidates using any out-of-scope signal.
+  - The contract MUST NOT carry a pre-selection field — committing requires the client to explicitly call `tenantAdminLinkUnknownItem` with a chosen `target_product_id`.
+
+The future API feature decides at its contract-slice authoring time whether to include `candidate_matches` in v1; 006's spec leaves that decision open while pinning the safety boundaries.
 
 ### 2.9 Bulk-dismiss bounds (FR-070)
 
@@ -124,7 +129,7 @@ Per Constitution §IV "conformance MUST be enforced by automated contract tests,
 
 1. Every operationId returns the canonical error envelope on every error path.
 2. The closed set of `error.code` values matches §2.3 — no rogue codes.
-3. `candidate_matches` is always an array (possibly empty); never null; never includes out-of-scope products.
+3. When `candidate_matches` is present in the response, it is an array (possibly empty); never null; never includes out-of-scope products. When the field is omitted from the response (v1-surface-off case per §2.8), no inference about out-of-scope state is leaked.
 4. Bulk-dismiss above 200 items returns `validation`.
 5. Cross-tenant lookups return `not-found` indistinguishably from genuine not-founds.
 6. Response schemas declare no `sale_context` or descriptive-metadata field.

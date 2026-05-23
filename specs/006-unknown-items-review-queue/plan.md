@@ -18,7 +18,7 @@
 
 - **Permission-aware visibility** scoped per 005 / 003 RLS (tenant-wide for admins, store-scoped for operators), with non-disclosing failure on every cross-tenant or out-of-scope access (spec §7, SI-001–SI-009).
 - **A small, safe set of review actions** — link to existing product, create new product, dismiss, and reopen — each consuming 005's lifecycle and conflict semantics without weakening them (spec §6.5–§6.7, FR-040–FR-063, FR-070).
-- **Strict v1 scope discipline**: descriptive metadata is **not** surfaced (FR-021a); in-scope candidate-match hints **must** be surfaced (FR-080); bulk dismiss is capped at **200 items per submission** (FR-070); reopen is restricted to **tenant-wide actors only** (FR-062a).
+- **Strict v1 scope discipline**: descriptive metadata is **not** surfaced (FR-021a — MUST NOT); in-scope candidate-match hints **may** be surfaced (FR-080 — display decision is MAY, but the in-scope-sourcing / no-auto-link / no-pre-select / no-leakage safety boundaries are MUST when the hint is rendered); bulk dismiss is capped at **200 items per submission** (FR-070 — MUST); reopen is restricted to **tenant-wide actors only** (FR-062a — MUST).
 - **Audit completeness**: every review action (success or failure) emits through 005's existing audit pipe (FR-110–FR-113).
 
 The plan's job is to (a) confirm the spec is consumable, (b) confirm 005 readiness, (c) document the obligations the downstream API + UI features will have to honor, and (d) explicitly defer all implementation to those downstream features. No code lands from this plan.
@@ -41,7 +41,7 @@ The plan's job is to (a) confirm the spec is consumable, (b) confirm 005 readine
 | ID strategy | UUIDv7 (v4 fallback) | Unknown-item references, product references, audit correlation IDs all inherited unchanged. |
 | Idempotency | 002's request-level token + 001's idempotency interceptor | The future API feature MAY apply idempotency tokens to write actions (link / create / dismiss / reopen / bulk-dismiss) for client-retry safety; 006 itself takes no position. |
 | Audit | 005's existing audit pipe (per 005 FR-080–FR-083 / Constitution §XIII) | FR-110–FR-113 commit 006 to riding this pipe with no parallel surface. |
-| Observability signals | Pre-named in 003 §9 + the `idempotency_token_mismatch_total` 005 introduces | 006 introduces **no new metric names**; review-queue actions emit through 005's `unknown_item_resolved_total{action="linked|created|dismissed"}` and related counters. |
+| Observability signals | Pre-named in 003 §9 + the `idempotency_token_mismatch_total` 005 introduces | 006 introduces **no new metric names**; review-queue actions emit through 005's `unknown_item_resolved_total{action="linked"\|"created"\|"dismissed"}` and related counters. |
 | Auth principals | 001 (tenant admin / store operator), 002 (POS device — N/A here), 005 (reopen authority) | 006 introduces **no new role, permission, or membership shape**. FR-062a's tenant-wide-only reopen consumes the existing membership model. |
 | UI | Dashboard frontend (separate future feature) | 006 explicitly **forbids** UI implementation (spec §0, §3); the eventual UI is routed through Impeccable (spec §11). |
 
@@ -201,19 +201,20 @@ Wave 1 covers POS submission → unknown-item capture → idempotency → audit 
 
 ### 5.3 005 — Wave 2 (reconciliation) — the actual 006 *implementation* gate
 
-006's link / create / dismiss / reopen actions consume 005's reconciliation service surface, which 005 plan §8.2 schedules as **Wave 2 — blocked on PHASE3_RED_WAVE** (003's service layer, particularly `T383_PRODUCT_ALIASES_UNIQUENESS_RED`).
+006's link / create / dismiss / reopen actions consume 005's reconciliation service surface, which 005 plan §8.2 schedules as **Wave 2**. As of `origin/main` at `bbb9beb`, the **003 PHASE3_RED_WAVE prerequisites for Wave 2 are now all merged** (closed out by PR #309); Wave 2 itself remains unscheduled (its slices have not yet been authored).
 
 | 005 Wave 2 prerequisite | Status | What 006 needs from it |
 |---|---|---|
-| `T350_TENANT_CATALOG_CREATE_RED` (003) → `TenantCatalogService.create()` | **merged on `main` as of PR #300 (`2bf7e27`)** — RED contract spec + initial service file landed; subsequent GREEN slices (validation, full coverage) may still follow. | Backs the eventual `tenantAdminCreateProductFromUnknownItem` flow (006 FR-050). |
-| `T383_PRODUCT_ALIASES_UNIQUENESS_RED` (003) → `ProductAliasesService` with uniqueness rules | proposed, not yet merged per 005 plan §4.2 (corresponding branch `test/003-t383-product-aliases-uniqueness-red` exists but is not on `main`). | Backs every 006 reconciliation action that writes an alias (FR-040..043, FR-050..052, FR-060..063 indirectly via 005). |
-| `T360_GLOBAL_CATALOG_LIST_RED` (003) → `GlobalCatalogService.list()` | RED spec + initial service file shipped alongside T350 in PR #300 (`2bf7e27`). | Not directly consumed by 006; noted for catalog-wave context. |
-| `T372_STORE_OVERRIDE_CREATE_RED` (003) | proposed, not yet merged. | Not directly consumed by 006. |
-| 005 reconciliation service modules (Wave 2) | not yet specced as slices | Backs the queue's `link`, `create`, `dismiss`, `reopen` actions end-to-end. |
+| `T350_TENANT_CATALOG_CREATE_RED` (003) → `TenantCatalogService.create()` | **merged** via PR #300 (`2bf7e27`) — RED contract spec + initial service file landed. Subsequent GREEN slices (validation, full coverage) lie outside 005 plan §4.2's named set and are not yet on `main`. | Backs the eventual `tenantAdminCreateProductFromUnknownItem` flow (006 FR-050). |
+| `T360_GLOBAL_CATALOG_LIST_RED` (003) → `GlobalCatalogService.list()` | **merged** via PR #301 (`f577570`) — RED contract spec + initial service file landed. | Not directly consumed by 006; noted for catalog-wave context. |
+| `T372_STORE_OVERRIDE_CREATE_RED` (003) → `StoreOverrideService.create()` | **merged** via PR #302 (`c4147b0`) — RED contract spec landed. | Not directly consumed by 006. |
+| `T383_PRODUCT_ALIASES_UNIQUENESS_RED` (003) → `ProductAliasesService` with uniqueness rules | **merged** via PR #303 (`454a7ae`) — RED contract spec for alias uniqueness landed. | Backs every 006 reconciliation action that writes an alias (FR-040..043, FR-050..052, FR-060..063 indirectly via 005). **This was the canonical PHASE3_RED_WAVE blocker referenced in 005 plan §4.2.** |
+| PHASE3_RED_WAVE closeout | **closed out** via PR #309 (`bbb9beb`) — confirms all four RED contract specs above are on `main`. | Removes the headline blocker on 005 Wave 2's scheduling. |
+| 005 reconciliation service modules (Wave 2 GREEN slices) | not yet specced as slices | Backs the queue's `link`, `create`, `dismiss`, `reopen` actions end-to-end. |
 
 **Net**: 006's **downstream API + UI features cannot ship** until 005 Wave 2 is on `main`. The expected serial chain is:
 
-```
+```text
 003 PHASE3_RED_WAVE  →  005 Wave 1 (capture)  →  005 Wave 2 (reconciliation)
                                               →  006 future API feature  →  006 future UI feature
 ```

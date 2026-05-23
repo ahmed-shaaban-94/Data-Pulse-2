@@ -45,7 +45,7 @@ The future the future API feature API feature is **obligated** to produce the fo
 **MUST NOT appear** in this projection:
 - Any field from `unknown_items.sale_context` (FR-021a / FR-022).
 - Any out-of-scope store / tenant detail (SI-001, SI-002).
-- Any candidate-match data sourced from out-of-scope products (FR-041, FR-082).
+- Any candidate-match data sourced from out-of-scope products (FR-041; FR-082 is a sibling rule for cross-store duplicate *indicators*).
 - Any field redacted by 005 / 003 at the logger boundary (FR-022).
 
 ### 2.2 Queue list item (terminal — resolved / dismissed) — per FR-001a
@@ -67,7 +67,7 @@ When the actor filters to `resolved` or `dismissed`:
 
 Same fields as the queue list item, plus:
 
-- `candidate_matches`: array of in-scope candidate `tenant_products` for this identifier (per FR-080). MUST be sourced strictly within the actor's authorized scope (FR-041, FR-082, SI-004). MAY be empty; an empty array MUST NOT render a "no candidates found" message that hints at out-of-scope state (FR-080 last sentence).
+- `candidate_matches` *(optional in v1 per FR-080 / contracts/README §2.8)*: when present, an array of in-scope candidate `tenant_products` for this identifier (per FR-080). MUST be sourced strictly within the actor's authorized scope (FR-041, SI-004). MAY be empty; an empty array MUST NOT render a "no candidates found" message that hints at out-of-scope state (FR-080 last sentence). When the field is **omitted entirely** from the response, that means the v1 surface does not expose the hint — it does NOT mean "no candidates exist."
 - `advisory_hints` (richer than list view; same scope constraints).
 
 **Still MUST NOT appear**:
@@ -119,7 +119,7 @@ the future API feature's data-model.md will document its query patterns against 
 
 006 introduces no new state. The closed set is per 005 FR-001 / 003 §6:
 
-```
+```text
         ┌──────────┐
 POS ──▶ │ pending  │ ──link──▶ ┌───────────────────────┐
         └──────────┘            │ resolved (linked)     │

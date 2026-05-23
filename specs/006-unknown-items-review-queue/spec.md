@@ -6,7 +6,7 @@
 **Created**: 2026-05-23
 **Owner**: Ahmed Shaaban
 **Depends on**: [specs/005-pos-catalog-sync-reconciliation](../005-pos-catalog-sync-reconciliation/spec.md) (which itself depends on [specs/003-catalog-foundation](../003-catalog-foundation/spec.md))
-**Constitution version**: 3.0.0 — primary touchpoints §II (multi-tenant RLS), §III (backend authority), §IV (contract-first), §IX (Source-of-Truth Model), §XII (object safety), §XIV (PII discipline)
+**Constitution version**: v3.0.1 — primary touchpoints §II (multi-tenant RLS), §III (backend authority), §IV (contract-first), §IX (Source-of-Truth Model), §XII (object safety), §XIV (PII discipline)
 
 ---
 
@@ -82,7 +82,7 @@ This feature pins those expectations at the product level so that:
 - No POS-side behavior or client SDK shape.
 - No changes to catalog foundation (003), POS identity (002), platform readiness (004), or reconciliation backend (005). 006 consumes them; it does not modify them.
 - No analytics dashboards, reports, dbt models, ClickHouse views, Dagster jobs, observability dashboards, billing, or CI changes.
-- No `plan.md`, `tasks.md`, `data-model.md`, `research.md`, or `contracts/` in this spec PR.
+- `plan.md`, `research.md`, `data-model.md` (pointer doc only — no schema authored), `contracts/README.md` (obligations only — no YAML authored), `quickstart.md`, and `checklists/requirements.md` are intentionally included in this PR alongside the spec as the standard Spec Kit Phase 0 + Phase 1 outputs. `tasks.md` is NOT produced from 006 — implementation tasks land in the separate downstream API + UI features (see plan §9.1 / §9.2 / §9.5). No application code, OpenAPI YAML, schema migrations, NestJS modules, or React components are produced from 006 itself; those non-goals are enumerated separately above.
 - No Impeccable shape/critique/audit/polish/clarify runs yet — this spec only declares that those steps must happen *before* UI implementation.
 
 ---
@@ -118,7 +118,7 @@ A tenant admin opens the review queue and sees every `pending` unknown item capt
 
 1. **Given** a tenant admin authenticated to tenant T with tenant-wide authority, **and** tenant T has `pending` unknown items captured at stores S1, S2, S3, **When** the admin opens the review queue, **Then** every `pending` item across S1, S2, S3 is visible with its identifier metadata, capture store, source system, age, and lifecycle state.
 2. **Given** the admin's queue is open, **When** an item is captured in tenant T while the admin is reviewing, **Then** the new item becomes available on the admin's next refresh (the platform does not require live-pushing it into the open view — see FR-090 stale-state handling).
-3. **Given** the admin is signed in to tenant T, **When** they attempt to look up an item by an identifier from tenant T', **Then** the queue returns no result and the response is non-disclosing — the admin cannot tell whether the item exists in T'.
+3. **Given** the admin is signed in to tenant T, **When** they attempt to access a specific `unknown_items` row by its primary id where that row belongs to tenant T' (e.g., guessed or leaked UUID), **Then** the queue returns no result and the response is non-disclosing — the admin cannot tell whether that row exists in T'. (Identifier *values* such as barcodes / SKUs are deliberately not unique across tenants and are not used as a cross-tenant lookup vector — only the opaque row id is.)
 
 ---
 
@@ -171,7 +171,7 @@ When the user opens an individual `pending` unknown item, they see exactly the c
 1. **Given** an authorized reviewer opens unknown item U, **When** the detail view renders, **Then** it shows: identifier type, identifier value (or its 005-permitted display form), source system, capture store (within scope), capture timestamp, lifecycle state, and any advisory hints permitted by FR-040–FR-043.
 2. **Given** unknown item U was captured at store S2 and the reviewer is a store operator scoped only to S1, **When** the reviewer attempts to open U, **Then** the platform returns a non-disclosing not-found.
 3. **Given** unknown item U has a "previously dismissed once" advisory marker (per 005 FR-005 / edge case), **When** an authorized reviewer opens U, **Then** the marker is shown as advisory metadata that does not affect lifecycle and is non-disclosing across scope boundaries.
-4. **Given** unknown item U carries optional descriptive metadata travelling inside 005's existing `unknown_items.sale_context jsonb` (per 005 FR-006 / FR-006a), **When** the reviewer opens U, **Then** that metadata is shown only to the extent 003 §8 and Constitution §14 permit, and the platform does not present it as identity or auto-match signal (consistent with 005 FR-006).
+4. **Given** unknown item U carries optional descriptive metadata travelling inside 005's existing `unknown_items.sale_context jsonb` (per 005 FR-006 / FR-006a), **When** the reviewer opens U, **Then** that metadata MUST NOT be surfaced in the v1 review experience (per FR-021a) — neither in the queue listing nor in the inspection view — and the platform MUST NOT present it as identity or auto-match signal (consistent with 005 FR-006). 003 §8 and Constitution §14 continue to govern the column at the storage / logger boundary; 006's v1 surface holds the field back entirely. Any future surfacing is a separate opt-in feature outside 006's scope.
 5. **Given** any inspection view, **When** rendered, **Then** it surfaces no candidate-match suggestions sourced from stores or tenants the reviewer is not authorized to see.
 
 ---
@@ -363,7 +363,7 @@ All requirements below are **product-level, user-visible expectations**. None of
 
 ### 6.8 Duplicate / conflict warning behavior
 
-- **FR-080 — Candidate-match hint (safety boundaries are MUST; the *decision to surface* is MAY)**: The eventual inspection surface MAY display an advisory "candidate match within your scope" hint when one or more in-scope candidates exist for the captured identifier. The decision of whether v1 surfaces this hint is delegated to the future API + UI features and to their Impeccable critique rounds (per §11) — both because the query cost (an authority-scoped read against `product_aliases` + `tenant_products`) warrants future-API-feature cost analysis and because the false-positive UX risk (an irrelevant candidate biasing the reviewer) warrants future-UI-feature critique. **When the hint is surfaced (v1 or later)**, the following safety boundaries MUST hold: (a) candidates MUST be sourced strictly from products / aliases the actor is authorized to see (per FR-041, FR-082, and 005 SI-004); (b) products or aliases from stores or tenants outside the actor's scope MUST NOT be considered candidates and MUST NOT influence ranking, ordering, or presentation; (c) the hint MUST be advisory only — the surface MUST NOT pre-select a candidate, MUST NOT auto-link, and MUST require an explicit reviewer action (link to existing product) to commit; (d) when no in-scope candidate exists, the surface MUST NOT render a "no candidates found" message that hints at out-of-scope state — it MUST simply omit the hint.
+- **FR-080 — Candidate-match hint (safety boundaries are MUST; the *decision to surface* is MAY)**: The eventual inspection surface MAY display an advisory "candidate match within your scope" hint when one or more in-scope candidates exist for the captured identifier. The decision of whether v1 surfaces this hint is delegated to the future API + UI features and to their Impeccable critique rounds (per §11) — both because the query cost (an authority-scoped read against `product_aliases` + `tenant_products`) warrants future-API-feature cost analysis and because the false-positive UX risk (an irrelevant candidate biasing the reviewer) warrants future-UI-feature critique. **When the hint is surfaced (v1 or later)**, the following safety boundaries MUST hold: (a) candidates MUST be sourced strictly from products / aliases the actor is authorized to see (per FR-041 and 005 SI-004 — FR-082 is a sibling rule for cross-store duplicate *indicators*, a different surface); (b) products or aliases from stores or tenants outside the actor's scope MUST NOT be considered candidates and MUST NOT influence ranking, ordering, or presentation; (c) the hint MUST be advisory only — the surface MUST NOT pre-select a candidate, MUST NOT auto-link, and MUST require an explicit reviewer action (link to existing product) to commit; (d) when no in-scope candidate exists, the surface MUST NOT render a "no candidates found" message that hints at out-of-scope state — it MUST simply omit the hint.
 - **FR-081**: When acting on an unknown item, alias conflicts (per 005 §6.5) MUST surface as a non-disclosing conflict-category outcome. The reviewer MUST NOT learn the identity of the conflicting product unless they already have authority to see it.
 - **FR-082**: Cross-store duplicate indicators that would require disclosing out-of-scope detail MUST be suppressed entirely or rendered as a non-disclosing conflict-category state (per 005 SI-004).
 - **FR-083**: Where 005 emits the `duplicate_alias_conflict` observability signal (per 005 FR-043 / 003 §9), the user-facing surface MUST NOT echo or expose that signal beyond the non-disclosing category outcome the user already sees.
@@ -451,7 +451,7 @@ This spec introduces **no new entities**. It consumes:
 | **specs/003-catalog-foundation** | Underlying data model (`tenant_products`, `product_aliases`, `unknown_items`), alias uniqueness rules, RLS, redaction posture. Consumed transitively via 005. |
 | **specs/002-pos-operator-identity** | POS principal identity model — referenced indirectly because the queue presents items captured by POS principals. 006 does not interact with POS principals directly. |
 | **specs/001-foundation-auth-tenant-store** | Audit pipeline, correlation-id infrastructure, membership / scope model, idempotency primitive. Consumed transitively via 005. |
-| **Constitution v3.0.0** | §II multi-tenant RLS, §III backend authority, §IV contract-first, §IX source-of-truth, §XII object safety, §XIV PII discipline. |
+| **Constitution v3.0.1** | §II multi-tenant RLS, §III backend authority, §IV contract-first, §IX source-of-truth, §XII object safety, §XIV PII discipline. |
 
 This spec **introduces no new dependencies** beyond those it transitively consumes through 005.
 
