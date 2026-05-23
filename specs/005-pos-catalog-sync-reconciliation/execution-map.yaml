@@ -1,0 +1,646 @@
+# 005-pos-catalog-sync-reconciliation — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 005 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, findings (none yet), and proposed parallel groups.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/005-pos-catalog-sync-reconciliation/wave-status.md
+#
+# Updated: 2026-05-23 — initial authoring after Wave 1 tasks.md merged in PR #296 @ 5179682.
+# No slices dispatched yet. All Wave 1 slices at `proposed` awaiting per-slice approval.
+# Wave 2 slices not yet enumerated (blocked on 003's PHASE3_RED_WAVE — T350 + T383).
+#
+# Authoring sequence:
+#  - Spec authored:           PR #293 @ 9d835eb (2026-05-23)
+#  - Plan + research + data-model + quickstart + contracts placeholder: PR #294 @ 6895246 (2026-05-23)
+#  - Wave 1 tasks.md:         PR #296 @ 5179682 (2026-05-23)
+#  - This execution-map:      (this commit)
+
+spec: 005-pos-catalog-sync-reconciliation
+version: 1
+base: origin/main  # 5179682 (PR #296, Wave 1 tasks.md)
+
+# ----------------------------------------------------------------------------
+# findings
+# ----------------------------------------------------------------------------
+# No findings yet — no implementation work has been dispatched. The known
+# dependencies (PHASE3_RED_WAVE for Wave 2, header-name drift between
+# spec/quickstart and the existing interceptor) are planning-time decisions
+# already documented in plan.md §4 and tasks.md preamble; they are not
+# defects discovered during work.
+
+findings: []
+
+# ----------------------------------------------------------------------------
+# slices — Wave 1 (capture path)
+# ----------------------------------------------------------------------------
+# All 19 candidate slices listed below at `status: proposed`. None have been
+# approved for dispatch. The 5 Phase 1+2 slices have full briefs authored;
+# Phase 3-6 slices carry minimal stubs referencing tasks.md as the brief
+# source-of-truth. Stubs will be expanded to full briefs as each slice
+# approaches dispatch.
+#
+# Per tasks.md §11.2, slices are dispatched in roughly phase order with
+# parallelism opportunities within each phase. See tasks.md §10.3.
+
+slices:
+
+  # ===== Phase 1: Setup ====================================================
+
+  - id: 005-WAVE1-SETUP
+    task_ids: [T500, T501]
+    type: chore
+    status: proposed
+    approval_required: false
+    depends_on: []
+    blocks:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-IDEMP-VERIFY
+      - 005-WAVE1-HARNESS
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.module.ts
+      - apps/api/src/observability/metrics/api.metrics.ts
+    forbidden_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts          # belongs to T511
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts       # belongs to T512
+    validation:
+      - command: pnpm --filter @data-pulse-2/api typecheck
+        expected: GREEN
+        docker_required: false
+      - command: pnpm --filter @data-pulse-2/api test "observability/metrics"
+        expected: GREEN (existing metrics suite still passes; three new counters registered)
+        docker_required: false
+    stop:
+      - if any file outside allowed_files is modified
+      - if existing counters (`recordIdempotencyConflict`, `recordIdempotencyReplay`, `recordIdempotencyInProgress`) are altered
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    branch_template: "chore/005-wave1-setup"
+
+  # ===== Phase 2: Foundational ==============================================
+
+  - id: 005-WAVE1-CONTRACT
+    task_ids: [T503, T504]
+    type: feat
+    status: proposed
+    approval_required: true  # [GATED] — packages/contracts/openapi/** is a forbidden surface per Standing Rules §3
+    depends_on:
+      - 005-WAVE1-SETUP
+    blocks:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-LIST
+      - 005-WAVE1-DISMISS
+      - 005-WAVE1-IDEMP-WIRE
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/catalog/unknown-items.yaml         # [GATED] — OpenAPI YAML
+      - packages/contracts/__tests__/catalog/unknown-items.spec.ts    # conformance test stub
+    forbidden_files:
+      - packages/contracts/openapi/audit.openapi.yaml                 # do not edit existing contracts
+      - packages/contracts/openapi/auth.openapi.yaml
+      - packages/contracts/openapi/context.openapi.yaml
+      - packages/contracts/openapi/memberships.openapi.yaml
+      - packages/contracts/openapi/outbox.openapi.yaml
+      - packages/contracts/openapi/pos-audit-events.openapi.yaml
+      - packages/contracts/openapi/pos-operators.openapi.yaml
+      - packages/contracts/openapi/pos-shifts.openapi.yaml
+      - packages/contracts/openapi/stores.openapi.yaml
+      - packages/contracts/openapi/tenants.openapi.yaml
+    validation:
+      - command: pnpm --filter @data-pulse-2/contracts test
+        expected: GREEN — existing contract suite + new unknown-items conformance test
+        docker_required: false
+      - command: pnpm --filter @data-pulse-2/contracts lint
+        expected: GREEN — YAML lints clean
+        docker_required: false
+    stop:
+      - if the YAML edits any existing operationId
+      - if the contract uses `Idempotency-Token` instead of `Idempotency-Key` (must align to existing IdempotencyInterceptor convention; see tasks.md §5.2 note)
+      - if any file outside `packages/contracts/` is modified
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe   # gated contract — serialize before any impl
+    branch_template: "feat/005-wave1-contract"
+
+  - id: 005-WAVE1-IDEMP-VERIFY
+    task_ids: [T505]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE1-SETUP
+    blocks: []   # T505 is a verification spec, not a hard predecessor for downstream slices — but its result determines whether Phase 4 needs any custom service code
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/idempotency/existing-primitive-coverage.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/idempotency/existing-primitive-coverage"
+        expected: GREEN 4/4 — existing IdempotencyInterceptor satisfies FR-021/021a/021b/021c against a fake POS-principal context
+        docker_required: true
+    stop:
+      - if any of the 4 cases require modifications to `apps/api/src/idempotency/idempotency.interceptor.ts` (which is forbidden — 001-owned)
+      - if FR-021b's 72h default is somehow shorter than 24h (would indicate a regression in 001)
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    branch_template: "test/005-wave1-idemp-verify"
+
+  - id: 005-WAVE1-HARNESS
+    task_ids: [T506, T507]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE1-SETUP
+    blocks:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-CAPTURE-RESOLVE
+      - 005-WAVE1-CAPTURE-STORE-SCOPE
+      - 005-WAVE1-CAPTURE-DEDUP
+      - 005-WAVE1-LIST
+      - 005-WAVE1-DISMISS
+      - 005-WAVE1-NON-DISCLOSING
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/__support__/seed-unknown-items.ts
+      - apps/api/test/catalog/unknown-items/isolation/cross-tenant.spec.ts
+    forbidden_files:
+      - apps/api/test/catalog/__support__/isolation-harness.ts   # 003-owned, do not modify
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/__support__"
+        expected: GREEN — seed-unknown-items.ts compiles and is importable
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation"
+        expected: GREEN — existing 003 isolation suites (T341 31/31, T342 17 pass + 4 todo, T343 35 pass + 4 todo, T344) unchanged
+        docker_required: true
+    stop:
+      - if isolation-harness.ts is modified (003-owned, T336/T340/T341 invariant)
+      - if existing 003 isolation suite counts change
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe
+    branch_template: "test/005-wave1-harness"
+
+  # ===== Phase 3: US1 Capture (P1 / MVP) ====================================
+
+  - id: 005-WAVE1-CAPTURE-HAPPY
+    task_ids: [T510, T511, T512]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE1-SETUP
+      - 005-WAVE1-CONTRACT      # needs operationId from YAML
+      - 005-WAVE1-HARNESS       # needs seed-unknown-items.ts
+    blocks:
+      - 005-WAVE1-CAPTURE-RESOLVE
+      - 005-WAVE1-CAPTURE-STORE-SCOPE
+      - 005-WAVE1-CAPTURE-DEDUP
+      - 005-WAVE1-NON-DISCLOSING
+      - 005-WAVE1-IDEMP-WIRE
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.module.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-happy-path.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-happy-path"
+        expected: GREEN — T510 acceptance criteria met
+        docker_required: true
+    stop:
+      - if any 003 file is modified
+      - if any new SQL migration is created
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: unsafe   # shared service/controller files with downstream capture slices
+    branch_template: "feat/005-wave1-capture-happy"
+
+  - id: 005-WAVE1-CAPTURE-RESOLVE
+    task_ids: [T513, T514]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-HAPPY]
+    blocks: [005-WAVE1-CAPTURE-STORE-SCOPE, 005-WAVE1-CAPTURE-DEDUP]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-resolves-to-alias"
+        expected: GREEN — alias-resolution prelude wins over capture
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe   # shared service file
+    branch_template: "feat/005-wave1-capture-resolve"
+
+  - id: 005-WAVE1-CAPTURE-STORE-SCOPE
+    task_ids: [T515, T516]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-RESOLVE]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-store-scope.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-store-scope"
+        expected: GREEN — FR-030a store-scope respected at capture
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-capture-store-scope"
+
+  - id: 005-WAVE1-CAPTURE-DEDUP
+    task_ids: [T517, T518]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-RESOLVE]
+    blocks: [005-WAVE1-FR005]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-deduplicates-pending.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-deduplicates-pending"
+        expected: GREEN — FR-032 natural dedup via idx_unknown_items_lookup_value
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-capture-dedup"
+
+  - id: 005-WAVE1-VALIDATION
+    task_ids: [T519, T520]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-HAPPY]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/dto/capture-request.dto.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-validation.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-validation"
+        expected: GREEN — FR-070/071/072 boundary rejection
+        docker_required: true
+    stop:
+      - if Zod schema diverges from 003 CHK constraints (unknown_items_identifier_type_valid, unknown_items_value_length, unknown_items_source_system_required)
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: safe   # dto/ is a new file, controller is shared but the edit is decorator-only
+    branch_template: "feat/005-wave1-validation"
+
+  - id: 005-WAVE1-NON-DISCLOSING
+    task_ids: [T521, T522]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-HARNESS]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/test/catalog/unknown-items/isolation/cross-tenant.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/isolation/cross-tenant"
+        expected: GREEN — SI-001/SI-004/FR-013/FR-092 non-disclosing
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation/cross-tenant-read"
+        expected: GREEN 31/31 — T341 regression unchanged
+        docker_required: true
+    stop:
+      - if T341 regresses
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe   # shared service file
+    branch_template: "feat/005-wave1-non-disclosing"
+
+  - id: 005-WAVE1-LIST
+    task_ids: [T523, T524]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CONTRACT, 005-WAVE1-HARNESS]
+    blocks: [005-WAVE1-DISMISS]   # dismiss needs an existing pending item to dismiss; list reads from same fixtures
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts
+      - apps/api/test/catalog/unknown-items/list/list-queue.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/list/list-queue"
+        expected: GREEN — FR-014 store-scoped vs tenant-wide visibility
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-list"
+
+  # ===== Phase 4: US4 Idempotency (P2) ======================================
+
+  - id: 005-WAVE1-IDEMP-WIRE
+    task_ids: [T530, T531]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-IDEMP-VERIFY, 005-WAVE1-CAPTURE-HAPPY]
+    blocks: [005-WAVE1-IDEMP-MISMATCH, 005-WAVE1-IDEMP-EDGES]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts   # add @Idempotent('required') decorator
+      - apps/api/test/catalog/unknown-items/idempotency/retry-identical.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/idempotency/retry-identical"
+        expected: GREEN — FR-021 identical retry replays
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-idemp-wire"
+
+  - id: 005-WAVE1-IDEMP-MISMATCH
+    task_ids: [T532, T533]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-IDEMP-WIRE]
+    blocks: [005-WAVE1-AUDIT, 005-WAVE1-METRICS]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts   # new file — small exception filter
+      - apps/api/src/catalog/unknown-items/unknown-items.module.ts                 # wire the filter
+      - apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/idempotency/retry-mismatch"
+        expected: GREEN — FR-021c catalog-domain audit + counter on existing 409
+        docker_required: true
+    stop:
+      - if the filter modifies the existing 001 IdempotencyInterceptor behavior on routes other than the capture route
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: safe   # new filter file, scoped to capture route
+    branch_template: "feat/005-wave1-idemp-mismatch"
+
+  - id: 005-WAVE1-IDEMP-EDGES
+    task_ids: [T534, T535, T536]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-IDEMP-WIRE, 005-WAVE1-CAPTURE-RESOLVE]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/idempotency/cross-device-keys.spec.ts
+      - apps/api/test/catalog/unknown-items/idempotency/ttl-expiry.spec.ts
+      - apps/api/test/catalog/unknown-items/idempotency/post-resolved.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/idempotency"
+        expected: GREEN — FR-021a, FR-021b, FR-022
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: safe   # three disjoint test files
+    branch_template: "test/005-wave1-idemp-edges"
+
+  # ===== Phase 5: US5 Audit + Dismiss (P2) ==================================
+
+  - id: 005-WAVE1-DISMISS
+    task_ids: [T540, T541, T542, T543]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-LIST]
+    blocks: [005-WAVE1-FR005, 005-WAVE1-AUDIT]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts
+      - apps/api/test/catalog/unknown-items/dismiss/dismiss-happy-path.spec.ts
+      - apps/api/test/catalog/unknown-items/dismiss/dismiss-monotonic.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/dismiss"
+        expected: GREEN — FR-002/003/004 monotonic lifecycle
+        docker_required: true
+    stop:
+      - if UPDATE clause omits WHERE resolution_status='pending' (would violate FR-004 monotonicity)
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-dismiss"
+
+  - id: 005-WAVE1-FR005
+    task_ids: [T544, T545]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-DEDUP, 005-WAVE1-DISMISS]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/test/catalog/unknown-items/capture/dismissed-then-resubmit.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/dismissed-then-resubmit"
+        expected: GREEN — FR-005 fresh pending row after dismiss + resubmit
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe
+    branch_template: "feat/005-wave1-fr005"
+
+  - id: 005-WAVE1-AUDIT
+    task_ids: [T546, T547, T548, T549, T550, T551]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-DISMISS, 005-WAVE1-IDEMP-MISMATCH]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts   # @Auditable decorators on capture/dismiss
+      - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts   # audit emission for mismatch
+      - apps/api/test/catalog/unknown-items/audit/capture-audit.spec.ts
+      - apps/api/test/catalog/unknown-items/audit/dismiss-audit.spec.ts
+      - apps/api/test/catalog/unknown-items/audit/idempotency-mismatch-audit.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit"
+        expected: GREEN — FR-080/082 audit emission for all 3 Wave 1 subjects
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: safe   # three test files; controller and filter touch decorator-level changes only
+    branch_template: "test/005-wave1-audit"
+
+  - id: 005-WAVE1-METRICS
+    task_ids: [T552, T553]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-DISMISS, 005-WAVE1-IDEMP-MISMATCH]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts   # add counter-increment calls if needed
+      - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts   # counter increment for mismatch
+      - apps/api/test/catalog/unknown-items/audit/metrics.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics"
+        expected: GREEN — FR-081 counter increments at all 3 emission sites
+        docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: unsafe   # touches service file
+    branch_template: "test/005-wave1-metrics"
+
+  # ===== Phase 6: Polish ====================================================
+
+  - id: 005-WAVE1-POLISH
+    task_ids: [T560, T561, T562, T563, T564]
+    type: chore
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE1-IDEMP-WIRE     # T560 perf test needs full capture path
+      - 005-WAVE1-DISMISS        # T561 regression sweep needs reconciliation paths wired
+      - 005-WAVE1-IDEMP-MISMATCH # T562 verifies 001 idempotency suite still GREEN
+      - 005-WAVE1-AUDIT          # T563 audit-fanout regression
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/perf/capture-latency.spec.ts
+      - specs/005-pos-catalog-sync-reconciliation/wave-status.md       # closeout doc
+      - specs/005-pos-catalog-sync-reconciliation/spec.md              # header-name drift fixup (Idempotency-Token → Idempotency-Key)
+      - specs/005-pos-catalog-sync-reconciliation/quickstart.md        # header-name drift fixup
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/perf/capture-latency"
+        expected: GREEN — SC-008 p95 ≤ 500ms, p99 ≤ 1s on local Testcontainers
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/isolation"
+        expected: GREEN — T341/T342/T343/T344 unchanged (regression sweep)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/idempotency"
+        expected: GREEN — 001 idempotency suite unchanged (T562)
+        docker_required: true
+    stop:
+      - if any 003 isolation suite regresses
+      - if 001 idempotency suite regresses
+      - if perf test fails the SC-008 budget on a representative tenant catalog
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe   # author-time tasks; performance test runs independently
+    branch_template: "chore/005-wave1-polish"
+
+# ----------------------------------------------------------------------------
+# groups — phase cohorts (NOT flat-dispatchable waves)
+# ----------------------------------------------------------------------------
+# Groups below are **phase cohorts** for human-readable navigation of slices
+# that share a phase boundary. They are **NOT flat-dispatchable bundles**.
+# Members may have intra-group `depends_on` edges; Maestro MUST topologically
+# sort by the per-slice `depends_on` DAG before dispatching any member.
+#
+# `parallel_safety: safe` on a group reflects the schema's file/fixture
+# disjointness contract (docs/agent-os/slice-schema.yaml §parallel_safety):
+# group members do not write to overlapping files and do not share test
+# fixture state. It does **NOT** mean the members are dependency-flat.
+#
+# Where two or more members are dependency-independent of each other AND
+# their predecessors are merged, those subsets MAY be dispatched in parallel
+# worktrees. Where members have intra-group dependencies (e.g., one member
+# blocks another), Maestro serializes them per the DAG.
+#
+# See tasks.md §10.3 for the source-of-truth parallel-set analysis at the
+# RED-authoring level.
+
+groups:
+
+  - id: PHASE_1_2_COHORT
+    members:
+      - 005-WAVE1-SETUP
+      - 005-WAVE1-IDEMP-VERIFY
+      - 005-WAVE1-HARNESS
+    parallel_safety: safe   # file/fixture disjoint per schema
+    proposed: true
+    # Intra-group DAG: SETUP `blocks` IDEMP-VERIFY and HARNESS, so SETUP
+    # MUST land before the other two. After SETUP merges, IDEMP-VERIFY and
+    # HARNESS may dispatch in parallel worktrees (they touch disjoint test
+    # paths). File scope: SETUP edits the module dir + api.metrics.ts;
+    # IDEMP-VERIFY is one new spec file under .../idempotency/; HARNESS adds
+    # two new files under .../__support__/ and .../isolation/.
+
+  - id: PHASE_3_COHORT
+    members:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-CAPTURE-RESOLVE
+      - 005-WAVE1-CAPTURE-STORE-SCOPE
+      - 005-WAVE1-CAPTURE-DEDUP
+      - 005-WAVE1-VALIDATION
+      - 005-WAVE1-NON-DISCLOSING
+      - 005-WAVE1-LIST
+    parallel_safety: safe   # RED spec files are disjoint per schema
+    proposed: true
+    # Intra-group DAG: CAPTURE-HAPPY is the root; CAPTURE-RESOLVE,
+    # VALIDATION, NON-DISCLOSING, LIST all `depends_on: CAPTURE-HAPPY`.
+    # CAPTURE-STORE-SCOPE and CAPTURE-DEDUP both `depends_on: CAPTURE-RESOLVE`.
+    # The group is NOT a flat dispatch wave. RED test authoring across
+    # members is parallel-safe (each spec file disjoint), but GREEN
+    # implementations serialize through unknown-items.service.ts and
+    # unknown-items.controller.ts. See tasks.md §10.3.
+
+  - id: PHASE_4_5_COHORT
+    members:
+      - 005-WAVE1-IDEMP-WIRE
+      - 005-WAVE1-IDEMP-MISMATCH
+      - 005-WAVE1-IDEMP-EDGES
+      - 005-WAVE1-DISMISS
+      - 005-WAVE1-FR005
+      - 005-WAVE1-AUDIT
+      - 005-WAVE1-METRICS
+    parallel_safety: safe   # RED spec files are disjoint per schema
+    proposed: true
+    # Intra-group DAG: IDEMP-WIRE `blocks` IDEMP-MISMATCH + IDEMP-EDGES.
+    # IDEMP-MISMATCH `blocks` AUDIT + METRICS. DISMISS `blocks` FR005 + AUDIT.
+    # See per-slice depends_on edges above. RED tests within disjoint spec
+    # files may dispatch in parallel where predecessors are merged; GREEN
+    # implementations serialize through the shared service/controller/filter
+    # files.
+
+# ----------------------------------------------------------------------------
+# Wave 2 — not yet enumerated
+# ----------------------------------------------------------------------------
+# Wave 2 covers US2 link reconciliation, US2 create-new reconciliation, and
+# US3 alias-conflict fail-closed behavior. **Blocked on 003's PHASE3_RED_WAVE
+# (specifically T350 + T383).** When PHASE3_RED_WAVE merges on 003 main, a
+# separate /speckit-tasks invocation will author Wave 2's tasks.md and a
+# follow-up commit will extend this execution-map with the Wave 2 slices
+# (expected ID range T600–T6XX, slice ids 005-WAVE2-*).
+#
+# Do not propose Wave 2 slices here ahead of that work — the 003 service-layer
+# contracts may evolve during PHASE3_RED_WAVE authoring, and any premature
+# Wave 2 brief would risk dereferencing surfaces that haven't been frozen.
