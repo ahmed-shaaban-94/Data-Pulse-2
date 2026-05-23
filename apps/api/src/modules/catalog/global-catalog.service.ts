@@ -68,7 +68,15 @@ export class GlobalCatalogService {
    */
   constructor(
     @Optional() @Inject(PG_POOL) private readonly pool: Pool,
-  ) {}
+  ) {
+    // `@Optional()` only relaxes Nest DI so tests can `new` the service
+    // with a raw pool; the service still functionally requires a pool
+    // to honor `list()`. Fail fast at construction rather than at the
+    // first query — clearer error, satisfies §XII object-safety.
+    if (!this.pool) {
+      throw new Error("GlobalCatalogService requires a pg.Pool instance");
+    }
+  }
 
   /**
    * List all active global_products. Retired rows are filtered at the
