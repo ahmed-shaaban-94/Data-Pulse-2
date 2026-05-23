@@ -7,19 +7,22 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/005-pos-catalog-sync-reconciliation/wave-status.md
 #
-# Updated: 2026-05-23 — initial authoring after Wave 1 tasks.md merged in PR #296 @ 5179682.
-# No slices dispatched yet. All Wave 1 slices at `proposed` awaiting per-slice approval.
+# Updated: 2026-05-23 — after PR #299 + #304 closeout. Two Wave 1 slices merged:
+# 005-WAVE1-METRICS-ALLOWLIST (PR #299) and 005-WAVE1-SETUP (PR #304). 18
+# candidate slices remain at `status: proposed`.
 # Wave 2 slices not yet enumerated (blocked on 003's PHASE3_RED_WAVE — T350 + T383).
 #
 # Authoring sequence:
-#  - Spec authored:           PR #293 @ 9d835eb (2026-05-23)
-#  - Plan + research + data-model + quickstart + contracts placeholder: PR #294 @ 6895246 (2026-05-23)
-#  - Wave 1 tasks.md:         PR #296 @ 5179682 (2026-05-23)
-#  - This execution-map:      (this commit)
+#  - Spec authored:                                                       PR #293 @ 9d835eb (2026-05-23)
+#  - Plan + research + data-model + quickstart + contracts placeholder:   PR #294 @ 6895246 (2026-05-23)
+#  - Wave 1 tasks.md:                                                     PR #296 @ 5179682 (2026-05-23)
+#  - execution-map + wave-status initial authoring:                       PR #298 @ dd38594 (2026-05-23)
+#  - 005-WAVE1-METRICS-ALLOWLIST slice merged (gated allowlist + finding): PR #299 @ 28d1a0d (2026-05-23)
+#  - 005-WAVE1-SETUP slice merged (T500 module skeleton + T501 counters):  PR #304 @ 622e509 (2026-05-23)
 
 spec: 005-pos-catalog-sync-reconciliation
 version: 1
-base: origin/main  # 5179682 (PR #296, Wave 1 tasks.md)
+base: origin/main  # 622e509 (PR #304, 005-WAVE1-SETUP merged)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -57,9 +60,9 @@ findings:
       `depends_on: [005-WAVE1-METRICS-ALLOWLIST]` edge so T501 cannot
       dispatch until the allowlist lands on `main`.
     resolved_by_slice: 005-WAVE1-METRICS-ALLOWLIST
-    resolved_by_pr: null   # filled in at closeout
-    resolved_at_commit: null
-    resolved_at: null
+    resolved_by_pr: 299
+    resolved_at_commit: 28d1a0d72725ffa93272dd2a2e9b912b11380cc4
+    resolved_at: 2026-05-23
     notes: |
       Planning fix only — no Wave 1 task IDs change. tasks.md T501's
       acceptance criteria already assumed the counters would be registered;
@@ -96,7 +99,12 @@ slices:
   - id: 005-WAVE1-METRICS-ALLOWLIST
     task_ids: []   # No task ids in tasks.md — this is a planning correction added after tasks.md merged. Tracked as a finding-driven slice.
     type: docs
-    status: proposed
+    status: merged
+    merged_in_pr: 299
+    merged_at_commit: 28d1a0d72725ffa93272dd2a2e9b912b11380cc4
+    merged_at_date: 2026-05-23
+    previously_blocked:
+      - 005-WAVE1-SETUP
     approval_required: true   # [GATED] — touches 004-owned observability schema (packages/shared/src/observability/** and docs/observability/**)
     depends_on: []
     blocks:
@@ -148,7 +156,14 @@ slices:
   - id: 005-WAVE1-SETUP
     task_ids: [T500, T501]
     type: chore
-    status: proposed
+    status: merged
+    merged_in_pr: 304
+    merged_at_commit: 622e5091196409f145a38ef8458b1b23014ce17b
+    merged_at_date: 2026-05-23
+    previously_blocked:
+      - 005-WAVE1-CAPTURE-HAPPY
+      - 005-WAVE1-IDEMP-VERIFY
+      - 005-WAVE1-HARNESS
     approval_required: false
     depends_on:
       - 005-WAVE1-METRICS-ALLOWLIST   # T501 requires the three new counters allowlisted upstream first
@@ -166,7 +181,7 @@ slices:
       - packages/shared/src/observability/metrics-labels.ts                  # done in 005-WAVE1-METRICS-ALLOWLIST (predecessor)
       - docs/observability/signals.md                                        # done in 005-WAVE1-METRICS-ALLOWLIST (predecessor)
     validation:
-      - command: pnpm --filter @data-pulse-2/api typecheck
+      - command: pnpm --filter @data-pulse-2/api build
         expected: GREEN
         docker_required: false
       - command: pnpm --filter @data-pulse-2/api test "observability/metrics"
