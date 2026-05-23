@@ -4,7 +4,7 @@
 **Spec:** [`specs/003-catalog-foundation/`](.)
 **Base:** `origin/main` at `fd18598` (PR #285, 2026-05-22)
 **Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered)
-**In-progress resolution:** `RLS_UNSET_TENANT_GUC_CAST_ERROR` — SQL migration + tests authored on branch `fix/003-catalog-0010-tenant-guc-cast`; awaiting CI and merge
+**In-progress resolution (not yet merged):** `RLS_UNSET_TENANT_GUC_CAST_ERROR` — SQL migration + tests authored on branch `fix/003-catalog-0010-tenant-guc-cast` (PR #292); awaiting merge to `main`
 **Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
 
 ---
