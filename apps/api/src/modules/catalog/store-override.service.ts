@@ -128,12 +128,16 @@ export class StoreOverrideService {
    */
   async create(dto: CreateStoreOverrideDto): Promise<StoreOverrideRecord> {
     // (1) Q8 validation FIRST — no DB access permitted in this branch.
-    if (dto.name !== undefined) {
+    // Use own-property presence (not `!== undefined`) so payloads like
+    // `{ name: null }` or `{ categoryId: undefined }` are still rejected.
+    // The Q8 contract is "DTO contains the key", not "DTO contains a
+    // truthy value for the key".
+    if (Object.prototype.hasOwnProperty.call(dto, "name")) {
       throw new BadRequestException(
         "'name' is not overrideable at the store level (Q8).",
       );
     }
-    if (dto.categoryId !== undefined) {
+    if (Object.prototype.hasOwnProperty.call(dto, "categoryId")) {
       throw new BadRequestException(
         "'categoryId' is not overrideable at the store level (Q8).",
       );

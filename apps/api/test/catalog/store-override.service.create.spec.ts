@@ -87,12 +87,17 @@ beforeAll(async () => {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
       dockerSkipped = true;
+      // Don't interpolate the raw error message — it can include
+      // socket paths, daemon URLs, or other CI-environment details
+      // we'd rather not bake into logs (CodeRabbit PR #302).
       // eslint-disable-next-line no-console
       console.warn(
-        `\n[store-override.service.create.spec] Docker NOT AVAILABLE: ${msg}\n`,
+        "[store-override.service.create.spec] Docker unavailable — skipping (reason=docker_unavailable)",
       );
       return;
     }
+    // The throw path is fine to surface the underlying error — it
+    // fails the suite hard so a human sees it once, not in a tail.
     throw new Error(`Container start failed: ${msg}`);
   }
 
