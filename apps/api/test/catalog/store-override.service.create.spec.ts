@@ -79,24 +79,15 @@ let dockerSkipped = false;
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
+  // Narrow MIGRATION_TEST_ALLOW_SKIP=1 to Docker-only failures so a real
+  // regression in migrations/seeds is not silently swallowed.
   try {
     env = await startPgEnv();
-    await applyAllUpAndCreateAppRole(env);
-    await seedCatalogIsolationFixture(env);
-
-    // Build a connection pool that authenticates as the runtime app role
-    // (RLS is enforced for this role — not bypassed like env.admin).
-    appPool = new Pool({
-      host: env.host,
-      port: env.port,
-      database: env.database,
-      user: APP_ROLE_NAME,
-      password: APP_ROLE_PASSWORD,
-    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
       dockerSkipped = true;
+      // eslint-disable-next-line no-console
       console.warn(
         `\n[store-override.service.create.spec] Docker NOT AVAILABLE: ${msg}\n`,
       );
@@ -104,6 +95,20 @@ beforeAll(async () => {
     }
     throw new Error(`Container start failed: ${msg}`);
   }
+
+  // Container is up — failures past this point are real and must not skip.
+  await applyAllUpAndCreateAppRole(env);
+  await seedCatalogIsolationFixture(env);
+
+  // Build a connection pool that authenticates as the runtime app role
+  // (RLS is enforced for this role — not bypassed like env.admin).
+  appPool = new Pool({
+    host: env.host,
+    port: env.port,
+    database: env.database,
+    user: APP_ROLE_NAME,
+    password: APP_ROLE_PASSWORD,
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -117,6 +122,7 @@ afterAll(async () => {
 
 function maybeSkip(): boolean {
   if (dockerSkipped) {
+    // eslint-disable-next-line no-console
     console.warn(
       "[store-override.service.create.spec] Skipping — Docker unavailable",
     );
@@ -194,8 +200,10 @@ describe("S1 — happy path: create store_product_override", () => {
     expect(result.storeId).toBe(STORE_A_X);
     expect(result.productId).toBe(PRODUCT_A_RETIRED);
     expect(result.isActive).toBe(true);
+    // Per coding guideline: UUIDv7 (preferred) with UUIDv4 fallback.
+    // Version nibble must be 4 or 7; variant nibble must be 8/9/a/b (RFC 4122).
     expect(result.id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
   });
 });
@@ -296,17 +304,55 @@ describe("S4 — FK validation: cross-tenant product_id reference rejected", () 
 // S5 — Q8 field rejection: name / category_id in body → 400
 // ---------------------------------------------------------------------------
 
-describe("S5 — Q8 field rejection: non-overrideable fields rejected", () => {
-  it("rejects a DTO containing 'name' with a validation error (400)", async () => {
+describe("S5 — Q8 field rejection: non-overrideable fields rejected before DB call", () => {
+  // S5 must prove the rejection happens *before* any DB interaction. To
+  // assert that, instantiate the service with a Pool wrapped to track
+  // .query / .connect calls; if a Q8-violating DTO causes a query, the
+  // service is reaching the DB before validation — which violates the
+  // "validate at boundaries" contract from spec §5.3 Q8.
+
+  function buildPoolWithQuerySpy(): {
+    pool: Pool;
+    queryCount: () => number;
+    connectCount: () => number;
+  } {
+    let queries = 0;
+    let connects = 0;
+    const realPool = appPool!;
+    // Construct a Proxy so the service receives an object that behaves
+    // like Pool but observes any .query() or .connect() call before
+    // forwarding (forwarding only on the happy path; for Q8 we expect
+    // zero forwards).
+    const spied = new Proxy(realPool, {
+      get(target, prop, receiver) {
+        if (prop === "query") {
+          return ((...args: unknown[]) => {
+            queries++;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return (target as any).query(...args);
+          }) as Pool["query"];
+        }
+        if (prop === "connect") {
+          return (() => {
+            connects++;
+            return target.connect();
+          }) as Pool["connect"];
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return {
+      pool: spied as unknown as Pool,
+      queryCount: () => queries,
+      connectCount: () => connects,
+    };
+  }
+
+  it("rejects a DTO containing 'name' with a 400 — and makes ZERO DB calls", async () => {
     if (maybeSkip()) return;
 
-    // Per spec §5.3 Q8, only price, is_active, and tax_category are
-    // overrideable at the store level. `name` and `category_id` are
-    // tenant-catalog concerns and must be rejected by the service before
-    // any DB call is made. The service should throw with a status of 400
-    // or equivalent validation error.
-
-    const service = new StoreOverrideService(appPool!);
+    const { pool: spiedPool, queryCount, connectCount } = buildPoolWithQuerySpy();
+    const service = new StoreOverrideService(spiedPool);
 
     const dtoWithName: CreateStoreOverrideDto = {
       tenantId: TENANT_A,
@@ -317,19 +363,23 @@ describe("S5 — Q8 field rejection: non-overrideable fields rejected", () => {
       name: "Forbidden name override", // Q8 violation
     };
 
-    await expect(
-      runWithTenantStoreContext(
-        appPool!,
-        { tenantId: TENANT_A, isPlatformAdmin: false, storeId: STORE_A_X },
-        (_client) => service.create(dtoWithName),
-      ),
-    ).rejects.toMatchObject({ status: 400 });
+    // Call the service DIRECTLY — no runWithTenantStoreContext wrap. The
+    // wrapper would issue set_config(...) before reaching the service,
+    // which would falsely show "DB activity" and undermine the assertion.
+    await expect(service.create(dtoWithName)).rejects.toMatchObject({
+      status: 400,
+    });
+
+    // The service must reject before touching the DB.
+    expect(queryCount()).toBe(0);
+    expect(connectCount()).toBe(0);
   });
 
-  it("rejects a DTO containing 'categoryId' with a validation error (400)", async () => {
+  it("rejects a DTO containing 'categoryId' with a 400 — and makes ZERO DB calls", async () => {
     if (maybeSkip()) return;
 
-    const service = new StoreOverrideService(appPool!);
+    const { pool: spiedPool, queryCount, connectCount } = buildPoolWithQuerySpy();
+    const service = new StoreOverrideService(spiedPool);
 
     const dtoWithCategory: CreateStoreOverrideDto = {
       tenantId: TENANT_A,
@@ -340,12 +390,11 @@ describe("S5 — Q8 field rejection: non-overrideable fields rejected", () => {
       categoryId: STORE_A_X, // Q8 violation — any UUID will do
     };
 
-    await expect(
-      runWithTenantStoreContext(
-        appPool!,
-        { tenantId: TENANT_A, isPlatformAdmin: false, storeId: STORE_A_X },
-        (_client) => service.create(dtoWithCategory),
-      ),
-    ).rejects.toMatchObject({ status: 400 });
+    await expect(service.create(dtoWithCategory)).rejects.toMatchObject({
+      status: 400,
+    });
+
+    expect(queryCount()).toBe(0);
+    expect(connectCount()).toBe(0);
   });
 });
