@@ -1,25 +1,23 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-23 (0010_CATALOG_TENANT_GUC_CAST_FIX authored — in_progress, stop before commit)
+**Last updated:** 2026-05-23 (0010_CATALOG_TENANT_GUC_CAST_FIX merged — PR #292 @ `6adf6df`)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `fd18598` (PR #285, 2026-05-22)
+**Base:** `origin/main` at `6adf6df` (PR #292, 2026-05-23)
 **Active findings:** 2 — `MISSING_WITHSTORE_HELPER` (low; scaffold mismatch), `RLS_STORE_ABSENT_READ_LEAK` (medium; matrix §4.6/§7.6 fail-closed not delivered)
-**In-progress resolution (not yet merged):** `RLS_UNSET_TENANT_GUC_CAST_ERROR` — SQL migration + tests authored on branch `fix/003-catalog-0010-tenant-guc-cast` (PR #292); awaiting merge to `main`
-**Resolved findings (kept for audit):** 2 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`)
+**Resolved findings (kept for audit):** 3 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`)
 
 ---
 
 ## TL;DR
 
-Slice `0010_CATALOG_TENANT_GUC_CAST_FIX` is **in_progress** on branch
-`fix/003-catalog-0010-tenant-guc-cast` (worktree `dp2-0010-tenant-guc-fix`).
-Stop-before-commit reached — slice is authored and locally validated (Docker-skip
-path: 35 passed, 4 todo, 39 total). Awaiting Docker/WSL CI run and user commit
-authorization.
+Slice `0010_CATALOG_TENANT_GUC_CAST_FIX` **merged** in PR #292 @ `6adf6df`
+(2026-05-23). Resolves finding `RLS_UNSET_TENANT_GUC_CAST_ERROR`. The 5 tenant-axis
+`it.todo` items in T343 (`rls-bypass-probe.spec.ts` §3.3/§4.5/§5.3/§6.5/§7.6) are
+now executable assertions. Validation: 35 passed / 4 todo / 39 total on T343;
+T341 31/31; T342 17/4 todo (store-axis unchanged); migration round-trip 27/27; CLI
+spec 10/10.
 
-T342, T343, T344 merged in PR #285 @ `fd18598` (2026-05-22). T344 is **fully GREEN**.
 T342 still carries 4 `it.todo` items for store-axis (RLS_STORE_ABSENT_READ_LEAK).
-T343 had 5 tenant-axis `it.todo` items — all 5 flipped to executable by this slice.
 T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
 
 ---
@@ -43,6 +41,7 @@ T336 remains blocked on `MISSING_WITHSTORE_HELPER`.
 | `T342` | Cross-store read sweep (`apps/api/test/catalog/isolation/cross-store-read.spec.ts`) — §4.6/§7.6 store-absent deferred as `it.todo` (RLS_STORE_ABSENT_READ_LEAK) | PR #285 @ `fd18598` |
 | `T343` | RLS bypass probe (`apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts`) — 9 `it.todo` deferred against RLS_STORE_ABSENT_READ_LEAK + RLS_UNSET_TENANT_GUC_CAST_ERROR | PR #285 @ `fd18598` |
 | `T344` | Malicious body-override sweep (`apps/api/test/catalog/isolation/malicious-override.spec.ts`) — GREEN, no deferred coverage | PR #285 @ `fd18598` |
+| `0010_CATALOG_TENANT_GUC_CAST_FIX` | `0010_catalog_tenant_empty_guc_fix.sql` — CASE guard for empty `app.current_tenant` cast across 13 policies on 5 tables; 5 T343 `it.todo` unblocked | PR #292 @ `6adf6df` |
 
 ### Context from neighboring merges
 
@@ -79,6 +78,14 @@ All previously-local work is now on `main`:
 - **Verification:** T341 GREEN 31/31 on Testcontainers (WSL Docker) after PR #279 merge.
 - **Audit kept because:** HARNESS_SEED_BUGS unblocked T342–T344 dispatch; the chain of proof is valuable context for future harness modifications.
 
+### `RLS_UNSET_TENANT_GUC_CAST_ERROR` — RESOLVED
+
+- **Resolved by:** `0010_CATALOG_TENANT_GUC_CAST_FIX` (PR #292 @ `6adf6df`, merged 2026-05-23)
+- **Originally affected:** `tenant_products`, `tenant_product_categories`, `product_aliases`, `price_history`, `unknown_items` — read-path cast error on unset tenant GUC.
+- **Mechanism of fix:** Added a `CASE` guard to 13 policy bodies across 5 tables so that `current_setting('app.current_tenant', true) = ''` maps to `NULL` rather than raising `22P02`. Group A: 0007-form INSERT/UPDATE policies on 5 tables. Group B: 0009-form SELECT/write policies on `store_product_overrides` and `unknown_items` (store CASE guard preserved; tenant guard added). Down migration restores the 0007 body for Group A and the 0009 body for Group B.
+- **Verification:** T343 rls-bypass-probe 35 passed / 4 todo (5 formerly-todo tenant-axis assertions now execute); T341 31/31 regression GREEN; T342 17 passed / 4 todo (store-axis unchanged); migration round-trip 27/27; CLI spec 10/10.
+- **Audit kept because:** documents the `''` vs NULL GUC semantics gotcha and the CASE-guard pattern used — valuable context for any future policy author.
+
 ### `RLS_CROSS_STORE_READ_LEAK` — RESOLVED
 
 - **Resolved by:** `RLS_CROSS_STORE_FIX` (PR #254 @ `483aae4`, merged 2026-05-21)
@@ -100,16 +107,6 @@ All previously-local work is now on `main`:
 - **Resolution paths (either, with explicit user approval):**
   1. New gated SQL slice (e.g. `0010_*`) extending 0009's CASE guard to distinguish "GUC explicitly empty (carve-out)" from "GUC never set (fail-closed)" — e.g. by keying the carve-out on a dedicated `app.current_store_owner_carveout` sentinel rather than the empty string.
   2. Matrix amendment re-specifying §4.6 / §7.6 to require an explicit `DISCARD ALL` (or equivalent connection-reset) before the contract holds — i.e. accepting that the never-set behavior is "indistinguishable from explicit-empty" at the policy layer and revising the contract accordingly.
-
-### `RLS_UNSET_TENANT_GUC_CAST_ERROR` — discovered 2026-05-22
-
-- **Summary:** Matrix §2.3, §3.3, §5.3, §6.5, §7.6 prescribe "`app.current_tenant` unset / NULL → 0 rows" for every tenant-scoped catalog table. CI on PR #285 (commit `30751989`) showed five SELECT cases throwing `invalid input syntax for type uuid: ""` (SQLSTATE 22P02) instead of returning 0 rows. The matrix author assumed NULL semantics (`NULL::uuid = NULL`, policy `tenant_id = NULL` evaluates to NULL → 0 rows); PG actually returns `''` from `current_setting('app.current_tenant', true)` for a never-set GUC, and `''::uuid` raises before the policy evaluates. The §2.3 `tenant_products` case in the bypass-probe spec passed via a cold no-GUC pool path; the other four (§3.3, §5.3, §6.5, §7.6) failed because they share `withRawClient` against `env.app` where pool-scoped `set_config` bleed exposes the cast error.
-- **Severity:** medium (read-path fail-closed semantics defect; write-path RLS still enforces).
-- **Proof:** CI failure (PR #285 @ `30751989`) — five "unset tenant GUC: SELECT returns 0 rows" cases failing with `22P02`. PG 16 probe (2026-05-22) confirmed `current_setting('app.current_tenant', true)` returns `''` (not NULL) for a never-set GUC.
-- **Blocks:** No slice-level dispatch blocker. PR #285 ships T343 with five `it.todo` placeholders covering the deferred contract.
-- **Resolution paths (either, with explicit user approval):**
-  1. New gated SQL slice (e.g. `0010_*`) adding a CASE guard around the tenant cast in every tenant-scoped policy, analogous to 0009's store-GUC guard. Body shape: `tenant_id = CASE WHEN current_setting('app.current_tenant', true) = '' THEN NULL ELSE current_setting('app.current_tenant', true)::uuid END` — preserves fail-closed (NULL comparison returns no rows) without throwing.
-  2. Matrix amendment redefining §2.3 / §3.3 / §5.3 / §6.5 / §7.6 expected result from "0 rows" to "SQLSTATE 22P02 cast error" — arguably stronger fail-closed semantics (loud failure beats silent leak), but requires coordinated test updates to assert the error code rather than row count.
 
 ### `MISSING_WITHSTORE_HELPER`
 
@@ -133,15 +130,7 @@ All previously-local work is now on `main`:
 
 ## Ready / in-flight
 
-`0010_CATALOG_TENANT_GUC_CAST_FIX` — **in_progress** on branch
-`fix/003-catalog-0010-tenant-guc-cast` (worktree `dp2-0010-tenant-guc-fix`).
-Stop-before-commit reached 2026-05-23. Awaiting Docker/WSL CI confirmation and
-user commit authorization. Files:
-- `packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.sql` ← new
-- `packages/db/drizzle/0010_catalog_tenant_empty_guc_fix.down.sql` ← new
-- `apps/api/test/catalog/isolation/rls-bypass-probe.spec.ts` ← 5 `it.todo` → executable
-- `packages/db/__tests__/cli/migrate.spec.ts` ← `EXPECTED_MIGRATIONS` + 1
-- `specs/003-catalog-foundation/execution-map.yaml` ← slice entry + finding update
+_None — no slices are currently in-progress or locally-committed._
 
 ---
 
@@ -164,14 +153,12 @@ user endorsement.
 
 ## Next recommended action
 
-**Authorize commit and PR for `0010_CATALOG_TENANT_GUC_CAST_FIX`** — slice is fully
-authored and locally validated. Run the full Docker/Testcontainers validation on WSL
-then commit and open PR. This resolves `RLS_UNSET_TENANT_GUC_CAST_ERROR` and
-unblocks 5 deferred `it.todo` assertions in T343.
-
-After 0010 merges, the remaining medium-severity finding is `RLS_STORE_ABSENT_READ_LEAK`
-(store-axis, 4 `it.todo` items in T342/T343). Resolution requires slice `0011` with a
-sentinel GUC — deferred until after 0010 is on `main`.
+**Resolve `RLS_STORE_ABSENT_READ_LEAK`** — the remaining medium-severity finding
+(4 `it.todo` items in T342/T343 for store-axis §4.6/§7.6). Resolution requires a
+new gated SQL slice `0011_CATALOG_STORE_CARVEOUT_SENTINEL` that distinguishes
+"GUC explicitly empty (tenant-owner carve-out)" from "GUC never set (fail-closed)"
+by introducing a sentinel value or a separate GUC flag. Explicit user approval
+required (SQL migration — gated surface).
 
 Alternatively, endorse the Phase-3 RED wave (`PHASE3_RED_WAVE`) to advance catalog
 feature implementation. T336 is independent and still needs an explicit decision on
@@ -208,15 +195,7 @@ If the slice resolves a finding, the same closeout sets
 
 ## Next short Maestro prompt
 
-Authorize commit and PR for the in-progress slice (requires Docker/WSL CI first):
-
-```text
-Use Agent OS. Close out slice 0010_CATALOG_TENANT_GUC_CAST_FIX. Commit and open PR.
-Spec: specs/003-catalog-foundation
-Branch: fix/003-catalog-0010-tenant-guc-cast
-```
-
-After 0010 merges — resolve the store-absent finding:
+Resolve the store-absent finding (next SQL migration slice):
 
 ```text
 Use Agent OS. Execute slice 0011_CATALOG_STORE_CARVEOUT_SENTINEL. Stop before commit.

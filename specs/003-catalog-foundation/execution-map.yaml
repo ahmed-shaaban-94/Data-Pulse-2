@@ -7,19 +7,19 @@
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/003-catalog-foundation/wave-status.md
 #
-# Updated: 2026-05-23 — 0010_CATALOG_TENANT_GUC_CAST_FIX slice authored.
+# Updated: 2026-05-23 — 0010_CATALOG_TENANT_GUC_CAST_FIX closed out: PR #292 @ 6adf6df (2026-05-23).
 # T340 (isolation harness) closed out: PR #264 @ 02cdf75 (2026-05-21).
 # T341 (cross-tenant read isolation) closed out: PR #268 @ 263492a (2026-05-21).
 # HARNESS_FIX (seed constraint violations) closed out: PR #279 @ e33fd0e (2026-05-22).
 # 0009_STORE_GUC_FIX (empty-store cast CASE guard) closed out: PR #279 @ e33fd0e (2026-05-22).
 # HARNESS_SEED_BUGS finding resolved by PR #279 — T341 31/31 GREEN confirmed.
 # T342, T343, T344 closed out: PR #285 @ fd18598 (2026-05-22).
-# Map base advanced to fd18598 (PR #285).
-# 0010_CATALOG_TENANT_GUC_CAST_FIX — in_progress 2026-05-23 (branch fix/003-catalog-0010-tenant-guc-cast).
+# RLS_UNSET_TENANT_GUC_CAST_ERROR finding resolved by PR #292 @ 6adf6df (2026-05-23).
+# Map base advanced to 6adf6df (PR #292).
 
 spec: 003-catalog-foundation
 version: 1
-base: origin/main  # fd18598 (PR #285, T342-T344 isolation specs bundled)
+base: origin/main  # 6adf6df (PR #292, 0010 tenant GUC cast fix)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -195,7 +195,10 @@ findings:
     resolution_paths:
       - "(a) New gated SQL slice (e.g. 0010_*) adding a CASE guard around the tenant cast in every tenant-scoped policy, analogous to 0009's store-GUC guard. Body shape: `tenant_id = CASE WHEN current_setting('app.current_tenant', true) = '' THEN NULL ELSE current_setting('app.current_tenant', true)::uuid END` — preserves fail-closed (NULL match returns 0 rows) without throwing."
       - "(b) Matrix amendment redefining the §2.3 / §3.3 / §5.3 / §6.5 / §7.6 expected result from '0 rows' to 'SQLSTATE 22P02 cast error (acceptable fail-closed behavior because the query throws before any data is returned)' — this is arguably stronger fail-closed semantics but would require coordinated test updates to assert the error code rather than row count."
-    resolved_by: null   # path (a) — resolution authored in 0010_CATALOG_TENANT_GUC_CAST_FIX; set on merge
+    resolved_by: 0010_CATALOG_TENANT_GUC_CAST_FIX
+    resolved_by_pr: 292
+    resolved_by_commit: 6adf6df
+    resolved_at: 2026-05-23
 
 # ----------------------------------------------------------------------------
 # slices
@@ -651,7 +654,7 @@ slices:
   - id: 0010_CATALOG_TENANT_GUC_CAST_FIX
     task_ids: []
     type: fix
-    status: in_progress           # branch fix/003-catalog-0010-tenant-guc-cast (worktree dp2-0010-tenant-guc-fix)
+    status: merged                # closed out 2026-05-23 via PR #292 @ 6adf6df
     approval_required: true       # gated (SQL migration) — approval granted 2026-05-23
     depends_on:
       - 0009_STORE_GUC_FIX        # 0009 bodies are the baseline for Group B down-migration
@@ -702,6 +705,9 @@ slices:
       - confirmation_no_unauthorized_git_ops
       - recommended_commit_message
     parallel_safety: unsafe   # gated SQL — serialize
+    merged_in_pr: 292
+    merged_at_commit: 6adf6df
+    merged_at_date: 2026-05-23
     notes: >
       Resolves finding RLS_UNSET_TENANT_GUC_CAST_ERROR. Adds CASE guard to 13 policy
       bodies across 5 tenant-scoped tables: (Group A) tenant_product_categories,
@@ -713,6 +719,9 @@ slices:
       to executable assertions. Does NOT resolve RLS_STORE_ABSENT_READ_LEAK
       (4 remaining it.todo items for store-axis). Down migration restores 0007 form
       for Group A and 0009 form for Group B.
+      Validation results (PR #292): T343 rls-bypass-probe 35 passed / 4 todo; T341
+      cross-tenant-read 31/31; T342 cross-store-read 17 passed / 4 todo; 0001-catalog
+      27/27; migrate.spec.ts 10/10.
 
   # ===== Proposed Phase-3 RED tests (not approved) ==========================
 
