@@ -1,0 +1,578 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Catalog — Unknown Items API
+  version: "1.0.0-draft"
+  description: >
+    Spec 005 Wave 1 (capture path) contract surface. Defines three
+    operations for the POS-Pulse catalog-sync / unknown-item-reconciliation
+    workflow:
+
+      1. `posCaptureItem`            — POS submits an item reference; when
+         it cannot be resolved against the tenant's active alias set, a
+         pending `unknown_items` row is created scoped to (tenant, store)
+         per FR-001, FR-010, FR-030, FR-031, FR-032.
+      2. `tenantAdminListUnknownItems` — tenant admins (and store-scoped
+         operators per RLS) read the pending review queue per FR-014.
+      3. `tenantAdminDismissUnknownItem` — tenant admins terminate a
+         pending item as invalid per FR-003, FR-004 (monotonic lifecycle).
+
+    Wave 2 reconciliation operations (link, create-new) are deferred to
+    a separate gated extension of this YAML.
+
+    Schemas align with `specs/005-pos-catalog-sync-reconciliation/data-model.md`
+    §2.1 (lifecycle) and §2.2 (tenant + store scoping). Failure-response
+    `error.code` values follow `research.md` §R2 taxonomy. The contract is
+    consumed by `apps/api/test/catalog/unknown-items/contract.spec.ts` plus
+    the umbrella conformance suite once the loader is taught to discover
+    nested YAML directories (currently a no-op — see T504 verdict in the
+    slice closeout report).
+
+    Authentication boundary:
+
+      * `posCaptureItem` is POS-authenticated via the same Clerk JWT
+        bearer scheme used by `pos-shifts.openapi.yaml` and
+        `pos-audit-events.openapi.yaml` (component `clerkJwt`).
+        The principal's resolved store binding (per spec 002) supplies
+        `store_id`; rejected with 400 `store_context_required` if absent
+        (FR-011).
+      * `tenantAdminListUnknownItems` and `tenantAdminDismissUnknownItem`
+        are dashboard-session-authenticated via `cookieAuth` (component
+        matches `outbox.openapi.yaml` / `memberships.openapi.yaml`).
+        Cross-tenant + out-of-scope requests are non-disclosing 404s per
+        SI-001 / SI-004 / FR-013 / FR-092.
+
+    Idempotency:
+
+      * `posCaptureItem` REQUIRES the `Idempotency-Key` header following
+        the existing `IdempotencyInterceptor` convention (header name +
+        shape mirror `memberships.openapi.yaml` `createInvitation`).
+        `Idempotency-Token` is NOT used here — the spec.md/quickstart.md
+        drift to `Idempotency-Token` was recorded as a known issue under
+        `tasks.md` T564 (closeout fixup).
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: catalog-unknown-items
+    description: >
+      POS catalog sync — unknown-item capture and tenant-admin review
+      queue. Spec 005 Wave 1.
+
+paths:
+  /api/pos/v1/catalog/unknown-items:
+    post:
+      summary: POS captures (or resolves) a catalog item reference.
+      operationId: posCaptureItem
+      x-idempotency: required
+      tags: [catalog-unknown-items]
+      security:
+        - clerkJwt: []
+      description: >
+        Look up the submitted identifier against the tenant's active
+        alias set. On a hit, return the resolved product reference; on a
+        miss, create a `pending` `unknown_items` row scoped to (tenant,
+        store) and return its stable id. The submitting POS device's
+        authenticated principal supplies both `tenant_id` and `store_id`
+        (per spec 002); body-supplied tenant / store fields are NOT
+        accepted (Constitution §III).
+
+        Idempotency: the `Idempotency-Key` header is REQUIRED. The
+        existing `IdempotencyInterceptor` keys on `(method, route,
+        clientId = POS device principal id, key)` per FR-021a and honors
+        a default 72-hour TTL (≥ FR-021b's 24h minimum). Identical retry
+        replays the stored response with `Idempotent-Replayed: true`;
+        key-reuse with a different logical payload returns 409
+        `idempotency_key_conflict` per FR-021c.
+
+        Failure-response error codes follow research.md §R2 taxonomy:
+        `validation_failure`, `store_context_required`,
+        `idempotency_key_required`, `idempotency_key_malformed`,
+        `idempotency_key_conflict`.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+            pattern: "^[\\x21-\\x7E]{16,128}$"
+          description: >
+            Client-generated opaque token (UUIDv7 recommended) that
+            enables safe retries. Same key + same body replays the
+            original response; same key + different body returns 409.
+            Missing header returns 400 (policy: required). Shape and
+            convention match `memberships.openapi.yaml#createInvitation`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosCaptureItemRequest"
+      responses:
+        "200":
+          description: >
+            Identifier resolved to an existing tenant product (FR-022,
+            FR-030, FR-031). No `unknown_items` row was created.
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+              description: >
+                Present with value "true" when this response is an
+                idempotent replay of an earlier successful capture.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCaptureResolvedResponse"
+        "201":
+          description: >
+            Identifier did not resolve; a new `pending` `unknown_items`
+            row was created (or, on natural dedup, an existing pending
+            row's reference was returned per FR-032).
+          headers:
+            Idempotent-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+              description: >
+                Present with value "true" when this response is an
+                idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCaptureUnknownResponse"
+        "400":
+          description: >
+            Bad request. Possible `error.code` values:
+            `validation_failure` (FR-070 / FR-071 — missing or malformed
+            field), `store_context_required` (FR-011 — POS principal
+            lacks resolved store), `idempotency_key_required`,
+            `idempotency_key_malformed`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: POS principal is missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Idempotency-Key reuse with a different logical payload
+            (FR-021c). `error.code = "idempotency_key_conflict"`.
+            Audit subject: `unknown_item.idempotency_mismatch_rejected`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is
+            still being processed. Retry after `Retry-After` seconds with
+            the same key and body.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items:
+    get:
+      summary: List pending unknown items for the active tenant.
+      operationId: tenantAdminListUnknownItems
+      tags: [catalog-unknown-items]
+      description: >
+        Returns pending `unknown_items` visible to the authenticated
+        dashboard principal under the active tenant context. Tenant-wide
+        actors (tenant admin / tenant owner) see all stores in the
+        tenant; store-scoped operators see only items captured at stores
+        they have access to (RLS-enforced per 003 §8 / FR-014). Ordered
+        by `encountered_at DESC, id DESC`. Cursor pagination matches the
+        `outbox.openapi.yaml` precedent: opaque base64url token encoding
+        the next-page boundary.
+
+        Cross-tenant probes are non-disclosing — the page is filtered to
+        the active tenant by RLS, never by an authorization error
+        (SI-001 / SI-004 / FR-013).
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+            enum: [pending, resolved, dismissed]
+            default: pending
+          description: >
+            Lifecycle filter. Wave 1 supports `pending`; the `resolved`
+            and `dismissed` values are reserved for forward-compatibility
+            with the Wave 2 reconciliation review surfaces.
+        - in: query
+          name: store_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: >
+            Optional explicit store filter. RLS still applies; supplying
+            a store the principal cannot see returns the same empty
+            page a non-disclosing probe would. Tenant-wide actors may
+            omit this to see all stores.
+        - in: query
+          name: cursor
+          required: false
+          schema:
+            type: string
+            minLength: 1
+          description: >
+            Opaque pagination token returned in the previous page's
+            `next_cursor`. Clients MUST treat as opaque.
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: OK — page of unknown items (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListUnknownItemsResponse"
+        "400":
+          description: >
+            Invalid query parameter (bad UUID, bad cursor encoding,
+            limit out of range).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Caller lacks the tenant-admin / store-operator role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items/{id}/dismiss:
+    post:
+      summary: Dismiss a pending unknown item as invalid.
+      operationId: tenantAdminDismissUnknownItem
+      tags: [catalog-unknown-items]
+      description: >
+        Transition the addressed `unknown_items` row from `pending` to
+        `dismissed` (FR-003 / resolution_action = `dismissed`). The
+        UPDATE is constrained `WHERE resolution_status = 'pending'` to
+        enforce monotonic lifecycle (FR-004). Re-dismissing a
+        `dismissed` or `resolved` row returns 409 `already_reconciled`
+        (research.md §R2). A subsequent POS submission of the same
+        logical identifier creates a fresh `pending` row per FR-005;
+        the dismissed row is preserved unchanged as audit history.
+
+        Cross-tenant or out-of-scope addresses receive a non-disclosing
+        404 (SI-001 / SI-004 / FR-013 / FR-092).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUIDv7 primary key of the unknown-item row.
+      responses:
+        "200":
+          description: >
+            Item transitioned to `dismissed`. The response carries the
+            updated lifecycle fields so the client can refresh its view
+            without a follow-up GET.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnknownItem"
+        "400":
+          description: Bad request (invalid path UUID).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Caller lacks the role to dismiss in this scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            Not found OR not in scope. The two cases share one
+            non-disclosing response per SI-004.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Already reconciled. The item is already `resolved` or
+            `dismissed`. `error.code = "already_reconciled"` (research
+            §R2). The lifecycle UPDATE is monotonic per FR-004.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+    clerkJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    PosCaptureItemRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - identifier_type
+        - identifier_value
+      properties:
+        identifier_type:
+          type: string
+          enum: [barcode, sku, plu, supplier_code, external_pos_id]
+          description: >
+            Identifier kind, matching 003's
+            `unknown_items_identifier_type_valid` CHECK. `external_pos_id`
+            REQUIRES `source_system`.
+        identifier_value:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >
+            Identifier string (barcode, SKU, etc.). Length matches
+            003's `unknown_items_value_length` CHECK. Catalog reference
+            data per Constitution §XIV — not PII.
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+          nullable: true
+          description: >
+            Required when `identifier_type = external_pos_id`; MUST be
+            null/absent otherwise. Mirrors 003's
+            `unknown_items_source_system_required` CHECK.
+        sale_context:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Opaque advisory metadata (POS cashier label, vendor hint,
+            etc.) flowed into the existing 003
+            `unknown_items.sale_context jsonb` column. NON-IDENTITY,
+            NON-MATCHING, NON-AUTHORITATIVE per FR-006. Redaction applies
+            at all logger boundaries per 003 §8 + Constitution §14.
+
+    PosCaptureResolvedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - product_id
+      properties:
+        kind:
+          type: string
+          enum: [resolved]
+          description: Discriminator literal — alias resolution succeeded.
+        product_id:
+          type: string
+          format: uuid
+          description: Tenant-product UUID the identifier resolved to.
+        alias_id:
+          type: string
+          format: uuid
+          description: >
+            Optional alias row id that produced the resolution.
+            Convenience for auditing; clients SHOULD NOT depend on it.
+
+    PosCaptureUnknownResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - unknown_item
+      properties:
+        kind:
+          type: string
+          enum: [unknown]
+          description: >
+            Discriminator literal — identifier did not resolve; a
+            `pending` `unknown_items` row is the result.
+        unknown_item:
+          $ref: "#/components/schemas/UnknownItem"
+
+    UnknownItem:
+      type: object
+      additionalProperties: false
+      description: >
+        Redacted projection of an `unknown_items` row. Schema mirrors
+        003 `data-model.md` §8 + 005 `data-model.md` §2.1 / §2.2. The
+        `sale_context` field is opaque advisory metadata (FR-006).
+      required:
+        - id
+        - tenant_id
+        - store_id
+        - identifier_type
+        - identifier_value
+        - source_system
+        - resolution_status
+        - resolution_action
+        - resolved_at
+        - resolved_by
+        - resolved_product_id
+        - encountered_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUIDv7 primary key.
+        tenant_id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+          description: >
+            Non-null per FR-010; capture always carries the POS
+            principal's resolved store binding.
+        identifier_type:
+          type: string
+          enum: [barcode, sku, plu, supplier_code, external_pos_id]
+        identifier_value:
+          type: string
+          minLength: 1
+          maxLength: 200
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+          nullable: true
+          description: >
+            Non-null when `identifier_type = external_pos_id`; null
+            otherwise. Matches 003 CHECK
+            `unknown_items_source_system_required`.
+        resolution_status:
+          type: string
+          enum: [pending, resolved, dismissed]
+          description: Lifecycle state per FR-001 / FR-004.
+        resolution_action:
+          type: string
+          enum: [linked, created, dismissed]
+          nullable: true
+          description: >
+            Populated only when `resolution_status != 'pending'`.
+            Wave 1 only emits `dismissed`; `linked` and `created` are
+            reserved for Wave 2 reconciliation.
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: Acting principal's id when not pending.
+        resolved_product_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Set only when `resolution_action = linked` or `created`
+            (Wave 2). Always null for Wave 1 dismiss outcomes.
+        encountered_at:
+          type: string
+          format: date-time
+          description: When the capture first happened.
+        sale_context:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Opaque advisory metadata per FR-006 / FR-006a. Carries
+            POS-supplied hints inside the existing 003 `sale_context
+            jsonb` field. Non-identity, non-authoritative.
+
+    ListUnknownItemsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - next_cursor
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/UnknownItem"
+        next_cursor:
+          type: string
+          nullable: true
+          description: >
+            Opaque cursor for the next page; null on the last page.
+            Clients MUST treat as opaque.
+
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      description: >
+        Canonical error envelope shared with `auth.openapi.yaml`,
+        `outbox.openapi.yaml`, and others. The `error.code` enum is
+        documented in `research.md` §R2 (FR-091 taxonomy).
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+            message:
+              type: string
+              description: Human-readable summary; no sensitive data.
+            request_id:
+              type: string
+              format: uuid
+              nullable: true
+              description: Server-assigned correlation id.
+
+security:
+  - cookieAuth: []
