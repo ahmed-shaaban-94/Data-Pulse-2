@@ -1,0 +1,448 @@
+# 006-unknown-items-review-queue — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 006 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety semantics.
+#
+# 006 is a DOCS-ONLY feature. Every slice below carries `type: docs` and
+# touches only documentation under `specs/006-unknown-items-review-queue/**`
+# or the documented coordination surfaces (`CLAUDE.md`, `005/wave-status.md`).
+# No slice writes application code, schema, OpenAPI YAML, or UI artefacts.
+# No slice touches a `[GATED]` path; `approval_required: false` everywhere.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/006-unknown-items-review-queue/wave-status.md
+# Brief source:     specs/006-unknown-items-review-queue/tasks.md
+#                   (each slice's full brief lives in tasks.md; this file
+#                   provides the dispatch-time schema fields only)
+#
+# Updated: 2026-05-24 — initial authoring, after PR #308 push of commit
+# `7cfe25c` (CodeRabbit response). All 23 slices at `status: proposed`.
+
+spec: 006-unknown-items-review-queue
+version: 1
+base: origin/main
+
+# ----------------------------------------------------------------------------
+# findings
+# ----------------------------------------------------------------------------
+# 006 has no implementation findings (no code is written). Product / spec
+# clarifications are recorded in `spec.md` "## Clarifications" with dated
+# revision notes; planning-level decisions live in `plan.md`. No finding
+# entries needed at authoring time.
+
+findings: []
+
+# ----------------------------------------------------------------------------
+# slices — all status: proposed at authoring time
+# ----------------------------------------------------------------------------
+# Slice IDs match tasks.md task IDs (T001..T023) for 1:1 traceability.
+# Phase grouping below mirrors tasks.md Phase 1..13.
+#
+# Standard `report_fields` across every 006 slice (omitted per-slice for
+# brevity; Maestro infers from this list):
+#   - changed_files
+#   - validation_results
+#   - forbidden_path_check
+#   - confirmation_no_unauthorized_git_ops
+
+slices:
+
+  # ===== Phase 1: Setup (Coordination & Crosslink) ==========================
+
+  - id: T001
+    task_ids: [T001]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/006-unknown-items-review-queue/**
+    validation:
+      - command: gh pr view 308 --json reviews --jq '[.reviews[] | select(.author.login=="coderabbitai") | .state] | last'
+        expected: "Either COMMENTED with no actionable comments unresolved, or APPROVED. If CHANGES_REQUESTED, address findings and re-trigger via @coderabbitai review."
+    stop:
+      - standing-rules universal stops
+      - "stop if CodeRabbit posts findings touching files outside specs/006-unknown-items-review-queue/**"
+    parallel_safety: safe   # different files from T002 / T003
+
+  - id: T002
+    task_ids: [T002]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - CLAUDE.md
+    validation:
+      - command: grep -n "006.*Unknown Items Review Queue" CLAUDE.md
+        expected: "One match in the Specs summary section."
+    stop:
+      - standing-rules universal stops
+      - "stop if CLAUDE.md Active feature section needs editing — that's T023's slice"
+    parallel_safety: unsafe   # shares CLAUDE.md with T023
+
+  - id: T003
+    task_ids: [T003]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/005-pos-catalog-sync-reconciliation/wave-status.md
+    validation:
+      - command: grep -n "006-unknown-items-review-queue\|006 / Unknown Items Review Queue" specs/005-pos-catalog-sync-reconciliation/wave-status.md
+        expected: "One forward-link to 006 in 005's wave-status.md (informational only, no semantic change)."
+    stop:
+      - standing-rules universal stops
+      - "stop if the edit changes 005's slice / finding state in any way — this slice must be informational only"
+    parallel_safety: safe   # different file from T001 / T002
+
+  # ===== Phase 2: Foundational (Gates) ======================================
+  # Gate slices observe external work. They start at `status: blocked` even
+  # though their `depends_on` is technically empty within 006 — the gate is
+  # an external commit / merge on another spec or in the repo at large.
+
+  - id: T004
+    task_ids: [T004]
+    type: docs
+    status: blocked   # waits for 005 Wave 1 closeout on origin/main
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/006-unknown-items-review-queue/plan.md
+    validation:
+      - command: grep -E "wave_1.*(closed|complete|done)" specs/005-pos-catalog-sync-reconciliation/wave-status.md
+        expected: "One match indicating 005 Wave 1 is closed."
+    stop:
+      - standing-rules universal stops
+      - "stop if 005 Wave 1 status is still 'in progress' — leave slice blocked and update wave-status.md instead"
+    parallel_safety: safe   # different file from T005 / T006 gates
+
+  - id: T005
+    task_ids: [T005]
+    type: docs
+    status: blocked   # waits for 005 Wave 2 reconciliation spec authoring + merge
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/006-unknown-items-review-queue/plan.md
+    validation:
+      - command: ls specs/005-pos-catalog-sync-reconciliation/execution-map.yaml && grep -E "reconciliation|wave.?2" specs/005-pos-catalog-sync-reconciliation/execution-map.yaml | head -5
+        expected: "005 execution-map shows Wave 2 reconciliation slices listed and at least one merged."
+    stop:
+      - standing-rules universal stops
+      - "stop if 005 Wave 2 has not yet been authored — gate remains blocked"
+    parallel_safety: safe
+
+  - id: T006
+    task_ids: [T006]
+    type: docs
+    status: blocked   # waits for 003 PHASE3_RED_WAVE GREEN slices
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/006-unknown-items-review-queue/plan.md
+    validation:
+      - command: ls apps/api/src/modules/catalog/tenant-catalog.service.ts apps/api/src/modules/catalog/product-aliases.service.ts 2>&1
+        expected: "Both files exist and contain GREEN implementations (not RED skeletons)."
+    stop:
+      - standing-rules universal stops
+      - "stop if either service is still RED-only — gate remains blocked"
+    parallel_safety: safe
+
+  - id: T007
+    task_ids: [T007]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/006-unknown-items-review-queue/spec.md
+      - specs/006-unknown-items-review-queue/plan.md
+    validation:
+      - command: grep -n "v3\\.0\\." .specify/memory/constitution.md
+        expected: "Header version is v3.0.1 or a SemVer-compatible patch (v3.0.x)."
+    stop:
+      - standing-rules universal stops
+      - "stop if constitution bumped to v3.1.x or higher — re-run /speckit-clarify against 006"
+    parallel_safety: safe
+
+  - id: T008
+    task_ids: [T008]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files: []   # read-only verification; no edits expected
+    validation:
+      - command: grep -E "package\\.json|pnpm-lock|drizzle|openapi|\\.github" docs/agent-os/standing-rules.md | head -10
+        expected: "Standing rules §3 forbidden-paths list matches 006 plan.md §9.4 claim verbatim."
+    stop:
+      - standing-rules universal stops
+      - "stop if forbidden-paths list has drifted — propose a plan.md §9.4 amendment slice"
+    parallel_safety: safe
+
+  - id: T009
+    task_ids: [T009]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files: []   # read-only verification of the §6.1.1 + execution-map / wave-status files
+    validation:
+      - command: ls specs/006-unknown-items-review-queue/execution-map.yaml specs/006-unknown-items-review-queue/wave-status.md
+        expected: "Both files exist. plan.md §6.1.1 narrative matches reality (006 carries them, compact form)."
+    stop:
+      - standing-rules universal stops
+      - "stop if either file is missing — that means a regression slipped through"
+    parallel_safety: safe
+
+  # ===== Phase 3-12: Per-user-story sign-off slices =========================
+  # All sign-off slices share the same `allowed_files` (the Sign-off log in
+  # requirements.md), so they MUST serialise. `parallel_safety: unsafe` is
+  # set explicitly so Maestro never dispatches two sign-offs in parallel.
+  # `agent: reviewer` reflects the role: read spec/quickstart, judge against
+  # acceptance scenarios, append a dated entry to the log.
+
+  - id: T010
+    task_ids: [T010]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]   # CR feedback must clear before sign-offs land
+    agent: reviewer
+    allowed_files:
+      - specs/006-unknown-items-review-queue/checklists/requirements.md
+    validation:
+      - command: grep -n "^### T010 sign-off\|^#### T010" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: "Sign-off entry for T010 appears under '## Sign-off log' with a date stamp and reviewer attribution."
+    stop:
+      - standing-rules universal stops
+      - "stop if review surfaces a US1 ambiguity — open a /speckit-clarify slice instead of signing off"
+    parallel_safety: unsafe   # shares checklists/requirements.md with T011..T019
+
+  - id: T011
+    task_ids: [T011]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T011 sign-off\|^#### T011" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T011 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if review surfaces a US2 ambiguity"]
+    parallel_safety: unsafe
+
+  - id: T012
+    task_ids: [T012]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T012 sign-off\|^#### T012" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T012 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if review surfaces a US3 ambiguity"]
+    parallel_safety: unsafe
+
+  - id: T013
+    task_ids: [T013]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T013 sign-off\|^#### T013" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T013 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if review surfaces a US4 ambiguity — likely FR-021a / FR-080 follow-through"]
+    parallel_safety: unsafe
+
+  - id: T014
+    task_ids: [T014]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T014 sign-off\|^#### T014" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T014 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if US5 race-loser scenario is ambiguous"]
+    parallel_safety: unsafe
+
+  - id: T015
+    task_ids: [T015]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T015 sign-off\|^#### T015" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T015 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if US6 atomic-commit obligation is unclear"]
+    parallel_safety: unsafe
+
+  - id: T016
+    task_ids: [T016]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T016 sign-off\|^#### T016" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T016 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if US7 #3 wording (`already-reconciled` + `details.prior_state`) is unclear"]
+    parallel_safety: unsafe
+
+  - id: T017
+    task_ids: [T017]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T017 sign-off\|^#### T017" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T017 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if US8 #4 / #5 (`forbidden` vs `not-found` split) is ambiguous"]
+    parallel_safety: unsafe
+
+  - id: T018
+    task_ids: [T018]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: rg -n "validation|target-unavailable|alias-conflict|idempotency-token-mismatch|already-reconciled|not-found|forbidden|system-failure|already-terminal" specs/006-unknown-items-review-queue/{spec,plan,research,data-model,quickstart}.md specs/006-unknown-items-review-queue/contracts/README.md
+        expected: All 5 docs enumerate the same 8 live categories; `already-terminal` appears only in historical revision-note context.
+    stop: [standing-rules universal stops, "stop if any document still treats `already-terminal` as a live category"]
+    parallel_safety: unsafe
+
+  - id: T019
+    task_ids: [T019]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [T001]
+    agent: reviewer
+    allowed_files: [specs/006-unknown-items-review-queue/checklists/requirements.md]
+    validation:
+      - command: grep -n "^### T019 sign-off\|^#### T019" specs/006-unknown-items-review-queue/checklists/requirements.md
+        expected: Sign-off entry for T019 appears under '## Sign-off log'.
+    stop: [standing-rules universal stops, "stop if a new metric / audit subject is discovered — that's an unplanned scope expansion"]
+    parallel_safety: unsafe
+
+  # ===== Phase 13: Handoff ==================================================
+
+  - id: T020
+    task_ids: [T020]
+    type: docs
+    status: blocked   # depends on T005 (005 Wave 2 merged)
+    approval_required: true   # opening a new feature spec creates downstream work; flag for explicit user OK
+    depends_on: [T005]
+    agent: opus-maestro
+    allowed_files:
+      - specs/   # creates a new specs/00N-future-api-feature/ directory; exact NNN decided at dispatch time
+    validation:
+      - command: ls -d specs/00*-*api* 2>/dev/null || ls -d specs/00*-*review-api*
+        expected: A new feature directory under specs/ exists for the future API feature, containing spec.md (and at least skeleton plan/research/etc.).
+    stop:
+      - standing-rules universal stops
+      - "stop if T005 hasn't transitioned to ready/merged — gate must clear first"
+      - "stop if user hasn't approved opening the downstream feature spec in the current session"
+    parallel_safety: safe
+
+  - id: T021
+    task_ids: [T021]
+    type: docs
+    status: blocked   # depends on T020 (future API feature merged)
+    approval_required: true
+    depends_on: [T020]
+    agent: opus-maestro
+    allowed_files:
+      - specs/   # creates a new specs/00N-future-ui-feature/ directory
+    validation:
+      - command: ls -d specs/00*-*ui* 2>/dev/null || ls -d specs/00*-*dashboard*
+        expected: A new feature directory under specs/ exists for the future UI feature.
+    stop:
+      - standing-rules universal stops
+      - "stop if the future API feature is not yet merged on `origin/main` — gate must clear first"
+      - "stop if user hasn't approved opening the downstream feature spec in the current session"
+    parallel_safety: safe
+
+  - id: T022
+    task_ids: [T022]
+    type: docs
+    status: blocked   # depends on Phase 3-12 sign-offs (T010..T019)
+    approval_required: false
+    depends_on: [T010, T011, T012, T013, T014, T015, T016, T017, T018, T019]
+    agent: reviewer
+    allowed_files: []   # read-only audit pass
+    validation:
+      - command: for n in 010 011 012 013 014 015 016 017 018 019; do grep -q "^### T$n sign-off\|^#### T$n" specs/006-unknown-items-review-queue/checklists/requirements.md || echo "MISSING T$n"; done
+        expected: No "MISSING T###" output — every Phase 3-12 sign-off is recorded.
+    stop:
+      - standing-rules universal stops
+      - "stop if any sign-off is missing — re-dispatch that story's slice instead of forcing T022 closed"
+    parallel_safety: safe   # read-only
+
+  - id: T023
+    task_ids: [T023]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: []
+    agent: opus-maestro
+    allowed_files:
+      - CLAUDE.md
+    validation:
+      - command: grep -A 3 "^## Active feature" CLAUDE.md
+        expected: Active feature reflects current state — 006 referenced only in Specs summary unless explicit follow-up work exists.
+    stop:
+      - standing-rules universal stops
+      - "stop if 006 has unexpected in-flight follow-up work — surface it before editing CLAUDE.md"
+    parallel_safety: unsafe   # shares CLAUDE.md with T002
+
+# ----------------------------------------------------------------------------
+# groups — optional parallel groupings (none endorsed yet)
+# ----------------------------------------------------------------------------
+# 006's slices are mostly serialised by file-overlap (the entire sign-off
+# sweep shares one file) or by external gates (Phase 2 waits on 005 / 003).
+# Two safe parallel groups are proposed for future endorsement.
+
+groups:
+
+  - id: PHASE1-CROSSLINK
+    members: [T001, T002, T003]
+    parallel_safety: unsafe   # T002 + T023 share CLAUDE.md; safer to mark whole group unsafe
+    proposed: true
+
+  - id: PHASE2-DRIFT-CHECKS
+    members: [T007, T008, T009]
+    parallel_safety: safe   # all read-only or non-overlapping file targets
+    proposed: true
