@@ -71,7 +71,6 @@ These slices cannot transition to `ready` until their external trigger fires:
 |---|---|---|---|
 | T004 | blocked | 005 Wave 1 closeout on `origin/main` | `005/wave-status.md` shows `wave_1.status: closed`. Currently Wave 1 is in progress (last closeout PR was #305 on 2026-05-23). |
 | T005 | blocked | 005 Wave 2 reconciliation spec authored + merged | 005's `execution-map.yaml` lists Wave 2 reconciliation slices and at least one is merged. 003 PHASE3_RED_WAVE dependency is cleared (T350/T351 + T383/T384 GREEN pairs merged); 005 Wave 2 task authoring is still pending. |
-| T006 | proposed | ~~003 PHASE3_RED_WAVE GREEN slices~~ — **trigger cleared** | `apps/api/src/modules/catalog/tenant-catalog.service.ts` (T351 GREEN, PR #300) and `product-aliases.service.ts` (T384 GREEN, PR #303) are on `main`. T006 can now dispatch. |
 | T020 | blocked | T005 transitions to merged | Cannot open the future API feature spec until 005 Wave 2 reconciliation lands. |
 | T021 | blocked | T020 transitions to merged | Cannot open the future UI feature spec until the future API feature merges. |
 | T022 | blocked | All Phase 3-12 sign-offs (T010..T019) recorded | Final sweep of the sign-off log. |
