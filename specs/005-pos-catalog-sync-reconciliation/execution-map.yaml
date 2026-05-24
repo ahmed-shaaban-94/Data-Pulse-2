@@ -215,8 +215,8 @@ slices:
       - 005-WAVE1-IDEMP-WIRE
     agent: sonnet-api
     allowed_files:
-      - packages/contracts/openapi/catalog/unknown-items.yaml         # [GATED] — OpenAPI YAML
-      - packages/contracts/__tests__/catalog/unknown-items.spec.ts    # conformance test stub
+      - packages/contracts/openapi/catalog/unknown-items.yaml             # [GATED] — OpenAPI YAML
+      - apps/api/test/catalog/unknown-items/contract.spec.ts              # conformance test (apps/api Jest runner; mirrors apps/api/test/outbox/admin.contract.spec.ts precedent)
     forbidden_files:
       - packages/contracts/openapi/audit.openapi.yaml                 # do not edit existing contracts
       - packages/contracts/openapi/auth.openapi.yaml
@@ -229,16 +229,16 @@ slices:
       - packages/contracts/openapi/stores.openapi.yaml
       - packages/contracts/openapi/tenants.openapi.yaml
     validation:
-      - command: pnpm --filter @data-pulse-2/contracts test
-        expected: GREEN — existing contract suite + new unknown-items conformance test
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/contract"
+        expected: GREEN — new unknown-items.contract.spec.ts asserts the new YAML is loadable, operationIds are unique vs. existing contracts, and the document conforms to existing schema/header conventions (Idempotency-Key cased and shaped like memberships.openapi.yaml)
         docker_required: false
-      - command: pnpm --filter @data-pulse-2/contracts lint
-        expected: GREEN — YAML lints clean
+      - command: pnpm --filter @data-pulse-2/api test "test/contract-conformance"
+        expected: GREEN — umbrella conformance suite continues to auto-discover every YAML under packages/contracts/openapi/ (including the new catalog/unknown-items.yaml) with no regressions
         docker_required: false
     stop:
       - if the YAML edits any existing operationId
       - if the contract uses `Idempotency-Token` instead of `Idempotency-Key` (must align to existing IdempotencyInterceptor convention; see tasks.md §5.2 note)
-      - if any file outside `packages/contracts/` is modified
+      - if any file outside `packages/contracts/openapi/catalog/` or `apps/api/test/catalog/unknown-items/` is modified
     report_fields:
       - changed_files
       - validation_results
