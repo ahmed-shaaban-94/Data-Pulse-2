@@ -342,10 +342,11 @@ describe("catalog/unknown-items.yaml — schema closedness", () => {
   it("Error envelope shape matches the outbox.openapi.yaml convention (error.code + error.message)", () => {
     const schema = catalogDoc.components?.schemas?.["Error"];
     const props = schema?.["properties"] as
-      | { error?: { required?: string[] } }
+      | { error?: { required?: string[]; additionalProperties?: boolean } }
       | undefined;
     expect(props?.error?.required).toEqual(
       expect.arrayContaining(["code", "message"]),
     );
+    expect(props?.error?.additionalProperties).toBe(false);
   });
 });
