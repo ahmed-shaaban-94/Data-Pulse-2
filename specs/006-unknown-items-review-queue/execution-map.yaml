@@ -143,7 +143,7 @@ slices:
   - id: T006
     task_ids: [T006]
     type: docs
-    status: blocked   # waits for 003 PHASE3_RED_WAVE GREEN slices
+    status: proposed   # external trigger cleared: 003 PHASE3_RED_WAVE GREEN pairs on main (T351 PR #300, T384 PR #303)
     approval_required: false
     depends_on: []
     agent: opus-maestro

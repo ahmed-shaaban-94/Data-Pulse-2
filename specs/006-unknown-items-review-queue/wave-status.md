@@ -70,8 +70,8 @@ These slices cannot transition to `ready` until their external trigger fires:
 | Slice | Status | Blocked by | What it waits for |
 |---|---|---|---|
 | T004 | blocked | 005 Wave 1 closeout on `origin/main` | `005/wave-status.md` shows `wave_1.status: closed`. Currently Wave 1 is in progress (last closeout PR was #305 on 2026-05-23). |
-| T005 | blocked | 005 Wave 2 reconciliation spec authored + merged | 005's `execution-map.yaml` lists Wave 2 reconciliation slices and at least one is merged. Wave 2 itself is blocked on 003 PHASE3_RED_WAVE GREEN slices. |
-| T006 | blocked | 003 PHASE3_RED_WAVE GREEN slices land | `apps/api/src/modules/catalog/tenant-catalog.service.ts` carries a GREEN `create()` implementation; `ProductAliasesService` carries GREEN uniqueness implementation. As of `2bf7e27`, T350 RED is on main but the corresponding service file is a skeleton, not GREEN. |
+| T005 | blocked | 005 Wave 2 reconciliation spec authored + merged | 005's `execution-map.yaml` lists Wave 2 reconciliation slices and at least one is merged. 003 PHASE3_RED_WAVE dependency is cleared (T350/T351 + T383/T384 GREEN pairs merged); 005 Wave 2 task authoring is still pending. |
+| T006 | proposed | ~~003 PHASE3_RED_WAVE GREEN slices~~ — **trigger cleared** | `apps/api/src/modules/catalog/tenant-catalog.service.ts` (T351 GREEN, PR #300) and `product-aliases.service.ts` (T384 GREEN, PR #303) are on `main`. T006 can now dispatch. |
 | T020 | blocked | T005 transitions to merged | Cannot open the future API feature spec until 005 Wave 2 reconciliation lands. |
 | T021 | blocked | T020 transitions to merged | Cannot open the future UI feature spec until the future API feature merges. |
 | T022 | blocked | All Phase 3-12 sign-offs (T010..T019) recorded | Final sweep of the sign-off log. |
@@ -100,6 +100,7 @@ These slices have no unsatisfied dependencies and can dispatch when their slot o
 | T017 | 10 — US8 sign-off | reviewer | (same file) | — |
 | T018 | 11 — US9 sign-off | reviewer | (same file) | — |
 | T019 | 12 — US10 sign-off | reviewer | (same file) | — |
+| T006 | 2 — Foundational gate | opus-maestro | `specs/006-unknown-items-review-queue/plan.md` | T004, T005 (different files) |
 | T023 | 13 — Handoff | opus-maestro | `CLAUDE.md` | — (T002 also touches CLAUDE.md) |
 
 **Proposed parallel groups** (awaiting endorsement):
