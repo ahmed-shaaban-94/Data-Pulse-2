@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-24 (Wave 2 tasks authored — T600–T670, 9 slices `005-WAVE2-*` added to execution-map.yaml; tasks.md §§13–21 appended)
+**Last updated:** 2026-05-24 (Wave 1 Phase 2–3 slices merged — `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317; Phase 3+ now unblocked)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `e7c41b0` (PR #307, 2026-05-23 — `005-WAVE1-HARNESS` merged)
+**Base:** `origin/main` at `5fc8549` (PR #317, 2026-05-24 — `005-WAVE1-CAPTURE-HAPPY` merged)
 **Active findings:** 0 (1 resolved — see "Resolved findings" below)
 **Resolved findings:** 1
 
@@ -10,17 +10,17 @@
 
 ## TL;DR
 
-**4 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, **`005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307** — both new this closeout). **16 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
+**6 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, **`005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317** — two new this closeout). **14 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
 
-**Wave 2 tasks now authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
+**Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
+
+**Phase 3+ now unblocked.** With `005-WAVE1-CONTRACT` merged, the Phase 3 capture path is ready to dispatch. The immediate next slice is **`005-WAVE1-CAPTURE-RESOLVE`** (T513 + T514, alias-resolution prelude — all dependencies satisfied, parallel_safety: unsafe).
 
 **Next moves:**
 
-1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`). This is the **sole gating bottleneck** for Wave 1 Phase 3+ — every capture/list/dismiss slice needs operationIds defined here.
-2. **`005-WAVE1-CAPTURE-HAPPY`** (T510 + T511 + T512) is unblocked on the harness side
-   (`005-WAVE1-HARNESS` merged); it still waits on `005-WAVE1-CONTRACT`. When that
-   lands, this becomes the obvious next Wave 1 slice to dispatch.
-3. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). The Wave 2 conflict harness, link, and create-new slices cannot dispatch until this is approved and merged. The Wave 1 and Wave 2 CONTRACT approvals can be requested together or sequentially — they touch the same YAML file so they must merge serially.
+1. **Dispatch `005-WAVE1-CAPTURE-RESOLVE`** (T513 + T514) — now fully unblocked; no gating.
+2. In parallel or after CAPTURE-RESOLVE, dispatch from the Phase 3 cohort per the DAG in execution-map.yaml: **`005-WAVE1-VALIDATION`** (T519 + T520, parallel_safety: safe), **`005-WAVE1-NON-DISCLOSING`** (T521 + T522, parallel_safety: unsafe), **`005-WAVE1-LIST`** (T523 + T524, parallel_safety: unsafe).
+3. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges.
 
 ---
 
@@ -34,6 +34,8 @@
 | `005-WAVE1-SETUP` (slice) | T500 module skeleton (`apps/api/src/catalog/unknown-items/unknown-items.module.ts`) + T501 counter registration in `api.metrics.ts`; introduced `CATALOG_METRIC_NAMES` sibling registry | PR #304 @ `622e509` |
 | `005-WAVE1-IDEMP-VERIFY` (slice) | T505 — Verification spec proving the existing `IdempotencyInterceptor` covers FR-021/021a/021b/021c against a fake POS-principal context. Result: existing primitive is sufficient; Phase 4 needs no wrapper service. | PR #306 @ `4c16451` |
 | `005-WAVE1-HARNESS` (slice) | T506 `seed-unknown-items.ts` fixture (6 deterministic rows, 4 barcode + 2 external_pos_id) + T507 cross-tenant RED suite (`cross-tenant.spec.ts`). Soft-skip gate (`serviceMissing()` returns early when `UnknownItemsService` is absent) keeps CI green until T511 ships GREEN — the gate flips off naturally once the service module is loadable. | PR #307 @ `e7c41b0` |
+| `005-WAVE1-CONTRACT` (slice) | T503 + T504 — OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml` with Wave 1 operationIds (`posCaptureItem`, `tenantAdminListUnknownItems`, `tenantAdminDismissUnknownItem`); contract conformance spec. Unblocks all Phase 3+ slices. | PR #315 @ `6cb4a1b` |
+| `005-WAVE1-CAPTURE-HAPPY` (slice) | T510 + T511 + T512 — US1 first end-to-end capture path: `UnknownItemsService.capture()` + `UnknownItemsController.capture()` + capture happy-path spec. Blocks all subsequent capture refinements (resolve, store-scope, dedup, validation, non-disclosing) and idempotency wiring. | PR #317 @ `5fc8549` |
 
 ### Planning artifacts merged (for context)
 
@@ -111,16 +113,11 @@ _None._
 
 ## Proposed (awaiting approval / dispatch)
 
-_Phase 0 (cross-spec prerequisite), Phase 1 (setup), and the Phase 2 verification + harness slices are complete; see "Merged on `main`."_
-
-### Phase 2 — Foundational
-
-- **`005-WAVE1-CONTRACT`** (T503, T504) — OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`. **`[GATED]`** — requires explicit per-slice approval per Standing Rules §3. **Sole remaining Phase 2 slice and the gating bottleneck for Phase 3+.**
+_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), and Phase 3 happy-path slices are complete; see "Merged on `main`."_
 
 ### Phase 3 — US1 Capture (P1 / MVP)
 
-- **`005-WAVE1-CAPTURE-HAPPY`** (T510, T511, T512) — first end-to-end capture.
-- **`005-WAVE1-CAPTURE-RESOLVE`** (T513, T514) — alias-resolution prelude (FR-022/030/031).
+- **`005-WAVE1-CAPTURE-RESOLVE`** (T513, T514) — alias-resolution prelude (FR-022/030/031). **NEXT SLICE TO DISPATCH.** All dependencies satisfied.
 - **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515, T516) — FR-030a store-scope respect.
 - **`005-WAVE1-CAPTURE-DEDUP`** (T517, T518) — FR-032 natural dedup.
 - **`005-WAVE1-VALIDATION`** (T519, T520) — Zod boundary + redaction guard.
@@ -181,8 +178,8 @@ _Phase 0 (cross-spec prerequisite), Phase 1 (setup), and the Phase 2 verificatio
 
 | Cohort | Members | Notes |
 |---|---|---|
-| `PHASE_0_1_2_COHORT` | METRICS-ALLOWLIST + SETUP + IDEMP-VERIFY + HARNESS | All four merged: METRICS-ALLOWLIST PR #299, SETUP PR #304, IDEMP-VERIFY PR #306, HARNESS PR #307 (all 2026-05-23). Only `005-WAVE1-CONTRACT` remains in Phase 2 — that one is `[GATED]` (packages/contracts/openapi/**). Cohort id retained in `execution-map.yaml` for traceability. |
-| `PHASE_3_COHORT` | 7 capture/list slices | Intra-cohort DAG: CAPTURE-HAPPY is the root; descendants depend on it. RED test authoring is parallel-safe across disjoint spec files; GREEN impls serialize through shared `unknown-items.service.ts` and `unknown-items.controller.ts`. |
+| `PHASE_0_1_2_COHORT` | METRICS-ALLOWLIST + SETUP + IDEMP-VERIFY + HARNESS + CONTRACT | All five merged: METRICS-ALLOWLIST PR #299, SETUP PR #304, IDEMP-VERIFY PR #306, HARNESS PR #307 (all 2026-05-23), CONTRACT PR #315 (2026-05-24). Cohort id retained in `execution-map.yaml` for traceability. |
+| `PHASE_3_COHORT` | CAPTURE-HAPPY (merged) + 6 dependent slices | CAPTURE-HAPPY merged PR #317 (2026-05-24). Remaining members: CAPTURE-RESOLVE, CAPTURE-STORE-SCOPE, CAPTURE-DEDUP, VALIDATION, NON-DISCLOSING, LIST. Intra-cohort DAG: CAPTURE-HAPPY was the root; descendants depend on it. RED test authoring is parallel-safe across disjoint spec files; GREEN impls serialize through shared `unknown-items.service.ts` and `unknown-items.controller.ts`. |
 | `PHASE_4_5_COHORT` | 7 idempotency/dismiss/audit/metrics slices | Intra-cohort DAG: IDEMP-WIRE `blocks` MISMATCH + EDGES; DISMISS `blocks` FR005 + AUDIT. RED tests where disjoint may dispatch in parallel; GREENs serialize through shared service/controller/filter files. |
 
 See [`execution-map.yaml`](./execution-map.yaml) `groups:` section for full member lists, intra-cohort DAG notes, and the schema-anchored definition of what `parallel_safety: safe` means on a group.
@@ -222,20 +219,19 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-With Wave 2 tasks authored, three tracks are open:
+Phase 3+ capture path is now fully unblocked. Two tracks are open:
 
-1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, `packages/contracts/openapi/catalog/unknown-items.yaml`). Sole gating bottleneck for all Wave 1 Phase 3+ slices.
-2. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, same YAML extended with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Can be approved together with `005-WAVE1-CONTRACT` if the YAML review covers both operationId sets in one pass. They must merge serially (T600 `depends_on: [005-WAVE1-CONTRACT]`).
-3. **Dispatch `005-WAVE2-CONFLICT`** once `005-WAVE2-CONTRACT` is merged — no code, RED-only test authoring, unblocks the link + create-new slices.
+1. **Dispatch the Phase 3 capture sequence, starting with `005-WAVE1-CAPTURE-RESOLVE`** (T513 + T514). All Phase 3 slices depend on CAPTURE-HAPPY which merged PR #317. CAPTURE-RESOLVE is the immediate next slice; it has no other predecessors. Remaining Phase 3 slices per intra-cohort DAG: CAPTURE-STORE-SCOPE (blocks on RESOLVE), CAPTURE-DEDUP (blocks on RESOLVE), VALIDATION (blocks on CAPTURE-HAPPY), NON-DISCLOSING (blocks on CAPTURE-HAPPY), LIST (blocks on CAPTURE-HAPPY).
+2. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges. Once approved + merged, dispatch `005-WAVE2-CONFLICT` (RED-only), then link + create-new per the DAG.
 
 Reusable Maestro prompts (short form):
 
 ```text
-# Wave 1 contract — request approval first:
-Use Agent OS. Execute slice 005-WAVE1-CONTRACT. Stop before commit.
+# Phase 3 capture resolve — first post-happy-path slice:
+Use Agent OS. Execute slice 005-WAVE1-CAPTURE-RESOLVE. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 
-# Wave 2 contract — request approval first (depends_on 005-WAVE1-CONTRACT):
+# Wave 2 contract — request approval (depends_on 005-WAVE1-CONTRACT which merged):
 Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 

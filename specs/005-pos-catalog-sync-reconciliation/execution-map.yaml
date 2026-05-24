@@ -204,7 +204,10 @@ slices:
   - id: 005-WAVE1-CONTRACT
     task_ids: [T503, T504]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 315
+    merged_at_commit: 6cb4a1b3911a14b1cc6f4b40933d693317cbf4b5
+    merged_at_date: 2026-05-24
     approval_required: true  # [GATED] — packages/contracts/openapi/** is a forbidden surface per Standing Rules §3
     depends_on:
       - 005-WAVE1-SETUP
@@ -339,7 +342,10 @@ slices:
   - id: 005-WAVE1-CAPTURE-HAPPY
     task_ids: [T510, T511, T512]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 317
+    merged_at_commit: 5fc8549769c44771842328f5dd42050f4c30a1b8
+    merged_at_date: 2026-05-24
     approval_required: false
     depends_on:
       - 005-WAVE1-SETUP
