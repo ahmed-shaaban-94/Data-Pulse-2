@@ -1,8 +1,8 @@
 # Wave Status — `006-unknown-items-review-queue`
 
-**Last updated:** 2026-05-24 (initial authoring, after PR #308 commit `7cfe25c` — CodeRabbit response + tasks.md external-review fixes)
+**Last updated:** 2026-05-24 (post-merge closeout: PR #308 @ `678cbd2` merged 2026-05-23; PR #311 @ `8ea103a` merged 2026-05-24 — Agent OS compatibility artefacts on `main`)
 **Spec:** [`specs/006-unknown-items-review-queue/`](.)
-**Base:** `origin/main` at `2bf7e27` (PR #300, T350 RED — 2026-05-23). PR #308 not yet merged at authoring time.
+**Base:** `origin/main` at `8ea103a` (PR #311, 006 Agent OS compatibility, 2026-05-24)
 **Active findings:** 0
 **Resolved findings:** 0
 
@@ -21,8 +21,8 @@
 
 **Next moves:**
 
-1. **Land PR #308.** That puts spec / plan / research / data-model / contracts / quickstart / tasks / execution-map / wave-status on `main` and makes 006 citable. T001 (CodeRabbit follow-through) is the only Phase 1 slice that may need to run *before* merge.
-2. **Dispatch the post-merge crosslink pair** — T002 (CLAUDE.md Specs summary) and T003 (005 wave-status forward-link). They have non-overlapping files but share the parallel group `PHASE1-CROSSLINK` with T001; safer to dispatch sequentially.
+1. **PR #308 and PR #311 are merged** — 006 artefacts are on `main` and the spec is citable.
+2. **Dispatch the Phase 1 crosslink pair** — T002 (CLAUDE.md Specs summary) and T003 (005 wave-status forward-link). They have non-overlapping files but share the parallel group `PHASE1-CROSSLINK` with T001; safer to dispatch sequentially. T001 (CodeRabbit follow-through) should run first if any CR findings remain from `7cfe25c`.
 3. **Run the drift checks** — `PHASE2-DRIFT-CHECKS` group (T007 + T008 + T009) is `parallel_safety: safe` and can dispatch together once Phase 1 lands.
 4. **Open the Phase 3–12 sign-off sweep** — schedule reviewers against `quickstart.md` scenarios; sign-offs serialise on `checklists/requirements.md`.
 5. **Hold T020 / T021** until the foundational gates (T004 + T005 + T006) observe their external triggers.
@@ -33,22 +33,16 @@
 
 ## Merged on `main`
 
-_(none yet — PR #308 is the merge target that will move planning artefacts here)_
-
-When PR #308 merges, this section will list:
-
 | Stage | Subject | Reference |
 |---|---|---|
-| Spec + plan + Phase 0/1 artefacts + tasks.md + execution-map + wave-status | 006 product-level UX brief — 10 user stories, 38 FRs (incl. FR-001a / FR-021a / FR-062a / FR-070a / FR-100 with `forbidden`), 9 SI requirements, 8 SCs, 12 edge cases, 4 clarifications + 3 external-review revisions | PR #308 @ `<TBD>` |
+| Spec + plan + Phase 0/1 artefacts | 006 product-level UX brief — 10 user stories, 38 FRs (incl. FR-001a / FR-021a / FR-062a / FR-070a / FR-100 with `forbidden`), 9 SI requirements, 8 SCs, 12 edge cases, 4 clarifications + 3 external-review revisions | PR #308 @ `678cbd2` (2026-05-23) |
+| `tasks.md` + `execution-map.yaml` + `wave-status.md` | Agent OS compatibility artefacts — slice schema, T001..T023 coordination tasks, execution map with parallel groups, wave-status initial authoring | PR #311 @ `8ea103a` (2026-05-24) |
 
 ---
 
 ## Local only — committed/uncommitted, not on `main`
 
-| Slice | Status | Branch | Reference |
-|---|---|---|---|
-| (all planning artefacts) | `pushed` (PR #308 open) | `claude/naughty-elion-e34744` | 3 commits: `4383928` (initial spec+plan), `9da3c68` (self-external-review fixes), `7cfe25c` (CodeRabbit response) |
-| T001 — CodeRabbit follow-through | proposed (in-flight if CR re-review surfaces findings) | `claude/naughty-elion-e34744` | Re-triggered via `@coderabbitai review` comment on PR #308 |
+_None._ All planning artefacts are on `main` — PR #308 (spec/plan/Phase 0–1) merged 2026-05-23; PR #311 (tasks.md/execution-map/wave-status) merged 2026-05-24.
 
 ---
 
@@ -116,32 +110,17 @@ These slices have no unsatisfied dependencies and can dispatch when their slot o
 
 ## Next recommended action
 
-**Wait for PR #308 to merge.** Until it merges, 006's `tasks.md` cannot be cited from `origin/main` and 006 is not yet "active" from CLAUDE.md's perspective. Specifically:
+**PR #308 and PR #311 are merged.** 006 is now active on `origin/main`. Next steps:
 
-1. **Monitor CodeRabbit re-review** on commit `7cfe25c`. If findings land, T001 dispatches to address them.
-2. **Land PR #308 → main.** Closeout this `wave-status.md` (transition the planning-artefacts row from "Local only" to "Merged on `main`", update Base to the merge commit SHA).
-3. **Dispatch T002 + T003** sequentially (CLAUDE.md row + 005 wave-status forward-link).
-4. **Dispatch `PHASE2-DRIFT-CHECKS` group** (T007 + T008 + T009 in parallel — `safe`).
-5. **Schedule the Phase 3–12 sign-off sweep** with reviewers. Aim for one P1 sign-off per week (T010–T015), then a single batch for P2 sign-offs (T016–T019).
+1. **Dispatch T002 + T003** sequentially — T002 updates the `CLAUDE.md` Specs summary row for 006; T003 adds a forward-link to 006 in `specs/005-pos-catalog-sync-reconciliation/wave-status.md`. They touch different files so can run in parallel, but T001 (CodeRabbit follow-through, if CR findings arrived after `7cfe25c`) should land first if any are open.
+2. **Dispatch `PHASE2-DRIFT-CHECKS` group** (T007 + T008 + T009 in parallel — `safe`). Three independent drift-verification reads.
+3. **Schedule the Phase 3–12 sign-off sweep** with reviewers. Aim for one P1 sign-off per week (T010–T015), then a single batch for P2 sign-offs (T016–T019).
 
 The downstream-feature gates (T004 + T005 + T006) are background-monitored — they don't actively block 006's planning-artefact lifecycle, only the eventual T020 + T021 spec-opening dispatch.
 
 ---
 
 ## Next short Maestro prompt
-
-After PR #308 merges, the first dispatch sequence is:
-
-```text
-Use Agent OS.
-Close out PR #308.
-Spec: specs/006-unknown-items-review-queue
-Expected slice: (planning artefacts as a whole — see "Merged on `main`" table above)
-Update execution-map.yaml and wave-status.md.
-Stop before commit.
-```
-
-Followed (in a separate Maestro session, post-closeout) by:
 
 ```text
 Use Agent OS. Execute slice T002. Stop before commit.

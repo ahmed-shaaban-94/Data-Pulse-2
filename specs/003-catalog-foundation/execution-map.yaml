@@ -83,9 +83,9 @@ findings:
     previously_blocked:
       - T336
     resolved_by: T336    # path (b): T336 reinterpreted to test runWithTenantContext + manual SET LOCAL app.current_store, same pattern as T335_TENANT_HELPER_COVERAGE — no helper file authored
-    resolved_by_pr: null      # set on closeout once the slice merges
-    resolved_by_commit: null  # set on closeout once the slice merges
-    resolved_at: null         # set on closeout once the slice merges
+    resolved_by_pr: 310
+    resolved_by_commit: 69e0e00
+    resolved_at: 2026-05-23
 
   - id: HARNESS_SEED_BUGS
     summary: >
@@ -419,7 +419,7 @@ slices:
     # `packages/db/src/helpers/with-store.ts` (forbidden surface — would
     # need a separate `[GATED]` slice); that is explicitly NOT taken
     # here.
-    status: proposed      # finding MISSING_WITHSTORE_HELPER resolved by this reinterpretation; awaiting dispatch/merge
+    status: merged              # closed out 2026-05-23 via PR #310 @ 69e0e00
     approval_required: false
     depends_on: []        # RLS_CROSS_STORE_FIX merged; no remaining slice-level deps
     blocks: []
@@ -443,9 +443,10 @@ slices:
       - changed_files
       - validation_results
     parallel_safety: safe
-    # Resolves finding MISSING_WITHSTORE_HELPER via path (b). On closeout,
-    # set the finding's resolved_by_pr / resolved_by_commit / resolved_at
-    # to this slice's merge audit fields.
+    merged_in_pr: 310
+    merged_at_commit: 69e0e00
+    merged_at_date: 2026-05-23
+    # Resolves finding MISSING_WITHSTORE_HELPER via path (b).
 
   # ===== Merged (T340 PR #264, T341 PR #268, HARNESS_FIX + 0009 PR #279) / Ready ===
 

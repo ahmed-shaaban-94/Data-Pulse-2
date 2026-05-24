@@ -1,10 +1,10 @@
 # Wave Status — `003-catalog-foundation`
 
-**Last updated:** 2026-05-23 (T336 reinterpreted to resolve `MISSING_WITHSTORE_HELPER` via path (b); slice authored on `test/003-t336-store-guc-coverage`, awaiting commit/merge)
+**Last updated:** 2026-05-23 (T336 merged via PR #310 @ `69e0e00`; `MISSING_WITHSTORE_HELPER` finding fully closed out)
 **Spec:** [`specs/003-catalog-foundation/`](.)
-**Base:** `origin/main` at `bbb9beb` (PR #309 docs closeout, 2026-05-23)
+**Base:** `origin/main` at `69e0e00` (PR #310, T336 store GUC contract coverage, 2026-05-23)
 **Active findings:** 0
-**Resolved findings (kept for audit):** 5 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`), `RLS_STORE_ABSENT_READ_LEAK` (resolved PR #295 @ `2f7554d`), **`MISSING_WITHSTORE_HELPER`** (resolved by T336 reinterpretation — PR/commit set on closeout)
+**Resolved findings (kept for audit):** 5 — `RLS_CROSS_STORE_READ_LEAK` (resolved PR #254 @ `483aae4`), `HARNESS_SEED_BUGS` (resolved PR #279 @ `e33fd0e`), `RLS_UNSET_TENANT_GUC_CAST_ERROR` (resolved PR #292 @ `6adf6df`), `RLS_STORE_ABSENT_READ_LEAK` (resolved PR #295 @ `2f7554d`), **`MISSING_WITHSTORE_HELPER`** (resolved PR #310 @ `69e0e00`, 2026-05-23 — T336 path (b))
 
 ---
 
@@ -58,6 +58,7 @@ catalog.spec.ts`; PR/commit audit fields will be filled on closeout.
 | `T360_GLOBAL_CATALOG_LIST_RED` | `GlobalCatalogService.list` RED+GREEN — active-only filter, identical visibility across tenants. Closeout fix: runtime guard on `@Optional()` `PG_POOL` (CodeRabbit §XII object-safety). | PR #301 @ `f577570` |
 | `T372_STORE_OVERRIDE_CREATE_RED` | `StoreOverrideService.create` RED+GREEN — S1 create, S2 cross-store deny, S3 cross-tenant deny, **S4 cross-tenant product probe** (service-level pre-INSERT check since PG FKs bypass RLS), S5 Q8 forbidden fields via `hasOwnProperty`. Closeout fixes: `env.app` (was reading undefined `env.host` → ECONNREFUSED) + CodeRabbit hygiene. | PR #302 @ `c4147b0` |
 | `T383_PRODUCT_ALIASES_UNIQUENESS_RED` | `ProductAliasesService.create` RED+GREEN — eight groups (tenant-wide uniq, cross-tenant ok, external_pos_id scoping, store-scoped uniq, store+tenant coexistence, FK/CHECK violations). Closeout fix: consolidated `isUniqueViolation` (collapsed cause-recursion branch) to close global branch-coverage gap (89.97% → ≥90%). | PR #303 @ `454a7ae` |
+| `T336` | Store GUC contract coverage (`packages/db/__tests__/helpers/with-store-catalog.spec.ts`) — 7 cases (A own-store, B sibling-store, C carve-out `'*'`, D never-set fail-closed, E cross-tenant store id, F symmetry on tenant B, G runtime-role sanity). Path (b) of `MISSING_WITHSTORE_HELPER` resolution — no `with-store.ts` helper authored. | PR #310 @ `69e0e00` |
 
 ### Context from neighboring merges
 
@@ -120,11 +121,11 @@ All previously-local work is now on `main`:
 
 ### `MISSING_WITHSTORE_HELPER` — RESOLVED (via T336 reinterpretation)
 
-- **Resolved by:** T336 (slice on `test/003-t336-store-guc-coverage`; PR/commit set on closeout)
+- **Resolved by:** T336 (PR #310 @ `69e0e00`, merged 2026-05-23)
 - **Originally affected:** `packages/db/src/helpers/with-store.ts` (the file that the 003 spec claimed shipped from feature 001 but had never been scaffolded — `ls packages/db/src/helpers/` returned only `audit-insert.ts` and `with-tenant.ts`).
 - **Mechanism of fix:** **Path (b) of the user's authorized options.** Reinterpreted T336 to test the underlying store-GUC contract that any future `withStore` helper would compile to — `runWithTenantContext` (production tenant-axis glue) + manual `SELECT set_config('app.current_store', $1, true)` per transaction — exactly the call shape used by the rejected path (a). The new spec at `packages/db/__tests__/helpers/with-store-catalog.spec.ts` mirrors the T335 tenant-axis spec exactly, exercising 7 cases against the final-form (0011) `store_product_overrides_select` policy: (A) own-store, (B) sibling-store, (C) carve-out sentinel `'*'`, (D) never-set fail-closed, (E) cross-tenant store id, (F) symmetry, (G) runtime-role sanity.
 - **Path NOT taken:** path (a) — authoring `packages/db/src/helpers/with-store.ts`. That would have touched the `[GATED]` `packages/db/src/helpers/**` surface for an API the catalog services don't actually use (they call `runWithTenantContext` + `set_config` directly — see PR #302's `StoreOverrideService.create`). The reinterpretation tests the operational contract instead of a vestigial TS wrapper.
-- **Verification (planned):** `pnpm --filter @data-pulse-2/db test "__tests__/helpers/with-store-catalog.spec.ts"` → GREEN 7/7. Sanity run with `MIGRATION_TEST_ALLOW_SKIP=1` exercises the Docker-skip path locally.
+- **Verification:** `pnpm --filter @data-pulse-2/db test "__tests__/helpers/with-store-catalog.spec.ts"` → GREEN 7/7 (PR #310 CI confirmed).
 - **Audit kept because:** documents the "spec claims a helper that never shipped" gotcha and the operational-contract-over-TS-wrapper pattern — valuable context if a future slice asks "where does our store-axis isolation glue live?" Answer: it doesn't have a dedicated helper; it composes inside `runWithTenantContext` via an extra `set_config` call.
 
 ---
@@ -143,13 +144,7 @@ _None._ `T336` was the only slice blocked on `MISSING_WITHSTORE_HELPER`; with th
 
 ## Ready / in-flight
 
-- **`T336`** — Store GUC contract coverage on `store_product_overrides`. Reinterpreted per
-  finding `MISSING_WITHSTORE_HELPER` path (b). New spec authored at
-  `packages/db/__tests__/helpers/with-store-catalog.spec.ts` on branch
-  `test/003-t336-store-guc-coverage`; 7 cases (A own-store / B sibling-store / C carve-out
-  `'*'` / D never-set fail-closed / E cross-tenant store id / F symmetry / G runtime-role
-  sanity). Awaiting commit + PR per user's "Stop before commit" instruction on the
-  resolving prompt.
+_None._ All slices are merged. Spec 003-catalog-foundation is complete.
 
 ---
 
@@ -161,71 +156,33 @@ _None._ `PHASE3_RED_WAVE` is fully merged — see "Merged on `main`" above.
 
 ## Next recommended action
 
-**Phase 3's service-layer surface is on `main`** and **T336 is ready to ship** (spec
-authored locally; resolves the last open 003 finding). Downstream consumers (the 005
-Wave 2 reconciliation slices in particular) can now reference
-`TenantCatalogService.create`, `GlobalCatalogService.list`, `StoreOverrideService.create`,
-and `ProductAliasesService.create` as committed contracts.
+**Spec 003-catalog-foundation is complete.** All slices are on `main`. All 5 findings are resolved. No active work outstanding.
 
 **Recommended next steps:**
 
-1. **Commit + PR T336.** The branch `test/003-t336-store-guc-coverage` carries the new
-   spec at `packages/db/__tests__/helpers/with-store-catalog.spec.ts`. Resolves the
-   `MISSING_WITHSTORE_HELPER` finding. Authoring stopped before commit per the user's
-   prompt; resume the closeout protocol once the user explicitly authorizes the commit.
-2. **Unblock 005 Wave 2 authoring.** With T350 + T383 on `main`, the dependency note in
+1. **Unblock 005 Wave 2 authoring.** With T336 + all Phase 3 service-layer pairs on `main`, the dependency note in
    [`specs/005-pos-catalog-sync-reconciliation/wave-status.md`](../005-pos-catalog-sync-reconciliation/wave-status.md)
    is cleared. Run `/speckit-tasks` for spec 005 to extend its `tasks.md` and
    `execution-map.yaml` with the Wave 2 reconciliation slices (`005-WAVE2-*`).
+2. **Archive 003 or mark complete** in `CLAUDE.md` when 005 Wave 2 no longer needs this spec as a dependency reference.
 
-No findings remain. No medium-severity work outstanding on this spec.
+No findings remain. No work outstanding on this spec.
 
 ---
 
 ## Post-merge closeout
 
-When a PR for one of this spec's slices merges to `main`, run the
-closeout to refresh both this file and `execution-map.yaml`.
-Full workflow: `docs/agent-os/maestro-playbook.md` "Workflow —
-post-merge closeout".
-Reusable prompt template: `docs/agent-os/templates/post-merge-closeout-prompt.md`.
-
-Short prompt:
-
-```text
-Use Agent OS.
-Close out PR #<PR_NUMBER>.
-Spec: specs/003-catalog-foundation
-Expected slice: <EXPECTED_SLICE_ID>
-Update execution-map.yaml and wave-status.md.
-Stop before commit.
-```
-
-The closeout updates these audit fields on the merged slice:
-`merged_in_pr`, `merged_at_commit`, `merged_at_date`, `previously_blocked`.
-If the slice resolves a finding, the same closeout sets
-`resolved_by_pr`, `resolved_by_commit`, `resolved_at`, and
-`previously_blocked` on the finding entry.
+All slices closed. No further closeout prompts required for 003.
 
 ---
 
 ## Next short Maestro prompt
-
-Authorize the T336 commit + PR (the spec is already authored on
-`test/003-t336-store-guc-coverage`):
-
-```text
-Use Agent OS. Commit and PR slice T336.
-Spec: specs/003-catalog-foundation
-Branch: test/003-t336-store-guc-coverage
-Resolves: finding MISSING_WITHSTORE_HELPER (path b)
-```
 
 Hand off to 005 to author the now-unblocked Wave 2 reconciliation slices:
 
 ```text
 Use Agent OS. Author Wave 2 reconciliation tasks.
 Spec: specs/005-pos-catalog-sync-reconciliation
-Dependency cleared: 003 PHASE3_RED_WAVE merged (PR #300/#301/#302/#303).
+Dependency cleared: 003 PHASE3_RED_WAVE merged (PR #300/#301/#302/#303); T336 merged (PR #310).
 Stop before commit.
 ```
