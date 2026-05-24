@@ -1,6 +1,6 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-23 (refreshed after PR #306 + #307 closeout — `005-WAVE1-IDEMP-VERIFY` and `005-WAVE1-HARNESS` both merged)
+**Last updated:** 2026-05-24 (Wave 2 tasks authored — T600–T670, 9 slices `005-WAVE2-*` added to execution-map.yaml; tasks.md §§13–21 appended)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
 **Base:** `origin/main` at `e7c41b0` (PR #307, 2026-05-23 — `005-WAVE1-HARNESS` merged)
 **Active findings:** 0 (1 resolved — see "Resolved findings" below)
@@ -10,16 +10,17 @@
 
 ## TL;DR
 
-**4 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, **`005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307** — both new this closeout). **16 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
+**4 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, **`005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307** — both new this closeout). **16 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
+
+**Wave 2 tasks now authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
 **Next moves:**
 
-1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`). This is now the **sole gating bottleneck** for Phase 3+ — every capture/list/dismiss slice needs operationIds defined here.
+1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`). This is the **sole gating bottleneck** for Wave 1 Phase 3+ — every capture/list/dismiss slice needs operationIds defined here.
 2. **`005-WAVE1-CAPTURE-HAPPY`** (T510 + T511 + T512) is unblocked on the harness side
    (`005-WAVE1-HARNESS` merged); it still waits on `005-WAVE1-CONTRACT`. When that
-   lands, this becomes the obvious next slice to dispatch.
-
-**Wave 2 is now unblocked** — 003's `PHASE3_RED_WAVE` merged 2026-05-23 (PRs #300/#301/#302/#303). `TenantCatalogService.create` (T350+T351) and `ProductAliasesService.create` (T383+T384) are on `main`. A separate `/speckit-tasks` invocation can now author the Wave 2 reconciliation slices (`005-WAVE2-*`).
+   lands, this becomes the obvious next Wave 1 slice to dispatch.
+3. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). The Wave 2 conflict harness, link, and create-new slices cannot dispatch until this is approved and merged. The Wave 1 and Wave 2 CONTRACT approvals can be requested together or sequentially — they touch the same YAML file so they must merge serially.
 
 ---
 
@@ -96,7 +97,7 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 | Slice / wave | Blocked by | Resolution path |
 |---|---|---|
-| **Wave 2 entire** — US2 link reconciliation (FR-050–FR-053), US2 create-new reconciliation (FR-060–FR-063), US3 alias-conflict fail-closed (FR-040–FR-043) | **UNBLOCKED 2026-05-23**: `PHASE3_RED_WAVE` merged. T350 (PR #300 @ `2bf7e27`) + T383 (PR #303 @ `454a7ae`) and their paired GREENs are on `main`. | Run `/speckit-tasks` to author Wave 2's task set + extend this execution-map with Wave 2 slices (`005-WAVE2-*`). Tracked as the next planning action (see "Next recommended action" below). |
+| **Wave 2 entire** — US2 link reconciliation (FR-050–FR-053), US2 create-new reconciliation (FR-060–FR-063), US3 alias-conflict fail-closed (FR-040–FR-043) | **FULLY UNBLOCKED + TASKS AUTHORED 2026-05-24**: `PHASE3_RED_WAVE` merged (PRs #300–#303); T336 merged (PR #310). Wave 2 tasks T600–T670 appended to `tasks.md`; 9 `005-WAVE2-*` slices in `execution-map.yaml`. | Request `[GATED]` approval for `005-WAVE2-CONTRACT` (T600/T601). Once merged, dispatch `005-WAVE2-CONFLICT` then the link/create-new slices per the DAG in execution-map.yaml. |
 
 ---
 
@@ -104,7 +105,7 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-16 Wave 1 slices remain at `status: proposed`. None of the 16 remaining have been approved for dispatch.
+16 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ---
 
@@ -143,6 +144,37 @@ _Phase 0 (cross-spec prerequisite), Phase 1 (setup), and the Phase 2 verificatio
 
 - **`005-WAVE1-POLISH`** (T560, T561, T562, T563, T564) — perf smoke test (SC-008), regression sweeps (T341/T342/T343/T344 + 001 idempotency + audit-fanout), header-name drift fixup, wave-status closeout.
 
+---
+
+### Wave 2 — Reconciliation path (tasks authored 2026-05-24)
+
+#### Phase 2 (Wave 2) — Gated contract extension
+
+- **`005-WAVE2-CONTRACT`** (T600, T601) — extend `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`. **`[GATED]`** — requires explicit approval. **Gating bottleneck for all Wave 2 implementation slices.**
+
+#### Phase 3 (Wave 2) — US3 alias-conflict safety floor
+
+- **`005-WAVE2-CONFLICT`** (T610, T611) — RED test harness for alias-conflict fail-closed (FR-040–FR-043). Precedes link + create-new.
+
+#### Phase 4 (Wave 2) — US2 #1 link reconciliation
+
+- **`005-WAVE2-LINK-HAPPY`** (T620, T621, T622) — link happy path; creates `ReconciliationService`.
+- **`005-WAVE2-LINK-EDGES`** (T623, T624, T625, T626) — target-unavailable + already-reconciled edge cases.
+
+#### Phase 5 (Wave 2) — US2 #2 create-new reconciliation
+
+- **`005-WAVE2-CREATE-HAPPY`** (T630, T631, T632) — create-new happy path; extends `ReconciliationService`.
+- **`005-WAVE2-CREATE-EDGES`** (T633, T634, T635, T636) — create alias conflict + body validation.
+
+#### Phase 6 (Wave 2) — Audit, metrics, regression sweeps
+
+- **`005-WAVE2-AUDIT`** (T640–T645) — all three Wave 2 audit subjects; dual-emission guard.
+- **`005-WAVE2-METRICS`** (T650, T651) — counter increments at link + create-new sites.
+
+#### Phase 7 (Wave 2) — Polish & closeout
+
+- **`005-WAVE2-POLISH`** (T660, T661, T662, T670) — regression sweeps, SC-007 atomicity verification, Wave 2 closeout.
+
 ### Proposed phase cohorts
 
 > **These are phase cohorts for human readability, NOT flat-dispatchable waves.** Runtime dispatch MUST honor each member slice's `depends_on` DAG in [`execution-map.yaml`](./execution-map.yaml). `parallel_safety: safe` on a group reflects the schema's file/fixture disjointness contract — it does not mean members are dependency-flat. See the `groups:` block header in `execution-map.yaml` for the full semantics.
@@ -157,38 +189,59 @@ See [`execution-map.yaml`](./execution-map.yaml) `groups:` section for full memb
 
 ---
 
-## Wave 2 — ready for authoring
+## Wave 2 — tasks authored (2026-05-24)
 
 Wave 2 covers the reconciliation path: tenant admin links an unknown item to an existing tenant product (US2 #1, FR-050–FR-053), creates a new tenant product from an unknown item (US2 #2, FR-060–FR-063), and alias-conflict fail-closed (US3, FR-040–FR-043).
 
-**Dependency cleared 2026-05-23**: 003's `PHASE3_RED_WAVE` is fully merged.
-
+**Dependency cleared 2026-05-23/24**:
 - T350 + T351 → `TenantCatalogService.create` on `main` via PR #300 @ `2bf7e27`.
 - T383 + T384 → `ProductAliasesService.create` on `main` via PR #303 @ `454a7ae`.
+- T336 → `MISSING_WITHSTORE_HELPER` resolved via PR #310 @ `main` (path b).
 
-Run `/speckit-tasks` for spec 005 to author Wave 2's `tasks.md`; a follow-up commit will extend `execution-map.yaml` with the Wave 2 slices (expected ID range `T600–T6XX`, slice ids `005-WAVE2-*`).
+**Wave 2 planning artifacts authored 2026-05-24**:
+- `tasks.md` §§13–21 — T600–T670 (71 tasks, 9 candidate slices).
+- `execution-map.yaml` — 9 `005-WAVE2-*` slices + 3 Wave 2 cohort groups.
+
+**Architecture decision recorded**: `ReconciliationService` owns raw multi-row SQL inside a single `runWithTenantContext` transaction. Does NOT compose `TenantCatalogService.create` or `ProductAliasesService.create` for atomic writes (those services open independent transactions and would violate FR-053/FR-063 atomicity). See `tasks.md` §13 architecture note.
+
+**9 Wave 2 slices proposed**:
+
+| Slice | Tasks | Approval |
+|---|---|---|
+| `005-WAVE2-CONTRACT` | T600, T601 | **`[GATED]`** |
+| `005-WAVE2-CONFLICT` | T610, T611 | none |
+| `005-WAVE2-LINK-HAPPY` | T620, T621, T622 | none |
+| `005-WAVE2-LINK-EDGES` | T623, T624, T625, T626 | none |
+| `005-WAVE2-CREATE-HAPPY` | T630, T631, T632 | none |
+| `005-WAVE2-CREATE-EDGES` | T633, T634, T635, T636 | none |
+| `005-WAVE2-AUDIT` | T640–T645 | none |
+| `005-WAVE2-METRICS` | T650, T651 | none |
+| `005-WAVE2-POLISH` | T660, T661, T662, T670 | none |
 
 ---
 
 ## Next recommended action
 
-With `005-WAVE1-IDEMP-VERIFY` (PR #306) and `005-WAVE1-HARNESS` (PR #307) both merged, two tracks remain open:
+With Wave 2 tasks authored, three tracks are open:
 
-1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml`). This is now the **sole gating bottleneck** for Phase 3+. Every capture/list/dismiss slice needs the operationIds defined here.
-2. **Author Wave 2 in parallel** — 003 dependency is cleared. Run `/speckit-tasks` for spec 005 to generate Wave 2's `tasks.md`. This work is planning-only (no code), so it can run alongside the CONTRACT review without interference.
+1. **Request `[GATED]` approval for `005-WAVE1-CONTRACT`** (T503 + T504, `packages/contracts/openapi/catalog/unknown-items.yaml`). Sole gating bottleneck for all Wave 1 Phase 3+ slices.
+2. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, same YAML extended with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Can be approved together with `005-WAVE1-CONTRACT` if the YAML review covers both operationId sets in one pass. They must merge serially (T600 `depends_on: [005-WAVE1-CONTRACT]`).
+3. **Dispatch `005-WAVE2-CONFLICT`** once `005-WAVE2-CONTRACT` is merged — no code, RED-only test authoring, unblocks the link + create-new slices.
 
 Reusable Maestro prompts (short form):
 
 ```text
-# Gated — request approval first:
+# Wave 1 contract — request approval first:
 Use Agent OS. Execute slice 005-WAVE1-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 
-# Now-unblocked Wave 2 planning:
-Use Agent OS. Author Wave 2 reconciliation tasks.
+# Wave 2 contract — request approval first (depends_on 005-WAVE1-CONTRACT):
+Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
-Dependency cleared: 003 PHASE3_RED_WAVE merged (PR #300/#301/#302/#303).
-Stop before commit.
+
+# Wave 2 conflict harness (after 005-WAVE2-CONTRACT merges):
+Use Agent OS. Execute slice 005-WAVE2-CONFLICT. Stop before commit.
+Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
 ---

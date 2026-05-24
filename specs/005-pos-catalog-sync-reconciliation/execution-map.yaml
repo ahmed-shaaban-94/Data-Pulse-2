@@ -695,6 +695,280 @@ slices:
     branch_template: "chore/005-wave1-polish"
 
 # ----------------------------------------------------------------------------
+# Wave 2 slices — Reconciliation path (US2 link + create-new, US3 alias-conflict)
+# ----------------------------------------------------------------------------
+# Dependency cleared 2026-05-24:
+#   - 003 PHASE3_RED_WAVE fully merged (PR #300 TenantCatalogService.create,
+#     PR #301, PR #302, PR #303 ProductAliasesService.create).
+#   - T336 MISSING_WITHSTORE_HELPER resolved via PR #310 (store-GUC contract,
+#     path b — no new with-store.ts; tested via runWithTenantContext + manual
+#     SET LOCAL app.current_store in test helper).
+#
+# Architecture: ReconciliationService owns multi-row SQL (product INSERT +
+# alias INSERT + unknown_items UPDATE) inside a single runWithTenantContext
+# call. Does NOT compose TenantCatalogService.create (opens own transaction,
+# emits own catalog.product.create audit) or ProductAliasesService.create
+# (calls pool.query directly — no tenant GUC). Pattern mirrors StoresService.
+#
+# Task range: T600–T670  |  Slices: 005-WAVE2-*  |  Authored: 2026-05-24
+# Wave 2 tasks authored in tasks.md §§13–21 (appended 2026-05-24).
+
+  # ===== Wave 2 Phase 2: Gated contract extension ===========================
+
+  - id: 005-WAVE2-CONTRACT
+    task_ids: [T600, T601]
+    type: contract
+    status: proposed
+    approval_required: true   # [GATED] — extends packages/contracts/openapi/**
+    depends_on:
+      - 005-WAVE1-CONTRACT    # Wave 1 YAML must be merged first (T503/T504)
+    blocks:
+      - 005-WAVE2-CONFLICT
+      - 005-WAVE2-LINK-HAPPY
+      - 005-WAVE2-CREATE-HAPPY
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/catalog/unknown-items.yaml   # [GATED] — extend with Wave 2 operationIds
+      - packages/contracts/openapi/index.ts                     # [GATED] — registration if needed (T601 no-op if auto-discovered)
+    forbidden_files:
+      - apps/api/src/catalog/**
+      - apps/api/test/catalog/**
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/contracts lint
+        expected: GREEN — YAML lints clean; both tenantAdminLinkUnknownItem and tenantAdminCreateProductFromUnknownItem operationIds present and ref-resolved
+        docker_required: false
+
+  # ===== Wave 2 Phase 3: US3 alias-conflict safety floor ====================
+
+  - id: 005-WAVE2-CONFLICT
+    task_ids: [T610, T611]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-CONTRACT
+    blocks:
+      - 005-WAVE2-LINK-HAPPY
+      - 005-WAVE2-CREATE-HAPPY
+    agent: sonnet-api
+    parallel_safety: safe   # T610 + T611 spec files are disjoint
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/conflict/alias-conflict.spec.ts         # T610
+      - apps/api/test/catalog/reconciliation/conflict/store-scoped-conflict.spec.ts  # T611
+      - apps/api/test/catalog/__support__/seed-unknown-items.ts                      # read-only ref; may add helpers
+    forbidden_files:
+      - apps/api/src/catalog/reconciliation/**      # no implementation in this RED-only slice
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/conflict"
+        expected: RED — tests run and fail predictably (no ReconciliationService yet); no unhandled exceptions or import errors
+        docker_required: true
+
+  # ===== Wave 2 Phase 4: US2 #1 link reconciliation =========================
+
+  - id: 005-WAVE2-LINK-HAPPY
+    task_ids: [T620, T621, T622]
+    type: feature
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-CONFLICT
+    blocks:
+      - 005-WAVE2-LINK-EDGES
+      - 005-WAVE2-CREATE-HAPPY   # ReconciliationService (T621) created here; CREATE-HAPPY extends it
+      - 005-WAVE2-AUDIT
+      - 005-WAVE2-METRICS
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/link/link-happy-path.spec.ts              # T620 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts                  # T621 GREEN (new file)
+      - apps/api/src/catalog/reconciliation/reconciliation.module.ts                   # module skeleton (new file)
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts               # T622 GREEN (new file)
+    forbidden_files:
+      - apps/api/src/modules/catalog/tenant-catalog.service.ts    # 003-owned — read-only
+      - apps/api/src/modules/catalog/product-aliases.service.ts   # 003-owned — read-only
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/link/link-happy-path"
+        expected: GREEN — T620 passes
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/conflict"
+        expected: RED still (conflict harness T610/T611 fail until GREEN impl lands); no new import errors
+        docker_required: true
+
+  - id: 005-WAVE2-LINK-EDGES
+    task_ids: [T623, T624, T625, T626]
+    type: feature
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-LINK-HAPPY
+    blocks:
+      - 005-WAVE2-AUDIT
+    agent: sonnet-api
+    parallel_safety: safe   # T623 + T625 RED spec files are disjoint; T624 + T626 are GREEN fixups
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/link/link-target-unavailable.spec.ts     # T623 RED
+      - apps/api/test/catalog/reconciliation/link/link-already-reconciled.spec.ts     # T625 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts                  # T624 + T626 GREEN
+    forbidden_files:
+      - apps/api/src/modules/catalog/tenant-catalog.service.ts
+      - apps/api/src/modules/catalog/product-aliases.service.ts
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/link"
+        expected: GREEN — all four link spec files pass
+        docker_required: true
+
+  # ===== Wave 2 Phase 5: US2 #2 create-new reconciliation ==================
+
+  - id: 005-WAVE2-CREATE-HAPPY
+    task_ids: [T630, T631, T632]
+    type: feature
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-LINK-HAPPY    # ReconciliationService exists; CREATE-HAPPY extends it
+      - 005-WAVE2-CONFLICT
+    blocks:
+      - 005-WAVE2-CREATE-EDGES
+      - 005-WAVE2-AUDIT
+      - 005-WAVE2-METRICS
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/create/create-happy-path.spec.ts         # T630 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts                  # T631 GREEN (extends)
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts               # T632 GREEN (extends)
+    forbidden_files:
+      - apps/api/src/modules/catalog/tenant-catalog.service.ts    # 003-owned — NOT called for create-new
+      - apps/api/src/modules/catalog/product-aliases.service.ts   # 003-owned — NOT called for create-new
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/create/create-happy-path"
+        expected: GREEN — T630 passes; no catalog.product.create audit row emitted (dual-emission guard)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/link"
+        expected: GREEN — link tests not regressed by service extension
+        docker_required: true
+
+  - id: 005-WAVE2-CREATE-EDGES
+    task_ids: [T633, T634, T635, T636]
+    type: feature
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-CREATE-HAPPY
+    blocks:
+      - 005-WAVE2-AUDIT
+    agent: sonnet-api
+    parallel_safety: safe   # T633 + T635 RED spec files are disjoint
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/create/create-alias-conflict.spec.ts     # T633 RED
+      - apps/api/test/catalog/reconciliation/create/create-validation.spec.ts         # T635 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts                  # T634 GREEN
+      - apps/api/src/catalog/reconciliation/dto/create-product-request.dto.ts          # T636 DTO (new file)
+    forbidden_files:
+      - apps/api/src/modules/catalog/tenant-catalog.service.ts
+      - apps/api/src/modules/catalog/product-aliases.service.ts
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/create"
+        expected: GREEN — all four create spec files pass; no tenant_products row on conflict
+        docker_required: true
+
+  # ===== Wave 2 Phase 6: Audit, metrics, regression sweeps ==================
+
+  - id: 005-WAVE2-AUDIT
+    task_ids: [T640, T641, T642, T643, T644, T645]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-LINK-EDGES
+      - 005-WAVE2-CREATE-EDGES
+    blocks:
+      - 005-WAVE2-POLISH
+    agent: sonnet-api
+    parallel_safety: safe   # T640 + T642 + T644 RED spec files are disjoint
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/audit/link-audit.spec.ts          # T640 RED
+      - apps/api/test/catalog/reconciliation/audit/create-audit.spec.ts        # T642 RED
+      - apps/api/test/catalog/reconciliation/audit/conflict-audit.spec.ts      # T644 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts            # T641/T643/T645 fixups
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts         # T641/T643 fixups
+    forbidden_files:
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/audit"
+        expected: GREEN — all three audit spec files pass; no dual-emission (catalog.product.create absent from create-new results)
+        docker_required: true
+
+  - id: 005-WAVE2-METRICS
+    task_ids: [T650, T651]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-LINK-HAPPY
+      - 005-WAVE2-CREATE-HAPPY
+    blocks:
+      - 005-WAVE2-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/audit/metrics.spec.ts              # T650 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts            # T651 GREEN counter increments
+      - apps/api/src/observability/metrics/api.metrics.ts                        # T651: add catalog_duplicate_alias_conflict_total to CATALOG_METRIC_NAMES if not already present (003 canonical name — not yet registered as of 2026-05-24)
+    forbidden_files:
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/audit/metrics"
+        expected: GREEN — unknown_item_resolved_total{action='linked'} + unknown_item_resolved_total{action='created'} + catalog_duplicate_alias_conflict_total (003 canonical name from tasks.md T603/003-tasks §9; verify CATALOG_METRIC_NAMES in api.metrics.ts before authoring T650 — register if absent per tasks.md T650 note) all increment at their call sites
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "unknown-items/audit/metrics"
+        expected: GREEN — Wave 1 counter tests (T552) not regressed
+        docker_required: true
+
+  # ===== Wave 2 Phase 7: Polish & closeout ==================================
+
+  - id: 005-WAVE2-POLISH
+    task_ids: [T660, T661, T662, T670]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-AUDIT
+      - 005-WAVE2-METRICS
+    blocks: []
+    agent: sonnet-api
+    parallel_safety: safe   # T660 + T661 + T662 spec files are disjoint; T670 is docs-only
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/integrity/atomicity.spec.ts        # T662 — SC-007 atomicity verification
+      - specs/005-pos-catalog-sync-reconciliation/wave-status.md                # T670 — Wave 2 closeout
+      - specs/005-pos-catalog-sync-reconciliation/execution-map.yaml            # T670 — self-amending merge audit fields
+    forbidden_files:
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items"
+        expected: GREEN — all Wave 1 specs still pass (T660 regression sweep)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog" --testPathPattern="isolation"
+        expected: GREEN — 003 isolation suites (T341–T344) still pass at established counts (T661)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/integrity/atomicity"
+        expected: GREEN — all fault-injection cases confirm full rollback (T662)
+        docker_required: true
+
+# ----------------------------------------------------------------------------
 # groups — phase cohorts (NOT flat-dispatchable waves)
 # ----------------------------------------------------------------------------
 # Groups below are **phase cohorts** for human-readable navigation of slices
@@ -774,16 +1048,41 @@ groups:
     # implementations serialize through the shared service/controller/filter
     # files.
 
+
 # ----------------------------------------------------------------------------
-# Wave 2 — not yet enumerated
+# Wave 2 groups
 # ----------------------------------------------------------------------------
-# Wave 2 covers US2 link reconciliation, US2 create-new reconciliation, and
-# US3 alias-conflict fail-closed behavior. **Blocked on 003's PHASE3_RED_WAVE
-# (specifically T350 + T383).** When PHASE3_RED_WAVE merges on 003 main, a
-# separate /speckit-tasks invocation will author Wave 2's tasks.md and a
-# follow-up commit will extend this execution-map with the Wave 2 slices
-# (expected ID range T600–T6XX, slice ids 005-WAVE2-*).
-#
-# Do not propose Wave 2 slices here ahead of that work — the 003 service-layer
-# contracts may evolve during PHASE3_RED_WAVE authoring, and any premature
-# Wave 2 brief would risk dereferencing surfaces that haven't been frozen.
+
+  - id: WAVE2_PHASE_2_3_COHORT
+    members:
+      - 005-WAVE2-CONTRACT    # [GATED] — must land first
+      - 005-WAVE2-CONFLICT
+    parallel_safety: safe
+    proposed: true
+    # Intra-group DAG: CONTRACT blocks CONFLICT.
+    # CONTRACT is [GATED] and must approve + merge before CONFLICT can dispatch.
+    # CONFLICT is RED-only — writes only to test spec files.
+
+  - id: WAVE2_PHASE_4_5_COHORT
+    members:
+      - 005-WAVE2-LINK-HAPPY
+      - 005-WAVE2-LINK-EDGES
+      - 005-WAVE2-CREATE-HAPPY
+      - 005-WAVE2-CREATE-EDGES
+    parallel_safety: safe   # RED spec files are disjoint; GREENs serialize through reconciliation.service.ts
+    proposed: true
+    # Intra-group DAG:
+    #   LINK-HAPPY blocks LINK-EDGES + CREATE-HAPPY.
+    #   CREATE-HAPPY blocks CREATE-EDGES.
+    #   LINK-EDGES and CREATE-HAPPY may dispatch in parallel once LINK-HAPPY merges.
+    # GREEN implementations all serialize through reconciliation.service.ts.
+
+  - id: WAVE2_PHASE_6_7_COHORT
+    members:
+      - 005-WAVE2-AUDIT
+      - 005-WAVE2-METRICS
+      - 005-WAVE2-POLISH
+    parallel_safety: safe   # AUDIT + METRICS spec files are disjoint; POLISH is docs-only
+    proposed: true
+    # Intra-group DAG: AUDIT + METRICS both block POLISH. AUDIT and METRICS
+    # may dispatch in parallel once their respective link/create predecessors merge.
