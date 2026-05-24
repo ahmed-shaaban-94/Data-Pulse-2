@@ -38,7 +38,7 @@ For slice state, always read the spec's `execution-map.yaml` and `wave-status.md
 
 - **`001-foundation-auth-tenant-store`** — shipped. Auth, tenant/store/memberships, audit pipeline, idempotency interceptor, outbox first slice all merged. [specs/001-foundation-auth-tenant-store/](specs/001-foundation-auth-tenant-store/)
 - **`002-pos-operator-identity`** — specification + OpenAPI contracts only. POS app is a separate repo integrating exclusively via `packages/contracts/openapi/`. [specs/002-pos-operator-identity/](specs/002-pos-operator-identity/)
-- **`003-catalog-foundation`** — schema modules, schema-shape tests, and SQL migrations (`0007_catalog.sql`, `0008` RLS cross-store fix) all merged. Runtime, contracts, and APIs paused while 004 closes. [specs/003-catalog-foundation/](specs/003-catalog-foundation/)
+- **`003-catalog-foundation`** — complete. All 22 slices merged on main through PR #310. Schema modules, schema-shape tests, 5 gated SQL migrations (0007–0011), and Phase 3 RED+GREEN service-layer pairs all on main; all 5 findings resolved. [specs/003-catalog-foundation/](specs/003-catalog-foundation/)
 - **`004-platform-production-readiness`** — active; see above and `004-closeout-status.md`.
 
 ## What this repo does NOT own
