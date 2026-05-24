@@ -358,3 +358,222 @@ A slice MUST stop and report rather than silently work around the following:
 - ❌ Any new SQL migration — data-model.md §5 forbids.
 - ❌ Any edits to 003 files — plan.md §3 + §9 forbid.
 - ❌ Performance load test (vs. smoke test) — SC-008 production verification is observability-based per spec, not a Wave 1 task.
+
+---
+
+---
+
+# Wave 2 — Reconciliation path (US2 link + create-new, US3 alias-conflict fail-closed)
+
+**Wave**: 2 of 2
+**Dependency cleared**: `003 PHASE3_RED_WAVE` merged 2026-05-23 (PR #300 `TenantCatalogService.create`, PR #301, PR #302, PR #303 `ProductAliasesService.create`). T336 `MISSING_WITHSTORE_HELPER` merged 2026-05-24 (PR #310).
+**Task range**: T600–T699
+**Status**: Draft (planning only — no code authored)
+**Authored**: 2026-05-24
+
+---
+
+> **Architecture note — why `ReconciliationService` does NOT compose T351 or T384**
+>
+> FR-053 requires that a link operation be fully atomic: alias INSERT + unknown_items UPDATE must both commit or both roll back. FR-063 requires the same guarantee for create-new: tenant_products INSERT + alias INSERT + unknown_items UPDATE.
+>
+> `TenantCatalogService.create` (T351) and `ProductAliasesService.create` (T384) each open their own `runWithTenantContext` call, which acquires a separate pool connection and begins its own transaction. Calling them from inside a second `runWithTenantContext` call would produce TWO independent transactions — violating the atomicity requirement and also creating a dual-audit row from `TenantCatalogService.create`'s inline `catalog.product.create` audit INSERT (see T351 header warning, lines 30–39).
+>
+> **Resolution**: `ReconciliationService` owns the multi-row SQL for all three writes inline, inside a single `runWithTenantContext` transaction. It does NOT delegate to `TenantCatalogService.create` or `ProductAliasesService.create` for any atomic writes. The 003 services remain the authoritative reference for interface shapes and constraint semantics — they are read as documentation, not called at runtime.
+>
+> This pattern mirrors `StoresService` (raw Pool + `runWithTenantContext`), which is established as the multi-tenant write primitive on this repo.
+
+> **Scope**
+>
+> - New NestJS module: `apps/api/src/catalog/reconciliation/` containing `reconciliation.module.ts` + `reconciliation.service.ts` + `reconciliation.controller.ts`.
+> - No new SQL migrations (data-model.md §5: Wave 2 also introduces zero new tables, columns, indexes, constraints, RLS policies, or migration files).
+> - No edits to `specs/003-catalog-foundation/**` — read-only for 005.
+> - No edits to `apps/api/src/modules/catalog/tenant-catalog.service.ts` or `product-aliases.service.ts` — those are 003-owned.
+> - The Wave 1 fixture helper `apps/api/test/catalog/__support__/seed-unknown-items.ts` (T506 / PR #307) is reused — no new harness needed.
+
+---
+
+## 13. Wave 2 approval-gated tasks (`[GATED]`)
+
+| Task | Reason for gating |
+|---|---|
+| `T600 [GATED]` — extend `packages/contracts/openapi/catalog/unknown-items.yaml` with Wave 2 operationIds (`tenantAdminLinkUnknownItem`, `tenantAdminCreateProductFromUnknownItem`) | OpenAPI YAML — `packages/contracts/openapi/**` is a forbidden surface per Standing Rules §3 |
+| `T601 [GATED]` — register any new YAML path entries in the conformance-test entrypoint if needed | OpenAPI directory of record |
+
+**No new SQL migrations are gated for Wave 2.** data-model.md §5 explicitly states Wave 2 also introduces zero schema work. Any Wave 2 task that would touch `packages/db/drizzle/**` or `packages/db/src/schema/**` is a defect — stop the slice and report.
+
+---
+
+## 14. Wave 2 user scenarios in scope
+
+| US# | Scenario (spec §5) | Phase |
+|---|---|---|
+| **US3** | Alias conflicts fail closed | Phase 3 (safety floor — precedes link + create-new) |
+| **US2 #1** | Tenant admin links unknown item to existing product | Phase 4 |
+| **US2 #2** | Tenant admin creates new product from unknown item | Phase 5 |
+
+---
+
+## 15. Phase 2 (Wave 2) — Gated contract extension
+
+**Purpose**: Extend the already-merged Wave 1 contract YAML (`packages/contracts/openapi/catalog/unknown-items.yaml`) with the two Wave 2 operationIds. **No Phase 3–5 Wave 2 task can start until this is approved and authored.**
+
+- [ ] T600 [GATED] Request explicit approval, then extend `packages/contracts/openapi/catalog/unknown-items.yaml` with two new operationIds: `tenantAdminLinkUnknownItem` (POST `…/unknown-items/:id/link`, request body carries `{ productId: string }`, tenant admin role required) and `tenantAdminCreateProductFromUnknownItem` (POST `…/unknown-items/:id/create-product`, request body carries `{ name: string, taxCategory: string }`, tenant admin role required). Both endpoints follow the error taxonomy from [research.md §R2](./research.md): `alias_conflict` → 409, `target_unavailable` → 409, `already_reconciled` → 409, cross-tenant `not-found` → 404 non-disclosing. Schema shapes align with [data-model.md §2.6–§2.7](./data-model.md). Predecessors: T503 (Wave 1 YAML already merged). Acceptance: YAML lints clean; both operationIds are present and ref-resolved.
+- [ ] T601 [GATED] [P] If the conformance-test entrypoint requires an explicit registration step for the updated YAML, perform it. If the validator auto-discovers YAML files mark complete-no-op. Predecessors: T600. Acceptance: conformance test covers both new operationIds.
+
+---
+
+## 16. Phase 3 (Wave 2) — US3: Alias conflicts fail closed (safety floor)
+
+**Goal**: When a link or create-new action would produce a `product_aliases` row that violates one of the three partial unique indexes, the operation fails closed with 409 `alias_conflict`, emits the `duplicate_alias_conflict` signal defined in 003 §9 (FR-043), and leaves `unknown_items` in its prior `pending` state. Non-disclosing: the conflicting product is NOT named in the response (FR-042).
+
+**Why US3 precedes US2**: Both link and create-new attempt an alias INSERT. The conflict-rejection path is the error branch every service test must be able to trigger. Authoring the conflict test harness first (Phase 3) means Phase 4 and Phase 5 RED tests can exercise the conflict rejection alongside the happy path within the same spec file.
+
+> **Note — FR-043 `duplicate_alias_conflict` signal**: spec §7 and data-model.md §9 anchor this to a Prometheus counter already defined in 003. Verify the counter name during execution (`duplicate_alias_conflict_total` or equivalent). This is NOT a new metric registration — it is an increment call at the Wave 2 service's alias-conflict catch site. If the counter is not yet in the `CATALOG_METRIC_NAMES` registry (from T501), add it to `api.metrics.ts` in this slice as a prerequisite step and note the finding.
+
+- [ ] T610 [P] [TC] RED test — `apps/api/test/catalog/reconciliation/conflict/alias-conflict.spec.ts` covering [FR-040, FR-041, FR-042, FR-043]: seed two tenants (T_A, T_B) and two pending unknown items in T_A (U1 with `barcode='X'`, U2 with `barcode='X'`). Tenant admin at T_A attempts to link U1 to product P1 (which already has an alias for `barcode='X'`) → 409 `alias_conflict`, U1 status remains `pending`, no `product_aliases` row added, no resolved product name in response body (FR-042). Separately verify `duplicate_alias_conflict` counter increments. Cross-tenant probe: T_B attempting to link T_A's unknown item → 404 non-disclosing. Predecessors: T600, T506 (seed helper). Acceptance: test runs, all cases fail (no reconciliation service exists).
+- [ ] T611 [TC] RED test — `apps/api/test/catalog/reconciliation/conflict/store-scoped-conflict.spec.ts` covering [FR-040] store-scoped alias variant: seed a store-scoped alias for `(T_A, S1, barcode, 'Y')` bound to product P2. Admin at T_A links a pending unknown item with `barcode='Y'` from store S1 → 409 `alias_conflict`. Same admin links a pending unknown item from store S2 → this should succeed (different store scope). Predecessors: T600, T506. Acceptance: test runs, fails.
+
+---
+
+## 17. Phase 4 (Wave 2) — US2 #1: Tenant admin links unknown item to existing product (Priority: P1)
+
+**Goal**: A tenant admin or store manager submits a link action on a pending unknown item referencing an existing, active `tenant_products` row. The result: exactly one `product_aliases` row is created linking the item's identifier to the product, and `unknown_items` is updated to `resolved` in the same transaction (FR-053). The action emits audit subject `unknown_item.resolved.linked`.
+
+**Independent test**: Admin links U1 → P1. Verify: (a) exactly one `product_aliases` row for `(T, identifier_type, value)`; (b) `unknown_items.resolution_status = 'resolved'`, `resolution_action = 'linked'`, `resolved_product_id = P1.id`; (c) one audit event `unknown_item.resolved.linked`; (d) `unknown_item_resolved_total{action='linked'}` incremented; (e) parallel admin at another tenant cannot see T's product or alias.
+
+> **FR-051 active-product check**: `TenantCatalogService` has no `findActive` method (T350 only ships `create`). Wave 2 reads `tenant_products` directly under the existing RLS inside the same `runWithTenantContext` transaction — a cross-tenant or non-existent product returns 0 rows from the SELECT, producing a non-disclosing 404 (never "product not found in tenant X").
+
+> **Race / already-reconciled (US3 #3)**: The final UPDATE uses `WHERE resolution_status='pending'`. If `rowCount = 0` after a successful alias INSERT the item was concurrently resolved — rollback the alias INSERT (the entire transaction aborts) and return `already_reconciled` 409.
+
+### 17.1 Link happy path
+
+- [ ] T620 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/link/link-happy-path.spec.ts` covering [FR-050, FR-051, FR-052, FR-053]: seed one pending unknown item U1 (barcode 'A') and one active product P1 (with no alias for 'A'). Tenant admin links U1 → P1. Assert: (a) `product_aliases` row exists for `(T, product_id=P1.id, identifier_type='barcode', value='A')`; (b) `unknown_items.resolution_status='resolved'`, `resolved_product_id=P1.id`, `resolution_action='linked'`; (c) one audit event `unknown_item.resolved.linked`; (d) counter `unknown_item_resolved_total{action='linked'}` increments; (e) the two writes committed atomically — simulate by injecting a fault between alias INSERT and unknown_items UPDATE and verify neither persists. Predecessors: T600, T610 (conflict harness exists). Acceptance: test runs, fails (no reconciliation service).
+- [ ] T621 [US2] Create `apps/api/src/catalog/reconciliation/reconciliation.service.ts` with method `linkUnknownItem(principal: CatalogPrincipal, unknownItemId: string, productId: string): Promise<ReconciliationResult>`. Inside a single `runWithTenantContext` call: (1) SELECT `unknown_items` WHERE `id=$1 AND resolution_status='pending'` — 0 rows → `not-found` or `already-reconciled` discriminated by `resolution_status` of the existing row; (2) SELECT `tenant_products` WHERE `id=$2 AND retired_at IS NULL` — 0 rows → `target-unavailable` 404 (non-disclosing — do not expose whether the product exists cross-tenant); (3) INSERT into `product_aliases` the linking row — unique violation → `alias-conflict` 409 (FR-040/FR-042); (4) UPDATE `unknown_items SET resolution_status='resolved', resolved_at=now(), resolved_by=$actor, resolution_action='linked', resolved_product_id=$productId WHERE id=$1 AND resolution_status='pending'` — `rowCount=0` → rollback + `already-reconciled` 409. Map `23505` unique violation to `ConflictException` with `error.code='alias_conflict'`. All other Postgres errors re-thrown. Predecessors: T620. Acceptance: T620 GREEN.
+- [ ] T622 [US2] Create `apps/api/src/catalog/reconciliation/reconciliation.controller.ts` with `POST /tenants/:tenant_id/catalog/unknown-items/:id/link` mapped to `tenantAdminLinkUnknownItem` operationId from T600. Decorate with `@Auditable("unknown_item.resolved.linked")`. Zod `.strict()` validation on `{ productId: string (UUID) }`. Tenant-admin or store-manager role check via existing `@Roles(...)` guard. Predecessors: T600, T621. Acceptance: T620 still GREEN; conformance test for `tenantAdminLinkUnknownItem` passes.
+
+### 17.2 Link against retired or cross-tenant product (FR-051 non-disclosing)
+
+- [ ] T623 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/link/link-target-unavailable.spec.ts` covering [FR-051, FR-092]: (a) link U1 → retired product P_retired → 409 `target_unavailable`; (b) link U1 → UUID belonging to another tenant's product (cross-tenant) → 404 non-disclosing (never reveals the product exists); (c) link U1 → non-existent UUID → 404 non-disclosing. In all three cases: U1 status remains `pending`, no alias row written. Predecessors: T621. Acceptance: test runs, fails.
+- [ ] T624 [US2] Map the zero-row SELECT result in `linkUnknownItem` to the correct outcome: `retired_at IS NOT NULL` branch → `target-unavailable` 409; rows=0 branch (RLS filtered the row — cross-tenant or does not exist) → 404 with non-disclosing message per FR-092. Adjust the SELECT to include `retired_at` in the RETURNING columns so the service can discriminate. Predecessors: T623. Acceptance: T623 GREEN; T620 still GREEN.
+
+### 17.3 Link of already-resolved item (race / monotonicity)
+
+- [ ] T625 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/link/link-already-reconciled.spec.ts` covering [FR-052, US3 #3]: simulate a concurrent resolution by directly UPDATEing `unknown_items.resolution_status='resolved'` via superuser pool (bypassing RLS) before the link service reads it. Then attempt link → 409 `already_reconciled`; no alias written; no audit event. Predecessors: T621. Acceptance: test runs, fails.
+- [ ] T626 [US2] The `WHERE resolution_status='pending'` on the final UPDATE (step 4 of T621's implementation) already handles this race. This task verifies the already-reconciled discriminator is propagated as the correct HTTP shape (T623's test runs the assertion). If T625 fails for a different reason — e.g., the initial SELECT in step 1 fetched the row before the concurrent UPDATE landed — extend step 1 to re-check after alias INSERT using `SELECT … FOR UPDATE SKIP LOCKED`. Predecessors: T625. Acceptance: T625 GREEN; T620 still GREEN.
+
+---
+
+## 18. Phase 5 (Wave 2) — US2 #2: Tenant admin creates new product from unknown item (Priority: P1)
+
+**Goal**: A tenant admin or store manager creates a new `tenant_products` row directly from a pending unknown item. The result: exactly one `tenant_products` row + exactly one `product_aliases` row (linking the new product to the identifier) + `unknown_items` updated to `resolved` — all three in a single transaction (FR-063). Audit subject: `unknown_item.resolved.created`.
+
+**Independent test**: Admin creates product from U1 with `{ name: "Widget", taxCategory: "standard" }`. Verify: (a) one `tenant_products` row with correct `tenant_id` from principal (body-supplied `tenantId` discarded per Constitution §III / spec §5.2); (b) one `product_aliases` row for U1's identifier; (c) `unknown_items.resolution_status='resolved'`, `resolution_action='created'`; (d) one audit event `unknown_item.resolved.created`; (e) `unknown_item_resolved_total{action='created'}` incremented; (f) all three writes atomic.
+
+> **No call to `TenantCatalogService.create`**: That service emits its own `catalog.product.create` audit event in-transaction (T351 lines 199–215). Calling it from `ReconciliationService` would produce a dual-audit row. `ReconciliationService.createProductFromUnknownItem` owns the raw `INSERT INTO tenant_products` SQL directly, using its existing `runWithTenantContext` client. The audit subject emitted is `unknown_item.resolved.created` — NOT `catalog.product.create`.
+
+> **Constitution §III backend authority**: The body-supplied `tenantId`, if any, is discarded. The persisted `tenant_products.tenant_id` is always taken from `principal.tenantId` (mirrors T351's approach).
+
+### 18.1 Create-new happy path
+
+- [ ] T630 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/create/create-happy-path.spec.ts` covering [FR-060, FR-061, FR-062, FR-063]: seed one pending unknown item U1 (identifier `barcode='B'`). Admin submits `{ name: "Widget", taxCategory: "standard" }`. Assert: (a) new `tenant_products` row with `name='Widget'`, `tenant_id=T_A`, `retired_at=null`; (b) `product_aliases` row for `(T_A, product_id=<new>, identifier_type='barcode', value='B')`; (c) `unknown_items.resolution_status='resolved'`, `resolution_action='created'`, `resolved_product_id=<new>`; (d) one audit event `unknown_item.resolved.created`; (e) counter `unknown_item_resolved_total{action='created'}` increments; (f) atomicity fault injection: simulate INSERT tenant_products succeeds but alias INSERT fails → both tenant_products row AND unknown_items UPDATE must be absent. Predecessors: T600, T610 (conflict harness). Acceptance: test runs, fails.
+- [ ] T631 [US2] Extend `ReconciliationService` (T621) with method `createProductFromUnknownItem(principal: CatalogPrincipal, unknownItemId: string, input: { name: string; taxCategory: string }): Promise<ReconciliationResult>`. Inside the same `runWithTenantContext` pattern: (1) SELECT `unknown_items` WHERE `id=$1 AND resolution_status='pending'` — 0 rows → discriminate `not-found` vs `already-reconciled`; (2) validate `name.trim()` + `taxCategory.trim()` non-empty (throw 400 before any write if either empty — mirrors T351's validation); (3) INSERT into `tenant_products (id, tenant_id, name, tax_category, created_by, updated_by)` with `tenant_id=principal.tenantId` (body-supplied tenantId discarded per Constitution §III); (4) INSERT into `product_aliases` linking `(tenantId, productId=<new>, identifierType=U1.identifier_type, value=U1.value, sourceSystem=U1.source_system, storeId=U1.store_id)` — unique violation → `alias_conflict` 409 (rollback both product + unknown_items UPDATE); (5) UPDATE `unknown_items SET resolution_status='resolved', resolution_action='created', resolved_product_id=<new>, resolved_at=now(), resolved_by=$actor WHERE id=$1 AND resolution_status='pending'` — rowCount=0 → rollback all + `already_reconciled` 409. Predecessors: T630. Acceptance: T630 GREEN.
+- [ ] T632 [US2] Create `POST /tenants/:tenant_id/catalog/unknown-items/:id/create-product` in `ReconciliationController` mapped to `tenantAdminCreateProductFromUnknownItem` operationId from T600. Decorate with `@Auditable("unknown_item.resolved.created")`. Zod `.strict()` validation on `{ name: string, taxCategory: string }` (both required non-empty). Tenant-admin role check. Predecessors: T600, T631. Acceptance: T630 still GREEN; conformance test for `tenantAdminCreateProductFromUnknownItem` passes.
+
+### 18.2 Create-new with alias conflict (US3 path from create side)
+
+- [ ] T633 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/create/create-alias-conflict.spec.ts` covering [FR-040, FR-042, FR-063]: seed P_existing with an alias for `(T_A, barcode, 'C')`. Seed U1 with `barcode='C'`. Admin creates product from U1 → 409 `alias_conflict`, no new `tenant_products` row, U1 status remains `pending`, `duplicate_alias_conflict` counter increments, conflicting product not named in response (FR-042). Predecessors: T631. Acceptance: test runs, fails.
+- [ ] T634 [US2] Verify that the `23505` catch in `createProductFromUnknownItem` (step 4 in T631) correctly rolls back the `tenant_products` INSERT as well as the unknown_items UPDATE. Since all three writes are in the same `runWithTenantContext` transaction, a PG-level rollback triggered by the re-thrown `ConflictException` is sufficient — the transaction client aborts automatically when the `work` callback throws. Add the `duplicate_alias_conflict` counter increment to the conflict catch site. Predecessors: T633. Acceptance: T633 GREEN; T630 still GREEN.
+
+### 18.3 Create-new body validation and Constitution §III non-trust
+
+- [ ] T635 [P] [US2] [TC] RED test — `apps/api/test/catalog/reconciliation/create/create-validation.spec.ts` covering [FR-063, Constitution §III]: (a) missing `name` → 400; (b) empty string `name` after trim → 400; (c) body supplies `tenantId: "attacker-tenant"` — persisted `tenant_products.tenant_id` is always `principal.tenantId`, not body value; (d) missing `taxCategory` → 400. Predecessors: T631. Acceptance: test runs, fails.
+- [ ] T636 [US2] Ensure the Zod DTO for the create-product endpoint uses `.strict()` and explicitly rejects any body-supplied `tenantId` field (or silently ignores it — the service already discards it; the DTO should not accept it to avoid confusion). Predecessors: T635. Acceptance: T635 GREEN.
+
+---
+
+## 19. Phase 6 (Wave 2) — Audit, metrics, and cross-cutting verification
+
+**Purpose**: Verify that all three Wave 2 audit subjects emit correctly, all Wave 2 counters increment at the right sites, and Wave 1 regression suites are not perturbed.
+
+### 19.1 Audit event emission verification (Wave 2 subjects)
+
+- [ ] T640 [P] [US5] [TC] RED test — `apps/api/test/catalog/reconciliation/audit/link-audit.spec.ts` covering [FR-080]: link action emits exactly one `audit_events` row with subject `unknown_item.resolved.linked`, attributed to the tenant admin actor, with correct `target_id = unknown_item.id` and `correlation_id`. Predecessors: T621. Acceptance: test runs, fails if `@Auditable` on the link route is missing or wired incorrectly.
+- [ ] T641 [US5] If T640 fails, fixup the `@Auditable("unknown_item.resolved.linked")` decorator on the link route (T622) or the inline emit call. Predecessors: T640. Acceptance: T640 GREEN.
+- [ ] T642 [P] [US5] [TC] RED test — `apps/api/test/catalog/reconciliation/audit/create-audit.spec.ts` covering [FR-080]: create-new action emits exactly one `audit_events` row with subject `unknown_item.resolved.created`. No `catalog.product.create` audit row present (dual-emission guard). Predecessors: T631. Acceptance: test runs, fails.
+- [ ] T643 [US5] If T642 fails or if the dual-emission guard trips (two audit rows), fixup the `@Auditable` decorator or service call. The `ReconciliationService` must NOT emit `catalog.product.create` — only `unknown_item.resolved.created`. Predecessors: T642. Acceptance: T642 GREEN, dual-emission guard GREEN.
+- [ ] T644 [P] [US5] [TC] RED test — `apps/api/test/catalog/reconciliation/audit/conflict-audit.spec.ts` covering [FR-043, FR-082]: alias-conflict rejection (from either link or create-new) emits `unknown_item.reconciliation_conflict_rejected{reason="alias_conflict"}` audit event. Target-unavailable rejection emits `unknown_item.reconciliation_conflict_rejected{reason="target_unavailable"}`. Already-reconciled rejection emits `unknown_item.reconciliation_conflict_rejected{reason="already_reconciled"}`. Predecessors: T621, T631. Acceptance: test runs, fails.
+- [ ] T645 [US5] Wire the conflict-rejection audit emissions at the service catch sites in `ReconciliationService`. These are explicit calls — the `AuditEmitterInterceptor` short-circuits before the handler on exception paths, so decorator-driven emission does not fire for 4xx rejections. Predecessors: T644. Acceptance: T644 GREEN.
+
+### 19.2 Observability counter verification (Wave 2)
+
+- [ ] T650 [P] [US5] [TC] RED test — `apps/api/test/catalog/reconciliation/audit/metrics.spec.ts` covering [FR-081]: (a) successful link → `unknown_item_resolved_total{action='linked'}` increments; (b) successful create-new → `unknown_item_resolved_total{action='created'}` increments; (c) alias conflict rejection → `duplicate_alias_conflict_total` (or equivalent 003-defined counter name — verify during execution) increments. Predecessors: T621, T631, T610 (conflict path). Acceptance: test runs, fails.
+- [ ] T651 [US5] Add explicit counter-increment calls at each Wave 2 emission site. All three action labels (`linked`, `created`, `dismissed`) on `unknown_item_resolved_total` were registered in T501 — Wave 2 just adds the `linked` and `created` increment call sites. Predecessors: T650. Acceptance: T650 GREEN; Wave 1 counter tests (T552) still GREEN.
+
+### 19.3 Regression sweeps
+
+- [ ] T660 [P] [TC] Regression sweep — confirm Wave 1 capture + idempotency + dismiss tests are all still GREEN after Wave 2 service + controller are registered in the NestJS module graph. Predecessors: T621, T631, T622, T632. Acceptance: all Wave 1 spec files pass at the counts recorded after each Wave 1 slice merged.
+- [ ] T661 [P] [TC] Regression sweep — confirm 003 isolation suites (T341–T344) are still GREEN after Wave 2 reconciliation writes are wired. Predecessors: T621, T631. Acceptance: 003 isolation suites pass at their established counts.
+- [ ] T662 [P] [TC] SC-007 transactional integrity verification — the spec requires atomicity (FR-053, FR-063). Author `apps/api/test/catalog/reconciliation/integrity/atomicity.spec.ts` injecting faults at each write boundary (alias INSERT throws → verify `unknown_items` not updated; unknown_items UPDATE rowCount=0 → verify alias INSERT rolled back for link; tenant_products INSERT throws → verify alias + unknown_items not persisted for create-new). Use Testcontainers + `ROLLBACK TO SAVEPOINT` or connection-level error injection. Predecessors: T621, T631. Acceptance: all fault-injection cases confirm full rollback.
+
+---
+
+## 20. Phase 7 (Wave 2) — Polish & Wave 2 closeout
+
+**Purpose**: Update wave-status.md with Wave 2 authoring and execution state; update slice dispatch table with Wave 2 slices.
+
+- [ ] T670 Update `specs/005-pos-catalog-sync-reconciliation/wave-status.md` to reflect Wave 2 tasks authored (T600–T670), slices proposed (`005-WAVE2-CONTRACT`, `005-WAVE2-CONFLICT`, `005-WAVE2-LINK-HAPPY`, `005-WAVE2-LINK-EDGES`, `005-WAVE2-CREATE-HAPPY`, `005-WAVE2-CREATE-EDGES`, `005-WAVE2-AUDIT`, `005-WAVE2-METRICS`, `005-WAVE2-POLISH`), dependency-cleared note referencing PR #300, #301, #302, #303, #310. Predecessors: all Wave 2 tasks merged. Acceptance: file updated; Wave 2 slices listed under "Proposed".
+
+---
+
+## 21. Wave 2 — Dependencies & ordering
+
+### 21.1 Phase ordering (strict)
+
+```
+Phase 2-W2 (Gated contract: T600–T601)   ← [GATED] requires approval first
+   ↓
+Phase 3-W2 (US3 conflict safety floor: T610–T611)
+   ↓
+Phase 4-W2 (US2 #1 link: T620–T626)   ← T610/T611 conflict harness must pre-exist
+   ↓
+Phase 5-W2 (US2 #2 create-new: T630–T636)   ← T621 (ReconciliationService) already exists
+   ↓
+Phase 6-W2 (Audit + metrics + regressions: T640–T662)
+   ↓
+Phase 7-W2 (Polish: T670)
+```
+
+### 21.2 Parallel opportunities within Wave 2
+
+- **Phase 3**: T610 + T611 are parallel-safe (disjoint spec files, different alias-conflict scenarios).
+- **Phase 4 RED tests**: T620 + T623 + T625 are parallel-safe (disjoint spec files). GREENs (T621, T624, T626) serialize through `reconciliation.service.ts`.
+- **Phase 5 RED tests**: T630 + T633 + T635 are parallel-safe. GREENs (T631, T634, T636) serialize through `reconciliation.service.ts`.
+- **Phase 6**: T640 + T642 + T644 + T650 + T660 + T661 + T662 are all parallel-safe. Fixup tasks (T641, T643, T645, T651) follow their respective RED results.
+
+### 21.3 Recommended Wave 2 slice dispatch (under Maestro)
+
+| Slice | Tasks | Approval | Reviewer focus |
+|---|---|---|---|
+| `005-WAVE2-CONTRACT` | T600, T601 | **`[GATED]`** | OpenAPI YAML — verify operationIds, error shapes, role annotations |
+| `005-WAVE2-CONFLICT` | T610, T611 | none | US3 conflict harness; disjoint spec files, parallel-safe |
+| `005-WAVE2-LINK-HAPPY` | T620, T621, T622 | none | Link happy path; `ReconciliationService` created here |
+| `005-WAVE2-LINK-EDGES` | T623, T624, T625, T626 | none | Target-unavailable + already-reconciled |
+| `005-WAVE2-CREATE-HAPPY` | T630, T631, T632 | none | Create-new happy path; extends `ReconciliationService` |
+| `005-WAVE2-CREATE-EDGES` | T633, T634, T635, T636 | none | Create alias conflict + validation |
+| `005-WAVE2-AUDIT` | T640–T645 | none | All three Wave 2 audit subjects; dual-emission guard |
+| `005-WAVE2-METRICS` | T650, T651 | none | Counter increments at link + create-new sites |
+| `005-WAVE2-POLISH` | T660, T661, T662, T670 | none | Regression sweeps, atomicity verification, closeout |
+
+Approx **9 slices** for Wave 2.
+
+### 21.4 Stop conditions (Wave 2)
+
+A slice MUST stop and report rather than silently work around the following:
+
+- Any task would touch `packages/db/drizzle/**` or `packages/db/src/schema/**` — Wave 2 introduces zero schema work (data-model.md §5). Stop and report.
+- Any task would touch `specs/003-catalog-foundation/**` — 003 is read-only for 005.
+- T600 (Wave 2 contract YAML extension) is being worked without explicit `[GATED]` approval.
+- A phase 4/5 GREEN task passes locally but a Wave 1 regression suite has a new failure — fix before proceeding.
+- T642 reveals a dual-audit row (both `catalog.product.create` and `unknown_item.resolved.created`) — stop, investigate the `@Auditable` decorator placement and the `ReconciliationService` call site, fix before T643.
+- T662 (atomicity) reveals any partial-commit case — Wave 2 may not ship with known atomicity gaps.
