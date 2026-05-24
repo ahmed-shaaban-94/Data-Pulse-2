@@ -244,11 +244,25 @@ specs/006-unknown-items-review-queue/
 ├── quickstart.md           # Phase 1 output — stakeholder walkthrough of a clear-the-queue session
 ├── contracts/
 │   └── README.md           # Phase 1 output — contract obligations the future API feature must honor; no YAML in 006
+├── tasks.md                # /speckit-tasks output — coordination-only task list (no implementation slices)
+├── execution-map.yaml      # Agent OS v1 — slices Maestro can dispatch (per docs/agent-os/slice-schema.yaml)
+├── wave-status.md          # Agent OS v1 — human-readable progress narrative
 └── checklists/
     └── requirements.md     # Spec-quality checklist (created by /speckit-specify, all green)
 ```
 
-`tasks.md` is **not** produced by this plan. See §9.5.
+`tasks.md` is NOT produced by `/speckit-plan` (it is the output of a separate `/speckit-tasks` invocation per the Spec Kit workflow). Per §9.5, `/speckit-tasks` for 006 was optional; if run, it generates a coordination-only `tasks.md` (no implementation slices).
+
+#### 6.1.1 — Agent OS bootstrap compatibility (compact `execution-map.yaml` + `wave-status.md`)
+
+`CLAUDE.md` "Agent OS / Maestro operating mode" lists, as bootstrap items 5 and 6 for every agent session: the active spec's `execution-map.yaml` (slice state, allowed/forbidden files, validation contract) and `wave-status.md` (human-readable progress). 005 carries both as the canonical pattern. **006 carries both as well**, in a deliberately compact form appropriate to a docs-only feature:
+
+- `execution-map.yaml` enumerates each `tasks.md` task as a slice with the required schema fields (`id`, `type`, `status`, `approval_required`, `depends_on`, `agent`, `allowed_files`, `validation`, `stop`, `report_fields`, `parallel_safety`) so Maestro can dispatch `Use Agent OS. Execute slice T010. Stop before commit.` against 006 in the same way it dispatches against 005.
+- All 006 slices carry `type: docs` (per the slice-schema enum) — none produce application code, schema, contract YAML, or UI artefacts. `allowed_files` lists are narrow (typically one or two files per slice) and respect the standing-rules forbidden-paths list verbatim.
+- `wave-status.md` is a single-phase narrative (006 has no waves — it has phases mapping to spec §5 user stories). It tracks the sign-off log progress + the foundational gates that govern downstream-feature opening.
+- Adding empty / placeholder files would have been worse than just doing it right; compatibility with the Agent OS contract means 006's slices live in the same surface every other active spec uses.
+
+The downstream **future API feature** and **future UI feature** will each carry their own `execution-map.yaml` + `wave-status.md` when they are opened, scoped to the slices they own. 006's execution-map references those future features by `previously_blocked` / `blocks` edges (informational only) but does not author their slices.
 
 ### 6.2 Source code (repository root) — none
 
