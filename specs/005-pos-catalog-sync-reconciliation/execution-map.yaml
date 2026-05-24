@@ -925,13 +925,13 @@ slices:
     allowed_files:
       - apps/api/test/catalog/reconciliation/audit/metrics.spec.ts              # T650 RED
       - apps/api/src/catalog/reconciliation/reconciliation.service.ts            # T651 GREEN counter increments
+      - apps/api/src/observability/metrics/api.metrics.ts                        # T651: add catalog_duplicate_alias_conflict_total to CATALOG_METRIC_NAMES if not already present (003 canonical name — not yet registered as of 2026-05-24)
     forbidden_files:
-      - apps/api/src/observability/metrics/api.metrics.ts   # counter registration already done in T501
       - packages/db/**
       - specs/003-catalog-foundation/**
     validation:
       - command: pnpm --filter @data-pulse-2/api test "reconciliation/audit/metrics"
-        expected: GREEN — unknown_item_resolved_total{action='linked'} + unknown_item_resolved_total{action='created'} + duplicate_alias_conflict_total all increment at their call sites
+        expected: GREEN — unknown_item_resolved_total{action='linked'} + unknown_item_resolved_total{action='created'} + catalog_duplicate_alias_conflict_total (003 canonical name from tasks.md T603/003-tasks §9; verify CATALOG_METRIC_NAMES in api.metrics.ts before authoring T650 — register if absent per tasks.md T650 note) all increment at their call sites
         docker_required: true
       - command: pnpm --filter @data-pulse-2/api test "unknown-items/audit/metrics"
         expected: GREEN — Wave 1 counter tests (T552) not regressed
