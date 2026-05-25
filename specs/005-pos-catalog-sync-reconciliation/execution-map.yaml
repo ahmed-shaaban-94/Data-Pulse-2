@@ -381,7 +381,10 @@ slices:
   - id: 005-WAVE1-CAPTURE-RESOLVE
     task_ids: [T513, T514]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 321
+    merged_at_commit: f5e4a19dd93abdc2520e21f0661f803a3c563edf
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-CAPTURE-HAPPY]
     blocks: [005-WAVE1-CAPTURE-STORE-SCOPE, 005-WAVE1-CAPTURE-DEDUP]
