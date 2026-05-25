@@ -253,7 +253,11 @@ afterEach(async () => {
   // the T513-prefixed namespace).
   if (env) {
     await env.admin.query(
-      "DELETE FROM unknown_items WHERE value LIKE 'T513-%'",
+      `DELETE FROM unknown_items
+        WHERE tenant_id = $1
+          AND store_id = $2
+          AND value LIKE 'T513-%'`,
+      [TENANT_A, STORE_A_X],
     );
   }
 });
