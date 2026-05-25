@@ -51,6 +51,17 @@
  * 401/403 envelopes) is wider than this slice's scope; T564 polish
  * or a future contract-conformance pass can extend.
  */
+import "reflect-metadata";
+
+import {
+  type CanActivate,
+  type ExecutionContext,
+  type INestApplication,
+} from "@nestjs/common";
+import { Test } from "@nestjs/testing";
+import type { Pool } from "pg";
+import request from "supertest";
+
 import {
   applyAllUpAndCreateAppRole,
   startPgEnv,
@@ -63,14 +74,48 @@ import {
   UNKNOWN_ITEMS_FIXTURE_IDS,
 } from "../../__support__/seed-unknown-items";
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
+import { UnknownItemsController } from "../../../../src/catalog/unknown-items/unknown-items.controller";
+import { PG_POOL } from "../../../../src/auth/auth.module";
+import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
+import type { ResolvedContext } from "../../../../src/context/types";
 
 // --------------------------------------------------------------------------
-// Suite-level state — mirrors cross-tenant.spec.ts (PR #332)
+// Suite-level state — mirrors cross-tenant.spec.ts (PR #332) for service-direct
+// cases, and capture-happy-path.spec.ts (PR #317) for the supertest case.
 // --------------------------------------------------------------------------
 
 let env: PgTestEnv | null = null;
 let dockerSkipped = false;
 let service: UnknownItemsService | null = null;
+let app: INestApplication | null = null;
+let contextGuard: ConfigurableContextGuard | null = null;
+
+// --------------------------------------------------------------------------
+// ConfigurableContextGuard — same shape as capture-happy-path.spec.ts,
+// supplies a configurable POS / dashboard principal per request.
+// --------------------------------------------------------------------------
+
+class ConfigurableContextGuard implements CanActivate {
+  public tenantId: string = UNKNOWN_ITEMS_FIXTURE_IDS.tenantA;
+  public storeId: string | null = null; // tenant-wide by default for list
+  public userId: string = "0a000000-0000-7000-8000-0000000005ae";
+
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest<{
+      context?: ResolvedContext;
+      principal?: { userId?: string };
+    }>();
+    req.context = {
+      userId: this.userId,
+      tenantId: this.tenantId,
+      storeId: this.storeId,
+      isPlatformAdmin: false,
+      source: "session",
+    };
+    req.principal = { userId: this.userId };
+    return true;
+  }
+}
 
 beforeAll(async () => {
   try {
@@ -91,12 +136,42 @@ beforeAll(async () => {
     throw new Error(`Container start failed: ${msg}`);
   }
 
+  // Service-direct handle (used by the FR-014 + SI-001/004 cases below).
   service = new UnknownItemsService(env.app);
+
+  // Nest app boot for the supertest case (controller → Zod-pipe → service →
+  // DB end-to-end). Stripped-down providers: GETs aren't `@Idempotent`, so no
+  // IdempotencyInterceptor / Redis wiring is needed; no `@Auditable`, so no
+  // AuditEmitter providers needed. The configurable guard mounts the
+  // `req.context` shape that production's `TenantContextGuard` would publish.
+  contextGuard = new ConfigurableContextGuard();
+  const localEnv = env;
+  const moduleRef = await Test.createTestingModule({
+    controllers: [UnknownItemsController],
+    providers: [
+      // Bind the service to the RLS-enforced app-role pool (same as
+      // service-direct cases use). The controller picks up
+      // UnknownItemsService via DI.
+      { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
+      UnknownItemsService,
+    ],
+  }).compile();
+
+  app = moduleRef.createNestApplication({ bufferLogs: true });
+  app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalGuards(contextGuard);
+  await app.init();
 }, 180_000);
 
 afterAll(async () => {
+  if (app) await app.close();
   if (env) await stopPgEnv(env);
 }, 60_000);
+
+function http() {
+  if (!app) throw new Error("app not initialised");
+  return request(app.getHttpServer());
+}
 
 function maybeSkip(): boolean {
   if (dockerSkipped) {
@@ -256,21 +331,103 @@ describe("T523 / 005-WAVE1-LIST — cross-tenant probe returns empty, not error"
     expect(Array.isArray(result.items)).toBe(true);
   });
 
-  it("tenant-wide actor with a store_id from a DIFFERENT tenant returns empty (RLS filter, no error)", async () => {
+  it("tenant-wide actor narrowing via `storeIdFilter` to a foreign-tenant store returns empty (RLS filter, no error)", async () => {
     if (maybeSkip()) return;
     if (!service) throw new Error("service not constructed");
 
-    // Tenant A admin tries to narrow to tenant B's store. RLS filters
-    // out B's rows; the empty page matches the non-disclosing posture
+    // Tenant A admin (tenant-wide, storeId=null) supplies the
+    // OPTIONAL `storeIdFilter` query convenience pointing at tenant B's
+    // store. RLS still controls visibility: the
+    // `unknown_items_tenant_isolation` policy filters B's rows BEFORE
+    // the residual `AND store_id = $X` predicate ever runs, so the page
+    // is empty. The non-disclosing posture is preserved
     // (indistinguishable from "no rows at that store in your tenant").
+    //
+    // Correctness fix from CodeRabbit comment on PR #334: the prior
+    // version passed `storeId: storeBX` which would have changed the
+    // ACTOR'S scope (a different RLS path: store-scoped actor in
+    // foreign store) instead of exercising the residual filter param.
     const result = await service.listForTenant({
       tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA,
-      storeId: UNKNOWN_ITEMS_FIXTURE_IDS.storeBX, // B's store, viewed from A
+      storeId: null, // tenant-wide actor
+      storeIdFilter: UNKNOWN_ITEMS_FIXTURE_IDS.storeBX, // foreign-tenant store filter
       status: "pending",
       limit: 50,
     });
 
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------
+// Controller-boundary supertest case (CodeRabbit comment #3 on PR #334)
+// --------------------------------------------------------------------------
+//
+// The service-direct cases above prove the SQL / RLS / store-scope
+// invariants — the slice's load-bearing behavior. This single supertest
+// case validates the additional surface the controller introduces:
+//
+//   1. HTTP routing — `@Get("api/v1/catalog/unknown-items")` is reachable
+//      (proves the controller-prefix refactor in PR #334 didn't break
+//       method-level path resolution).
+//   2. Zod `.strict()` query parsing — `?status=pending&limit=50` is
+//      coerced and validated; unknown params would 400.
+//   3. Wire-shape adapter — service's `UnknownItemRow` (camelCase) → the
+//      contract's `UnknownItem` (snake_case) survives the round-trip.
+//   4. Tenant-context resolution — `req.context.tenantId/storeId` from
+//      the guard reaches the service correctly.
+//
+// One case is sufficient: more would duplicate the service-direct
+// assertions above. Per the path-rule from CLAUDE.md
+// (`**/*.{spec,test}.{ts,tsx}: Use Jest + Supertest + Testcontainers`).
+
+describe("T523 / 005-WAVE1-LIST — HTTP boundary (supertest)", () => {
+  it("GET /api/v1/catalog/unknown-items returns tenant A admin's pending page in contract shape", async () => {
+    if (maybeSkip()) return;
+    if (!contextGuard) throw new Error("contextGuard not constructed");
+
+    // Tenant A admin, tenant-wide (storeId=null).
+    contextGuard.tenantId = UNKNOWN_ITEMS_FIXTURE_IDS.tenantA;
+    contextGuard.storeId = null;
+
+    const res = await http()
+      .get("/api/v1/catalog/unknown-items")
+      .query({ status: "pending", limit: 50 });
+
+    expect(res.status).toBe(200);
+
+    // Response shape: `ListUnknownItemsResponse` per the OpenAPI
+    // contract (`packages/contracts/openapi/catalog/unknown-items.yaml`).
+    expect(res.body).toMatchObject({
+      items: expect.any(Array),
+      next_cursor: null, // Wave 1 single-pages; cursor always null.
+    });
+
+    // Same 3 ids the service-direct case above asserts, but through
+    // the wire-shape adapter — proves snake_case conversion + adapter
+    // mapping survives. (`identifier_value` vs service-level
+    // `identifierValue`, etc.)
+    const ids = res.body.items.map((it: { id: string }) => it.id).sort();
+    expect(ids).toEqual(
+      [
+        UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
+        UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode,
+        UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+      ].sort(),
+    );
+
+    // Sanity-check the snake_case wire fields on at least one row.
+    const sample = res.body.items[0];
+    expect(sample).toHaveProperty("tenant_id");
+    expect(sample).toHaveProperty("store_id");
+    expect(sample).toHaveProperty("identifier_type");
+    expect(sample).toHaveProperty("identifier_value");
+    expect(sample).toHaveProperty("resolution_status", "pending");
+    expect(sample).toHaveProperty("encountered_at");
+    // Snake_case fields confirm the controller's wire-shape adapter
+    // ran; the service exposes camelCase (`identifierValue`).
+    expect(sample).not.toHaveProperty("identifierValue");
+    expect(sample).not.toHaveProperty("tenantId");
   });
 });

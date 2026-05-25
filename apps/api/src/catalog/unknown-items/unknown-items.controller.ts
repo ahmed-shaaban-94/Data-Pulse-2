@@ -344,6 +344,20 @@ export class UnknownItemsController {
    *     transitions (FR-080 scopes audits to transitions).
    *   - No `@Idempotent` decorator: GETs are naturally idempotent
    *     and the interceptor expects a header on writes only.
+   *
+   * Auth / RolesGuard (documented intentional gap):
+   *   This handler does NOT carry `@UseGuards(AuthGuard,
+   *   TenantContextGuard, RolesGuard)` or `@Roles(...)` decorators.
+   *   It inherits the same posture as `posCaptureItem` above —
+   *   the route is consumed by integration tests via a
+   *   configurable context guard, and production wiring of the
+   *   real auth+roles stack lands in a future Wave 1 slice. Auth
+   *   files (`apps/api/src/auth/**`) are forbidden surface for
+   *   005 per the slice contract, so adding decorators here
+   *   would silently expand scope. Flagged by CodeRabbit on
+   *   PR #334; tracked as a follow-up auth-wiring slice that
+   *   addresses both `posCaptureItem` and
+   *   `tenantAdminListUnknownItems` consistently.
    */
   @Get("api/v1/catalog/unknown-items")
   async tenantAdminListUnknownItems(
