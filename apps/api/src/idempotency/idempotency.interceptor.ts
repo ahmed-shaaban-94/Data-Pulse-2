@@ -30,7 +30,6 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   type CallHandler,
@@ -270,8 +269,13 @@ export class IdempotencyInterceptor implements NestInterceptor {
         tap({
           next: async (responseBody: unknown) => {
             // Save the successful response for future replays.
+            // T539a — preserve the handler's actual status (200, 201, 202, …)
+            // rather than hard-coding CREATED. Handlers that use
+            // `@Res({ passthrough: true })` to branch status (e.g.,
+            // 005 unknown-items capture: 200 resolved / 201 unknown) rely on
+            // this so replay returns the same status as the original response.
             const result: StoredResult = {
-              status: HttpStatus.CREATED,
+              status: execCtx.switchToHttp().getResponse<{ statusCode: number }>().statusCode,
               body: responseBody,
             };
             await this.store.save(
