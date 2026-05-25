@@ -561,7 +561,8 @@ slices:
     agent: sonnet-api
     allowed_files:
       - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts   # new file — small exception filter
-      - apps/api/src/catalog/unknown-items/unknown-items.module.ts                 # wire the filter
+      - apps/api/src/catalog/unknown-items/unknown-items.module.ts                 # register the filter as a provider
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts             # apply @UseFilters(IdempotencyMismatchFilter) to posCaptureItem; method-scope keeps filter off LIST/DISMISS/future routes per stop rule
       - apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/idempotency/retry-mismatch"
@@ -569,8 +570,9 @@ slices:
         docker_required: true
     stop:
       - if the filter modifies the existing 001 IdempotencyInterceptor behavior on routes other than the capture route
+      - if @UseFilters is applied at the class level rather than method level (class-level would inherit to LIST/DISMISS, violating the stop rule above)
     report_fields: [changed_files, validation_results, forbidden_path_check]
-    parallel_safety: safe   # new filter file, scoped to capture route
+    parallel_safety: safe   # new filter file, method-scoped to capture route
     branch_template: "feat/005-wave1-idemp-mismatch"
 
   - id: 005-WAVE1-IDEMP-EDGES
