@@ -77,7 +77,6 @@ import {
 import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
 import type { Pool } from "pg";
-import { randomUUID } from "node:crypto";
 import request from "supertest";
 
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
@@ -99,7 +98,7 @@ import { UnknownItemsController } from "../../../../src/catalog/unknown-items/un
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import type { ResolvedContext } from "../../../../src/context/types";
-import { IdempotencyKeyStore } from "@data-pulse-2/shared";
+import { IdempotencyKeyStore, newId } from "@data-pulse-2/shared";
 
 import {
   applyAllUpAndCreateAppRole,
@@ -406,7 +405,7 @@ describe("T536 / 005-WAVE1-IDEMP-EDGES — FR-022 post-resolved identifier → a
     //     because we use 'barcode'. `source_system` is NULL because
     //     that column is required only for 'external_pos_id' aliases.
     //     `created_by` is NOT NULL — uses ACTOR_A from the harness.
-    dynamicAliasId = randomUUID();
+    dynamicAliasId = newId();
     await env!.admin.query(
       `INSERT INTO product_aliases
          (id, tenant_id, product_id, identifier_type, value,
