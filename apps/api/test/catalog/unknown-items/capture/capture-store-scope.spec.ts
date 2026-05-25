@@ -276,7 +276,7 @@ beforeAll(async () => {
     providers: [
       {
         provide: PG_POOL,
-        useFactory: (): Pool => localEnv.admin,
+        useFactory: (): Pool => localEnv.app,
       },
       UnknownItemsService,
       { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
