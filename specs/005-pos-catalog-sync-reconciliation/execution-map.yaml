@@ -388,6 +388,7 @@ slices:
     agent: sonnet-api
     allowed_files:
       - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts  # discriminated-union response, 200/201 status branching, audit-subject branch — required for `kind: "resolved"` path per contract
       - apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-resolves-to-alias"
