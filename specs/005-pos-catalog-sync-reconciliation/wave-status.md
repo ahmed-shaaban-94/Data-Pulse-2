@@ -1,20 +1,20 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-25 (Wave 1 Phase 3 happy-path + resolve slices merged — `005-WAVE1-CAPTURE-RESOLVE` PR #321; Phase 3 refinements (store-scope, dedup, validation, non-disclosing) now unblocked)
+**Last updated:** 2026-05-25 (Wave 1 Phase 4 idempotency status-capture slice merged — `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324; `005-IDEMP-STATUS-CAPTURE-DEFECT` resolved; LIST and DISMISS now unblocked for correctness-safe dispatch)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `f5e4a19` (PR #321, 2026-05-25 — `005-WAVE1-CAPTURE-RESOLVE` merged)
-**Active findings:** 1 (IdempotencyInterceptor status-code replay defect — workaround in place, follow-up slice proposed)
-**Resolved findings:** 1
+**Base:** `origin/main` at `0c3638d` (PR #324, 2026-05-25 — `005-WAVE1-IDEMP-STATUS-CAPTURE` merged)
+**Active findings:** 0
+**Resolved findings:** 2
 
 ---
 
 ## TL;DR
 
-**7 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, **`005-WAVE1-CAPTURE-RESOLVE` PR #321** — new this closeout). **13 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. The `005-METRICS-ALLOWLIST-PRECONDITION` finding is resolved (see "Resolved findings" below).
+**8 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, **`005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324** — new this closeout). **12 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved (see "Resolved findings" below).
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
-**Phase 3 refinements now unblocked.** With `005-WAVE1-CAPTURE-RESOLVE` merged, the Phase 3 refinement slice sequence is ready to dispatch. A defect in `apps/api/src/idempotency/idempotency.interceptor.ts:274` was discovered during RESOLVE authoring: hard-coded `HttpStatus.CREATED` causes 200-resolved responses to replay as 201 (see "Active findings" below). A workaround (`it.skip`) is in place, and a follow-up slice `005-WAVE1-IDEMP-STATUS-CAPTURE` is proposed to fix the interceptor once this slice lands (proposed as optional next dispatch or placeholder for future gating). The immediate next slice for Phase 3 is **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515 + T516, store-scope respect — all dependencies satisfied).
+**Phase 3 and Phase 4 now fully unblocked.** With `005-WAVE1-CAPTURE-RESOLVE` merged, the Phase 3 refinement sequence was ready. The IdempotencyInterceptor status-code replay defect found during RESOLVE authoring has been fixed via `005-WAVE1-IDEMP-STATUS-CAPTURE` (PR #324), resolving the `005-IDEMP-STATUS-CAPTURE-DEFECT` finding (see "Resolved findings" below). LIST and DISMISS are now correctness-safe for dispatch. The immediate next slices for Phase 3 are **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515 + T516, store-scope respect) and the parallel cohort of `005-WAVE1-VALIDATION`, `005-WAVE1-NON-DISCLOSING`, `005-WAVE1-LIST` — all dependencies satisfied.
 
 **Next moves:**
 
@@ -37,6 +37,7 @@
 | `005-WAVE1-CONTRACT` (slice) | T503 + T504 — OpenAPI YAML at `packages/contracts/openapi/catalog/unknown-items.yaml` with Wave 1 operationIds (`posCaptureItem`, `tenantAdminListUnknownItems`, `tenantAdminDismissUnknownItem`); contract conformance spec. Unblocks all Phase 3+ slices. | PR #315 @ `6cb4a1b` |
 | `005-WAVE1-CAPTURE-HAPPY` (slice) | T510 + T511 + T512 — US1 first end-to-end capture path: `UnknownItemsService.capture()` + `UnknownItemsController.capture()` + capture happy-path spec. Blocks all subsequent capture refinements (resolve, store-scope, dedup, validation, non-disclosing) and idempotency wiring. | PR #317 @ `5fc8549` |
 | `005-WAVE1-CAPTURE-RESOLVE` (slice) | T513 + T514 — Alias-resolution prelude (FR-022/030/031): when POS sends a known alias `source_system`+`value` pair, resolve the alias to the matching `tenant_products` row and return `kind: "resolved"` + status 200. Updates `UnknownItemsService.captureItem()` and `UnknownItemsController.capture()` with discriminated-union response and status-branching logic. | PR #321 @ `f5e4a19` |
+| `005-WAVE1-IDEMP-STATUS-CAPTURE` (slice) | T539a + T539b — IdempotencyInterceptor status-preservation fix: line 274 now reads the original response's statusCode via ExecutionContext instead of hard-coding `HttpStatus.CREATED`, ensuring non-201 responses (e.g., resolved-to-alias 200) replay with the correct status. Includes regression test in `apps/api/test/idempotency/replay.spec.ts` and flips the `it.skip` tripwire in the capture-resolves-to-alias spec. Resolves `005-IDEMP-STATUS-CAPTURE-DEFECT` finding. | PR #324 @ `0c3638d` |
 
 ### Planning artifacts merged (for context)
 
@@ -57,28 +58,7 @@ _None._
 
 ## Active findings
 
-### `005-IDEMP-STATUS-CAPTURE-DEFECT` (medium) — discovered during RESOLVE authoring
-
-**Discovered**: 2026-05-25, during `005-WAVE1-CAPTURE-RESOLVE` implementation and testing (PR #321 authoring phase).
-
-**Summary**: The existing `IdempotencyInterceptor` at `apps/api/src/idempotency/idempotency.interceptor.ts:274` hard-codes the replay response status to `HttpStatus.CREATED` (201). When a request is successfully resolved and returns a 200 to the client, a retry with the same `Idempotency-Key` will replay from the interceptor's cache and return 201 (created) instead of 200 (ok), violating the contract that the replay status matches the original response.
-
-**Impact**: Non-critical in Wave 1 capture happy-path (calls only return 201 on fresh capture, 200 only on resolved-to-alias — so the resolved case has a status-code inconsistency on replay). Affects all future endpoints that return 200 on success. Blocks correctness for LIST and DISMISS operations if they return 200 and are idempotent.
-
-**Evidence**:
-- `apps/api/src/idempotency/idempotency.interceptor.ts:274` — hard-coded `HttpStatus.CREATED` in replay path
-- `apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts:417` (PR #321) — `it.skip('should replay a resolved capture as 200...')` blocks the test to avoid CI failure; the skip is a tripwire flagging the defect
-
-**Workaround (in place)**: PR #321 documents the defect in its body and marks the replay test with `it.skip(...)` as a tripwire. The test will fail once the interceptor is fixed, alerting the author of the status-code fix.
-
-**Proposed resolution**: A new slice `005-WAVE1-IDEMP-STATUS-CAPTURE` was named in PR #321's discussion but is NOT yet authored in `execution-map.yaml`. The fix requires editing `apps/api/src/idempotency/idempotency.interceptor.ts` (001-owned forbidden surface for any 005 slice) to capture and replay the original status code instead of hard-coding. Options:
-- **(a) Author + dispatch `005-WAVE1-IDEMP-STATUS-CAPTURE`** as a gated prerequisite for LIST + DISMISS phases (005-WAVE1-LIST, 005-WAVE1-DISMISS, 005-WAVE1-IDEMP-WIRE) to ensure the 001 interceptor is fixed before those endpoints land.
-- **(b) Continue with Phase 3–5 slices as-is** (STORE-SCOPE, DEDUP, VALIDATION, NON-DISCLOSING, LIST, DISMISS, IDEMP-WIRE) and defer the interceptor fix to a post-Wave-1 maintenance slice once the 005 spec is merged and the need is evident in production/staging.
-
-**Audit fields**:
-- `discovered_in_slice_attempt`: `005-WAVE1-CAPTURE-RESOLVE`
-- `discovered_at_commit`: `f5e4a19dd93abdc2520e21f0661f803a3c563edf` (PR #321)
-- `discovered_at`: 2026-05-25
+_None._
 
 **Other known issues** (planning-time decisions, not findings):
 - Header-name drift `Idempotency-Token` → `Idempotency-Key` in `spec.md` §5 and `quickstart.md` — fixup tracked in `tasks.md` T564.
@@ -115,6 +95,28 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 - `resolved_at_commit`: `28d1a0d72725ffa93272dd2a2e9b912b11380cc4`
 - `resolved_at`: 2026-05-23
 
+### `005-IDEMP-STATUS-CAPTURE-DEFECT` (medium) — resolved
+
+**Discovered**: 2026-05-25, during `005-WAVE1-CAPTURE-RESOLVE` implementation and testing (PR #321 authoring phase).
+
+**Summary**: The existing `IdempotencyInterceptor` at `apps/api/src/idempotency/idempotency.interceptor.ts:274` hard-codes the replay response status to `HttpStatus.CREATED` (201). When a request is successfully resolved and returns a 200 to the client, a retry with the same `Idempotency-Key` will replay from the interceptor's cache and return 201 (created) instead of 200 (ok), violating the contract that the replay status matches the original response.
+
+**Impact**: Non-critical in Wave 1 capture happy-path (calls only return 201 on fresh capture, 200 only on resolved-to-alias — so the resolved case has a status-code inconsistency on replay). Affects all future endpoints that return 200 on success. Blocks correctness for LIST and DISMISS operations if they return 200 and are idempotent.
+
+**Evidence**:
+- `apps/api/src/idempotency/idempotency.interceptor.ts:274` — hard-coded `HttpStatus.CREATED` in replay path
+- `apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts:417` (PR #321) — `it.skip('should replay a resolved capture as 200...')` blocks the test to avoid CI failure; the skip is a tripwire flagging the defect
+
+**Resolution**: Authored `005-WAVE1-IDEMP-STATUS-CAPTURE` slice (PR #324). The fix reads the original response's statusCode via `ExecutionContext` (`execCtx.switchToHttp().getResponse<{ statusCode: number }>().statusCode`) at line 274 instead of hard-coding `HttpStatus.CREATED`. Includes regression test in `apps/api/test/idempotency/replay.spec.ts` asserting non-201 status preservation through replay, and flips the `it.skip` tripwire in `apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts` to active `it()`. LIST and DISMISS are now correctness-safe for dispatch.
+
+**Audit fields**:
+- `discovered_in_slice_attempt`: `005-WAVE1-CAPTURE-RESOLVE`
+- `discovered_at_commit`: `f5e4a19dd93abdc2520e21f0661f803a3c563edf` (PR #321)
+- `discovered_at`: 2026-05-25
+- `resolved_by_pr`: 324
+- `resolved_at_commit`: `0c3638d0bcaa409cae13c2a9b7ca1e0da76c17a3`
+- `resolved_at`: 2026-05-25
+
 ---
 
 ## Blocked
@@ -129,22 +131,21 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-16 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+12 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ---
 
 ## Proposed (awaiting approval / dispatch)
 
-_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), and Phase 3 happy-path slices are complete; see "Merged on `main`."_
+_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), Phase 3 happy-path + resolve, and Phase 4 idempotency-status-capture slices are complete; see "Merged on `main`."_
 
 ### Phase 3 — US1 Capture (P1 / MVP)
 
-- **`005-WAVE1-CAPTURE-RESOLVE`** (T513, T514) — alias-resolution prelude (FR-022/030/031). **NEXT SLICE TO DISPATCH.** All dependencies satisfied.
-- **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515, T516) — FR-030a store-scope respect.
+- **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515, T516) — FR-030a store-scope respect. **NEXT SLICE TO DISPATCH.** All dependencies satisfied.
 - **`005-WAVE1-CAPTURE-DEDUP`** (T517, T518) — FR-032 natural dedup.
 - **`005-WAVE1-VALIDATION`** (T519, T520) — Zod boundary + redaction guard.
 - **`005-WAVE1-NON-DISCLOSING`** (T521, T522) — SI-001/004/FR-013/092.
-- **`005-WAVE1-LIST`** (T523, T524) — tenant-admin queue read endpoint.
+- **`005-WAVE1-LIST`** (T523, T524) — tenant-admin queue read endpoint (now unblocked for correctness-safe dispatch following IDEMP-STATUS-CAPTURE fix).
 
 ### Phase 4 — US4 Idempotency (P2)
 
@@ -241,20 +242,16 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-Phase 3+ capture refinement path is now fully unblocked. Three decisions and two tracks are open:
+Phase 3+ capture refinement path is now fully unblocked. The IdempotencyInterceptor fix has been merged (PR #324), resolving the `005-IDEMP-STATUS-CAPTURE-DEFECT` finding. LIST and DISMISS are now correctness-safe for dispatch. Two tracks are open:
 
-**Decision 1: IdempotencyInterceptor fix sequencing** — See "Active findings" above. Choose one:
-- **(a) Author + dispatch `005-WAVE1-IDEMP-STATUS-CAPTURE`** before LIST + DISMISS phases (gated prerequisite for FR-014/002–004 endpoints that return 200 on success). This requires prior approval to touch `apps/api/src/idempotency/idempotency.interceptor.ts` (001-owned).
-- **(b) Defer the interceptor fix** to post-Wave-1 and continue with Phase 3–5 slices using the current workaround (test skip). The `it.skip()` is a tripwire — once the interceptor is fixed separately, the test auto-starts failing, alerting the author.
-
-**Decision 2: Phase 3 refinement sequencing** — Remaining Phase 3 slices per intra-cohort DAG (all unblocked by CAPTURE-RESOLVE merge):
+**Phase 3 refinement sequencing** — Remaining Phase 3 slices per intra-cohort DAG (all unblocked by CAPTURE-RESOLVE + IDEMP-STATUS-CAPTURE merges):
 - **CAPTURE-STORE-SCOPE** (T515 + T516) — immediate next; no other predecessors
 - **CAPTURE-DEDUP** (T517 + T518) — depends on STORE-SCOPE
 - **VALIDATION** (T519 + T520) — depends on CAPTURE-HAPPY only; can dispatch in parallel with STORE-SCOPE/DEDUP
 - **NON-DISCLOSING** (T521 + T522) — depends on CAPTURE-HAPPY + HARNESS; can dispatch in parallel
-- **LIST** (T523 + T524) — depends on CONTRACT + HARNESS; can dispatch in parallel
+- **LIST** (T523 + T524) — depends on CONTRACT + HARNESS; now correctness-safe following IDEMP-STATUS-CAPTURE fix; can dispatch in parallel
 
-Parallelizable: STORE-SCOPE and VALIDATION can dispatch together once RESOLVE merges. NON-DISCLOSING and LIST can also start. DEDUP serializes after STORE-SCOPE.
+Parallelizable: STORE-SCOPE and VALIDATION can dispatch together. NON-DISCLOSING and LIST can also start. DEDUP serializes after STORE-SCOPE.
 
 **Track 1: Phase 3 capture refinements** — Smallest next slice is **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515 + T516). Reusable Maestro prompt:
 
