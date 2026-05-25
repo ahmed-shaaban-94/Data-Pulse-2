@@ -29,27 +29,49 @@
  * Audit:
  *   `@Auditable("unknown_item.captured")` is passive metadata read
  *   by the global `AuditEmitterInterceptor` from `AuditModule`. The
- *   interceptor emits one audit-event per successful response. Deep
- *   audit-event assertion lives in T546.
+ *   interceptor emits one audit-event per successful response.
+ *
+ *   Audit-subject branching (T514): the `AuditEmitterInterceptor` reads
+ *   the metadata key from the route handler BEFORE invoking the handler
+ *   (audit-emitter.interceptor.ts:75-83), so the decorator string is
+ *   fixed per route at module-load time. Mutating the subject per branch
+ *   would require either (a) injecting `AUDIT_JOB_ENQUEUER` into this
+ *   controller and emitting programmatically — disallowed because the
+ *   CAPTURE-HAPPY integration spec wires this controller without the
+ *   audit module's providers, so adding a constructor dependency would
+ *   regress the existing test — or (b) modifying `AuditEmitterInterceptor`
+ *   itself, which is forbidden surface for 005. The safest choice is to
+ *   keep ONE static subject for both outcomes: `unknown_item.captured`
+ *   is semantically accurate for the POS capture *request* regardless
+ *   of whether it resolved or fell through to a new pending row. A
+ *   future audit-taxonomy refinement (e.g. T546) can split this if
+ *   downstream needs require it. Deep audit-event assertion lives in T546.
  *
  * Validation:
  *   The Zod schema in `./dto/capture-request.dto.ts` is the boundary
  *   for FR-070 / FR-071. CAPTURE-HAPPY ships a minimal schema covering
  *   the happy-path fields; T520 (005-WAVE1-VALIDATION) tightens it.
  *
- * Status code:
- *   201 Created for the `unknown` outcome (a new pending row). The
- *   resolved-200 path lands in CAPTURE-RESOLVE (T514).
+ * Status code (T514):
+ *   - 200 OK for the `resolved` outcome (alias hit — no row created).
+ *   - 201 Created for the `unknown` outcome (new pending row).
+ *
+ *   Status branching uses NestJS's `@Res({ passthrough: true })` pattern
+ *   so the handler still returns a body (the global interceptors —
+ *   logging, idempotency replay storage — keep working) while setting
+ *   the status code programmatically. The route-level `@HttpCode`
+ *   decorator is removed because it would override `res.status(...)`.
  */
 import {
   Body,
   Controller,
-  HttpCode,
   HttpStatus,
   Post,
   Req,
+  Res,
   UnauthorizedException,
 } from "@nestjs/common";
+import type { Response } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
@@ -113,7 +135,20 @@ interface PosCaptureUnknownResponseBody {
   };
 }
 
-function toWireShape(row: CapturedUnknownItemRow): PosCaptureUnknownResponseBody {
+/**
+ * Wire shape of the contract's `PosCaptureResolvedResponse`
+ * (catalog/unknown-items.yaml#PosCaptureResolvedResponse) — discriminated
+ * literal `kind: "resolved"`, required `product_id`, optional `alias_id`.
+ */
+interface PosCaptureResolvedResponseBody {
+  readonly kind: "resolved";
+  readonly product_id: string;
+  readonly alias_id: string;
+}
+
+function toUnknownWireShape(
+  row: CapturedUnknownItemRow,
+): PosCaptureUnknownResponseBody {
   return {
     kind: "unknown",
     unknown_item: {
@@ -134,6 +169,17 @@ function toWireShape(row: CapturedUnknownItemRow): PosCaptureUnknownResponseBody
   };
 }
 
+function toResolvedWireShape(
+  productId: string,
+  aliasId: string,
+): PosCaptureResolvedResponseBody {
+  return {
+    kind: "resolved",
+    product_id: productId,
+    alias_id: aliasId,
+  };
+}
+
 @Controller("api/pos/v1/catalog/unknown-items")
 export class UnknownItemsController {
   constructor(private readonly unknownItemsService: UnknownItemsService) {}
@@ -147,14 +193,14 @@ export class UnknownItemsController {
    * CAPTURE-DEDUP).
    */
   @Post()
-  @HttpCode(HttpStatus.CREATED)
   @Idempotent("required")
   @Auditable("unknown_item.captured")
   async posCaptureItem(
     @Req() request: TenantContextRequest,
     @Body(new ZodValidationPipe(PosCaptureItemRequestSchema))
     body: PosCaptureItemRequestDto,
-  ): Promise<PosCaptureUnknownResponseBody> {
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<PosCaptureResolvedResponseBody | PosCaptureUnknownResponseBody> {
     const ctx = request.context;
     if (!ctx) {
       // No resolved POS principal context. In production this is
@@ -191,6 +237,14 @@ export class UnknownItemsController {
       saleContext: body.sale_context ?? null,
     });
 
-    return toWireShape(result.unknownItem);
+    if (result.kind === "resolved") {
+      // FR-022 / FR-030 / FR-031 — alias hit. 200 OK, no row created.
+      res.status(HttpStatus.OK);
+      return toResolvedWireShape(result.productId, result.aliasId);
+    }
+
+    // FR-001 — capture: a new pending row was inserted. 201 Created.
+    res.status(HttpStatus.CREATED);
+    return toUnknownWireShape(result.unknownItem);
   }
 }
