@@ -73,43 +73,19 @@ import {
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import type { TenantContextRequest } from "../../context/types";
 import { Idempotent } from "../../idempotency/idempotent.decorator";
 import {
+  PosCaptureItemRequestSchema,
+  type PosCaptureItemRequestDto,
+} from "./dto/capture-request.dto";
+import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
 } from "./unknown-items.service";
-
-/**
- * Minimal Zod schema mirroring the OpenAPI `PosCaptureItemRequest`.
- * Closed object (`additionalProperties: false` ⇒ `.strict()`).
- *
- * CAPTURE-HAPPY ships the structural validation; full FR-071 enforcement
- * (`source_system` ⇔ `external_pos_id` cross-field constraint, raw-value
- * log redaction) is tightened in 005-WAVE1-VALIDATION (T520).
- */
-const PosCaptureItemRequestSchema = z
-  .object({
-    identifier_type: z.enum([
-      "barcode",
-      "sku",
-      "plu",
-      "supplier_code",
-      "external_pos_id",
-    ]),
-    identifier_value: z.string().min(1).max(200),
-    source_system: z.string().min(1).max(64).nullable().optional(),
-    sale_context: z.record(z.string(), z.unknown()).nullable().optional(),
-  })
-  .strict();
-
-export type PosCaptureItemRequestDto = z.infer<
-  typeof PosCaptureItemRequestSchema
->;
 
 /**
  * Wire shape of the contract's `PosCaptureUnknownResponse`. Adapts the
