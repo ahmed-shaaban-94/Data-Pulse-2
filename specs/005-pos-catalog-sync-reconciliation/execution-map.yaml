@@ -554,10 +554,14 @@ slices:
   - id: 005-WAVE1-IDEMP-MISMATCH
     task_ids: [T532, T533]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 339
+    merged_at_commit: 0eef243c1fbf55fb4ca209c7dc8ae8b4ad36813e
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: []   # IDEMP-WIRE merged via PR #336 (d57efc6); was sole blocker
-    blocks: [005-WAVE1-AUDIT, 005-WAVE1-METRICS]
+    previously_blocked: [005-WAVE1-AUDIT, 005-WAVE1-METRICS]
+    blocks: []
     agent: sonnet-api
     allowed_files:
       - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts   # new file — small exception filter
@@ -707,7 +711,7 @@ slices:
     type: test
     status: proposed
     approval_required: false
-    depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-DISMISS, 005-WAVE1-IDEMP-MISMATCH]
+    depends_on: [005-WAVE1-DISMISS]   # CAPTURE-HAPPY merged via PR #317; IDEMP-MISMATCH merged via PR #339 (0eef243); only DISMISS remains
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -730,7 +734,7 @@ slices:
     type: test
     status: proposed
     approval_required: false
-    depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-DISMISS, 005-WAVE1-IDEMP-MISMATCH]
+    depends_on: [005-WAVE1-DISMISS]   # CAPTURE-HAPPY merged via PR #317; IDEMP-MISMATCH merged via PR #339 (0eef243); only DISMISS remains
     blocks: []
     agent: sonnet-test
     allowed_files:
