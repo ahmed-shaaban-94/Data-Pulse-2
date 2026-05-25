@@ -530,10 +530,14 @@ slices:
   - id: 005-WAVE1-IDEMP-WIRE
     task_ids: [T530, T531]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 336
+    merged_at_commit: d57efc6b026bd0cf095476d1022d020532675fba
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-IDEMP-VERIFY, 005-WAVE1-CAPTURE-HAPPY]
-    blocks: [005-WAVE1-IDEMP-MISMATCH, 005-WAVE1-IDEMP-EDGES]
+    previously_blocked: [005-WAVE1-IDEMP-MISMATCH, 005-WAVE1-IDEMP-EDGES]
+    blocks: []
     agent: sonnet-api
     allowed_files:
       - apps/api/src/catalog/unknown-items/unknown-items.controller.ts   # add @Idempotent('required') decorator
@@ -552,7 +556,7 @@ slices:
     type: feat
     status: proposed
     approval_required: false
-    depends_on: [005-WAVE1-IDEMP-WIRE]
+    depends_on: []   # IDEMP-WIRE merged via PR #336 (d57efc6); was sole blocker
     blocks: [005-WAVE1-AUDIT, 005-WAVE1-METRICS]
     agent: sonnet-api
     allowed_files:
@@ -574,7 +578,7 @@ slices:
     type: test
     status: proposed
     approval_required: false
-    depends_on: [005-WAVE1-IDEMP-WIRE, 005-WAVE1-CAPTURE-RESOLVE]
+    depends_on: []   # IDEMP-WIRE merged via PR #336 (d57efc6); CAPTURE-RESOLVE merged via PR #321; both predecessors cleared
     blocks: []
     agent: sonnet-test
     allowed_files:
