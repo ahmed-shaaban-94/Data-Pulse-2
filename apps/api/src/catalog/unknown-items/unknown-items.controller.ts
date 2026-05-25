@@ -67,6 +67,7 @@ import {
   Controller,
   Get,
   HttpStatus,
+  Param,
   Post,
   Query,
   Req,
@@ -400,5 +401,71 @@ export class UnknownItemsController {
       items: result.items.map(rowToUnknownItemWireShape),
       next_cursor: result.nextCursor,
     };
+  }
+
+  /**
+   * `tenantAdminDismissUnknownItem` — dashboard / tenant-admin
+   * dismiss action (T541 / 005-WAVE1-DISMISS).
+   *
+   * POST /api/v1/catalog/unknown-items/:id/dismiss
+   *
+   * Transitions the addressed `unknown_items` row from `pending` to
+   * `dismissed` per FR-003 / FR-004. The service-layer
+   * `dismissUnknownItem` enforces the monotonicity guard at the
+   * UPDATE's WHERE clause + distinguishes 404 (non-disclosing)
+   * from 409 (`already_reconciled`) via a conditional SELECT on
+   * rowCount=0.
+   *
+   * Path-param validation:
+   *   The `:id` segment is Zod-validated as a UUID at the controller
+   *   boundary. A malformed id rejects as 400 (validation_error)
+   *   before reaching the service. Matches the contract's
+   *   `format: uuid` requirement.
+   *
+   * Audit / idempotency:
+   *   - `@Auditable("unknown_item.dismissed")` fires on success only
+   *     (the AuditEmitterInterceptor only emits after handler
+   *     completion). The 404/409 paths throw before the interceptor
+   *     can fire; rejected-dismiss audit emission is deferred to a
+   *     future enhancement (tasks.md T543's `rejected=true`
+   *     discriminator would need a filter pattern similar to
+   *     PR #339's IDEMP-MISMATCH).
+   *   - No `@Idempotent('required')` decorator: dismiss is naturally
+   *     idempotent at the DB layer via the monotonicity guard.
+   *     Re-dismissing returns deterministic 409 from the lifecycle
+   *     invariant — no client-side dedup key needed.
+   *
+   * Auth gap (carried forward from CAPTURE-HAPPY / NON-DISCLOSING /
+   * LIST / IDEMP-WIRE / IDEMP-MISMATCH): no `@UseGuards(AuthGuard,
+   * TenantContextGuard, RolesGuard)`. Same documented intentional gap;
+   * `apps/api/src/auth/**` remains forbidden surface for 005.
+   * Tracked in wave-status.md "Outstanding known gap" section.
+   */
+  @Post("api/v1/catalog/unknown-items/:id/dismiss")
+  @Auditable("unknown_item.dismissed")
+  async tenantAdminDismissUnknownItem(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid()))
+    id: string,
+  ): Promise<UnknownItemWireShape> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const row = await this.unknownItemsService.dismissUnknownItem({
+      id,
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      actorUserId: ctx.userId,
+    });
+
+    return rowToUnknownItemWireShape(row);
   }
 }

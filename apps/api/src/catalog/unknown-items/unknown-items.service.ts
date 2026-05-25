@@ -55,7 +55,12 @@
  *   specs/005-pos-catalog-sync-reconciliation/data-model.md §2.1 + §2.2
  *   packages/contracts/openapi/catalog/unknown-items.yaml — posCaptureItem
  */
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 
@@ -759,5 +764,176 @@ export class UnknownItemsService {
     // Future cursor logic encodes the boundary in
     // `(encountered_at, id)` for the next page.
     return { items, nextCursor: null };
+  }
+
+  /**
+   * Dismiss a pending unknown-item (T541 / 005-WAVE1-DISMISS).
+   *
+   * Behavior (FR-002, FR-003, FR-004 monotonic lifecycle):
+   *   - Atomic UPDATE with monotonicity guard
+   *     (`WHERE id = $1 AND resolution_status = 'pending'`) — the
+   *     status filter encodes FR-004 ("pending → resolved/dismissed,
+   *     no other transitions"). Re-dismissing a non-pending row
+   *     can't succeed at the DB layer.
+   *   - On success (rowCount = 1): RETURNING fetches the post-
+   *     transition row; caller adapts to wire shape.
+   *   - On failure (rowCount = 0): a conditional SELECT distinguishes
+   *     the two non-disclosure cases per the contract:
+   *       - SELECT returns 1 row → 409 `already_reconciled` (the
+   *         caller's tenant CAN see the row, but it's already
+   *         `resolved` or `dismissed`)
+   *       - SELECT returns 0 rows → 404 non-disclosing (RLS filtered
+   *         the row out — either cross-tenant or doesn't exist
+   *         anywhere; SI-001/SI-004/FR-013/FR-092)
+   *
+   * Race safety:
+   *   UPDATE-first avoids the SELECT-then-UPDATE race where two
+   *   concurrent dismiss requests both see `pending`, both compute
+   *   "200 OK", but only one transition actually lands. UPDATE-first
+   *   guarantees exactly one atomic winner; the loser's rowCount=0
+   *   path drives them to 409 via the SELECT check.
+   *
+   * RLS posture:
+   *   Runs inside `runWithTenantContext` (sets `app.current_tenant`)
+   *   + explicit `app.current_store` GUC (empty string for tenant-wide
+   *   actors via 0009 carve-out; store UUID for store-scoped operators).
+   *   No application-level `tenant_id` predicate — RLS does the
+   *   cross-tenant filter. Same posture as `findByIdForTenant` and
+   *   `listForTenant`.
+   *
+   * Audit / metrics:
+   *   The route handler carries `@Auditable("unknown_item.dismissed")` —
+   *   the global `AuditEmitterInterceptor` fires the audit subject
+   *   on a successful response. Wave 1 does NOT emit a rejected-
+   *   dismiss audit subject on the 404/409 paths (the
+   *   `AuditEmitterInterceptor` only fires on handler success).
+   *   Tasks.md T543 mentions a `rejected=true` discriminator;
+   *   that's deferred to a future enhancement (would require a
+   *   pattern similar to PR #339's IDEMP-MISMATCH filter).
+   *
+   *   No metric increment in Wave 1 — `unknown_item_resolved_total{action}`
+   *   was allowlisted with `action ∈ {linked, created, dismissed}` in
+   *   PR #299, and the `dismissed` action is the natural counter
+   *   site here. The METRICS slice (T552/T553) authors the explicit
+   *   counter increment after this slice ships.
+   */
+  async dismissUnknownItem(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly storeId: string | null;
+    readonly actorUserId: string;
+  }): Promise<UnknownItemRow> {
+    const result = await runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<
+        | { kind: "ok"; row: UnknownItemRow }
+        | { kind: "already_reconciled" }
+        | { kind: "not_found" }
+      > => {
+        // Set `app.current_store` GUC — drives the
+        // `unknown_items_store_read` RLS policy branch. Same pattern
+        // as `findByIdForTenant`/`listForTenant`.
+        await client.query(
+          "SELECT set_config('app.current_store', $1, true)",
+          [input.storeId ?? ""],
+        );
+
+        // UPDATE-first with monotonicity guard. The `WHERE` clause
+        // includes `resolution_status = 'pending'` per FR-004 +
+        // the slice's explicit stop rule. Omitting that predicate
+        // would allow re-dismissing a `resolved` row (silently
+        // overwriting timestamps).
+        const updateResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending" | "resolved" | "dismissed";
+          resolution_action: "linked" | "created" | "dismissed" | null;
+          resolved_at: Date | null;
+          resolved_by: string | null;
+          resolved_product_id: string | null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `UPDATE unknown_items
+              SET resolution_status = 'dismissed',
+                  resolution_action = 'dismissed',
+                  resolved_at       = now(),
+                  resolved_by       = $2,
+                  resolved_product_id = NULL
+            WHERE id = $1
+              AND resolution_status = 'pending'
+          RETURNING id, tenant_id, store_id, identifier_type, value,
+                    source_system, resolution_status, resolution_action,
+                    resolved_at, resolved_by, resolved_product_id,
+                    encountered_at, sale_context`,
+          [input.id, input.actorUserId],
+        );
+
+        const updated = updateResult.rows[0];
+        if (updated) {
+          return {
+            kind: "ok",
+            row: {
+              id: updated.id,
+              tenantId: updated.tenant_id,
+              storeId: updated.store_id,
+              identifierType: updated.identifier_type,
+              identifierValue: updated.value,
+              sourceSystem: updated.source_system,
+              resolutionStatus: updated.resolution_status,
+              resolutionAction: updated.resolution_action,
+              resolvedAt: updated.resolved_at,
+              resolvedBy: updated.resolved_by,
+              resolvedProductId: updated.resolved_product_id,
+              encounteredAt: updated.encountered_at,
+              saleContext: updated.sale_context,
+            },
+          };
+        }
+
+        // rowCount = 0 — distinguish 404 (RLS filtered / doesn't exist)
+        // from 409 (exists, just not pending). The SELECT runs with
+        // the same RLS context (tenant + store GUC still set), so a
+        // cross-tenant row will be invisible here just as it was to
+        // the UPDATE.
+        const existenceCheck = await client.query<{ resolution_status: string }>(
+          `SELECT resolution_status
+             FROM unknown_items
+            WHERE id = $1
+            LIMIT 1`,
+          [input.id],
+        );
+
+        if (existenceCheck.rows[0]) {
+          return { kind: "already_reconciled" };
+        }
+        return { kind: "not_found" };
+      },
+    );
+
+    if (result.kind === "ok") {
+      return result.row;
+    }
+    if (result.kind === "already_reconciled") {
+      // 409 with `error.code = "conflict"` (envelope) + `details.code =
+      // "already_reconciled"` (research §R2 taxonomy). The nested code
+      // mirrors PR #339's pattern where the interceptor's domain code
+      // travels through `error.details`.
+      throw new ConflictException({
+        code: "already_reconciled",
+        message:
+          "The unknown item is already resolved or dismissed; lifecycle transitions are monotonic per FR-004.",
+      });
+    }
+    // SI-001 / SI-004 / FR-013 / FR-092: non-disclosing 404. Same
+    // posture as `findByIdForTenant` — the response carries no
+    // identifier, no tenant id, nothing that could be used as an
+    // existence oracle.
+    throw new NotFoundException("Not Found");
   }
 }
