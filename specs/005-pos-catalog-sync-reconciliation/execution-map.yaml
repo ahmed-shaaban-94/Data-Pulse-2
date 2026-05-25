@@ -428,7 +428,10 @@ slices:
   - id: 005-WAVE1-CAPTURE-DEDUP
     task_ids: [T517, T518]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 328
+    merged_at_commit: d3985137211a9c65a935e2e356f96386552c8424
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-CAPTURE-RESOLVE]
     blocks: [005-WAVE1-FR005]
