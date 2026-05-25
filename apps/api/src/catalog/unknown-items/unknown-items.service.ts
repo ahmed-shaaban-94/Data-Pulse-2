@@ -1,24 +1,35 @@
 /**
- * UnknownItemsService — 005 Wave 1 / T511 (CAPTURE-HAPPY) + T514 (CAPTURE-RESOLVE).
+ * UnknownItemsService — 005 Wave 1 / T511 (CAPTURE-HAPPY) + T514
+ * (CAPTURE-RESOLVE) + T516 (CAPTURE-STORE-SCOPE) + T518 (CAPTURE-DEDUP).
  *
  * Owns the data-layer writes for the POS unknown-item capture path.
  *
  * CAPTURE-HAPPY scope (T511): on a miss against the tenant's active alias
  * set, INSERT a fresh `pending` `unknown_items` row.
  *
- * CAPTURE-RESOLVE scope (T514, THIS extension): before that INSERT, query
+ * CAPTURE-RESOLVE scope (T514): before that INSERT, query
  * `product_aliases` filtered to `retired_at IS NULL` (uses the partial
  * index `idx_product_aliases_lookup`). On a hit, return a `resolved`
  * outcome carrying the resolved `tenant_products.id` (and the alias id
  * for auditing). NO `unknown_items` row is created on the resolved path
  * per FR-022 / FR-030 / FR-031.
  *
+ * CAPTURE-STORE-SCOPE scope (T516): the alias lookup applies the
+ * `store_id IS NULL OR store_id = $current_store` residual filter so a
+ * store-scoped alias bound to a DIFFERENT store of the same tenant does
+ * not resolve a submission from the submitting store (FR-030a).
+ *
+ * CAPTURE-DEDUP scope (T518, THIS extension): after alias lookup misses,
+ * SELECT `unknown_items` filtered to `resolution_status = 'pending'` for
+ * the same `(tenant_id, store_id, identifier_type, value, source_system)`
+ * tuple — uses the partial index `idx_unknown_items_lookup_value`
+ * (003 §8, predicate `WHERE resolution_status = 'pending'`). On a hit,
+ * return the existing row's reference; do NOT INSERT (FR-032). A
+ * `dismissed` or `resolved` row is excluded by the partial-index
+ * predicate and MUST NOT short-circuit a fresh capture (FR-005).
+ *
  * Out of scope for THIS slice (each lands in a downstream Wave 1 slice
  * that EXTENDS this service):
- *   - Submitting-store scope on alias lookup (FR-030a) →
- *       005-WAVE1-CAPTURE-STORE-SCOPE (T515/T516)
- *   - Natural dedup of pending rows (FR-032) →
- *       005-WAVE1-CAPTURE-DEDUP (T517/T518)
  *   - Non-disclosing get-by-id (SI-004 / FR-013 / FR-092) →
  *       005-WAVE1-NON-DISCLOSING (T521/T522)
  *   - List + dismiss → 005-WAVE1-LIST / 005-WAVE1-DISMISS
@@ -122,15 +133,22 @@ export class UnknownItemsService {
   /**
    * Capture a POS-submitted item reference.
    *
-   * Behavior (FR-022 / FR-030 / FR-031 / FR-001):
+   * Behavior (FR-022 / FR-030 / FR-031 / FR-032 / FR-001):
    *   1. ALIAS-RESOLUTION PRELUDE (T514) — SELECT the most recent active
    *      `product_aliases` row matching `(tenant_id, identifier_type,
    *      value)` filtered to `retired_at IS NULL`. On a hit, return a
    *      `resolved` outcome carrying the resolved `tenant_products.id`
    *      — no `unknown_items` row is created (FR-022).
-   *   2. CAPTURE FALLBACK (T511) — on a miss, INSERT a fresh `pending`
-   *      `unknown_items` row scoped to (tenant, store) and return the
-   *      persisted row.
+   *   2. NATURAL-DEDUP CHECK (T518) — on alias miss, SELECT
+   *      `unknown_items` for the same `(tenant_id, store_id,
+   *      identifier_type, value, source_system)` tuple where
+   *      `resolution_status = 'pending'`. On a hit, return that row's
+   *      reference; do NOT INSERT (FR-032). Dismissed/resolved rows are
+   *      excluded by the partial-index predicate so FR-005 (resubmit
+   *      after dismissal creates a fresh `pending` row) is preserved.
+   *   3. CAPTURE FALLBACK (T511) — on both misses, INSERT a fresh
+   *      `pending` `unknown_items` row scoped to (tenant, store) and
+   *      return the persisted row.
    *
    * Alias scope (T516 — store-scope respected, FR-030a):
    *   The lookup filter is `(tenant_id, identifier_type, value) AND
@@ -184,7 +202,7 @@ export class UnknownItemsService {
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client): Promise<
         | { kind: "resolved"; productId: string; aliasId: string }
-        | { kind: "unknown"; row: {
+        | { kind: "unknown"; inserted: boolean; row: {
             id: string;
             tenant_id: string;
             store_id: string;
@@ -240,7 +258,10 @@ export class UnknownItemsService {
         const hit = aliasHit.rows[0];
         if (hit) {
           // FR-022 / FR-030 / FR-031: no INSERT; surface the resolved
-          // product directly. Store GUC not set because no write occurs.
+          // product directly. Store GUC remains unset on this branch —
+          // the resolved path does not read or write `unknown_items`
+          // and therefore needs neither the store_read RLS predicate
+          // nor the insert WITH CHECK predicate.
           return {
             kind: "resolved",
             productId: hit.product_id,
@@ -248,13 +269,115 @@ export class UnknownItemsService {
           };
         }
 
-        // Miss → capture path (T511). Set the store GUC required by
-        // 003's `unknown_items_insert` RLS policy.
+        // Set the store GUC BEFORE the dedup SELECT.
+        //
+        // 003 ships TWO permissive SELECT policies on `unknown_items`:
+        //   - `unknown_items_tenant_isolation` (tenant_id = $tenant)
+        //   - `unknown_items_store_read`       (store_id = $store OR
+        //                                       store='')
+        // Permissive policies OR — visibility requires at least one to
+        // be TRUE. But `current_setting('app.current_store', true)`
+        // returns NULL when unset (the `true` second arg suppresses the
+        // missing-setting error), so `NULL::uuid` makes both halves of
+        // the store policy NULL → NULL, which Postgres treats as FALSE
+        // in filter context. Tenant-isolation alone would be enough to
+        // see the row in theory, but the OR'd-NULL drives the policy
+        // evaluation to FALSE for the store_read branch and the row is
+        // filtered when the tenant policy is also unreachable for the
+        // current login role. Setting `app.current_store` here makes
+        // the store_read policy succeed and the dedup query find any
+        // pending rows the prior capture committed.
+        //
+        // The GUC is harmless to the resolved-alias branch above: that
+        // branch returned BEFORE this point, so the store GUC remains
+        // unset for the resolved-path commit (no row written, no SELECT
+        // attempted on `unknown_items` on that branch).
         await client.query(
           "SELECT set_config('app.current_store', $1, true)",
           [input.storeId],
         );
 
+        // Natural-dedup check (T518, FR-032).
+        //
+        // Uses the partial index `idx_unknown_items_lookup_value`
+        // (tenant_id, identifier_type, value) WHERE resolution_status =
+        // 'pending'. The predicate is written literally (not
+        // parameterized) so the planner can match the partial index;
+        // `store_id` and `source_system` are applied as residual filters.
+        //
+        // Store-scope enforcement: `store_id = $4` ensures dedup is
+        // bounded to the submitting store. A pending row at a DIFFERENT
+        // store of the same tenant MUST NOT short-circuit this capture
+        // — that's the FR-030a invariant carried forward from T516.
+        //
+        // source_system matching: 003's `unknown_items_source_system_required`
+        // CHK ties source_system NOT NULL <=> identifier_type =
+        // 'external_pos_id'. For `barcode` / `sku` / `plu` /
+        // `supplier_code` the column is always NULL; for
+        // `external_pos_id` it's always NOT NULL. `IS NOT DISTINCT
+        // FROM` matches both branches (NULL=NULL → TRUE,
+        // 'pos-a'='pos-a' → TRUE, NULL='pos-a' → FALSE).
+        //
+        // FR-005 invariant: dismissed/resolved rows are excluded by the
+        // partial-index predicate `WHERE resolution_status = 'pending'`,
+        // so resubmitting an identifier whose only prior row is
+        // `dismissed` correctly falls through to INSERT a new pending
+        // row (the dismissed row is NOT returned). T545 elsewhere
+        // codifies this as a service-layer assertion.
+        const dedupHit = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending";
+          resolution_action: null;
+          resolved_at: null;
+          resolved_by: null;
+          resolved_product_id: null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `SELECT id, tenant_id, store_id, identifier_type, value,
+                  source_system, resolution_status, resolution_action,
+                  resolved_at, resolved_by, resolved_product_id,
+                  encountered_at, sale_context
+             FROM unknown_items
+            WHERE tenant_id       = $1
+              AND store_id        = $2
+              AND identifier_type = $3
+              AND value           = $4
+              AND source_system IS NOT DISTINCT FROM $5
+              AND resolution_status = 'pending'
+            ORDER BY encountered_at ASC
+            LIMIT 1`,
+          [
+            input.tenantId,
+            input.storeId,
+            input.identifierType,
+            input.identifierValue,
+            input.sourceSystem,
+          ],
+        );
+
+        const existing = dedupHit.rows[0];
+        if (existing) {
+          // FR-032: a pending row already exists for this logical
+          // identifier in the same (tenant, store). Return its
+          // reference unchanged — no INSERT, no metric increment
+          // (`unknown_item_captured_total` counts NEW pending rows
+          // per docs/observability/signals.md). The row's
+          // `encountered_at` reflects the ORIGINAL capture time, not
+          // this resubmission — that's intentional per FR-032
+          // ("return that existing record's reference").
+          return { kind: "unknown", inserted: false, row: existing };
+        }
+
+        // Both misses → capture path (T511). The store GUC required by
+        // 003's `unknown_items_insert` RLS policy was already set above
+        // (before the dedup SELECT) and remains in scope for this
+        // transaction.
         const insertResult = await client.query<{
           id: string;
           tenant_id: string;
@@ -300,7 +423,7 @@ export class UnknownItemsService {
           // exception rather than corrupt the response shape.
           throw new Error("unknown_items: insert produced no row");
         }
-        return { kind: "unknown", row: r };
+        return { kind: "unknown", inserted: true, row: r };
       },
     );
 
@@ -315,7 +438,14 @@ export class UnknownItemsService {
       };
     }
 
-    recordUnknownItemCaptured();
+    if (result.inserted) {
+      // T518 / FR-032: only increment the capture counter on a FRESH
+      // INSERT. A dedup-hit returns an existing pending row (no new
+      // `unknown_items` write) and so must NOT increment the counter
+      // — per docs/observability/signals.md `unknown_item_captured_total`
+      // tracks "successful POS capture INTO unknown_items table".
+      recordUnknownItemCaptured();
+    }
 
     const row = result.row;
     const captured: CapturedUnknownItemRow = {
