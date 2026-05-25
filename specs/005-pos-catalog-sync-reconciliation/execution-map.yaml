@@ -451,7 +451,10 @@ slices:
   - id: 005-WAVE1-VALIDATION
     task_ids: [T519, T520]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 331
+    merged_at_commit: 290cbaa22cc928e154de8befd9eaf7c38fe5ffba
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-CAPTURE-HAPPY]
     blocks: []
