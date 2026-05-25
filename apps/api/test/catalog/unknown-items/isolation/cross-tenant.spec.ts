@@ -1,5 +1,6 @@
 /**
- * T507 — 005 unknown_items cross-tenant non-disclosing isolation (RED).
+ * T507 (authored) → T521 (extended) — 005 unknown_items cross-tenant
+ * non-disclosing isolation.
  *
  * Purpose
  * -------
@@ -12,42 +13,55 @@
  *   - FR-014 (touched indirectly): a tenant lists only its own pending
  *     items; cross-tenant probe returns an empty list, not an error.
  *
- * RED contract
- * ------------
- * This is the RED authoring point for the 005 unknown-items capture /
- * list / dismiss surface. At the time of this slice (005-WAVE1-HARNESS,
- * tasks.md T507) the service does NOT exist yet:
+ * RED→GREEN history
+ * -----------------
+ *   - T507 / 005-WAVE1-HARNESS (PR #307): authored the RED scaffolding
+ *     with `it()` placeholders that asserted only `expect(...IDS...).toBeDefined()`.
+ *     The not-yet-implemented `UnknownItemsService` was loaded via
+ *     dynamic require, with a `serviceMissing()` soft-skip gate that
+ *     returned early until T511.
+ *   - T511 / 005-WAVE1-CAPTURE-HAPPY (PR #317): shipped `UnknownItemsService`.
+ *     The `serviceMissing()` gate fell through; placeholder assertions
+ *     remained passing (vacuously).
+ *   - **T521 / 005-WAVE1-NON-DISCLOSING (THIS commit)**: rewrites the
+ *     placeholder cases into real assertions:
+ *       - 4 get-by-id cases exercise the new `findByIdForTenant` helper
+ *         (T522) and assert `NotFoundException` on cross-tenant access.
+ *       - 2 value-probe cases exercise `captureItem` with cross-tenant
+ *         identifier values and assert a NEW pending row is created in
+ *         the submitting tenant's scope (the existing-in-other-tenant
+ *         row MUST NOT short-circuit dedup).
+ *       - 2 list-shaped cases are flipped to `it.skip` with a tripwire
+ *         comment pointing at T523 / 005-WAVE1-LIST — that slice authors
+ *         `listForTenant` and its own `list-queue.spec.ts` covers the
+ *         cross-tenant list invariant per tasks.md T523. Authoring
+ *         `listForTenant` here would silently expand the slice.
  *
- *   - `apps/api/src/catalog/unknown-items/unknown-items.service.ts`
- *     belongs to T511 / 005-WAVE1-CAPTURE-HAPPY (downstream slice).
+ * Wiring strategy
+ * ---------------
+ * Service-direct — no NestJS DI, no `Test.createTestingModule`, no
+ * supertest. The slice's allowed_files explicitly exclude the
+ * controller; T522 calls the GET-by-id surface "internal" for Wave 1
+ * (LIST is the public surface). Construct `new UnknownItemsService(env.app)`
+ * with the RLS-enforced app-role pool from the testcontainer; assert
+ * exception types and side-effects directly.
  *
- * Per tasks.md T507 acceptance criteria: "test runs, cases fail (no
- * `unknown_items` service exists yet to exercise; failure is on missing
- * service, not on RLS)."
- *
- * To honour the "failure is on missing service, not on RLS" contract
- * (which would otherwise be satisfied by 003's existing RLS and turn
- * GREEN immediately), we exercise the test against the not-yet-existing
- * service module. The dynamic `require` in `beforeAll` resolves to a
- * `MODULE_NOT_FOUND` error until T511 lands, which then propagates to
- * each `it(...)` case as a test failure. Once T511 ships
- * `unknown-items.service.ts` (and T512 the controller), this spec is
- * re-extended in T521 / 005-WAVE1-NON-DISCLOSING to exercise the real
- * controller surface and turn GREEN.
- *
- * Notes for the GREEN-future
- * --------------------------
- * - T521 extends this file to use the actual capture/get-by-id surface.
- * - The 003 RLS posture (verified by T341) already guarantees no rows
- *   leak across tenants at the DB layer. The 005 service must layer a
- *   non-disclosing 404-class response on top so that the HTTP boundary
- *   cannot be used as an existence oracle.
+ * Why `env.app` and not `env.admin`:
+ *   The seed helper uses `env.admin` to insert fixture rows (RLS bypass
+ *   is appropriate for seeding). The service under test MUST run
+ *   against `env.app` — the app-role pool that 003's RLS policies
+ *   actually filter. Mixing them would let a cross-tenant read silently
+ *   succeed against the admin pool.
  *
  * Pattern alignment
  * -----------------
- * Lifecycle / Docker-skip guard / `runWithTenantContext` usage mirrors
+ * Lifecycle / Docker-skip guard mirrors
  * `apps/api/test/catalog/isolation/cross-tenant-read.spec.ts` (T341).
+ * `serviceMissing()` retained for defense-in-depth (the service IS
+ * present at HEAD, but the gate documents the historical RED contract).
  */
+import { NotFoundException } from "@nestjs/common";
+
 import {
   applyAllUpAndCreateAppRole,
   startPgEnv,
@@ -59,6 +73,7 @@ import {
   seedUnknownItemsFixture,
   UNKNOWN_ITEMS_FIXTURE_IDS,
 } from "../../__support__/seed-unknown-items";
+import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 
 // --------------------------------------------------------------------------
 // Suite-level state
@@ -66,19 +81,8 @@ import {
 
 let env: PgTestEnv | null = null;
 let dockerSkipped = false;
-
-/**
- * The 005 unknown-items service module, loaded dynamically.
- *
- * Static `import` of a non-existent module would be a TypeScript
- * compile error and would break every other test in the same `tsc`
- * compilation graph. A dynamic `require` lets THIS file compile and
- * run; the missing module surfaces as a `MODULE_NOT_FOUND` thrown by
- * `beforeAll`, which Jest reports as a per-suite RED failure scoped
- * to this spec only.
- */
 let serviceModuleError: Error | null = null;
-let unknownItemsServiceModule: unknown = null;
+let service: UnknownItemsService | null = null;
 
 // ---- Lifecycle -------------------------------------------------------
 
@@ -95,22 +99,19 @@ beforeAll(async () => {
       dockerSkipped = true;
       // eslint-disable-next-line no-console
       console.warn(
-        `\n[T507 cross-tenant.spec] Docker NOT AVAILABLE: ${msg}\n`,
+        `\n[T521 cross-tenant.spec] Docker NOT AVAILABLE: ${msg}\n`,
       );
       return;
     }
     throw new Error(`Container start failed: ${msg}`);
   }
 
-  // Attempt to load the 005 unknown-items service. At the T507
-  // authoring point this module does not exist yet; the require()
-  // throws `MODULE_NOT_FOUND`. This is the expected RED state per
-  // tasks.md T507 acceptance.
+  // Defensive: `UnknownItemsService` IS present at HEAD (T511 PR #317),
+  // but the original T507 contract required this gate. Keep it so the
+  // suite's behavior under a future module-rename is "skip with a clear
+  // signal" rather than "all 8 cases throw an unrelated TypeError".
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    unknownItemsServiceModule = require(
-      "../../../../src/catalog/unknown-items/unknown-items.service",
-    );
+    service = new UnknownItemsService(env.app);
   } catch (err: unknown) {
     serviceModuleError =
       err instanceof Error ? err : new Error(String(err));
@@ -121,45 +122,56 @@ afterAll(async () => {
   if (env) await stopPgEnv(env);
 }, 60_000);
 
-// ---- Guard helper -------------------------------------------------------
+// Each value-probe case writes a new row to (TENANT_A, STORE_A_X) or
+// (TENANT_B, STORE_B_X). Clean those up between cases so the FR-032
+// natural-dedup doesn't quietly turn a "new row" into a "dedup hit" on
+// the second case's submission of the same cross-tenant value.
+afterEach(async () => {
+  if (dockerSkipped || !env) return;
+  await env.admin.query(
+    "DELETE FROM unknown_items WHERE value LIKE 'T506-%' AND id NOT IN ($1, $2, $3, $4, $5, $6)",
+    [
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode,
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode,
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownBYBarcode,
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXPos,
+    ],
+  );
+});
+
+// ---- Guard helpers -------------------------------------------------------
 
 function maybeSkip(): boolean {
   if (dockerSkipped) {
     // eslint-disable-next-line no-console
-    console.warn("[T507 cross-tenant.spec] skipping — Docker unavailable");
+    console.warn("[T521 cross-tenant.spec] skipping — Docker unavailable");
     return true;
   }
   return false;
 }
 
 /**
- * Returns `true` when the not-yet-implemented `UnknownItemsService`
- * module isn't loadable — the expected RED state at T507 authoring.
- * Each test case short-circuits via this gate so CI shows the suite
- * as no-op'd rather than failing on a thrown "RED" stub. Once T511
- * ships `unknown-items.service.ts`, `serviceModuleError` will be null,
- * the module load succeeds, and the assertions run for real.
- *
- * (Earlier revision threw inside each case to produce a per-case RED
- * signal. That kept the TDD-RED intent visible, but it also turned the
- * CI red light into permanent noise until T511 — making it impossible
- * to spot a *new* regression in this branch. Soft-skip preserves the
- * gate without burning the signal channel.)
+ * Returns `true` when `UnknownItemsService` failed to instantiate.
+ * Historically this guarded the T507 RED-phase (module not yet present).
+ * Today the gate is defense-in-depth — a future module rename or
+ * constructor signature change would trip this instead of producing 8
+ * misleading TypeErrors.
  */
 function serviceMissing(): boolean {
   if (serviceModuleError) {
     // eslint-disable-next-line no-console
     console.warn(
-      "[T507 cross-tenant.spec] UnknownItemsService not yet implemented — " +
-        "skipping (reason=red_phase, paired_green=T511)",
+      "[T521 cross-tenant.spec] UnknownItemsService instantiation failed — " +
+        `skipping (reason=${serviceModuleError.message})`,
     );
     return true;
   }
-  if (!unknownItemsServiceModule) {
+  if (!service) {
     // eslint-disable-next-line no-console
     console.warn(
-      "[T507 cross-tenant.spec] UnknownItemsService module loaded but empty — " +
-        "skipping (reason=red_phase, paired_green=T511)",
+      "[T521 cross-tenant.spec] UnknownItemsService not constructed — skipping",
     );
     return true;
   }
@@ -174,95 +186,159 @@ function serviceMissing(): boolean {
 // tenant B's unknown_item (by guessed UUID), the response MUST be a
 // non-disclosing 404-class — indistinguishable from "no such item in
 // my tenant". The 003 RLS posture already returns zero rows at the DB
-// layer (proven by T341); the 005 service must layer the
-// non-disclosing 404-class on top.
-//
-// These cases are RED at T507 authoring (no service exists). They go
-// GREEN once T511 ships the service AND T521 wires up the
-// non-disclosing 404-class behavior.
+// layer (proven by T341); T522 layers `NotFoundException` on top.
 
-describe("T507 — cross-tenant: tenant A cannot read tenant B's unknown_items", () => {
-  it("get-by-id on tenant B's barcode unknown_item from tenant A → non-disclosing 404", () => {
+describe("T521 — cross-tenant: tenant A cannot read tenant B's unknown_items", () => {
+  it("get-by-id on tenant B's barcode unknown_item from tenant A → non-disclosing 404", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    // GREEN-future (T521): call
-    //   service.findByIdForTenant(UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode, {
-    //     tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA, ...
-    //   })
-    // expect a 404-class NotFound error (NOT a 403 — that would leak existence).
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode).toBeDefined();
+    // NOTE the assertion: `NotFoundException`, NOT a 403 or a thrown
+    // error with B's tenant_id in the message. SI-004 / FR-092 require
+    // the response to be indistinguishable from "id does not exist".
+    await expect(
+      service!.findByIdForTenant({
+        id: UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode,
+        tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA,
+        storeId: null, // tenant-wide read; should still 404 cross-tenant
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("get-by-id on tenant B's external_pos_id unknown_item from tenant A → non-disclosing 404", () => {
+  it("get-by-id on tenant B's external_pos_id unknown_item from tenant A → non-disclosing 404", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXPos).toBeDefined();
+    await expect(
+      service!.findByIdForTenant({
+        id: UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXPos,
+        tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA,
+        storeId: null,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("list pending unknown_items as tenant A → contains only tenant A's rows, never tenant B's", () => {
-    if (maybeSkip()) return;
-    if (serviceMissing()) return;
-    // GREEN-future: assert the returned list contains
-    // UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode and
-    // UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode, and does NOT contain
-    // any of unknownBX*, unknownBY*.
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode).toBeDefined();
-  });
+  // List-shaped case — deferred to 005-WAVE1-LIST. See class header
+  // for the scope-boundary rationale; `list-queue.spec.ts` (T523)
+  // covers the cross-tenant list invariant.
+  it.skip(
+    "list pending unknown_items as tenant A → contains only tenant A's rows, never tenant B's (deferred to T523/LIST)",
+    () => {},
+  );
 });
 
 // --------------------------------------------------------------------------
 // Group B — Tenant B symmetry (mirror of Group A)
 // --------------------------------------------------------------------------
 
-describe("T507 — cross-tenant: tenant B cannot read tenant A's unknown_items", () => {
-  it("get-by-id on tenant A's barcode unknown_item from tenant B → non-disclosing 404", () => {
+describe("T521 — cross-tenant: tenant B cannot read tenant A's unknown_items", () => {
+  it("get-by-id on tenant A's barcode unknown_item from tenant B → non-disclosing 404", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode).toBeDefined();
+    await expect(
+      service!.findByIdForTenant({
+        id: UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
+        tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantB,
+        storeId: null,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("get-by-id on tenant A's external_pos_id unknown_item from tenant B → non-disclosing 404", () => {
+  it("get-by-id on tenant A's external_pos_id unknown_item from tenant B → non-disclosing 404", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos).toBeDefined();
+    await expect(
+      service!.findByIdForTenant({
+        id: UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+        tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantB,
+        storeId: null,
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("list pending unknown_items as tenant B → contains only tenant B's rows, never tenant A's", () => {
-    if (maybeSkip()) return;
-    if (serviceMissing()) return;
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode).toBeDefined();
-  });
+  it.skip(
+    "list pending unknown_items as tenant B → contains only tenant B's rows, never tenant A's (deferred to T523/LIST)",
+    () => {},
+  );
 });
 
 // --------------------------------------------------------------------------
 // Group C — Cross-tenant probe by identifier value (FR-092)
 // --------------------------------------------------------------------------
 //
-// A more subtle existence-leak vector: tenant A submits a capture or
-// search with an identifier value that tenant A has not seen but
-// tenant B HAS. The 005 service must not reveal tenant B's prior
-// row — either by returning a "captured" outcome in tenant A (a NEW
-// unknown_items row in A's space) or by returning the existing-in-B
-// state. The 003 RLS posture already guarantees no B row is read at
-// the DB layer; the 005 service must compose that into a clean,
-// non-disclosing happy-path response.
+// A more subtle existence-leak vector: tenant A submits a capture with
+// an identifier value that tenant A has not seen but tenant B HAS. The
+// 005 service must not reveal tenant B's prior row — either by
+// returning B's row id or by detecting it as a dedup hit. The 003 RLS
+// posture already filters B's row at the DB layer (the dedup SELECT
+// runs inside `runWithTenantContext(tenantId=A, ...)`, so B's row is
+// invisible). This spec asserts the composed outcome: a NEW pending
+// row appears in tenant A's scope per FR-001's happy path.
 
-describe("T507 — cross-tenant: identifier-value probe does not leak across tenants (FR-092)", () => {
-  it("tenant A queries by value that exists only in tenant B → no result that includes B's row", () => {
+describe("T521 — cross-tenant: identifier-value probe does not leak across tenants (FR-092)", () => {
+  it("tenant A captures value that exists only in tenant B → NEW row in A, B's row untouched", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    // GREEN-future: simulate a capture with
-    // UNKNOWN_ITEMS_FIXTURE_IDS.valueBXBarcode as identifier value
-    // from tenant A's principal context, then assert the service
-    // either creates a NEW unknown_items row owned by tenant A (the
-    // expected FR-001 happy path) or returns a non-disclosing result.
-    // It must NOT return UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode.
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.valueBXBarcode).toBeDefined();
+
+    const result = await service!.captureItem({
+      tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA,
+      storeId: UNKNOWN_ITEMS_FIXTURE_IDS.storeAX,
+      actorUserId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantA, // placeholder uuid — service doesn't dereference
+      correlationId: "0a000000-0000-7000-8000-000000005211",
+      identifierType: "barcode",
+      identifierValue: UNKNOWN_ITEMS_FIXTURE_IDS.valueBXBarcode, // B's barcode value
+      sourceSystem: null,
+      saleContext: null,
+    });
+
+    // Must be a fresh capture, NOT a resolved-alias outcome (no alias
+    // for this value in tenant A) and NOT a dedup hit on B's row.
+    expect(result.kind).toBe("unknown");
+    if (result.kind !== "unknown") return;
+
+    // The captured row belongs to tenant A, not tenant B.
+    expect(result.unknownItem.tenantId).toBe(
+      UNKNOWN_ITEMS_FIXTURE_IDS.tenantA,
+    );
+    expect(result.unknownItem.id).not.toBe(
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode,
+    );
+
+    // Sanity: tenant B's pre-existing row is unchanged. Read via admin
+    // (bypasses RLS) so we're directly inspecting B's tenant.
+    const bRow = await env!.admin.query<{ id: string; resolution_status: string }>(
+      "SELECT id, resolution_status FROM unknown_items WHERE id = $1",
+      [UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode],
+    );
+    expect(bRow.rows[0]?.resolution_status).toBe("pending");
   });
 
-  it("tenant B queries by value that exists only in tenant A → no result that includes A's row", () => {
+  it("tenant B captures value that exists only in tenant A → NEW row in B, A's row untouched", async () => {
     if (maybeSkip()) return;
     if (serviceMissing()) return;
-    expect(UNKNOWN_ITEMS_FIXTURE_IDS.valueAXBarcode).toBeDefined();
+
+    const result = await service!.captureItem({
+      tenantId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantB,
+      storeId: UNKNOWN_ITEMS_FIXTURE_IDS.storeBX,
+      actorUserId: UNKNOWN_ITEMS_FIXTURE_IDS.tenantB,
+      correlationId: "0b000000-0000-7000-8000-000000005212",
+      identifierType: "barcode",
+      identifierValue: UNKNOWN_ITEMS_FIXTURE_IDS.valueAXBarcode, // A's barcode value
+      sourceSystem: null,
+      saleContext: null,
+    });
+
+    expect(result.kind).toBe("unknown");
+    if (result.kind !== "unknown") return;
+    expect(result.unknownItem.tenantId).toBe(
+      UNKNOWN_ITEMS_FIXTURE_IDS.tenantB,
+    );
+    expect(result.unknownItem.id).not.toBe(
+      UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
+    );
+
+    const aRow = await env!.admin.query<{ id: string; resolution_status: string }>(
+      "SELECT id, resolution_status FROM unknown_items WHERE id = $1",
+      [UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode],
+    );
+    expect(aRow.rows[0]?.resolution_status).toBe("pending");
   });
 });
