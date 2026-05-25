@@ -86,7 +86,10 @@ export interface CaptureItemInput {
 /**
  * Raw row shape returned by the INSERT ... RETURNING clause. Aligned to
  * the 003 `unknown_items` Drizzle schema; the controller adapts to the
- * contract `UnknownItem` shape.
+ * contract `UnknownItem` shape. `captureItem` narrows to `pending` because
+ * a fresh INSERT is always `pending` per FR-001 + 003's CHK
+ * `unknown_items_resolved_fields_consistent` (all `resolved_*` fields
+ * NULL when status='pending').
  */
 export interface CapturedUnknownItemRow {
   readonly id: string;
@@ -100,6 +103,30 @@ export interface CapturedUnknownItemRow {
   readonly resolvedAt: null;
   readonly resolvedBy: null;
   readonly resolvedProductId: null;
+  readonly encounteredAt: Date;
+  readonly saleContext: Record<string, unknown> | null;
+}
+
+/**
+ * Lifecycle-tolerant row shape for read paths (`findByIdForTenant`).
+ * A GET-by-id may surface any of the three lifecycle states; the
+ * resolution-fields nullability mirrors 003's
+ * `unknown_items_resolved_fields_consistent` CHK (NULL for `pending`,
+ * NOT NULL for `resolved` / `dismissed`). Callers that need narrowing
+ * can discriminate on `resolutionStatus` at the use site.
+ */
+export interface UnknownItemRow {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly storeId: string;
+  readonly identifierType: string;
+  readonly identifierValue: string;
+  readonly sourceSystem: string | null;
+  readonly resolutionStatus: "pending" | "resolved" | "dismissed";
+  readonly resolutionAction: "linked" | "created" | "dismissed" | null;
+  readonly resolvedAt: Date | null;
+  readonly resolvedBy: string | null;
+  readonly resolvedProductId: string | null;
   readonly encounteredAt: Date;
   readonly saleContext: Record<string, unknown> | null;
 }
@@ -512,7 +539,7 @@ export class UnknownItemsService {
     readonly id: string;
     readonly tenantId: string;
     readonly storeId: string | null;
-  }): Promise<CapturedUnknownItemRow> {
+  }): Promise<UnknownItemRow> {
     const row = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
@@ -573,6 +600,12 @@ export class UnknownItemsService {
       throw new NotFoundException("Not Found");
     }
 
+    // Shape-tolerant adapter — the return type `UnknownItemRow` admits
+    // any lifecycle state, so no `as` narrowing is needed. 003's
+    // `unknown_items_resolved_fields_consistent` CHK guarantees the
+    // resolved_*/resolution_action fields are mutually consistent with
+    // `resolution_status` at the DB layer; callers that need narrowing
+    // discriminate on `resolutionStatus` at the use site.
     return {
       id: row.id,
       tenantId: row.tenant_id,
@@ -580,14 +613,11 @@ export class UnknownItemsService {
       identifierType: row.identifier_type,
       identifierValue: row.value,
       sourceSystem: row.source_system,
-      // The Wave 1 GET-by-id only surfaces pending rows in the test
-      // suite, but the helper is shape-tolerant for any lifecycle state
-      // — the CHK on 003 keeps the column combinations valid.
-      resolutionStatus: row.resolution_status as "pending",
-      resolutionAction: row.resolution_action as null,
-      resolvedAt: row.resolved_at as null,
-      resolvedBy: row.resolved_by as null,
-      resolvedProductId: row.resolved_product_id as null,
+      resolutionStatus: row.resolution_status,
+      resolutionAction: row.resolution_action,
+      resolvedAt: row.resolved_at,
+      resolvedBy: row.resolved_by,
+      resolvedProductId: row.resolved_product_id,
       encounteredAt: row.encountered_at,
       saleContext: row.sale_context,
     };
