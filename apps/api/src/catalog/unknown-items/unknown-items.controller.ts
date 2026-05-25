@@ -66,6 +66,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   HttpStatus,
   Param,
   Post,
@@ -442,6 +443,15 @@ export class UnknownItemsController {
    * Tracked in wave-status.md "Outstanding known gap" section.
    */
   @Post("api/v1/catalog/unknown-items/:id/dismiss")
+  // NestJS's `@Post()` defaults to 201 Created. The OpenAPI contract
+  // for `tenantAdminDismissUnknownItem` specifies 200 OK for the
+  // successful dismiss outcome (lines 299-308 of unknown-items.yaml).
+  // Unlike `posCaptureItem` which branches on outcome (200 for
+  // resolved alias, 201 for new pending row) and uses `@Res(...)`
+  // for runtime status branching, dismiss has exactly one success
+  // code — static `@HttpCode(HttpStatus.OK)` is the right shape.
+  // CodeRabbit Critical catch on PR #341.
+  @HttpCode(HttpStatus.OK)
   @Auditable("unknown_item.dismissed")
   async tenantAdminDismissUnknownItem(
     @Req() request: TenantContextRequest,

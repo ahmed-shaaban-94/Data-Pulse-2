@@ -201,6 +201,24 @@ describe("T540 / 005-WAVE1-DISMISS — service-direct happy-path", () => {
   it("tenant admin (storeId=null) dismisses a pending row → status=dismissed, resolved_* populated", async () => {
     if (maybeSkip()) return;
     if (!service) throw new Error("service not constructed");
+    expect(env).not.toBeNull();
+
+    // FR-001 reinforcement: dismiss MUST NOT create `tenant_products`
+    // or `product_aliases` rows as a side-effect. Capture before/after
+    // counts to assert the invariant by equality rather than by a
+    // brittle magic number tied to the fixture's exact seed state
+    // (CodeRabbit nitpick on PR #341 — the prior `>= 0` check was
+    // vacuously true).
+    const productCountBefore = await env!.admin.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM tenant_products WHERE tenant_id = $1",
+      [UNKNOWN_ITEMS_FIXTURE_IDS.tenantA],
+    );
+    const aliasCountBefore = await env!.admin.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM product_aliases WHERE tenant_id = $1",
+      [UNKNOWN_ITEMS_FIXTURE_IDS.tenantA],
+    );
+    const productsBefore = parseInt(productCountBefore.rows[0]!.count, 10);
+    const aliasesBefore = parseInt(aliasCountBefore.rows[0]!.count, 10);
 
     const result = await service.dismissUnknownItem({
       id: UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
@@ -224,26 +242,17 @@ describe("T540 / 005-WAVE1-DISMISS — service-direct happy-path", () => {
     expect(result.tenantId).toBe(UNKNOWN_ITEMS_FIXTURE_IDS.tenantA);
     expect(result.storeId).toBe(UNKNOWN_ITEMS_FIXTURE_IDS.storeAX);
 
-    // FR-001 reinforcement: no `tenant_products` or `product_aliases`
-    // row was created as a side-effect. (We didn't seed any, but
-    // assert the counts to lock the invariant.)
-    expect(env).not.toBeNull();
-    const productCount = await env!.admin.query<{ count: string }>(
+    // Invariant: no product or alias row added by the dismiss path.
+    const productCountAfter = await env!.admin.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM tenant_products WHERE tenant_id = $1",
       [UNKNOWN_ITEMS_FIXTURE_IDS.tenantA],
     );
-    // The 003 isolation fixture seeds 2 products in tenant A (active +
-    // retired). The dismiss path MUST NOT add a third.
-    expect(parseInt(productCount.rows[0]!.count, 10)).toBe(2);
-
-    const aliasCount = await env!.admin.query<{ count: string }>(
+    const aliasCountAfter = await env!.admin.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM product_aliases WHERE tenant_id = $1",
       [UNKNOWN_ITEMS_FIXTURE_IDS.tenantA],
     );
-    // Whatever the isolation fixture seeded (3 aliases for the 2
-    // products); the dismiss path MUST NOT change it.
-    const aliasBaseline = parseInt(aliasCount.rows[0]!.count, 10);
-    expect(aliasBaseline).toBeGreaterThanOrEqual(0); // baseline captured
+    expect(parseInt(productCountAfter.rows[0]!.count, 10)).toBe(productsBefore);
+    expect(parseInt(aliasCountAfter.rows[0]!.count, 10)).toBe(aliasesBefore);
   });
 
   it("store-scoped operator (storeId=their store) dismisses a pending row at THEIR store → same successful transition", async () => {
