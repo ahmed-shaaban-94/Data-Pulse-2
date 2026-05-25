@@ -476,7 +476,10 @@ slices:
   - id: 005-WAVE1-NON-DISCLOSING
     task_ids: [T521, T522]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 332
+    merged_at_commit: c151aeb95a2b92047363733e5a2a5b3caed1228b
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-CAPTURE-HAPPY, 005-WAVE1-HARNESS]
     blocks: []
