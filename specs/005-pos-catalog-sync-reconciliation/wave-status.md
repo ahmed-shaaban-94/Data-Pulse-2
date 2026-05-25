@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-25 (Wave 1 Phase 3 capture refinement slice merged — `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326; store-scope respect for FR-030a implemented)
+**Last updated:** 2026-05-25 (Wave 1 Phase 3 capture refinement slice merged — `005-WAVE1-CAPTURE-DEDUP` PR #328; natural dedup via `idx_unknown_items_lookup_value` index implemented; FR005 newly unblocked)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `9cae6b5` (PR #326, 2026-05-25 — `005-WAVE1-CAPTURE-STORE-SCOPE` merged)
+**Base:** `origin/main` at `d398513` (PR #328, 2026-05-25 — `005-WAVE1-CAPTURE-DEDUP` merged)
 **Active findings:** 0
 **Resolved findings:** 2
 
@@ -10,16 +10,16 @@
 
 ## TL;DR
 
-**9 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, **`005-WAVE1-CAPTURE-STORE-SCOPE` PR #326** — new this closeout). **11 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved (see "Resolved findings" below).
+**10 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, **`005-WAVE1-CAPTURE-DEDUP` PR #328** — new this closeout). **10 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved (see "Resolved findings" below).
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
-**Phase 3 refinement progressing.** `005-WAVE1-CAPTURE-STORE-SCOPE` has now merged (PR #326), implementing FR-030a store-scope respect via alias-lookup WHERE clause adjustment (`store_id IS NULL OR store_id = $current_store`). This unblocks `005-WAVE1-CAPTURE-DEDUP` (which depends on STORE-SCOPE). The remaining Phase 3 refinement slices are `005-WAVE1-CAPTURE-DEDUP` (T517 + T518, natural dedup), `005-WAVE1-VALIDATION` (T519 + T520), `005-WAVE1-NON-DISCLOSING` (T521 + T522), and `005-WAVE1-LIST` (T523 + T524, now correctness-safe since `005-WAVE1-IDEMP-STATUS-CAPTURE` merged PR #324). All dependencies are satisfied for parallel dispatch of VALIDATION, NON-DISCLOSING, and LIST.
+**Phase 3 refinement structurally complete.** The capture-prelude story is now fully implemented: CAPTURE-RESOLVE (alias resolution) → CAPTURE-STORE-SCOPE (store-scope respect) → **CAPTURE-DEDUP** (natural dedup via `idx_unknown_items_lookup_value` index) has now merged (PR #328). This unblocks **FR005** (dismissed-then-resubmit produces fresh pending row). The remaining Phase 3 refinement slices are `005-WAVE1-VALIDATION` (T519 + T520), `005-WAVE1-NON-DISCLOSING` (T521 + T522), `005-WAVE1-LIST` (T523 + T524), and downstream Phase 5 slices. All dependencies are satisfied for parallel dispatch of VALIDATION, NON-DISCLOSING, and LIST.
 
 **Next moves:**
 
-1. **Dispatch `005-WAVE1-CAPTURE-DEDUP`** (T517 + T518) — natural dedup via `idx_unknown_items_lookup_value` index. Dependencies: STORE-SCOPE (now merged). This is the next slice in the sequential capture-refinement chain.
-2. In parallel with DEDUP or after it, dispatch from the Phase 3 cohort per the DAG in execution-map.yaml: **`005-WAVE1-VALIDATION`** (T519 + T520, parallel_safety: safe), **`005-WAVE1-NON-DISCLOSING`** (T521 + T522, parallel_safety: unsafe), **`005-WAVE1-LIST`** (T523 + T524, parallel_safety: unsafe, now correctness-safe).
+1. **Dispatch remaining Phase 3 refinement cohort in parallel** per the DAG in execution-map.yaml: **`005-WAVE1-VALIDATION`** (T519 + T520, parallel_safety: safe), **`005-WAVE1-NON-DISCLOSING`** (T521 + T522, parallel_safety: unsafe), **`005-WAVE1-LIST`** (T523 + T524, parallel_safety: unsafe, now correctness-safe). The capture-prelude sequence is complete and FR005 is newly unblocked.
+2. **Dispatch Phase 4+5 slices** once their predecessors merge: IDEMP-WIRE (T530/T531), DISMISS (T540–T543), FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553).
 3. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges.
 
 ---
@@ -38,6 +38,7 @@
 | `005-WAVE1-CAPTURE-HAPPY` (slice) | T510 + T511 + T512 — US1 first end-to-end capture path: `UnknownItemsService.capture()` + `UnknownItemsController.capture()` + capture happy-path spec. Blocks all subsequent capture refinements (resolve, store-scope, dedup, validation, non-disclosing) and idempotency wiring. | PR #317 @ `5fc8549` |
 | `005-WAVE1-CAPTURE-RESOLVE` (slice) | T513 + T514 — Alias-resolution prelude (FR-022/030/031): when POS sends a known alias `source_system`+`value` pair, resolve the alias to the matching `tenant_products` row and return `kind: "resolved"` + status 200. Updates `UnknownItemsService.captureItem()` and `UnknownItemsController.capture()` with discriminated-union response and status-branching logic. | PR #321 @ `f5e4a19` |
 | `005-WAVE1-CAPTURE-STORE-SCOPE` (slice) | T515 + T516 — FR-030a store-scope respect at capture: alias-lookup WHERE clause adjusted to `store_id IS NULL OR store_id = $current_store`, ensuring tenant-wide aliases resolve everywhere but store-scoped aliases only resolve at the bound store. RED test spec + service implementation. | PR #326 @ `9cae6b5` |
+| `005-WAVE1-CAPTURE-DEDUP` (slice) | T517 + T518 — FR-032 natural dedup via `idx_unknown_items_lookup_value` index: duplicate pending rows on the same unknown item within a store are deduplicated at capture. Completes the capture-prelude structural story (RESOLVE → STORE-SCOPE → DEDUP). Unblocks FR005. | PR #328 @ `d398513` |
 | `005-WAVE1-IDEMP-STATUS-CAPTURE` (slice) | T539a + T539b — IdempotencyInterceptor status-preservation fix: line 274 now reads the original response's statusCode via ExecutionContext instead of hard-coding `HttpStatus.CREATED`, ensuring non-201 responses (e.g., resolved-to-alias 200) replay with the correct status. Includes regression test in `apps/api/test/idempotency/replay.spec.ts` and flips the `it.skip` tripwire in the capture-resolves-to-alias spec. Resolves `005-IDEMP-STATUS-CAPTURE-DEFECT` finding. | PR #324 @ `0c3638d` |
 
 ### Planning artifacts merged (for context)
@@ -132,19 +133,21 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-12 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+10 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+
+### Process note — recovery threshold calibration (from PR #328 retrospective)
+
+PR #328's orchestrator authored a recovery commit at the 15-minute post-edit silence mark, believing the agent's transcript had failed. The agent completed cleanly shortly after with full session output and identical byte-for-byte implementation. Lesson: post-edit silence on background agents is **NOT** a reliable death signal at the 15-minute mark. Multi-suite Testcontainers validation + write-fix-rerun loops can legitimately consume 25+ minutes of post-edit work. Future recovery decisions should wait ≥30 minutes of silence + no in-progress notification before assuming agent failure.
 
 ---
 
 ## Proposed (awaiting approval / dispatch)
 
-_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), Phase 3 happy-path + resolve, and Phase 4 idempotency-status-capture slices are complete; see "Merged on `main`."_
+_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), Phase 3 happy-path/resolve/store-scope/dedup, and Phase 4 idempotency-status-capture slices are complete; see "Merged on `main`." Remaining Phase 3 refinement slices are ready for parallel dispatch._
 
 ### Phase 3 — US1 Capture (P1 / MVP)
 
-- **`005-WAVE1-CAPTURE-STORE-SCOPE`** (T515, T516) — FR-030a store-scope respect. **NEXT SLICE TO DISPATCH.** All dependencies satisfied.
-- **`005-WAVE1-CAPTURE-DEDUP`** (T517, T518) — FR-032 natural dedup.
-- **`005-WAVE1-VALIDATION`** (T519, T520) — Zod boundary + redaction guard.
+- **`005-WAVE1-VALIDATION`** (T519, T520) — Zod boundary + redaction guard. **READY TO DISPATCH.** All dependencies satisfied (depends only on CAPTURE-HAPPY, merged).
 - **`005-WAVE1-NON-DISCLOSING`** (T521, T522) — SI-001/004/FR-013/092.
 - **`005-WAVE1-LIST`** (T523, T524) — tenant-admin queue read endpoint (now unblocked for correctness-safe dispatch following IDEMP-STATUS-CAPTURE fix).
 
