@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-25 (Wave 1 Phase 3 non-disclosing isolation slice merged — `005-WAVE1-NON-DISCLOSING` PR #332; SI-001/SI-004/FR-013/FR-092 cross-tenant invariants empirically enforced via service-direct `findByIdForTenant` returning `NotFoundException` on RLS-zero-rows)
+**Last updated:** 2026-05-25 (Wave 1 Phase 3 COMPLETE — `005-WAVE1-LIST` PR #334 merged closes the phase; tenant-admin queue read endpoint live, controller-prefix refactored to host both POS-facing and dashboard-facing route families, DISMISS newly unblocked for Phase 5 dispatch)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `c151aeb` (PR #332, 2026-05-25 — `005-WAVE1-NON-DISCLOSING` merged)
+**Base:** `origin/main` at `bdb582e` (PR #334, 2026-05-25 — `005-WAVE1-LIST` merged)
 **Active findings:** 0
 **Resolved findings:** 2
 
@@ -10,18 +10,21 @@
 
 ## TL;DR
 
-**12 Wave 1 slices merged** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, **`005-WAVE1-NON-DISCLOSING` PR #332** — new this closeout). **8 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved (see "Resolved findings" below).
+**13 Wave 1 slices merged. Phase 3 is COMPLETE** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, **`005-WAVE1-LIST` PR #334** — new this closeout). **7 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved.
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
-**Phase 3 nearly complete.** Capture-prelude structurally complete (RESOLVE → STORE-SCOPE → DEDUP); boundary validation enforces 003's three CHK constraints at the API edge; cross-tenant non-disclosing posture empirically locked in (`findByIdForTenant` + cross-tenant value-probe). Only **`005-WAVE1-LIST`** (T523 + T524) remains in Phase 3 — the tenant-admin queue read endpoint that opens the `tenantAdminListUnknownItems` operationId. LIST will also flip the two `it.skip` tripwires left in `cross-tenant.spec.ts` (Group A #3 / Group B #3) to active cross-tenant-list assertions.
+**Phase 3 closed.** Capture-prelude structurally complete (RESOLVE → STORE-SCOPE → DEDUP); boundary validation enforces 003's three CHK constraints at the API edge; cross-tenant non-disclosing posture empirically locked in; tenant-admin queue read endpoint live with method-level path scheme that hosts both POS-facing (`/api/pos/v1/...`) and dashboard-facing (`/api/v1/...`) route families in the same controller. **DISMISS is newly unblocked** (LIST was its sole predecessor); Phase 5 work can now begin in parallel with Phase 4.
 
 **Next moves:**
 
-1. **Dispatch `005-WAVE1-LIST`** (T523 + T524, depends on CONTRACT + HARNESS — both merged) — closes Phase 3 and unblocks DISMISS in Phase 5.
-2. **Dispatch Phase 4 slices**: IDEMP-WIRE (T530/T531), then IDEMP-MISMATCH (T532/T533), then IDEMP-EDGES (T534–T536). IDEMP-WIRE is dispatchable now (all predecessors merged).
-3. **Dispatch Phase 5 slices** once their predecessors merge: DISMISS (T540–T543), FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553).
-4. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges.
+1. **Dispatch Phase 4** — **`005-WAVE1-IDEMP-WIRE`** (T530/T531) is the cleanest next slice. Touches the controller (`@Idempotent('required')` on the capture route) + a new idempotency test file. File-disjoint from DISMISS's planned service edits — they can run in serial without rebase pain.
+2. **Dispatch Phase 5** — **`005-WAVE1-DISMISS`** (T540–T543) is newly ready. Touches the controller (`@Post(":id/dismiss")` route) + service `dismissItem` method + dismiss specs. Unblocks FR005 and AUDIT in turn.
+3. **Continue Phase 4** after IDEMP-WIRE merges: IDEMP-MISMATCH (T532/T533), then IDEMP-EDGES (T534–T536).
+4. **Continue Phase 5** after DISMISS merges: FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553).
+5. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges.
+
+**Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), and now LIST (PR #334) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. CodeRabbit flagged this on PRs #334 (twice — initial + duplicate); deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all unknown-items controller routes consistently (will need `[GATED]` approval per Standing Rules §3 since it touches forbidden surface).
 
 ---
 
@@ -43,6 +46,7 @@
 | `005-WAVE1-IDEMP-STATUS-CAPTURE` (slice) | T539a + T539b — IdempotencyInterceptor status-preservation fix: line 274 now reads the original response's statusCode via ExecutionContext instead of hard-coding `HttpStatus.CREATED`, ensuring non-201 responses (e.g., resolved-to-alias 200) replay with the correct status. Includes regression test in `apps/api/test/idempotency/replay.spec.ts` and flips the `it.skip` tripwire in the capture-resolves-to-alias spec. Resolves `005-IDEMP-STATUS-CAPTURE-DEFECT` finding. | PR #324 @ `0c3638d` |
 | `005-WAVE1-VALIDATION` (slice) | T519 + T520 — FR-070/071/072 Zod boundary validation mirroring 003's three `unknown_items` CHK constraints. Extracts schema from controller into `dto/capture-request.dto.ts` and adds the previously-silent bidirectional `source_system_required` rule via `.superRefine` (both arms). Behavior change: `{type:"barcode", source_system:"X"}` now rejects at the API boundary with 400 `validation_error` instead of 500'ing at the DB INSERT. Pure controller-pipe spec (8 cases, no Testcontainers needed — spy `UnknownItemsService` proves "no side-effects" structurally). | PR #331 @ `290cbaa` |
 | `005-WAVE1-NON-DISCLOSING` (slice) | T521 + T522 — SI-001/SI-004/FR-013/FR-092 cross-tenant non-disclosing posture. Adds `UnknownItemsService.findByIdForTenant({id, tenantId, storeId})` running inside `runWithTenantContext` with explicit `app.current_store` GUC; SELECT WHERE id = $1 only (no application-level tenant predicate — RLS does the filtering, single source of truth). Zero rows → `NotFoundException` (404-class, indistinguishable from "id doesn't exist anywhere"). Rewrites `cross-tenant.spec.ts` from T507 placeholder asserts into 6 real service-direct cases + 2 `it.skip` tripwires deferred to T523/LIST. CodeRabbit follow-up: introduced `UnknownItemRow` (lifecycle-tolerant) so the GET-by-id return type isn't silently narrowed to `pending` via `as` casts; `CapturedUnknownItemRow` stays narrow for `captureItem` (correct by construction). | PR #332 @ `c151aeb` |
+| `005-WAVE1-LIST` (slice) | T523 + T524 — FR-014 tenant-admin queue read endpoint. Adds `UnknownItemsService.listForTenant({tenantId, storeId, status, limit, storeIdFilter?})` with `app.current_store` GUC driving RLS visibility (empty-string for tenant-wide actors per 0009 carve-out; UUID for store-scoped operators); SELECT WHERE resolution_status = $1 [AND store_id = $2] only — no application-level tenant predicate, RLS filters cross-tenant. Adds `@Get("api/v1/catalog/unknown-items")` controller route with Zod `.strict()` query validation (status / store_id / cursor / limit). **Controller-prefix refactor**: class moved from `@Controller("api/pos/v1/catalog/unknown-items")` to `@Controller()` with paths on each method, so POS-facing (`/api/pos/v1/...`) and dashboard-facing (`/api/v1/...`) route families coexist; CAPTURE-HAPPY's served URL unchanged (23/23 capture tests pass unmodified). Service-direct + supertest hybrid spec (6 service cases + 1 supertest case for HTTP boundary coverage per CodeRabbit feedback). Wave 1 single-pages within `limit` (≤200), `next_cursor` always null — cursor parameter accepted at boundary for forward-compat but ignored internally. **DISMISS now unblocked** (was sole `blocks:` entry). | PR #334 @ `bdb582e` |
 
 ### Planning artifacts merged (for context)
 
@@ -136,7 +140,7 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-8 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+7 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ### Process note — recovery threshold calibration (from PR #328 retrospective)
 
@@ -146,11 +150,7 @@ PR #328's orchestrator authored a recovery commit at the 15-minute post-edit sil
 
 ## Proposed (awaiting approval / dispatch)
 
-_Phase 0 (cross-spec prerequisite), Phase 1 (setup), Phase 2 (foundational), Phase 3 happy-path/resolve/store-scope/dedup/validation/non-disclosing, and Phase 4 idempotency-status-capture slices are complete; see "Merged on `main`." Only `005-WAVE1-LIST` remains in Phase 3._
-
-### Phase 3 — US1 Capture (P1 / MVP)
-
-- **`005-WAVE1-LIST`** (T523, T524) — tenant-admin queue read endpoint; opens the `tenantAdminListUnknownItems` operationId from the merged Wave 1 contract. Will flip the two `it.skip` tripwires in `cross-tenant.spec.ts` (deferred from PR #332 / T521) to active cross-tenant-list assertions. **READY TO DISPATCH.** All dependencies satisfied (CONTRACT + HARNESS — both merged).
+_**Phase 3 is COMPLETE** as of PR #334. Phase 0/1/2 prerequisites and all 7 Phase 3 slices merged; see "Merged on `main`." Phase 4 (idempotency wiring on capture route) and Phase 5 (dismiss + audit + metrics) are now both open for dispatch. The two `it.skip` tripwires in `cross-tenant.spec.ts` were NOT flipped by LIST (that file was out of LIST's `allowed_files`) — they remain as obsolete scaffold for a future micro-slice or can be tidied as part of POLISH (T564)._
 
 ### Phase 4 — US4 Idempotency (P2)
 
@@ -247,22 +247,30 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-Phase 3 is one slice from done. **`005-WAVE1-LIST`** is the natural next dispatch — it closes Phase 3, opens the public list endpoint, and flips the two `it.skip` tripwires NON-DISCLOSING left behind. After that, Phase 4 (IDEMP-WIRE) is the next ready slice and the queue keeps moving.
+Phase 3 is closed. Three dispatch options stand ready; all predecessors merged for the Wave 1 ones, Wave 2 still gated.
 
-Reusable Maestro prompt:
+**Phase 4 — IDEMP-WIRE (smallest, lowest-risk)**: T530 + T531 applies `@Idempotent('required')` to the capture route + adds a retry-identical RED test. Touches controller + new test file only.
 
 ```text
-# Phase 3 LIST (closes Phase 3):
-Use Agent OS. Execute slice 005-WAVE1-LIST. Stop before commit.
+# Phase 4 IDEMP-WIRE:
+Use Agent OS. Execute slice 005-WAVE1-IDEMP-WIRE. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
-Alternatively, **`005-WAVE1-IDEMP-WIRE`** (T530 + T531 — applies `@Idempotent('required')` to the capture route + retry-identical RED test) is also dispatchable now: it depends on IDEMP-VERIFY + CAPTURE-HAPPY (both merged) and touches only the controller + a new test file, so it doesn't conflict with LIST's planned edits to `unknown-items.service.ts`. Running LIST and IDEMP-WIRE in serial (LIST first, since it shares the service file with future slices) keeps merges clean.
-
-**Track 2: Wave 2 setup** — Request `[GATED]` approval for `005-WAVE2-CONTRACT` (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges. Once approved + merged, dispatch `005-WAVE2-CONFLICT` then the link/create-new slices per the DAG. Reusable Maestro prompt:
+**Phase 5 — DISMISS (newly unblocked, larger scope)**: T540–T543 adds the `@Post(":id/dismiss")` route + service `dismissItem` method + monotonicity guard + 2 RED specs. Unblocks FR005 and AUDIT in turn. Will reuse the method-level path pattern PR #334 established for the dashboard-facing routes.
 
 ```text
-# Wave 2 contract — request approval:
+# Phase 5 DISMISS:
+Use Agent OS. Execute slice 005-WAVE1-DISMISS. Stop before commit.
+Spec: specs/005-pos-catalog-sync-reconciliation
+```
+
+IDEMP-WIRE and DISMISS both edit the controller file but different methods. Serial dispatch (IDEMP-WIRE first as the smaller, lower-risk slice) keeps merges clean.
+
+**Wave 2 setup (`[GATED]`)**: Request approval for `005-WAVE2-CONTRACT` (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges. Once approved + merged, dispatch `005-WAVE2-CONFLICT` then the link/create-new slices per the DAG.
+
+```text
+# Wave 2 contract — request [GATED] approval:
 Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 
