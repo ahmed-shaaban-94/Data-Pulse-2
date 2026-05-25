@@ -5,6 +5,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-9.15.0-f59e0b.svg)](package.json)
 [![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6.svg)](tsconfig.base.json)
 [![NestJS](https://img.shields.io/badge/NestJS-11-e0234e.svg)](apps/api)
+[![LOC](docs/assets/badges/loc.svg)](docs/assets/badges/loc.svg)
 
 ![Retail Tower OS — The command tower for modern retail](docs/assets/brand/exterior/retail-tower-os-exterior-hero.png)
 
