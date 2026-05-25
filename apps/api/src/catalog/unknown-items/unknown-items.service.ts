@@ -622,4 +622,142 @@ export class UnknownItemsService {
       saleContext: row.sale_context,
     };
   }
+
+  /**
+   * Tenant-admin / store-operator queue read (T524 /
+   * 005-WAVE1-LIST).
+   *
+   * Behavior (FR-014 + SI-001 / SI-004 / FR-013):
+   *   - The caller's tenant + (optional) store scope are set as GUCs
+   *     via `runWithTenantContext` + `set_config('app.current_store', ...)`.
+   *   - SELECT WHERE resolution_status = $1 only — no application-level
+   *     `tenant_id` predicate. RLS enforces tenant isolation (003
+   *     `unknown_items_tenant_isolation`); the explicit
+   *     `app.current_store` GUC drives the `unknown_items_store_read`
+   *     policy branch (empty-string for tenant-wide actors via 0009
+   *     carve-out; store UUID for store-scoped actors). A tenant
+   *     admin sees all stores; a store-scoped operator sees only
+   *     their store.
+   *   - `storeIdFilter` is an OPTIONAL additional residual filter for
+   *     a tenant-wide actor who wants to narrow the page to one
+   *     store. RLS still controls security; this param just lets the
+   *     caller filter further at the API. Supplying a store the
+   *     principal cannot see returns an empty page (RLS filters
+   *     before the residual predicate).
+   *
+   * Pagination:
+   *   Wave 1 single-pages within `limit` (default 50, max 200 per
+   *   contract). A cursor parameter is accepted at the controller
+   *   boundary for forward-compat with the contract's
+   *   `ListUnknownItemsResponse` shape, but Wave 1 ignores it
+   *   internally — `next_cursor` is always `null`. Real cursor
+   *   logic is a follow-up only if review queues exceed 50 rows.
+   *   Order: `encountered_at DESC, id DESC` per the contract.
+   *
+   * No new audit subject emitted by list reads (FR-080's audit
+   * scope is state transitions; a queue read is not a transition).
+   */
+  async listForTenant(input: {
+    readonly tenantId: string;
+    readonly storeId: string | null;
+    readonly status: "pending" | "resolved" | "dismissed";
+    readonly limit: number;
+    readonly storeIdFilter?: string | null;
+  }): Promise<{ items: ReadonlyArray<UnknownItemRow>; nextCursor: null }> {
+    const rows = await runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client) => {
+        // Set `app.current_store` GUC — drives the
+        // `unknown_items_store_read` RLS policy branch. Empty-string
+        // for tenant-wide actors (003 0009 carve-out); store UUID
+        // for store-scoped actors. Mirrors `findByIdForTenant` and
+        // `captureItem`'s GUC pattern.
+        await client.query(
+          "SELECT set_config('app.current_store', $1, true)",
+          [input.storeId ?? ""],
+        );
+
+        // Optional residual `store_id` predicate for tenant-wide
+        // actors who want to narrow. RLS still controls visibility;
+        // this is a convenience filter, not a security boundary.
+        // Parameterized so SQL injection cannot reach the planner.
+        const result = input.storeIdFilter
+          ? await client.query<{
+              id: string;
+              tenant_id: string;
+              store_id: string;
+              identifier_type: string;
+              value: string;
+              source_system: string | null;
+              resolution_status: "pending" | "resolved" | "dismissed";
+              resolution_action: "linked" | "created" | "dismissed" | null;
+              resolved_at: Date | null;
+              resolved_by: string | null;
+              resolved_product_id: string | null;
+              encountered_at: Date;
+              sale_context: Record<string, unknown> | null;
+            }>(
+              `SELECT id, tenant_id, store_id, identifier_type, value,
+                      source_system, resolution_status, resolution_action,
+                      resolved_at, resolved_by, resolved_product_id,
+                      encountered_at, sale_context
+                 FROM unknown_items
+                WHERE resolution_status = $1
+                  AND store_id = $2
+                ORDER BY encountered_at DESC, id DESC
+                LIMIT $3`,
+              [input.status, input.storeIdFilter, input.limit],
+            )
+          : await client.query<{
+              id: string;
+              tenant_id: string;
+              store_id: string;
+              identifier_type: string;
+              value: string;
+              source_system: string | null;
+              resolution_status: "pending" | "resolved" | "dismissed";
+              resolution_action: "linked" | "created" | "dismissed" | null;
+              resolved_at: Date | null;
+              resolved_by: string | null;
+              resolved_product_id: string | null;
+              encountered_at: Date;
+              sale_context: Record<string, unknown> | null;
+            }>(
+              `SELECT id, tenant_id, store_id, identifier_type, value,
+                      source_system, resolution_status, resolution_action,
+                      resolved_at, resolved_by, resolved_product_id,
+                      encountered_at, sale_context
+                 FROM unknown_items
+                WHERE resolution_status = $1
+                ORDER BY encountered_at DESC, id DESC
+                LIMIT $2`,
+              [input.status, input.limit],
+            );
+
+        return result.rows;
+      },
+    );
+
+    const items: UnknownItemRow[] = rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      storeId: row.store_id,
+      identifierType: row.identifier_type,
+      identifierValue: row.value,
+      sourceSystem: row.source_system,
+      resolutionStatus: row.resolution_status,
+      resolutionAction: row.resolution_action,
+      resolvedAt: row.resolved_at,
+      resolvedBy: row.resolved_by,
+      resolvedProductId: row.resolved_product_id,
+      encounteredAt: row.encountered_at,
+      saleContext: row.sale_context,
+    }));
+
+    // Wave 1: single-page within limit; nextCursor always null.
+    // Future cursor logic encodes the boundary in
+    // `(encountered_at, id)` for the next page.
+    return { items, nextCursor: null };
+  }
 }
