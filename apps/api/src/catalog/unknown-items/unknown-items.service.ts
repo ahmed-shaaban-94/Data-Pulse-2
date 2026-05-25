@@ -55,7 +55,7 @@
  *   specs/005-pos-catalog-sync-reconciliation/data-model.md §2.1 + §2.2
  *   packages/contracts/openapi/catalog/unknown-items.yaml — posCaptureItem
  */
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 
@@ -465,5 +465,131 @@ export class UnknownItemsService {
     };
 
     return { kind: "unknown", unknownItem: captured };
+  }
+
+  /**
+   * Non-disclosing GET-by-id for `unknown_items` (T522 /
+   * 005-WAVE1-NON-DISCLOSING).
+   *
+   * Behavior (SI-001 / SI-004 / FR-013 / FR-092):
+   *   - The caller's tenant + (optional) store scope are set as GUCs via
+   *     `runWithTenantContext` + `set_config('app.current_store', ...)`.
+   *   - Selects the row by `id` ONLY — the WHERE clause does NOT explicitly
+   *     check `tenant_id`. RLS does the tenant filtering: 003's
+   *     `unknown_items_tenant_isolation` policy returns zero rows when the
+   *     id belongs to a different tenant, and the OR'd `unknown_items_store_read`
+   *     branch enforces store-scope when the principal is store-scoped.
+   *   - Zero rows ⇒ `NotFoundException` (404-class). Indistinguishable from
+   *     "id does not exist anywhere" — the response MUST NOT leak existence
+   *     in another tenant or another store.
+   *   - One row ⇒ adapted to `CapturedUnknownItemRow` shape (mirrors
+   *     `captureItem`'s `unknown` branch).
+   *
+   * `storeId`:
+   *   - Tenant-wide principal (tenant admin / tenant owner) passes `null`;
+   *     `app.current_store` is set to `''` so 0009's empty-string carve-out
+   *     in `unknown_items_store_read` evaluates TRUE for all stores in the
+   *     tenant.
+   *   - Store-scoped principal (store manager / operator) passes their
+   *     store's UUID; the store_read predicate matches rows from that store
+   *     only.
+   *
+   * Why NOT add `WHERE tenant_id = $X` explicitly:
+   *   The whole point of RLS is that the service does not need to layer
+   *   tenant filtering on top — that introduces a second source of truth
+   *   and risks silent disagreement with the policy. SI-001's invariant is
+   *   that the DB layer alone makes cross-tenant reads impossible; this
+   *   helper composes that into a 404-class HTTP signal, no more.
+   *
+   * Wave 1 usage:
+   *   Internal only — no public route exposes this in Wave 1. tasks.md
+   *   T522 calls out that LIST is the public surface; this helper exists
+   *   so that when a future slice authors a controller GET-by-id (or
+   *   reconciliation-needs-by-id), the non-disclosing posture is already
+   *   the service contract.
+   */
+  async findByIdForTenant(input: {
+    readonly id: string;
+    readonly tenantId: string;
+    readonly storeId: string | null;
+  }): Promise<CapturedUnknownItemRow> {
+    const row = await runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client) => {
+        // Set `app.current_store` BEFORE the SELECT so the store_read RLS
+        // branch can evaluate. Empty-string for tenant-wide actors (0009
+        // carve-out); store UUID for store-scoped actors. Without this,
+        // `current_setting('app.current_store', true)` returns NULL and
+        // the OR'd store_read branch evaluates FALSE — leaving only the
+        // tenant_isolation branch, which is fine for tenant-wide queries
+        // but would silently over-restrict a store-scoped principal.
+        // Mirrors the `set_config` call in `captureItem` (line ~295).
+        await client.query(
+          "SELECT set_config('app.current_store', $1, true)",
+          [input.storeId ?? ""],
+        );
+
+        const result = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending" | "resolved" | "dismissed";
+          resolution_action: "linked" | "created" | "dismissed" | null;
+          resolved_at: Date | null;
+          resolved_by: string | null;
+          resolved_product_id: string | null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          // No `tenant_id = $X` predicate — RLS does the cross-tenant
+          // filter. SI-001 invariant: the row is unreachable from any
+          // tenant other than its owning tenant under 003's policies.
+          `SELECT id, tenant_id, store_id, identifier_type, value,
+                  source_system, resolution_status, resolution_action,
+                  resolved_at, resolved_by, resolved_product_id,
+                  encountered_at, sale_context
+             FROM unknown_items
+            WHERE id = $1
+            LIMIT 1`,
+          [input.id],
+        );
+
+        return result.rows[0] ?? null;
+      },
+    );
+
+    if (!row) {
+      // FR-013 / FR-092 / SI-004: non-disclosing 404. The exception body
+      // names no tenant, no store, no identifier — the actor cannot use
+      // this response to learn whether the id exists in another tenant.
+      // NestJS's `NotFoundException` formats as `{ statusCode: 404,
+      // message: "Not Found" }` by default; the `GlobalExceptionFilter`
+      // rewrites that into the canonical envelope with
+      // `error.code = "not_found"`.
+      throw new NotFoundException("Not Found");
+    }
+
+    return {
+      id: row.id,
+      tenantId: row.tenant_id,
+      storeId: row.store_id,
+      identifierType: row.identifier_type,
+      identifierValue: row.value,
+      sourceSystem: row.source_system,
+      // The Wave 1 GET-by-id only surfaces pending rows in the test
+      // suite, but the helper is shape-tolerant for any lifecycle state
+      // — the CHK on 003 keeps the column combinations valid.
+      resolutionStatus: row.resolution_status as "pending",
+      resolutionAction: row.resolution_action as null,
+      resolvedAt: row.resolved_at as null,
+      resolvedBy: row.resolved_by as null,
+      resolvedProductId: row.resolved_product_id as null,
+      encounteredAt: row.encountered_at,
+      saleContext: row.sale_context,
+    };
   }
 }
