@@ -1,0 +1,39 @@
+name: Update LOC Badge
+
+"on":
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/assets/badges/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-loc-badge:
+    name: Count LOC and update badge
+    runs-on: [self-hosted, Linux, X64, dp2-linux]
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Count LOC and generate badge
+        run: node scripts/update-loc-badge.mjs
+
+      - name: Commit badge if changed
+        run: |
+          git diff --quiet docs/assets/badges/loc.svg && exit 0
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/assets/badges/loc.svg
+          git commit -m "chore: update LOC badge [skip ci]"
+          git push
