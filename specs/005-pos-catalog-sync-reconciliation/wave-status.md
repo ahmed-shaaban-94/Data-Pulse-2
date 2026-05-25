@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-25 (Phase 4 FR-021 pair complete — `005-WAVE1-IDEMP-MISMATCH` PR #339 merged. FR-021c catalog-domain audit + counter now fire on payload-mismatch 409s; the happy-path replay (PR #336) + fail-closed mismatch (PR #339) pair lands the full FR-021 contract. AUDIT and METRICS now depend only on DISMISS)
+**Last updated:** 2026-05-25 (Phase 5 opened — `005-WAVE1-DISMISS` PR #341 merged. Highest-leverage Wave 1 merge: FR005 / AUDIT / METRICS all transition from blocked to ready in one merge. Wave 1 now has 4 ready slices and only POLISH left blocked)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `0eef243` (PR #339, 2026-05-25 — `005-WAVE1-IDEMP-MISMATCH` merged)
+**Base:** `origin/main` at `1ff755f` (PR #341, 2026-05-25 — `005-WAVE1-DISMISS` merged)
 **Active findings:** 0
 **Resolved findings:** 2
 
@@ -10,20 +10,23 @@
 
 ## TL;DR
 
-**15 Wave 1 slices merged. Phase 3 COMPLETE, Phase 4 FR-021 pair complete** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, **`005-WAVE1-IDEMP-MISMATCH` PR #339** — new this closeout). **5 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved.
+**16 Wave 1 slices merged. Phase 3 COMPLETE, Phase 4 FR-021 pair COMPLETE, Phase 5 opened** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, `005-WAVE1-IDEMP-MISMATCH` PR #339, **`005-WAVE1-DISMISS` PR #341** — new this closeout). **4 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved.
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
-**Phase 4 FR-021 pair complete.** IDEMP-WIRE (PR #336) shipped the FR-021 happy-path retry contract at N=5 against the real route; IDEMP-MISMATCH (PR #339, new this closeout) shipped the FR-021c fail-closed catalog-domain telemetry on the existing 409 path. The full FR-021 audit story (retry replays + payload-mismatch rejection both emit catalog-axis observability) is now empirically verified end-to-end on `main`. **AUDIT and METRICS slices now depend only on DISMISS**; they were 3-deps each (CAPTURE-HAPPY + DISMISS + IDEMP-MISMATCH) before — first two cleared, only DISMISS remains.
+**Phase 5 opened with the highest-leverage Wave 1 merge of the session.** DISMISS shipped the `@Post(":id/dismiss")` route + service `dismissUnknownItem` method with the **UPDATE-first + conditional-SELECT** pattern (atomic monotonic transition + race-safe 404/409 split). **Three downstream slices unblocked in one merge**: FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553). Plus IDEMP-EDGES was already ready — Wave 1 now has 4 ready slices and only POLISH left blocked.
+
+CodeRabbit caught a 🔴 Critical bug pre-merge: missing `@HttpCode(HttpStatus.OK)` would have made the dismiss route return 201 instead of 200 (NestJS POST default). Fixed in the same PR via a fixup commit; reinforces Standing Rules §6 (Docker-soft-skip locally cannot validate HTTP-layer status assertions).
 
 **Next moves:**
 
-1. **Dispatch Phase 5 — DISMISS** (T540–T543): `@Post(":id/dismiss")` route + service `dismissItem` method + monotonicity guard. Unblocks FR005, AUDIT, and METRICS all at once.
-2. **Dispatch Phase 4 — IDEMP-EDGES** (T534/T535/T536, test-only, parallel-safe): three RED specs covering FR-021a (per-device scoping), FR-021b (24h TTL), FR-022 (post-resolved). Independent of DISMISS — could run in serial or in parallel.
-3. **Continue Phase 5** after DISMISS merges: FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553).
-4. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601). Wave 2 implementation slices cannot dispatch until this merges.
+1. **Dispatch Phase 5 — FR005** (T544/T545): tighten the natural-dedup query in `captureUnknownItem` to filter on `resolution_status='pending'` so a fresh POS submission after a dismiss creates a new pending row (per FR-005). Smallest of the newly-unblocked slices; the partial index already enforces the predicate at the DB layer so this is a service-layer assertion + new RED test.
+2. **Dispatch Phase 5 — AUDIT** (T546–T551, test-only, parallel-safe): three RED specs verifying that capture / dismiss / mismatch all emit their audit subjects correctly. Test-only — no production code edits if the existing `@Auditable` decorators emit as expected.
+3. **Dispatch Phase 5 — METRICS** (T552/T553): assert each emission site increments its catalog-axis counter (`unknown_item_captured_total`, `unknown_item_resolved_total{action="dismissed"}`, `idempotency_token_mismatch_total`). The DISMISS counter increment (the `dismissed` action) was deferred for METRICS to author — service may need a small counter call addition.
+4. **Dispatch Phase 4 — IDEMP-EDGES** (T534/T535/T536, test-only, parallel-safe): three RED specs covering FR-021a (per-device scoping), FR-021b (24h TTL), FR-022 (post-resolved). Independent of the Phase 5 chain.
+5. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601). Wave 2 implementation slices cannot dispatch until this merges.
 
-**Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), LIST (PR #334), IDEMP-WIRE (PR #336), and IDEMP-MISMATCH (PR #339 — extends `@UseFilters` to the same already-decorated route) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. CodeRabbit flagged this on PR #334 (twice — initial + duplicate); not re-raised on subsequent PRs since the JSDoc disclaimer + this `wave-status.md` section serve as the durable deferral mechanism. Deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all unknown-items controller routes consistently (will need `[GATED]` approval per Standing Rules §3).
+**Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), LIST (PR #334), IDEMP-WIRE (PR #336), IDEMP-MISMATCH (PR #339), and DISMISS (PR #341 — adds the 6th unguarded route on this controller) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. CodeRabbit flagged this on PR #334 (twice — initial + duplicate); not re-raised on subsequent PRs since the JSDoc disclaimer + this `wave-status.md` section serve as the durable deferral mechanism. Deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all 6 routes consistently — POS routes use bearer tokens while admin routes use session cookies, so the guard parameterization will differ. Will need `[GATED]` approval per Standing Rules §3.
 
 ---
 
@@ -48,6 +51,7 @@
 | `005-WAVE1-LIST` (slice) | T523 + T524 — FR-014 tenant-admin queue read endpoint. Adds `UnknownItemsService.listForTenant({tenantId, storeId, status, limit, storeIdFilter?})` with `app.current_store` GUC driving RLS visibility (empty-string for tenant-wide actors per 0009 carve-out; UUID for store-scoped operators); SELECT WHERE resolution_status = $1 [AND store_id = $2] only — no application-level tenant predicate, RLS filters cross-tenant. Adds `@Get("api/v1/catalog/unknown-items")` controller route with Zod `.strict()` query validation (status / store_id / cursor / limit). **Controller-prefix refactor**: class moved from `@Controller("api/pos/v1/catalog/unknown-items")` to `@Controller()` with paths on each method, so POS-facing (`/api/pos/v1/...`) and dashboard-facing (`/api/v1/...`) route families coexist; CAPTURE-HAPPY's served URL unchanged (23/23 capture tests pass unmodified). Service-direct + supertest hybrid spec (6 service cases + 1 supertest case for HTTP boundary coverage per CodeRabbit feedback). Wave 1 single-pages within `limit` (≤200), `next_cursor` always null — cursor parameter accepted at boundary for forward-compat but ignored internally. **DISMISS now unblocked** (was sole `blocks:` entry). | PR #334 @ `bdb582e` |
 | `005-WAVE1-IDEMP-WIRE` (slice) | T530 + T531 — FR-021 retry-identical at N=5 against the real `posCaptureItem` route. Slice ships as a single new test file (`retry-identical.spec.ts`) because T531 (`@Idempotent('required')` on capture route) was already applied in PR #317 / CAPTURE-HAPPY. The spec closes the coverage gap between capture-happy-path's N=2 real-route assertion and existing-primitive-coverage.spec.ts's N=5 stub-controller assertion — neither alone matched T530's brief verbatim (N=5 × real route × full DB+metric+replay-header assertion set). **IDEMP-MISMATCH and IDEMP-EDGES both newly unblocked** by this merge. | PR #336 @ `d57efc6` |
 | `005-WAVE1-IDEMP-MISMATCH` (slice) | T532 + T533 — FR-021c catalog-domain audit + counter on the existing 409 path. Adds `IdempotencyMismatchFilter` (NestJS `@Catch(ConflictException)` filter with narrow `code === "idempotency_key_conflict"` check) that catches the 001 `IdempotencyInterceptor`'s payload-mismatch exception, fires `recordIdempotencyTokenMismatch()` + enqueues `unknown_item.idempotency_mismatch_rejected` audit subject, then re-throws so `GlobalExceptionFilter` formats the canonical 409 envelope. Method-scoped via `@UseFilters(IdempotencyMismatchFilter)` on `posCaptureItem` only (slice-entry fix in PR #338 added controller to allowed_files + new stop rule against class-scope). Two load-bearing design decisions documented inline: (a) `@Optional()` on the `AUDIT_JOB_ENQUEUER` injection so legacy test fixtures without the audit module don't fail DI compile; (b) try/catch around `enqueue()` so transient audit-pipeline failures can't replace the deterministic 409 with a 500 (CodeRabbit Major catch on fixup commit). Together they encode "audit is best-effort; response contract is load-bearing" at two failure modes. **AUDIT + METRICS slice dependencies reduced from 3 to 1**: only DISMISS remains. | PR #339 @ `0eef243` |
+| `005-WAVE1-DISMISS` (slice) | T540–T543 — FR-002/FR-003/FR-004 monotonic lifecycle. Adds `UnknownItemsService.dismissUnknownItem({id, tenantId, storeId, actorUserId})` with the **UPDATE-first + conditional-SELECT** pattern: atomic UPDATE with `WHERE id=$1 AND resolution_status='pending'` (the monotonicity guard — slice's stop rule), RETURNING for success, conditional SELECT on rowCount=0 to distinguish 404 non-disclosing (RLS filtered) from 409 `already_reconciled` (visible but not pending). Race-safe per US3 #3 invariant. Adds `@Post("api/v1/catalog/unknown-items/:id/dismiss")` with `@HttpCode(HttpStatus.OK)` (CodeRabbit Critical catch — NestJS POST defaults to 201; Docker-soft-skip locally couldn't validate the 200 contract), `@Param("id", ZodValidationPipe(z.string().uuid()))`, `@Auditable("unknown_item.dismissed")`. No `@Idempotent` (lifecycle invariant provides natural idempotency). Discriminated-union callback return shape (`{kind: "ok"\|"already_reconciled"\|"not_found"}`) keeps exception-throwing OUTSIDE `runWithTenantContext`'s transaction. Reuses LIST's `rowToUnknownItemWireShape` adapter. 7 test cases across 2 specs (happy-path service-direct + supertest, monotonic 409 + non-disclosing 404). **Three downstream slices unblock**: FR005 / AUDIT / METRICS. | PR #341 @ `1ff755f` |
 
 ### Planning artifacts merged (for context)
 
@@ -141,7 +145,7 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-5 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+4 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ### Process note — recovery threshold calibration (from PR #328 retrospective)
 
@@ -159,10 +163,9 @@ _**Phase 3 is COMPLETE** as of PR #334. Phase 0/1/2 prerequisites and all 7 Phas
 
 ### Phase 5 — US5 Audit + Dismiss (P2)
 
-- **`005-WAVE1-DISMISS`** (T540, T541, T542, T543) — dismiss endpoint + monotonicity guard.
-- **`005-WAVE1-FR005`** (T544, T545) — dismissed-then-resubmit produces fresh `pending`.
-- **`005-WAVE1-AUDIT`** (T546–T551) — `@Auditable` decorators + audit-emission verification for all 3 Wave 1 subjects.
-- **`005-WAVE1-METRICS`** (T552, T553) — counter-increment verification at all 3 emission sites.
+- **`005-WAVE1-FR005`** (T544, T545) — dismissed-then-resubmit produces fresh `pending`. **READY TO DISPATCH** (was blocked on CAPTURE-DEDUP + DISMISS; both now merged).
+- **`005-WAVE1-AUDIT`** (T546–T551) — `@Auditable` decorators + audit-emission verification for all 3 Wave 1 subjects. **READY TO DISPATCH** (was blocked on CAPTURE-HAPPY + DISMISS + IDEMP-MISMATCH; all three now merged).
+- **`005-WAVE1-METRICS`** (T552, T553) — counter-increment verification at all 3 emission sites. **READY TO DISPATCH** (same blockers, all merged).
 
 ### Phase 6 — Polish
 
@@ -246,25 +249,21 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-Phase 4 FR-021 pair complete. The most leverage-rich next dispatch is **`005-WAVE1-DISMISS`** (T540–T543) — it's the largest remaining Phase 5 slice and clears AUDIT + METRICS + FR005 from `depends_on: [DISMISS]` all at once. Adds the `@Post(":id/dismiss")` route + service `dismissItem` method + monotonicity guard (`UPDATE WHERE resolution_status = 'pending'`) + 2 RED specs (happy-path + already-resolved 409). Reuses PR #334's method-level path pattern.
+Phase 5 opened. **4 Wave 1 slices are now ready** (FR005, AUDIT, METRICS — all newly unblocked by DISMISS; IDEMP-EDGES was already ready). The natural next dispatch is **`005-WAVE1-FR005`** (T544 + T545) — it's the smallest of the newly-unblocked slices and finishes the FR-005 dismissed-then-resubmit story that the capture-prelude chain has been building toward since PR #328 (CAPTURE-DEDUP).
 
 ```text
-# Phase 5 DISMISS (highest leverage):
-Use Agent OS. Execute slice 005-WAVE1-DISMISS. Stop before commit.
+# Phase 5 FR005 (smallest, finishes a coherent story):
+Use Agent OS. Execute slice 005-WAVE1-FR005. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
-**Smaller alternative**:
+**Alternatives also ready**:
 
-- **`005-WAVE1-IDEMP-EDGES`** (T534/T535/T536) — three test-only RED specs covering FR-021a (per-device scoping), FR-021b (24h TTL), FR-022 (post-resolved). Parallel-safe across three disjoint files. Doesn't unblock anything new but rounds out the Phase 4 audit story. Independent of DISMISS — could run in parallel.
+- **`005-WAVE1-AUDIT`** (T546–T551) — three RED specs verifying that capture / dismiss / mismatch all emit their audit subjects correctly. Test-only, parallel-safe across three disjoint files. May reveal a gap in the existing `@Auditable` wiring; otherwise lands as pure verification coverage.
+- **`005-WAVE1-METRICS`** (T552, T553) — assert counter increments at all 3 emission sites. Likely needs a small service-layer counter-call addition for the `dismissed` action (the DISMISS slice deferred it for METRICS to author).
+- **`005-WAVE1-IDEMP-EDGES`** (T534/T535/T536) — three test-only RED specs for FR-021a / FR-021b / FR-022. Rounds out Phase 4. Doesn't unblock anything but completes the FR-021 family.
 
-```text
-# Phase 4 IDEMP-EDGES (smaller, independent):
-Use Agent OS. Execute slice 005-WAVE1-IDEMP-EDGES. Stop before commit.
-Spec: specs/005-pos-catalog-sync-reconciliation
-```
-
-DISMISS and IDEMP-EDGES are file-disjoint (DISMISS touches controller + service + new dismiss specs; EDGES touches only three new idempotency specs). They could run in parallel without merge conflicts.
+FR005 and IDEMP-EDGES touch only the service file + new specs respectively; they're file-disjoint and could land in any order. AUDIT and METRICS touch the controller + service alongside new specs — serial dispatch with FR005 (which also touches the service) keeps merges clean.
 
 **Wave 2 setup (`[GATED]`)**: Request approval for `005-WAVE2-CONTRACT` (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges. Once approved + merged, dispatch `005-WAVE2-CONFLICT` then the link/create-new slices per the DAG.
 
