@@ -574,6 +574,64 @@ slices:
     parallel_safety: safe   # three disjoint test files
     branch_template: "test/005-wave1-idemp-edges"
 
+  - id: 005-WAVE1-IDEMP-STATUS-CAPTURE
+    task_ids: [T539a, T539b]
+    type: feat
+    status: proposed
+    approval_required: true   # [GATED] — apps/api/src/idempotency/** is normally 001-owned; this slice crosses spec boundary to fix the defect surfaced by PR #321 (see wave-status.md finding 005-IDEMP-STATUS-CAPTURE-DEFECT)
+    depends_on:
+      - 005-WAVE1-CAPTURE-RESOLVE   # tripwire test (it.skip on line ~389) lives in this slice's spec file; flipping .skip → it requires RESOLVE's merge
+    blocks:
+      - 005-WAVE1-LIST              # LIST returns non-201 successful responses; the fix is a hard precondition for its idempotency-replay correctness
+      - 005-WAVE1-DISMISS           # same reason as LIST
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/idempotency/idempotency.interceptor.ts                            # [GATED] — 001-owned; one-line fix at line 274 (read actual response status instead of hard-coding HttpStatus.CREATED)
+      - apps/api/test/idempotency/replay.spec.ts                                       # [GATED] — 001-owned; add regression test asserting non-201 status preservation through replay
+      - apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts  # flip the existing it.skip() tripwire at line ~389 to it() and re-enable the 005-side status assertion
+    forbidden_files:
+      - packages/contracts/openapi/**
+      - packages/db/**
+      - packages/shared/**
+      - apps/api/src/auth/**
+      - apps/api/src/audit/**
+      - apps/api/src/catalog/**         # do not touch the catalog module; the 005-side test edit is just .skip → it
+      - apps/api/src/idempotency/in-progress-marker.ts   # marker is a separate concern; this slice only touches the interceptor
+      - apps/api/test/idempotency/conflict.spec.ts       # other idempotency tests stay locked
+      - apps/api/test/idempotency/cross-tenant.spec.ts
+      - apps/api/test/idempotency/expiry.spec.ts
+      - apps/api/test/idempotency/in-progress.spec.ts
+      - apps/api/test/idempotency/marker-ttl.spec.ts
+      - apps/api/test/idempotency/missing-header.spec.ts
+      - apps/api/test/idempotency/authorization.spec.ts
+      - apps/api/test/idempotency/signals.spec.ts
+      - apps/api/test/catalog/unknown-items/capture/capture-happy-path.spec.ts   # CAPTURE-HAPPY's tests must stay green; this slice does not modify them
+      - packages/contracts/openapi/catalog/unknown-items.yaml
+      - apps/api/test/catalog/unknown-items/contract.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/idempotency/replay"
+        expected: GREEN — new regression test asserts non-201 status preservation through replay; existing 4 replay tests unchanged
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-resolves-to-alias"
+        expected: GREEN — the previously-skipped resolved-branch idempotency replay test (it.skip → it) now passes; the existing 2 tests stay green (3/3 total, no skips)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-happy-path"
+        expected: GREEN — CAPTURE-HAPPY's 6 tests unchanged; regression guard since this slice's edit might silently affect any code path replaying responses
+        docker_required: true
+    stop:
+      - if the fix requires more than a one-line change at idempotency.interceptor.ts:274 (e.g., schema migration of StoredResult) → STOP and report; the interceptor's logic shouldn't need restructuring for this fix
+      - if the regression test reveals OTHER hard-coded fields in StoredResult that this slice should also fix → STOP and surface scope-expansion question to the user
+      - if CAPTURE-HAPPY's tests break (status-passthrough change shouldn't affect 201 handlers, but watch for it)
+      - if any file outside allowed_files is modified
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - recommended_commit_message
+    parallel_safety: unsafe   # gated 001-surface edit — serialize before LIST/DISMISS
+    branch_template: "feat/005-wave1-idemp-status-capture"
+
   # ===== Phase 5: US5 Audit + Dismiss (P2) ==================================
 
   - id: 005-WAVE1-DISMISS
