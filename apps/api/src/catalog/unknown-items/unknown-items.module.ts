@@ -47,13 +47,22 @@ import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
 import { IdempotencyModule } from "../../idempotency/idempotency.module";
 
+import { IdempotencyMismatchFilter } from "./filters/idempotency-mismatch.filter";
 import { UnknownItemsController } from "./unknown-items.controller";
 import { UnknownItemsService } from "./unknown-items.service";
 
 @Module({
   imports: [AuthModule, IdempotencyModule, AuditModule],
   controllers: [UnknownItemsController],
-  providers: [UnknownItemsService],
+  // `IdempotencyMismatchFilter` is registered as a provider so NestJS
+  // resolves its `AUDIT_JOB_ENQUEUER` injection from the audit module
+  // (imported above). The filter is NOT registered as APP_FILTER —
+  // module-global scope would run it on every route, violating the
+  // slice's stop rule ("filter must not modify IdempotencyInterceptor
+  // behavior on routes other than the capture route"). Method-scope
+  // is applied via `@UseFilters(IdempotencyMismatchFilter)` on
+  // `posCaptureItem` in `unknown-items.controller.ts`.
+  providers: [UnknownItemsService, IdempotencyMismatchFilter],
   exports: [UnknownItemsService],
 })
 export class UnknownItemsModule {}

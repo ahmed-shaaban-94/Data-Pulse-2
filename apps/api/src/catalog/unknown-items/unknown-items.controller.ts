@@ -72,6 +72,7 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UseFilters,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -85,6 +86,7 @@ import {
   PosCaptureItemRequestSchema,
   type PosCaptureItemRequestDto,
 } from "./dto/capture-request.dto";
+import { IdempotencyMismatchFilter } from "./filters/idempotency-mismatch.filter";
 import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
@@ -263,6 +265,15 @@ export class UnknownItemsController {
   @Post("api/pos/v1/catalog/unknown-items")
   @Idempotent("required")
   @Auditable("unknown_item.captured")
+  // METHOD-SCOPED filter — T533 / 005-WAVE1-IDEMP-MISMATCH. Catches
+  // the `ConflictException` the IdempotencyInterceptor throws on a
+  // payload mismatch (`code: "idempotency_key_conflict"`), emits the
+  // catalog-domain `unknown_item.idempotency_mismatch_rejected` audit
+  // subject + increments `idempotency_token_mismatch_total`, then
+  // re-throws so GlobalExceptionFilter formats the canonical envelope.
+  // Class-level scoping would inherit to LIST / DISMISS (forbidden
+  // per slice stop rule).
+  @UseFilters(IdempotencyMismatchFilter)
   async posCaptureItem(
     @Req() request: TenantContextRequest,
     @Body(new ZodValidationPipe(PosCaptureItemRequestSchema))
