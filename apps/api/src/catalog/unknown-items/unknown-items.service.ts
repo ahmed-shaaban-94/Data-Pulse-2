@@ -132,18 +132,30 @@ export class UnknownItemsService {
    *      `unknown_items` row scoped to (tenant, store) and return the
    *      persisted row.
    *
-   * Alias scope (T514 — tenant-only):
-   *   This slice scopes the lookup to `(tenant_id, identifier_type,
-   *   value)` only — tenant-wide and store-scoped aliases BOTH resolve
-   *   regardless of the submitting store. The submitting-store filter
-   *   (`store_id IS NULL OR store_id = $current_store`) lands in
-   *   005-WAVE1-CAPTURE-STORE-SCOPE (T515/T516).
+   * Alias scope (T516 — store-scope respected, FR-030a):
+   *   The lookup filter is `(tenant_id, identifier_type, value) AND
+   *   (store_id IS NULL OR store_id = $current_store)`. Tenant-wide
+   *   aliases (`store_id IS NULL`) resolve at every store of the tenant;
+   *   store-scoped aliases resolve ONLY when the submitting store
+   *   matches `store_id`. A store-scoped alias bound to a DIFFERENT
+   *   store of the same tenant MUST NOT resolve here — per FR-030a it
+   *   must fall through to capture as `unknown` at the submitting
+   *   store.
    *
-   *   The 003 partial unique indexes plus 003's eventual
-   *   `ProductAliasesService` guarantee at most ONE active alias per
-   *   `(tenant_id, identifier_type, value)` for non-POS rows; an
-   *   `ORDER BY created_at DESC LIMIT 1` makes the lookup tolerant of
-   *   future shape changes without changing this slice's semantics.
+   *   Precedence: when both a store-scoped match AND a tenant-wide
+   *   match exist for the same `(tenant_id, identifier_type, value)`,
+   *   the store-scoped row wins. This is implemented via
+   *   `ORDER BY (store_id IS NULL) ASC, created_at DESC LIMIT 1` —
+   *   `FALSE` (store-scoped) sorts before `TRUE` (tenant-wide). The
+   *   003 partial unique indexes guarantee at most ONE active row per
+   *   scope, so the secondary `created_at DESC` tiebreaker only
+   *   matters for defensive shape tolerance.
+   *
+   *   The 003 partial index `idx_product_aliases_lookup` (tenant_id,
+   *   identifier_type, value) WHERE retired_at IS NULL still serves
+   *   this access pattern — the `store_id` predicate is applied as a
+   *   filter after the index scan. Adding `store_id` to the index key
+   *   would be a 003-domain migration, out of scope for this slice.
    *
    * Transactional contract:
    *   - Both the alias SELECT and (when needed) the `unknown_items`
@@ -188,22 +200,41 @@ export class UnknownItemsService {
             sale_context: Record<string, unknown> | null;
           } }
       > => {
-        // Alias-resolution prelude (T514) — query the partial index
-        // `idx_product_aliases_lookup` (tenant_id, identifier_type, value)
-        // WHERE retired_at IS NULL.
+        // Alias-resolution prelude (T514, refined by T516 for FR-030a).
+        //
+        // Uses the partial index `idx_product_aliases_lookup`
+        // (tenant_id, identifier_type, value) WHERE retired_at IS NULL.
+        // The `store_id` predicate is applied as a residual filter:
+        // `store_id IS NULL` (tenant-wide alias, resolves anywhere) OR
+        // `store_id = $current_store` (store-scoped alias, resolves
+        // ONLY at the submitting store). A store-scoped alias bound to
+        // a DIFFERENT store of the same tenant MUST NOT match — that's
+        // the FR-030a invariant.
+        //
+        // Precedence (FR-030a): store-scoped wins over tenant-wide for
+        // the same identifier. `ORDER BY (store_id IS NULL) ASC` puts
+        // FALSE (store-scoped) before TRUE (tenant-wide); `created_at
+        // DESC` is a defensive tiebreaker (003's partial unique indexes
+        // already guarantee at most one active row per scope).
         const aliasHit = await client.query<{
           id: string;
           product_id: string;
         }>(
           `SELECT id, product_id
              FROM product_aliases
-            WHERE tenant_id      = $1
+            WHERE tenant_id       = $1
               AND identifier_type = $2
               AND value           = $3
               AND retired_at IS NULL
-            ORDER BY created_at DESC
+              AND (store_id IS NULL OR store_id = $4)
+            ORDER BY (store_id IS NULL) ASC, created_at DESC
             LIMIT 1`,
-          [input.tenantId, input.identifierType, input.identifierValue],
+          [
+            input.tenantId,
+            input.identifierType,
+            input.identifierValue,
+            input.storeId,
+          ],
         );
 
         const hit = aliasHit.rows[0];
