@@ -352,41 +352,23 @@ describe("T513 / 005-WAVE1-CAPTURE-RESOLVE — POS submission resolves via activ
   });
 
   // -------------------------------------------------------------------------
-  // KNOWN-DEFECT GUARD — Idempotency replay on the 200/resolved branch.
+  // T539b — Idempotency replay on the 200/resolved branch.
   //
-  // The slice brief states (Hard constraints → Contract compliance):
+  // Slice brief (Hard constraints → Contract compliance):
   //   "Both responses are still subject to the existing `@Idempotent('required')`
   //    interceptor — idempotency replay must work on BOTH branches (a resolved
   //    response replays as resolved; an unknown response replays as unknown)."
   //
-  // Empirically, the existing `IdempotencyInterceptor` (PR #306) hard-codes
-  // the replay status at `idempotency.interceptor.ts:274`:
-  //     const result: StoredResult = {
-  //       status: HttpStatus.CREATED,
-  //       body: responseBody,
-  //     };
-  // It does NOT read the actual `res.statusCode` set by the handler via
-  // `@Res({ passthrough: true })`. Consequently a 200-resolved response is
-  // saved with status 201 and the replay returns 201 + the resolved body.
-  // The body is correct; the status is wrong.
-  //
-  // This is forbidden surface for THIS slice (`apps/api/src/idempotency/**`
-  // is 001-owned per the brief's "Forbidden files"). The fix is one line
-  // (read `rawRes.statusCode` instead of hard-coding `HttpStatus.CREATED`
-  // — or pass through `entry.result.status` from the captured response),
-  // but it requires either expanding this slice's `allowed_files` via a
-  // docs PR (mirroring how PR #319 expanded for the controller) or a
-  // dedicated follow-up slice (proposal: `005-WAVE1-IDEMP-STATUS-CAPTURE`).
-  //
-  // Note for context: CAPTURE-HAPPY's existing replay test happens to pass
-  // by coincidence — its handler also returns 201, which matches the
-  // interceptor's hard-coded replay status. The defect only manifests on
-  // a non-201 successful response, which the resolved branch introduces.
-  //
-  // The body-level replay invariant (identical body on retry) is verified
-  // below; the status-level invariant is `.skip`'d pending the follow-up.
-  // eslint-disable-next-line jest/no-disabled-tests
-  it.skip("replays the resolved response on an identical retry with the same Idempotency-Key — KNOWN DEFECT in IdempotencyInterceptor:274 (hard-codes replay status to 201; see comment block above)", async () => {
+  // History: this assertion was `.skip`'d when authored (PR #321) because the
+  // existing `IdempotencyInterceptor` at `idempotency.interceptor.ts:274`
+  // hard-coded the replay status to `HttpStatus.CREATED`, so a 200-resolved
+  // response replayed as 201 (body correct, status wrong). The 005-WAVE1-
+  // IDEMP-STATUS-CAPTURE slice (T539a) replaced that literal with
+  // `execCtx.switchToHttp().getResponse().statusCode`, so the handler's
+  // actual status (set via `@Res({ passthrough: true })` + `res.status(...)`)
+  // is now preserved through replay. This test verifies that fix end-to-end
+  // on the 005 resolved branch.
+  it("replays the resolved response on an identical retry with the same Idempotency-Key (T539b fix verification — status now preserved from handler)", async () => {
     if (dockerSkipped) return;
 
     const body = {

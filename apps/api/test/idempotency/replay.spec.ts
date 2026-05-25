@@ -9,12 +9,16 @@
  */
 import "reflect-metadata";
 import {
+  Controller,
+  HttpStatus,
+  Post,
+  Res,
   type CanActivate,
   type ExecutionContext,
-  HttpStatus,
   type INestApplication,
 } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import type { Response } from "express";
 import request from "supertest";
 
 import { DashboardAuthGuard } from "../../src/auth/dashboard-auth.guard";
@@ -25,6 +29,7 @@ import { GlobalExceptionFilter } from "../../src/common/exception.filter";
 
 import { InvitationsController } from "../../src/memberships/invitations.controller";
 import { InvitationsService } from "../../src/memberships/invitations.service";
+import { Idempotent } from "../../src/idempotency/idempotent.decorator";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -231,5 +236,107 @@ describe("T510 — replay: same key + same body → handler runs once, replay re
     expect(replay.body.id).toBe(INVITATION_ID);
     expect(replay.body.tenant_id).toBe(TENANT_ID);
     expect(replay.body.status).toBe("pending");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T539a — non-201 successful status preservation through replay.
+//
+// Regression test for `005-IDEMP-STATUS-CAPTURE-DEFECT`: prior to the fix in
+// 005-WAVE1-IDEMP-STATUS-CAPTURE, `IdempotencyInterceptor` hard-coded the
+// stored response status to `HttpStatus.CREATED`, so any handler that
+// returned a non-201 successful status (e.g., 200 via `@Res({ passthrough })`
+// + `res.status(HttpStatus.OK)`) replayed as 201. The fix reads the actual
+// `res.statusCode` at capture time, so this test asserts that a 200-returning
+// handler replays as 200 (not 201).
+// ---------------------------------------------------------------------------
+
+@Controller("test-200")
+class Test200Controller {
+  public callCount = 0;
+
+  @Post()
+  @Idempotent("required")
+  async create(
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ ok: true; n: number }> {
+    this.callCount += 1;
+    res.status(HttpStatus.OK);
+    return { ok: true, n: this.callCount };
+  }
+}
+
+describe("T539a — replay preserves non-201 successful status (regression for IDEMP-STATUS-CAPTURE-DEFECT)", () => {
+  let app200: INestApplication;
+  let controller: Test200Controller;
+  let fakeRedis200: FakeRedis;
+  const KEY_200 = "abcdef1234567890abcdef1234567200"; // 32 chars
+
+  beforeAll(async () => {
+    fakeRedis200 = new FakeRedis();
+    const fakeMarker200 = new FakeMarker();
+    const store200 = new IdempotencyKeyStore({
+      redis: fakeRedis200,
+      pgWriter: { async insert() {} },
+      pgReader: { async find() { return null; } },
+      defaultTtlMs: 72 * 60 * 60 * 1000,
+    });
+    const reflector = new Reflector();
+    const interceptor = new IdempotencyInterceptor(
+      reflector,
+      store200,
+      fakeMarker200 as unknown as InProgressMarker,
+    );
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [Test200Controller],
+      providers: [
+        { provide: IDEMPOTENCY_KEY_STORE, useValue: store200 },
+        { provide: INFLIGHT_REDIS, useValue: fakeRedis200 },
+        { provide: InProgressMarker, useValue: fakeMarker200 },
+        { provide: APP_INTERCEPTOR, useValue: interceptor },
+      ],
+    }).compile();
+
+    controller = moduleRef.get(Test200Controller);
+    app200 = moduleRef.createNestApplication({ bufferLogs: true });
+    app200.useGlobalFilters(new GlobalExceptionFilter());
+    await app200.init();
+  });
+
+  afterAll(async () => {
+    if (app200) await app200.close();
+  });
+
+  beforeEach(() => {
+    fakeRedis200.clear();
+    controller.callCount = 0;
+  });
+
+  it("preserves non-201 successful status code (200) through replay (T539a, fixes IDEMP-STATUS-CAPTURE-DEFECT)", async () => {
+    const first = await request(app200.getHttpServer())
+      .post("/test-200")
+      .set("Idempotency-Key", KEY_200)
+      .send({});
+    expect(first.status).toBe(HttpStatus.OK);
+    expect(first.body).toEqual({ ok: true, n: 1 });
+    expect(controller.callCount).toBe(1);
+
+    // Drain the interceptor's fire-and-forget `store.save` tap so the second
+    // call sees the stored entry (same pattern used in capture-resolves-to-alias).
+    for (let i = 0; i < 50; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    const second = await request(app200.getHttpServer())
+      .post("/test-200")
+      .set("Idempotency-Key", KEY_200)
+      .send({});
+    // Pre-fix this would be 201 — the defect's exact signature.
+    expect(second.status).toBe(HttpStatus.OK);
+    expect(second.headers["idempotent-replayed"]).toBe("true");
+    expect(second.body).toEqual(first.body);
+    // Handler invoked exactly once across both calls.
+    expect(controller.callCount).toBe(1);
   });
 });
