@@ -503,10 +503,14 @@ slices:
   - id: 005-WAVE1-LIST
     task_ids: [T523, T524]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 334
+    merged_at_commit: bdb582efa364e66f9397e101148bdfa816c89c2a
+    merged_at_date: 2026-05-25
     approval_required: false
     depends_on: [005-WAVE1-CONTRACT, 005-WAVE1-HARNESS]
-    blocks: [005-WAVE1-DISMISS]   # dismiss needs an existing pending item to dismiss; list reads from same fixtures
+    previously_blocked: [005-WAVE1-DISMISS]
+    blocks: []   # DISMISS was the only blocker; cleared by this merge
     agent: sonnet-api
     allowed_files:
       - apps/api/src/catalog/unknown-items/unknown-items.service.ts
@@ -654,7 +658,7 @@ slices:
     type: feat
     status: proposed
     approval_required: false
-    depends_on: [005-WAVE1-LIST]
+    depends_on: []   # LIST merged via PR #334 (bdb582e); was the sole blocker
     blocks: [005-WAVE1-FR005, 005-WAVE1-AUDIT]
     agent: sonnet-api
     allowed_files:
