@@ -735,16 +735,23 @@ slices:
       - 005-WAVE2-CREATE-HAPPY
     agent: sonnet-api
     allowed_files:
-      - packages/contracts/openapi/catalog/unknown-items.yaml   # [GATED] — extend with Wave 2 operationIds
-      - packages/contracts/openapi/index.ts                     # [GATED] — registration if needed (T601 no-op if auto-discovered)
+      - packages/contracts/openapi/catalog/unknown-items.yaml             # [GATED] — extend with Wave 2 operationIds (tenantAdminLinkUnknownItem, tenantAdminCreateProductFromUnknownItem)
+      - apps/api/test/catalog/unknown-items/contract-wave2.spec.ts        # Wave 2 conformance test (apps/api Jest runner; mirrors PR #315 / #319 precedent for Wave 1)
     forbidden_files:
       - apps/api/src/catalog/**
-      - apps/api/test/catalog/**
+      - apps/api/test/catalog/unknown-items/contract.spec.ts   # Wave 1 conformance test — locked; this slice authors contract-wave2.spec.ts as a sibling
+      - apps/api/test/catalog/unknown-items/capture/**          # capture-* implementation tests live in Wave 1 / Phase 3 slices
+      - apps/api/test/catalog/unknown-items/idempotency/**      # idempotency tests live in 005-WAVE1-IDEMP-* slices
+      - apps/api/test/catalog/unknown-items/isolation/**        # 005-WAVE1-HARNESS owns these
+      - apps/api/test/catalog/unknown-items/__support__/**      # harness fixtures (HARNESS slice owns)
       - packages/db/**
       - specs/003-catalog-foundation/**
     validation:
-      - command: pnpm --filter @data-pulse-2/contracts lint
-        expected: GREEN — YAML lints clean; both tenantAdminLinkUnknownItem and tenantAdminCreateProductFromUnknownItem operationIds present and ref-resolved
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/contract-wave2"
+        expected: GREEN — new Wave 2 conformance spec asserts both tenantAdminLinkUnknownItem and tenantAdminCreateProductFromUnknownItem operationIds present, schemas resolve, and no operationId collision with Wave 1's three operationIds (posCaptureItem, tenantAdminListUnknownItems, tenantAdminDismissUnknownItem)
+        docker_required: false
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/contract"
+        expected: GREEN — Wave 1 contract conformance unchanged (no regression on the existing operationIds in the same YAML)
         docker_required: false
 
   # ===== Wave 2 Phase 3: US3 alias-conflict safety floor ====================
