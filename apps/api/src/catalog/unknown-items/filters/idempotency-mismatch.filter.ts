@@ -142,6 +142,22 @@ export class IdempotencyMismatchFilter implements ExceptionFilter {
     // AuditEmitterInterceptor produces for `@Auditable` decorators.
     // Skipped when the audit enqueuer is not wired (legacy test
     // fixtures — see constructor docstring).
+    //
+    // Best-effort enqueue (CodeRabbit feedback on PR #339): the
+    // enqueuer can throw on transient audit-pipeline failures (BullMQ
+    // outage, Redis disconnect, etc.). A thrown error here would
+    // propagate out of `catch()` and replace the canonical
+    // ConflictException, converting the deterministic 409 contract
+    // into a 500. FR-021c requires a deterministic conflict outcome,
+    // so audit emission MUST NOT alter the response shape. Swallow
+    // enqueue failures and continue to the re-throw below.
+    //
+    // The pattern mirrors AuditEmitterInterceptor's own enqueue
+    // handling (audit-emitter.interceptor.ts:91-93), which catches
+    // enqueue failures and logs them via an optional logger. This
+    // filter doesn't inject a logger to keep the slice scope tight;
+    // a future enhancement could add `@Optional() @Inject(ROOT_LOGGER)`
+    // to surface enqueue failures in operator dashboards.
     if (this.enqueuer !== null) {
       const request = host
         .switchToHttp()
@@ -157,7 +173,12 @@ export class IdempotencyMismatchFilter implements ExceptionFilter {
         request_id: request.requestId ?? null,
         metadata: null,
       };
-      await this.enqueuer.enqueue(payload);
+      try {
+        await this.enqueuer.enqueue(payload);
+      } catch {
+        // Best-effort: never override mismatch conflict semantics.
+        // FR-021c determinism takes precedence over audit emission.
+      }
     }
 
     // Re-throw so GlobalExceptionFilter formats the canonical envelope
