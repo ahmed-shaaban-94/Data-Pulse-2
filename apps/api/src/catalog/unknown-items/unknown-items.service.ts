@@ -559,7 +559,7 @@ export class UnknownItemsService {
         // Mirrors the `set_config` call in `captureItem` (line ~295).
         await client.query(
           "SELECT set_config('app.current_store', $1, true)",
-          [input.storeId ?? ""],
+          [input.storeId ?? "*"],
         );
 
         const result = await client.query<{
@@ -680,7 +680,7 @@ export class UnknownItemsService {
         // `captureItem`'s GUC pattern.
         await client.query(
           "SELECT set_config('app.current_store', $1, true)",
-          [input.storeId ?? ""],
+          [input.storeId ?? "*"],
         );
 
         // Optional residual `store_id` predicate for tenant-wide
@@ -836,7 +836,7 @@ export class UnknownItemsService {
         // as `findByIdForTenant`/`listForTenant`.
         await client.query(
           "SELECT set_config('app.current_store', $1, true)",
-          [input.storeId ?? ""],
+          [input.storeId ?? "*"],
         );
 
         // UPDATE-first with monotonicity guard. The `WHERE` clause
