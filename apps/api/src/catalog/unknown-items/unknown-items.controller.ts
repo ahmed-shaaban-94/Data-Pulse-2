@@ -65,14 +65,17 @@
 import {
   Body,
   Controller,
+  Get,
   HttpStatus,
   Post,
+  Query,
   Req,
   Res,
   UnauthorizedException,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
@@ -85,7 +88,78 @@ import {
 import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
+  type UnknownItemRow,
 } from "./unknown-items.service";
+
+/**
+ * Zod schema for `tenantAdminListUnknownItems` query params. Mirrors
+ * the OpenAPI contract `packages/contracts/openapi/catalog/unknown-items.yaml`:
+ *   - status: enum, default 'pending'
+ *   - store_id: UUID, optional (tenant-wide actors may narrow)
+ *   - cursor: string, optional (Wave 1 accepts but ignores — see
+ *     `listForTenant` comment)
+ *   - limit: 1-200, default 50
+ *
+ * `.strict()` rejects unknown params so a typo doesn't silently pass.
+ * Express query params arrive as strings; `z.coerce.number()` casts
+ * `?limit=100` to a number before range validation.
+ */
+const ListUnknownItemsQuerySchema = z
+  .object({
+    status: z
+      .enum(["pending", "resolved", "dismissed"])
+      .optional()
+      .default("pending"),
+    store_id: z.string().uuid().optional(),
+    cursor: z.string().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+  })
+  .strict();
+
+type ListUnknownItemsQueryDto = z.infer<typeof ListUnknownItemsQuerySchema>;
+
+/**
+ * Wire shape of the contract's `UnknownItem` schema. Adapts the
+ * service's `UnknownItemRow` (camelCase) to snake_case.
+ */
+interface UnknownItemWireShape {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly store_id: string;
+  readonly identifier_type: string;
+  readonly identifier_value: string;
+  readonly source_system: string | null;
+  readonly resolution_status: "pending" | "resolved" | "dismissed";
+  readonly resolution_action: "linked" | "created" | "dismissed" | null;
+  readonly resolved_at: string | null;
+  readonly resolved_by: string | null;
+  readonly resolved_product_id: string | null;
+  readonly encountered_at: string;
+  readonly sale_context: Record<string, unknown> | null;
+}
+
+interface ListUnknownItemsResponseBody {
+  readonly items: ReadonlyArray<UnknownItemWireShape>;
+  readonly next_cursor: string | null;
+}
+
+function rowToUnknownItemWireShape(row: UnknownItemRow): UnknownItemWireShape {
+  return {
+    id: row.id,
+    tenant_id: row.tenantId,
+    store_id: row.storeId,
+    identifier_type: row.identifierType,
+    identifier_value: row.identifierValue,
+    source_system: row.sourceSystem,
+    resolution_status: row.resolutionStatus,
+    resolution_action: row.resolutionAction,
+    resolved_at: row.resolvedAt ? row.resolvedAt.toISOString() : null,
+    resolved_by: row.resolvedBy,
+    resolved_product_id: row.resolvedProductId,
+    encountered_at: row.encounteredAt.toISOString(),
+    sale_context: row.saleContext,
+  };
+}
 
 /**
  * Wire shape of the contract's `PosCaptureUnknownResponse`. Adapts the
@@ -156,7 +230,25 @@ function toResolvedWireShape(
   };
 }
 
-@Controller("api/pos/v1/catalog/unknown-items")
+/**
+ * Controller class has no `@Controller(prefix)` argument — the URL
+ * paths are placed on each method instead. Two route families live in
+ * this controller and they have different prefixes:
+ *
+ *   - `posCaptureItem` is POS-facing → `/api/pos/v1/catalog/unknown-items`
+ *     (CAPTURE-HAPPY, PR #317)
+ *   - `tenantAdminListUnknownItems` is dashboard / tenant-admin facing
+ *     → `/api/v1/catalog/unknown-items` (LIST, T524 — no `/pos/` prefix
+ *     per the OpenAPI contract `packages/contracts/openapi/catalog/unknown-items.yaml`)
+ *   - Future `tenantAdminDismissUnknownItem` lands at
+ *     `/api/v1/catalog/unknown-items/{id}/dismiss` for the same reason
+ *
+ * The pre-LIST iteration used `@Controller("api/pos/v1/catalog/unknown-items")`
+ * because capture was the only route. LIST forced the move to a
+ * method-level path scheme — same served URLs, same supertest
+ * assertions, just relocated decorators.
+ */
+@Controller()
 export class UnknownItemsController {
   constructor(private readonly unknownItemsService: UnknownItemsService) {}
 
@@ -168,7 +260,7 @@ export class UnknownItemsController {
    * in by downstream slices (CAPTURE-RESOLVE / CAPTURE-STORE-SCOPE /
    * CAPTURE-DEDUP).
    */
-  @Post()
+  @Post("api/pos/v1/catalog/unknown-items")
   @Idempotent("required")
   @Auditable("unknown_item.captured")
   async posCaptureItem(
@@ -222,5 +314,66 @@ export class UnknownItemsController {
     // FR-001 — capture: a new pending row was inserted. 201 Created.
     res.status(HttpStatus.CREATED);
     return toUnknownWireShape(result.unknownItem);
+  }
+
+  /**
+   * `tenantAdminListUnknownItems` — dashboard / tenant-admin queue read
+   * (T524 / 005-WAVE1-LIST).
+   *
+   * GET /api/v1/catalog/unknown-items?status=&store_id=&cursor=&limit=
+   *
+   * RLS-driven visibility:
+   *   - Tenant-wide actors (storeId=null) see all stores in their
+   *     tenant; 003 0009 carve-out makes the `app.current_store=''`
+   *     pass the `unknown_items_store_read` policy branch.
+   *   - Store-scoped operators see only their bound store; the policy
+   *     branch matches `store_id = app.current_store`.
+   *   - Cross-tenant probes return an empty page (003
+   *     `unknown_items_tenant_isolation` filters at the DB layer),
+   *     NOT an authorization error — non-disclosing per SI-001 /
+   *     FR-013.
+   *
+   * Pagination: Wave 1 single-pages within `limit` (default 50, max
+   * 200 per the contract). `cursor` is accepted at the boundary so
+   * `.strict()` doesn't reject it, but ignored internally — the
+   * response always carries `next_cursor: null`. See `listForTenant`
+   * comment for the forward-compat plan.
+   *
+   * Audit / idempotency:
+   *   - No `@Auditable` decorator: list reads are not state
+   *     transitions (FR-080 scopes audits to transitions).
+   *   - No `@Idempotent` decorator: GETs are naturally idempotent
+   *     and the interceptor expects a header on writes only.
+   */
+  @Get("api/v1/catalog/unknown-items")
+  async tenantAdminListUnknownItems(
+    @Req() request: TenantContextRequest,
+    @Query(new ZodValidationPipe(ListUnknownItemsQuerySchema))
+    query: ListUnknownItemsQueryDto,
+  ): Promise<ListUnknownItemsResponseBody> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    // No `store_context_required` check here — list supports both
+    // tenant-wide actors (ctx.storeId === null) and store-scoped
+    // actors (ctx.storeId === UUID). The service's
+    // `app.current_store` GUC drives the RLS branch accordingly.
+
+    const result = await this.unknownItemsService.listForTenant({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      status: query.status,
+      limit: query.limit,
+      storeIdFilter: query.store_id ?? null,
+    });
+
+    return {
+      items: result.items.map(rowToUnknownItemWireShape),
+      next_cursor: result.nextCursor,
+    };
   }
 }
