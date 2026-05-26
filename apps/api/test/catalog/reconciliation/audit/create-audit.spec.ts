@@ -51,6 +51,7 @@ import {
   TENANT_A,
   STORE_A_X,
   PRODUCT_A_ACTIVE,
+  CATEGORY_A,
 } from "../../__support__/isolation-harness";
 
 const UNK_T642_CREATE = "0a000000-0000-7000-8000-00000642a001";
@@ -89,12 +90,17 @@ class ConfigurableContextGuard implements CanActivate {
   public tenantId: string = TENANT_A;
   public storeId: string | null = STORE_A_X;
   public userId: string = TENANT_A_ADMIN_USER;
+  /** When true, do NOT attach req.context — exercises the controller's `!ctx` 401. */
+  public skipContext = false;
 
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest<{
       context?: ResolvedContext;
       principal?: { userId?: string };
     }>();
+    if (this.skipContext) {
+      return true;
+    }
     req.context = {
       userId: this.userId,
       tenantId: this.tenantId,
@@ -215,6 +221,7 @@ beforeEach(() => {
   contextGuard.tenantId = TENANT_A;
   contextGuard.storeId = STORE_A_X;
   contextGuard.userId = TENANT_A_ADMIN_USER;
+  contextGuard.skipContext = false;
 });
 
 afterEach(async () => {
@@ -271,6 +278,40 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       expect(payload.tenant_id).toBe(TENANT_A);
       expect(payload.store_id).toBe(STORE_A_X);
       expect(payload.actor_user_id).toBe(TENANT_A_ADMIN_USER);
+    },
+  );
+
+  it(
+    "succeeds with a non-null category_id (category passthrough; ?? left branch)",
+    async () => {
+      if (dockerSkipped) return;
+
+      // Every other create test omits category_id, so the controller's
+      // `body.category_id ?? null` only ever takes the nullish (right) side.
+      // Sending a real CATEGORY_A FK exercises the present (left) side and
+      // confirms the category flows through to the new product.
+      const res = await http()
+        .post(CREATE_URL(UNK_T642_CREATE))
+        .send({ ...CREATE_BODY, category_id: CATEGORY_A });
+      expect(res.status).toBe(201);
+
+      await drainMicrotasks();
+
+      const createdEvents = auditSpy.calls.filter(
+        (c) => c.action === "unknown_item.resolved.created",
+      );
+      expect(createdEvents).toHaveLength(1);
+
+      // Prove the passthrough: the newly created product carries CATEGORY_A,
+      // not null. Without this, the test would pass even if the controller
+      // dropped category_id on the floor.
+      const newProductId = res.body?.resolved_product_id as string;
+      expect(newProductId).toBeTruthy();
+      const productRow = await env!.admin.query<{ category_id: string | null }>(
+        `SELECT category_id FROM tenant_products WHERE id = $1`,
+        [newProductId],
+      );
+      expect(productRow.rows[0]?.category_id).toBe(CATEGORY_A);
     },
   );
 
@@ -358,4 +399,46 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       ).toHaveLength(0);
     },
   );
+
+  it("returns 401 (no event) when the resolved context is entirely absent", async () => {
+    if (dockerSkipped) return;
+
+    // No req.context attached -> controller's `if (!ctx)` 401 branch.
+    contextGuard.skipContext = true;
+
+    const res = await http().post(CREATE_URL(UNK_T642_CREATE)).send(CREATE_BODY);
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    // No audit action of ANY kind may leak on an unauthorized request.
+    expect(auditSpy.calls).toHaveLength(0);
+  });
+
+  it("returns 401 (no event) when the resolved context has a null userId", async () => {
+    if (dockerSkipped) return;
+
+    // Context + tenant present, userId null -> `if (ctx.userId === null)` 401.
+    contextGuard.userId = null as unknown as string;
+
+    const res = await http().post(CREATE_URL(UNK_T642_CREATE)).send(CREATE_BODY);
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    expect(auditSpy.calls).toHaveLength(0);
+  });
+
+  it("returns 401 (no event) when the resolved context has a null tenantId", async () => {
+    if (dockerSkipped) return;
+
+    // Context present, userId present, but tenantId null -> the create route's
+    // `if (ctx.tenantId === null)` 401 branch. The link route covers its own
+    // copy of this guard; the create route's was previously untested.
+    contextGuard.tenantId = null as unknown as string;
+
+    const res = await http().post(CREATE_URL(UNK_T642_CREATE)).send(CREATE_BODY);
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    expect(auditSpy.calls).toHaveLength(0);
+  });
 });
