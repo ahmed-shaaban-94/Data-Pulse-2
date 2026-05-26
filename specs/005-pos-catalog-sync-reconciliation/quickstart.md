@@ -39,7 +39,7 @@ POS device `D` scans barcode `5449000000996` during a sale. The barcode does not
 ```
 POST /tenants/<T>/stores/<S>/catalog/unknown-items/capture
 Authorization: Bearer <POS device token for tenant T, store S>
-Idempotency-Token: <opaque token, 24h TTL>
+Idempotency-Key: <opaque key, 24h TTL>
 
 {
   "identifier_type": "barcode",
@@ -67,7 +67,7 @@ Idempotency-Token: <opaque token, 24h TTL>
 
 ## Step 2 — POS retries the same submission (network drop)
 
-The POS-side response was lost. POS retries the **exact same submission** within the 24h TTL with the **same** `Idempotency-Token`.
+The POS-side response was lost. POS retries the **exact same submission** within the 24h TTL with the **same** `Idempotency-Key`.
 
 **Expected SaaS behavior** (per FR-021, FR-021a, FR-021b, FR-022):
 
@@ -144,7 +144,7 @@ POS device `D` (or any other device of tenant `T` if the alias is tenant-wide) s
 
 **Expected SaaS behavior** (per FR-022, FR-030, FR-031):
 
-1. POS submits the same capture as Step 1, with a **different** Idempotency-Token (it's a new sale).
+1. POS submits the same capture as Step 1, with a **different** Idempotency-Key (it's a new sale).
 2. Inside `runWithTenantContext`:
    a. Look up active alias for `(T, 'barcode', '5449000000996')`. **Match found** → resolves to `P1`.
 3. **No** `unknown_items` row is created (FR-031).
