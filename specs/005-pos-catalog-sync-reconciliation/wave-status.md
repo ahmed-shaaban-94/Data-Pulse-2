@@ -1,32 +1,32 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-25 (Phase 5 opened — `005-WAVE1-DISMISS` PR #341 merged. Highest-leverage Wave 1 merge: FR005 / AUDIT / METRICS all transition from blocked to ready in one merge. Wave 1 now has 4 ready slices and only POLISH left blocked)
+**Last updated:** 2026-05-26 (Phase 5+ cleared: FR-005, AUDIT (partial), IDEMP-EDGES, and DISMISS-CARVEOUT-FIX all landed within an 18-minute window. METRICS is the last blocker before POLISH.)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `1ff755f` (PR #341, 2026-05-25 — `005-WAVE1-DISMISS` merged)
+**Base:** `origin/main` at `043c1c2` (PR #345, 2026-05-26 — `005-WAVE1-IDEMP-EDGES` merged)
 **Active findings:** 0
-**Resolved findings:** 2
+**Resolved findings:** 3
 
 ---
 
 ## TL;DR
 
-**16 Wave 1 slices merged. Phase 3 COMPLETE, Phase 4 FR-021 pair COMPLETE, Phase 5 opened** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, `005-WAVE1-IDEMP-MISMATCH` PR #339, **`005-WAVE1-DISMISS` PR #341** — new this closeout). **4 Wave 1 candidate slices remain at `status: proposed`.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. Both `005-METRICS-ALLOWLIST-PRECONDITION` and `005-IDEMP-STATUS-CAPTURE-DEFECT` findings are resolved.
+**19 Wave 1 slices merged + 1 hotfix (DISMISS-CARVEOUT-FIX). Phase 3 COMPLETE, Phase 4 COMPLETE, Phase 5 nearly complete — METRICS is the sole remaining blocker before POLISH.** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, `005-WAVE1-IDEMP-MISMATCH` PR #339, `005-WAVE1-DISMISS` PR #341, **`005-WAVE1-FR005` PR #343, `005-WAVE1-AUDIT` PR #344 (partial), `005-WAVE1-IDEMP-EDGES` PR #345, `005-WAVE1-DISMISS-CARVEOUT-FIX` PR #346** — new this closeout). **1 Wave 1 candidate slice remains at `status: proposed` (METRICS). T550/T551 deferred from AUDIT (#344) are a known follow-up item.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. All three findings (`005-METRICS-ALLOWLIST-PRECONDITION`, `005-IDEMP-STATUS-CAPTURE-DEFECT`, `005-DISMISS-SENTINEL-REGRESSION`) are resolved.
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
-**Phase 5 opened with the highest-leverage Wave 1 merge of the session.** DISMISS shipped the `@Post(":id/dismiss")` route + service `dismissUnknownItem` method with the **UPDATE-first + conditional-SELECT** pattern (atomic monotonic transition + race-safe 404/409 split). **Three downstream slices unblocked in one merge**: FR005 (T544/T545), AUDIT (T546–T551), METRICS (T552/T553). Plus IDEMP-EDGES was already ready — Wave 1 now has 4 ready slices and only POLISH left blocked.
+**Four PRs landed in an 18-minute window on 2026-05-26**, collectively completing FR005, the first half of AUDIT, all of IDEMP-EDGES, and a surgical hotfix that unblocked all three. FR005 (T544/T545) tightened the capture query to filter on `resolution_status='pending'` so a dismissed-then-resubmitted item creates a fresh pending row. AUDIT (T546–T549) shipped capture-audit and dismiss-audit specs; T550/T551 (idempotency-mismatch-audit) deferred. IDEMP-EDGES (T534–T536) completed the FR-021a/021b/022 test coverage. DISMISS-CARVEOUT-FIX (PR #346) was the hotfix prerequisite — see cross-spec regression section below.
 
-CodeRabbit caught a 🔴 Critical bug pre-merge: missing `@HttpCode(HttpStatus.OK)` would have made the dismiss route return 201 instead of 200 (NestJS POST default). Fixed in the same PR via a fixup commit; reinforces Standing Rules §6 (Docker-soft-skip locally cannot validate HTTP-layer status assertions).
+**METRICS (T552/T553) is now the last blocker before POLISH.**
 
 **Next moves:**
 
-1. **Dispatch Phase 5 — FR005** (T544/T545): tighten the natural-dedup query in `captureUnknownItem` to filter on `resolution_status='pending'` so a fresh POS submission after a dismiss creates a new pending row (per FR-005). Smallest of the newly-unblocked slices; the partial index already enforces the predicate at the DB layer so this is a service-layer assertion + new RED test.
-2. **Dispatch Phase 5 — AUDIT** (T546–T551, test-only, parallel-safe): three RED specs verifying that capture / dismiss / mismatch all emit their audit subjects correctly. Test-only — no production code edits if the existing `@Auditable` decorators emit as expected.
-3. **Dispatch Phase 5 — METRICS** (T552/T553): assert each emission site increments its catalog-axis counter (`unknown_item_captured_total`, `unknown_item_resolved_total{action="dismissed"}`, `idempotency_token_mismatch_total`). The DISMISS counter increment (the `dismissed` action) was deferred for METRICS to author — service may need a small counter call addition.
-4. **Dispatch Phase 4 — IDEMP-EDGES** (T534/T535/T536, test-only, parallel-safe): three RED specs covering FR-021a (per-device scoping), FR-021b (24h TTL), FR-022 (post-resolved). Independent of the Phase 5 chain.
-5. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601). Wave 2 implementation slices cannot dispatch until this merges.
+1. **Dispatch Phase 5 — METRICS** (T552/T553): assert counter increments at all 3 emission sites (`unknown_item_captured_total`, `unknown_item_resolved_total{action="dismissed"}`, `idempotency_token_mismatch_total`). The service likely needs a small counter call addition for the `dismissed` action. This is the final Wave 1 required slice.
+2. **Follow-up T550/T551** (idempotency-mismatch-audit, deferred from AUDIT PR #344): now that DISMISS-CARVEOUT-FIX is merged, these can dispatch as a standalone micro-slice or be absorbed into METRICS or POLISH.
+3. **Request `[GATED]` approval for `005-WAVE2-CONTRACT`** (T600 + T601). Wave 2 implementation slices cannot dispatch until this merges.
 
-**Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), LIST (PR #334), IDEMP-WIRE (PR #336), IDEMP-MISMATCH (PR #339), and DISMISS (PR #341 — adds the 6th unguarded route on this controller) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. CodeRabbit flagged this on PR #334 (twice — initial + duplicate); not re-raised on subsequent PRs since the JSDoc disclaimer + this `wave-status.md` section serve as the durable deferral mechanism. Deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all 6 routes consistently — POS routes use bearer tokens while admin routes use session cookies, so the guard parameterization will differ. Will need `[GATED]` approval per Standing Rules §3.
+**Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), LIST (PR #334), IDEMP-WIRE (PR #336), IDEMP-MISMATCH (PR #339), and DISMISS (PR #341 — adds the 6th unguarded route) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. Of the new PRs: FR005 (PR #343) touches only the service file, not the controller; AUDIT (PR #344) adds `@Auditable` decorators to the controller but no new routes; IDEMP-EDGES (PR #345) is test-only. The unguarded route count remains 6. CodeRabbit flagged this on PR #334 (twice); not re-raised on subsequent PRs since the JSDoc disclaimer + this section serve as the durable deferral mechanism. Deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all 6 routes consistently — POS routes use bearer tokens while admin routes use session cookies, so the guard parameterization will differ. Will need `[GATED]` approval per Standing Rules §3.
+
+**Outstanding known gap (deferred):** T550/T551 (idempotency-mismatch-audit.spec.ts) were deferred from AUDIT PR #344 because the DISMISS-CARVEOUT-FIX (#346) had not yet landed at authoring time. Both are now unblocked. Can be picked up as a standalone micro-slice or absorbed into POLISH.
 
 ---
 
@@ -52,6 +52,10 @@ CodeRabbit caught a 🔴 Critical bug pre-merge: missing `@HttpCode(HttpStatus.O
 | `005-WAVE1-IDEMP-WIRE` (slice) | T530 + T531 — FR-021 retry-identical at N=5 against the real `posCaptureItem` route. Slice ships as a single new test file (`retry-identical.spec.ts`) because T531 (`@Idempotent('required')` on capture route) was already applied in PR #317 / CAPTURE-HAPPY. The spec closes the coverage gap between capture-happy-path's N=2 real-route assertion and existing-primitive-coverage.spec.ts's N=5 stub-controller assertion — neither alone matched T530's brief verbatim (N=5 × real route × full DB+metric+replay-header assertion set). **IDEMP-MISMATCH and IDEMP-EDGES both newly unblocked** by this merge. | PR #336 @ `d57efc6` |
 | `005-WAVE1-IDEMP-MISMATCH` (slice) | T532 + T533 — FR-021c catalog-domain audit + counter on the existing 409 path. Adds `IdempotencyMismatchFilter` (NestJS `@Catch(ConflictException)` filter with narrow `code === "idempotency_key_conflict"` check) that catches the 001 `IdempotencyInterceptor`'s payload-mismatch exception, fires `recordIdempotencyTokenMismatch()` + enqueues `unknown_item.idempotency_mismatch_rejected` audit subject, then re-throws so `GlobalExceptionFilter` formats the canonical 409 envelope. Method-scoped via `@UseFilters(IdempotencyMismatchFilter)` on `posCaptureItem` only (slice-entry fix in PR #338 added controller to allowed_files + new stop rule against class-scope). Two load-bearing design decisions documented inline: (a) `@Optional()` on the `AUDIT_JOB_ENQUEUER` injection so legacy test fixtures without the audit module don't fail DI compile; (b) try/catch around `enqueue()` so transient audit-pipeline failures can't replace the deterministic 409 with a 500 (CodeRabbit Major catch on fixup commit). Together they encode "audit is best-effort; response contract is load-bearing" at two failure modes. **AUDIT + METRICS slice dependencies reduced from 3 to 1**: only DISMISS remains. | PR #339 @ `0eef243` |
 | `005-WAVE1-DISMISS` (slice) | T540–T543 — FR-002/FR-003/FR-004 monotonic lifecycle. Adds `UnknownItemsService.dismissUnknownItem({id, tenantId, storeId, actorUserId})` with the **UPDATE-first + conditional-SELECT** pattern: atomic UPDATE with `WHERE id=$1 AND resolution_status='pending'` (the monotonicity guard — slice's stop rule), RETURNING for success, conditional SELECT on rowCount=0 to distinguish 404 non-disclosing (RLS filtered) from 409 `already_reconciled` (visible but not pending). Race-safe per US3 #3 invariant. Adds `@Post("api/v1/catalog/unknown-items/:id/dismiss")` with `@HttpCode(HttpStatus.OK)` (CodeRabbit Critical catch — NestJS POST defaults to 201; Docker-soft-skip locally couldn't validate the 200 contract), `@Param("id", ZodValidationPipe(z.string().uuid()))`, `@Auditable("unknown_item.dismissed")`. No `@Idempotent` (lifecycle invariant provides natural idempotency). Discriminated-union callback return shape (`{kind: "ok"\|"already_reconciled"\|"not_found"}`) keeps exception-throwing OUTSIDE `runWithTenantContext`'s transaction. Reuses LIST's `rowToUnknownItemWireShape` adapter. 7 test cases across 2 specs (happy-path service-direct + supertest, monotonic 409 + non-disclosing 404). **Three downstream slices unblock**: FR005 / AUDIT / METRICS. | PR #341 @ `1ff755f` |
+| `005-WAVE1-DISMISS-CARVEOUT-FIX` (hotfix) | Surgical 3-line fix to three call sites in `UnknownItemsService` (`listForTenant`, `dismissUnknownItem`, `findByIdForTenant`) that still passed `input.storeId ?? ""` for the tenant-wide read carve-out sentinel after 003-catalog-foundation migration 0011 (PR #295) changed it from `''` to `'*'`. The `''` sentinel became fail-closed under the new migration, so all three db-integration tests failed when run against real Postgres in CI. Fix: replace `?? ""` with `?? "*"` at the three affected sites. **Prerequisite unblock for PR #343 / #344 / #345.** See "Cross-spec regression" section below. | PR #346 @ `08ab044` |
+| `005-WAVE1-FR005` (slice) | T544/T545 — FR-005 dismissed-then-resubmit invariant. Tightened `captureUnknownItem`'s natural-dedup query to filter on `resolution_status = 'pending'` so a POS resubmission after a dismiss creates a fresh pending row rather than silently returning the dismissed record. The partial index `idx_unknown_items_lookup_value` already enforces uniqueness only over pending rows at the DB layer; this slice adds the service-layer assertion and the RED spec (`dismissed-then-resubmit.spec.ts`, 484 lines). | PR #343 @ `83eb810` |
+| `005-WAVE1-AUDIT` (slice — partial) | T546–T549 shipped: `capture-audit.spec.ts` (325 lines) + `dismiss-audit.spec.ts` (255 lines) verifying FR-080/082 audit emission for the capture and dismiss paths. **T550/T551 deferred** (idempotency-mismatch-audit.spec.ts) — DISMISS-CARVEOUT-FIX had not yet landed when this PR was authored; now that PR #346 is merged, T550/T551 can be picked up as the next follow-up slice or absorbed into POLISH. | PR #344 @ `0a7cb10` |
+| `005-WAVE1-IDEMP-EDGES` (slice) | T534–T536 — FR-021a (per-device key scoping), FR-021b (24h TTL expiry), FR-022 (post-resolved idempotency behaviour). Three disjoint test-only specs (`cross-device-keys.spec.ts` 459 lines, `ttl-expiry.spec.ts` 433 lines, `post-resolved.spec.ts` 504 lines). Completes the FR-021 family coverage. No service or controller edits. | PR #345 @ `043c1c2` |
 
 ### Planning artifacts merged (for context)
 
@@ -77,6 +81,7 @@ _None._
 **Other known issues** (planning-time decisions, not findings):
 - Header-name drift `Idempotency-Token` → `Idempotency-Key` in `spec.md` §5 and `quickstart.md` — fixup tracked in `tasks.md` T564.
 - `PHASE3_RED_WAVE` dependency for Wave 2 (T350 + T383 on spec 003) — tracked in `plan.md §4` and `tasks.md §12`.
+- **T550/T551 follow-up** (idempotency-mismatch-audit.spec.ts): deferred from AUDIT PR #344; DISMISS-CARVEOUT-FIX is now merged so these are unblocked. Can be picked up as a standalone micro-slice or absorbed into POLISH (T564).
 
 ---
 
@@ -131,6 +136,44 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 - `resolved_at_commit`: `0c3638d0bcaa409cae13c2a9b7ca1e0da76c17a3`
 - `resolved_at`: 2026-05-25
 
+### `005-DISMISS-SENTINEL-REGRESSION` (high) — resolved
+
+**Discovered**: 2026-05-26, when CI ran db-integration tests for PRs #343, #344, and #345 against real Postgres.
+
+**Summary**: All three PRs initially failed db-integration CI because `UnknownItemsService` still passed `input.storeId ?? ""` for the tenant-wide read carve-out sentinel at three call sites (`listForTenant`, `dismissUnknownItem`, `findByIdForTenant`). Migration `0011_catalog_store_carveout_sentinel.sql` (003-catalog-foundation PR #295, 2026-05-24) had changed the sentinel value from `''` (empty string) to `'*'` and made `''` explicitly fail-closed (RLS rejects `''` as a store_id now). This is a **cross-spec coordination bug**: a migration in a different feature's spec changed GUC semantics under live consumer code in this spec, and neither DISMISS (PR #341) nor LIST (PR #334) detected it because both merged locally with `MIGRATION_TEST_ALLOW_SKIP=1` (Docker-soft-skip). CI on the next slice's tests against real Postgres is what surfaced it.
+
+**Why it was missed locally**: Docker-soft-skip (`MIGRATION_TEST_ALLOW_SKIP=1`) bypasses Testcontainers and does not run the migration stack. The service's `?? ""` fallback looked correct against any fixture that already had the tenant-wide carve-out pre-seeded; only a real Postgres run with migration 0011 applied triggered the fail-closed path.
+
+**Pattern classification**: This is the 5th occurrence of a "slice-entry-bug" in this spec (prior 4: PRs #314, #319, #320, #338 — all `allowed_files` gaps). However, it is qualitatively different from the prior four: those were single-spec authoring oversights; this was a **cross-spec migration coordination failure** where 003's migration 0011 changed a contract (the GUC sentinel value) that 005 was silently consuming without a declared dependency edge.
+
+**Evidence**:
+- `apps/api/src/catalog/unknown-items/unknown-items.service.ts` — three `?? ""` sites (pre-fix)
+- `003-catalog-foundation` PR #295 migration `0011_catalog_store_carveout_sentinel.sql` — changed sentinel from `''` to `'*'`, made `''` fail-closed
+- PRs #343, #344, #345 CI logs — db-integration failures before #346 merged
+
+**Resolution**: PR #346 (`005-WAVE1-DISMISS-CARVEOUT-FIX`) — 3-line literal replacement at all three call sites: `?? ""` replaced with `?? "*"`. Single file changed (`unknown-items.service.ts`). No schema, no migration, no contract change.
+
+**Meta-lesson**: Cross-spec migration coordination needs a survey gate. When a migration changes a GUC sentinel, constants value, or protocol detail that other specs consume, the spec owning the migration should sweep all active consumer specs before merge (or add a "breaking change" annotation to the migration file). The Docker-soft-skip workflow empirically validates Standing Rule §6: local soft-skip can let regressions land on `main` that CI will catch on the next affected slice.
+
+**Audit fields**:
+- `discovered_in_slice_attempt`: `005-WAVE1-FR005` (PR #343 CI)
+- `discovered_at`: 2026-05-26
+- `resolved_by_pr`: 346
+- `resolved_at_commit`: `08ab0445ff02fcae1430f99e21c7b1d8828f7af4`
+- `resolved_at`: 2026-05-26
+
+---
+
+## Cross-spec regression — 005's first hotfix
+
+See `005-DISMISS-SENTINEL-REGRESSION` in Resolved findings above for the full narrative. The key facts for ops context:
+
+- **Root cause**: 003-catalog-foundation migration `0011` (PR #295, 2026-05-24) changed `app.current_store` GUC's tenant-wide carve-out sentinel from `''` to `'*'` and made `''` fail-closed.
+- **Why it survived until 2026-05-26**: DISMISS (PR #341) and LIST (PR #334) both merged locally with `MIGRATION_TEST_ALLOW_SKIP=1`. The soft-skip path does not run migrations against real Postgres, so the `?? ""` sites appeared correct.
+- **How it was caught**: CI ran the next slices (#343/#344/#345) against real Postgres with migration 0011 applied; the fail-closed `''` path triggered on the three affected service methods.
+- **The fix**: PR #346 — 3-line literal replacement, single file. Prerequisite merge for all three feature PRs to go green.
+- **Meta-lesson**: Migrations that change GUC semantics need an active-consumer sweep before merge. Docker-soft-skip empirically validates Standing Rule §6.
+
 ---
 
 ## Blocked
@@ -145,7 +188,7 @@ Added new `[GATED]` prerequisite slice `005-WAVE1-METRICS-ALLOWLIST` touching on
 
 _None._
 
-4 Wave 1 slices remain at `status: proposed`. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+1 Wave 1 slice remains at `status: proposed` (METRICS). T550/T551 are a deferred follow-up not yet represented as a separate slice. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ### Process note — recovery threshold calibration (from PR #328 retrospective)
 
@@ -159,13 +202,13 @@ _**Phase 3 is COMPLETE** as of PR #334. Phase 0/1/2 prerequisites and all 7 Phas
 
 ### Phase 4 — US4 Idempotency (P2)
 
-- **`005-WAVE1-IDEMP-EDGES`** (T534, T535, T536) — FR-021a, FR-021b, FR-022 (three test-only RED specs: cross-device-keys, ttl-expiry, post-resolved). **READY TO DISPATCH** (no remaining `depends_on`).
+- **`005-WAVE1-IDEMP-EDGES`** (T534, T535, T536) — **MERGED** PR #345 @ `043c1c2` (2026-05-26).
 
 ### Phase 5 — US5 Audit + Dismiss (P2)
 
-- **`005-WAVE1-FR005`** (T544, T545) — dismissed-then-resubmit produces fresh `pending`. **READY TO DISPATCH** (was blocked on CAPTURE-DEDUP + DISMISS; both now merged).
-- **`005-WAVE1-AUDIT`** (T546–T551) — `@Auditable` decorators + audit-emission verification for all 3 Wave 1 subjects. **READY TO DISPATCH** (was blocked on CAPTURE-HAPPY + DISMISS + IDEMP-MISMATCH; all three now merged).
-- **`005-WAVE1-METRICS`** (T552, T553) — counter-increment verification at all 3 emission sites. **READY TO DISPATCH** (same blockers, all merged).
+- **`005-WAVE1-FR005`** (T544, T545) — **MERGED** PR #343 @ `83eb810` (2026-05-26).
+- **`005-WAVE1-AUDIT`** (T546–T549 shipped, T550/T551 deferred) — **MERGED (partial)** PR #344 @ `0a7cb10` (2026-05-26). T550/T551 are a follow-up item (see "Other known issues" above).
+- **`005-WAVE1-METRICS`** (T552, T553) — counter-increment verification at all 3 emission sites. **READY TO DISPATCH** (METRICS is now the last Wave 1 slice; dispatching it unlocks POLISH).
 
 ### Phase 6 — Polish
 
@@ -249,21 +292,21 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-Phase 5 opened. **4 Wave 1 slices are now ready** (FR005, AUDIT, METRICS — all newly unblocked by DISMISS; IDEMP-EDGES was already ready). The natural next dispatch is **`005-WAVE1-FR005`** (T544 + T545) — it's the smallest of the newly-unblocked slices and finishes the FR-005 dismissed-then-resubmit story that the capture-prelude chain has been building toward since PR #328 (CAPTURE-DEDUP).
+**METRICS (T552/T553) is the last Wave 1 slice before POLISH.** Dispatching it unlocks `005-WAVE1-POLISH` (the only slice still blocked). The service will need at least a small counter call addition for the `dismissed` action — the DISMISS slice explicitly deferred that for METRICS to author.
 
 ```text
-# Phase 5 FR005 (smallest, finishes a coherent story):
-Use Agent OS. Execute slice 005-WAVE1-FR005. Stop before commit.
+# Dispatch Phase 5 — METRICS (last Wave 1 blocker):
+Use Agent OS. Execute slice 005-WAVE1-METRICS. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
-**Alternatives also ready**:
+**Parallel-safe alternative**: T550/T551 (idempotency-mismatch-audit.spec.ts, deferred from AUDIT PR #344). Now that DISMISS-CARVEOUT-FIX is merged, these are unblocked and file-disjoint from METRICS. They can be dispatched in parallel or absorbed into POLISH at the owner's discretion.
 
-- **`005-WAVE1-AUDIT`** (T546–T551) — three RED specs verifying that capture / dismiss / mismatch all emit their audit subjects correctly. Test-only, parallel-safe across three disjoint files. May reveal a gap in the existing `@Auditable` wiring; otherwise lands as pure verification coverage.
-- **`005-WAVE1-METRICS`** (T552, T553) — assert counter increments at all 3 emission sites. Likely needs a small service-layer counter-call addition for the `dismissed` action (the DISMISS slice deferred it for METRICS to author).
-- **`005-WAVE1-IDEMP-EDGES`** (T534/T535/T536) — three test-only RED specs for FR-021a / FR-021b / FR-022. Rounds out Phase 4. Doesn't unblock anything but completes the FR-021 family.
-
-FR005 and IDEMP-EDGES touch only the service file + new specs respectively; they're file-disjoint and could land in any order. AUDIT and METRICS touch the controller + service alongside new specs — serial dispatch with FR005 (which also touches the service) keeps merges clean.
+```text
+# Optional follow-up T550/T551 (parallel-safe with METRICS):
+Use Agent OS. Execute slice 005-WAVE1-AUDIT (T550/T551 follow-up only). Stop before commit.
+Spec: specs/005-pos-catalog-sync-reconciliation
+```
 
 **Wave 2 setup (`[GATED]`)**: Request approval for `005-WAVE2-CONTRACT` (T600 + T601, extending `packages/contracts/openapi/catalog/unknown-items.yaml` with `tenantAdminLinkUnknownItem` + `tenantAdminCreateProductFromUnknownItem`). Wave 2 implementation slices cannot dispatch until this merges. Once approved + merged, dispatch `005-WAVE2-CONFLICT` then the link/create-new slices per the DAG.
 
