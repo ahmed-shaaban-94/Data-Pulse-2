@@ -243,7 +243,7 @@ async function seedPerfFixture(pool: Pool): Promise<void> {
   await pool.query(
     `
     INSERT INTO tenant_products (
-      id, tenant_id, name, created_by, updated_by, created_at, updated_at
+      id, tenant_id, name, tax_category, created_by, updated_by, created_at, updated_at
     )
     SELECT
       (
@@ -252,6 +252,7 @@ async function seedPerfFixture(pool: Pool): Promise<void> {
       )::uuid,
       $1::uuid,
       'Perf Product ' || gs::text,
+      'standard',
       $2::uuid,
       $2::uuid,
       now(),
@@ -273,7 +274,7 @@ async function seedPerfFixture(pool: Pool): Promise<void> {
     `
     INSERT INTO product_aliases (
       id, tenant_id, product_id, identifier_type, value,
-      source_system, store_id, created_by, created_at, updated_at
+      source_system, store_id, created_by, created_at
     )
     SELECT
       (
@@ -290,7 +291,6 @@ async function seedPerfFixture(pool: Pool): Promise<void> {
       NULL,
       NULL,
       $2::uuid,
-      now(),
       now()
     FROM generate_series(1, $4) AS gs
     ON CONFLICT DO NOTHING
