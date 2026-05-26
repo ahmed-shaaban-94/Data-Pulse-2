@@ -105,6 +105,8 @@ assertMetricLabels("idempotency_in_progress_total", ["route"]);
 assertMetricLabels("unknown_item_captured_total", []);
 assertMetricLabels("unknown_item_resolved_total", ["action"]);
 assertMetricLabels("idempotency_token_mismatch_total", []);
+// Catalog domain — 005 Wave 2 (signals.md §1.1; allowlist via 005-WAVE2-METRICS-ALLOWLIST)
+assertMetricLabels("catalog_duplicate_alias_conflict_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -174,6 +176,13 @@ const _idempotencyTokenMismatch: Counter = meter.createCounter(
   {
     description:
       "Catalog-domain idempotency-key replay with mismatched payload (FR-021c). Co-increments with platform idempotency_conflict_total{route} on the catalog capture route.",
+  },
+);
+const _catalogDuplicateAliasConflict: Counter = meter.createCounter(
+  "catalog_duplicate_alias_conflict_total",
+  {
+    description:
+      "Reconciliation rejections caused by an alias unique-index violation (005 FR-043 / 003 §9). Increments on the link and create-new conflict paths. Unlabeled — principal/correlation attribution is on the reconciliation_conflict_rejected audit event, not metric labels.",
   },
 );
 
@@ -357,6 +366,16 @@ export function recordIdempotencyTokenMismatch(): void {
   _idempotencyTokenMismatch.add(1);
 }
 
+/**
+ * Increment catalog_duplicate_alias_conflict_total (005 FR-043 / 003 §9).
+ * Emission sites: ReconciliationService link + create-new paths, at the
+ * post-transaction `alias_conflict` rejection discriminator (T651, Wave 2).
+ * Unlabeled — see the instrument description.
+ */
+export function recordDuplicateAliasConflict(): void {
+  _catalogDuplicateAliasConflict.add(1);
+}
+
 // ---------------------------------------------------------------------------
 // Signal-name registry — used by T460 signal-presence tests
 // ---------------------------------------------------------------------------
@@ -398,6 +417,7 @@ export const CATALOG_METRIC_NAMES = [
   "unknown_item_captured_total",
   "unknown_item_resolved_total",
   "idempotency_token_mismatch_total",
+  "catalog_duplicate_alias_conflict_total",
 ] as const satisfies readonly string[];
 
 export type CatalogMetricName = (typeof CATALOG_METRIC_NAMES)[number];
