@@ -78,7 +78,10 @@ import {
 } from "../../audit/audit-job.enqueuer";
 import { PG_POOL } from "../../auth/auth.module";
 import { ROOT_LOGGER } from "../../common/logging.interceptor";
-import { recordUnknownItemResolved } from "../../observability/metrics/api.metrics";
+import {
+  recordUnknownItemResolved,
+  recordDuplicateAliasConflict,
+} from "../../observability/metrics/api.metrics";
 
 // Re-export the common row shape so the controller does not need a separate
 // import from unknown-items.service.ts (avoids cross-module coupling).
@@ -394,6 +397,12 @@ export class ReconciliationService {
       result.kind === "target_unavailable" ||
       result.kind === "already_reconciled"
     ) {
+      // T651 / FR-043: an alias unique-index violation increments the
+      // duplicate-alias counter (alias_conflict only — not the other two
+      // rejection kinds). The 003 §9 canonical signal.
+      if (result.kind === "alias_conflict") {
+        recordDuplicateAliasConflict();
+      }
       // T645 / FR-082: emit the rejection audit event after the transaction
       // has resolved. not_found is intentionally excluded — a non-disclosing
       // 404 must not confirm the item's existence via an audit row.
@@ -645,6 +654,11 @@ export class ReconciliationService {
       result.kind === "alias_conflict" ||
       result.kind === "already_reconciled"
     ) {
+      // T651 / FR-043: alias unique-index violation increments the
+      // duplicate-alias counter (alias_conflict only).
+      if (result.kind === "alias_conflict") {
+        recordDuplicateAliasConflict();
+      }
       // T645 / FR-082: emit the rejection audit event after the transaction
       // has resolved/rolled back. not_found excluded (non-disclosing 404).
       // The create path has no target_unavailable kind (no retired-product
