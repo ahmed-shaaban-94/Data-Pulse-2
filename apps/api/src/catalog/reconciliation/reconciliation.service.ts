@@ -13,9 +13,10 @@
  * Returned discriminated union:
  *   {kind: "ok";               row: UnknownItemRow}
  *   {kind: "not_found"}        — unknown item absent (RLS/tenant filter) or
- *                                 product absent/retired
+ *                                 product absent
  *   {kind: "already_reconciled"} — item is already resolved/dismissed
  *   {kind: "alias_conflict"}   — product_aliases unique index violated (23505)
+ *   {kind: "target_unavailable"} — target product exists but is retired (FR-051)
  *
  * The controller maps these to HTTP status codes per FR-040 / FR-092.
  *
@@ -67,7 +68,8 @@ export type LinkResult =
   | { kind: "ok"; row: UnknownItemRow }
   | { kind: "not_found" }
   | { kind: "already_reconciled" }
-  | { kind: "alias_conflict" };
+  | { kind: "alias_conflict" }
+  | { kind: "target_unavailable" };
 
 @Injectable()
 export class ReconciliationService {
@@ -125,6 +127,8 @@ export class ReconciliationService {
           encountered_at: Date;
           sale_context: Record<string, unknown> | null;
         }>(
+          // T626 race-safety verification: this FOR UPDATE lock prevents the
+          // FR-052 monotonicity race exercised by link-already-reconciled.spec.ts.
           `SELECT id, tenant_id, store_id, identifier_type, value,
                   source_system, resolution_status, resolution_action,
                   resolved_at, resolved_by, resolved_product_id,
@@ -144,19 +148,27 @@ export class ReconciliationService {
           return { kind: "already_reconciled" };
         }
 
-        // Step 3: confirm target product exists and is active.
-        const productCheck = await client.query<{ id: string }>(
-          `SELECT id
+        // Step 3: confirm target product exists; discriminate retired separately
+        // so the controller can map retired -> 409 target_unavailable (FR-051)
+        // while absent stays 404 non-disclosing (FR-092 / SI-001).
+        const productCheck = await client.query<{
+          id: string;
+          retired_at: Date | null;
+        }>(
+          `SELECT id, retired_at
              FROM tenant_products
             WHERE id         = $1
               AND tenant_id  = $2
-              AND retired_at IS NULL
             LIMIT 1`,
           [input.productId, input.tenantId],
         );
 
-        if (!productCheck.rows[0]) {
+        const productRow = productCheck.rows[0];
+        if (!productRow) {
           return { kind: "not_found" };
+        }
+        if (productRow.retired_at !== null) {
+          return { kind: "target_unavailable" };
         }
 
         // Step 4: INSERT product_aliases — unique constraint 23505 surfaces
