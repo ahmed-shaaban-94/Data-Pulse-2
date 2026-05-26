@@ -321,7 +321,11 @@ describe("T633 / 005-WAVE2-CREATE-EDGES — create-new product with store-scoped
 
       const before = await productCount(CREATE_BODY.name);
 
-      await http().post(CREATE_URL(UNK_T633_CONFLICT)).send(CREATE_BODY);
+      const res = await http()
+        .post(CREATE_URL(UNK_T633_CONFLICT))
+        .send(CREATE_BODY);
+      expect(res.status).toBe(409);
+      expect(res.body?.error?.code).toBe("alias_conflict");
 
       // The AliasConflictSentinel throw rolls back the prior
       // INSERT INTO tenant_products (PR #365 transaction-boundary fix).
@@ -334,7 +338,11 @@ describe("T633 / 005-WAVE2-CREATE-EDGES — create-new product with store-scoped
     async () => {
       if (dockerSkipped) return;
 
-      await http().post(CREATE_URL(UNK_T633_CONFLICT)).send(CREATE_BODY);
+      const res = await http()
+        .post(CREATE_URL(UNK_T633_CONFLICT))
+        .send(CREATE_BODY);
+      expect(res.status).toBe(409);
+      expect(res.body?.error?.code).toBe("alias_conflict");
 
       expect(await unknownItemStatus()).toBe("pending");
     },
@@ -361,5 +369,62 @@ describe("T633 / 005-WAVE2-CREATE-EDGES — create-new product with store-scoped
   it.todo(
     "(e) FR-043: catalog_duplicate_alias_conflict_total increments on conflict — " +
       "deferred to T650 (counter not yet registered in CATALOG_METRIC_NAMES)",
+  );
+
+  // -------------------------------------------------------------------------
+  // Create-path discriminator coverage: not_found + already_reconciled.
+  // These exercise the two non-conflict early-return branches of
+  // createProductFromUnknownItem (service steps 1+2) so the full
+  // discriminated union (ok / not_found / already_reconciled / alias_conflict)
+  // is covered. Mirrors the link path's edge specs.
+  // -------------------------------------------------------------------------
+
+  it(
+    "(f) create from a non-existent unknown item -> 404 non-disclosing (not_found)",
+    async () => {
+      if (dockerSkipped) return;
+
+      const FABRICATED = "0a000000-0000-7000-8000-0000063300ff";
+      const res = await http()
+        .post(CREATE_URL(FABRICATED))
+        .send({ name: "Widget T633F", tax_category: "standard" });
+
+      // SI-001 / FR-092 non-disclosing 404 — does not reveal whether the
+      // unknown item exists. No product created.
+      expect(res.status).toBe(404);
+      expect(await productCount("Widget T633F")).toBe(0);
+    },
+  );
+
+  it(
+    "(g) create from an already-resolved item -> 409 already_reconciled",
+    async () => {
+      if (dockerSkipped) return;
+      if (!env) throw new Error("env not initialised");
+
+      // Pre-resolve U1 directly via the superuser pool to simulate a
+      // concurrent resolution before this create attempt (FR-004 monotonic
+      // lifecycle). Mirrors link-already-reconciled.spec.ts.
+      await env.admin.query(
+        `UPDATE unknown_items
+            SET resolution_status   = 'resolved',
+                resolution_action   = 'created',
+                resolved_at         = now(),
+                resolved_by         = $2,
+                resolved_product_id = $3
+          WHERE id = $1`,
+        [UNK_T633_CONFLICT, TENANT_A_ADMIN_USER, PRODUCT_A_ACTIVE],
+      );
+
+      const res = await http()
+        .post(CREATE_URL(UNK_T633_CONFLICT))
+        .send({ name: "Widget T633G", tax_category: "standard" });
+
+      expect(res.status).toBe(409);
+      expect(res.body?.error?.code).toBe("already_reconciled");
+      // No product created for the resolved item.
+      expect(await productCount("Widget T633G")).toBe(0);
+      // afterEach resets U1 back to pending for any subsequent run.
+    },
   );
 });

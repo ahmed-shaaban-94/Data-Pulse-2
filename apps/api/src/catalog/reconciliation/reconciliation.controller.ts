@@ -18,7 +18,9 @@
  *                                               category_id?: UUID | null }
  *   Both schemas use `additionalProperties: false`; enforced via `.strict()`
  *   on the Zod definitions below. The body-supplied `tenantId` (if any)
- *   is rejected with 400 `validation_failure` — Constitution §III.
+ *   is rejected with 400 `validation_error` — Constitution §III. (OpenAPI
+ *   prose says `validation_failure`; that is documented drift — the
+ *   enforced wire code is `validation_error` / ErrorCodes.VALIDATION.)
  *
  * Auth gap (carried forward from Wave 1 slices):
  *   No @UseGuards(AuthGuard, TenantContextGuard, RolesGuard). The
@@ -213,14 +215,14 @@ export class ReconciliationController {
    *
    * Creates a brand-new tenant product directly from a pending unknown
    * item. Server-resolved tenant_id (Constitution §III); body-supplied
-   * tenantId is rejected with 400 validation_failure by the `.strict()`
+   * tenantId is rejected with 400 validation_error by the `.strict()`
    * Zod schema.
    *
    * On success: 201 Created + updated UnknownItem shape (resolution_status
    *   = 'resolved', resolution_action = 'created', resolved_product_id
    *   pointing at the new tenant_products row).
    * On error:
-   *   400 validation_failure   — malformed :id, missing name / tax_category,
+   *   400 validation_error     — malformed :id, missing name / tax_category,
    *                              or body smuggling an additional property
    *   401 Unauthorized         — missing resolved context
    *   404 Not Found            — unknown item absent (non-disclosing per
