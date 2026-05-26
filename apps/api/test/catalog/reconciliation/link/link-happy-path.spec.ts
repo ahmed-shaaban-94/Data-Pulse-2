@@ -179,7 +179,7 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     controllers: [ReconciliationController],
     providers: [
-      { provide: PG_POOL, useFactory: (): Pool => localEnv.admin },
+      { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
       ReconciliationService,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
       { provide: APP_INTERCEPTOR, useValue: auditInterceptor },
