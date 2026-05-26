@@ -418,4 +418,21 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
     ).toHaveLength(0);
   });
+
+  it("returns 401 (no event) when the resolved context has a null tenantId", async () => {
+    if (dockerSkipped) return;
+
+    // Context present, userId present, but tenantId null -> the create route's
+    // `if (ctx.tenantId === null)` 401 branch. The link route covers its own
+    // copy of this guard; the create route's was previously untested.
+    contextGuard.tenantId = null as unknown as string;
+
+    const res = await http().post(CREATE_URL(UNK_T642_CREATE)).send(CREATE_BODY);
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    expect(
+      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
+    ).toHaveLength(0);
+  });
 });
