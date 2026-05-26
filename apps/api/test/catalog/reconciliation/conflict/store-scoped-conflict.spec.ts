@@ -82,7 +82,7 @@ import {
 const TENANT_A_ADMIN_USER = "0a000000-0000-7000-8000-000006110001";
 
 const LINK_URL = (id: string) => `/api/v1/catalog/unknown-items/${id}/link`;
-const LINK_BODY = { productId: PRODUCT_A_ACTIVE };
+const LINK_BODY = { product_id: PRODUCT_A_ACTIVE };
 
 // ---------------------------------------------------------------------------
 // ConfigurableContextGuard

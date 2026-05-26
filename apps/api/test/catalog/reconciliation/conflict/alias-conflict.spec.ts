@@ -88,7 +88,7 @@ const TENANT_A_ADMIN_USER = "0a000000-0000-7000-8000-000006100001";
 const TENANT_B_ADMIN_USER = "0b000000-0000-7000-8000-000006100002";
 
 const LINK_URL = (id: string) => `/api/v1/catalog/unknown-items/${id}/link`;
-const LINK_BODY = { productId: PRODUCT_A_ACTIVE };
+const LINK_BODY = { product_id: PRODUCT_A_ACTIVE };
 
 // ---------------------------------------------------------------------------
 // ConfigurableContextGuard
@@ -338,7 +338,7 @@ describe("T610 / 005-WAVE2-CONFLICT — alias-conflict safety floor (RED until L
 
         const res = await http()
           .post(LINK_URL(UNK_CONFLICT_A_X_U1))
-          .send({ productId: "0b000000-0000-7000-8000-00000000b401" });
+          .send({ product_id: "0b000000-0000-7000-8000-00000000b401" });
 
         // 404 is the correct result. Currently 404 for "route not found";
         // after LINK-HAPPY: 404 because the service cannot find the item
