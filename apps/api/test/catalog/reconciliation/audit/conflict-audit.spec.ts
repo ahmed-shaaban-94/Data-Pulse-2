@@ -319,3 +319,335 @@ describe("T644 / 005-WAVE2-AUDIT — conflict-rejection audit emission [FR-043, 
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// T645 — error-path branch coverage (Docker-free unit harness)
+// ---------------------------------------------------------------------------
+//
+// The integration cases above drive the *happy* rejection paths. Two service
+// branches are unreachable through Testcontainers because they require an
+// infrastructure fault rather than a domain outcome:
+//
+//   1. emitConflictRejection's best-effort `.catch` — exercised only when the
+//      audit enqueue itself REJECTS. The integration SpyAuditEnqueuer always
+//      resolves, so the catch (and the `this.logger?` optional-chain inside
+//      it) never runs. FR-082 requires a failed enqueue to be logged, not
+//      silently dropped — this asserts that contract on both logger states.
+//
+//   2. createProductFromUnknownItem's outer `else { throw err }` — reached
+//      only when a NON-AliasConflictSentinel error escapes the transaction
+//      (e.g. a pg connection drop / deadlock). The sentinel branch is covered
+//      by the create-path alias_conflict tests; this covers its complement,
+//      proving an unexpected DB error propagates rather than being mis-mapped
+//      to a 4xx kind.
+//
+// These run via a hand-rolled mock Pool — no Postgres, no Docker — so they
+// execute even when the integration suite above is soft-skipped. The mock
+// satisfies the runWithTenantContext contract (BEGIN, set_config x2, the
+// service's own queries, then COMMIT/ROLLBACK, then release).
+
+import type { Pool, PoolClient, QueryResult } from "pg";
+import type { Logger } from "@data-pulse-2/shared";
+
+import { ROOT_LOGGER } from "../../../../src/common/logging.interceptor";
+
+const UNIT_TENANT = TENANT_A;
+const UNIT_STORE = STORE_A_X;
+const UNIT_ACTOR = TENANT_A_ADMIN_USER;
+const UNIT_ITEM = "0a000000-0000-7000-8000-00000644e001";
+const UNIT_PRODUCT = PRODUCT_A_ACTIVE;
+
+/** Enqueuer whose enqueue() always rejects — drives emitConflictRejection's catch. */
+class RejectingAuditEnqueuer implements AuditJobEnqueuer {
+  public calls = 0;
+  async enqueue(): Promise<void> {
+    this.calls += 1;
+    throw new Error("simulated audit enqueue failure");
+  }
+}
+
+const emptyResult = (): QueryResult => ({
+  command: "",
+  rowCount: 0,
+  oid: 0,
+  rows: [],
+  fields: [],
+});
+
+/** An active (non-retired) product row for the link path's tenant_products check. */
+const activeProductRow = (): Record<string, unknown> => ({
+  id: UNIT_PRODUCT,
+  retired_at: null,
+});
+
+/**
+ * Build a mock PoolClient that drives the service's query sequence:
+ *   - the FOR UPDATE `unknown_items` select returns `lockRow` (or 0 rows),
+ *   - the `tenant_products` select returns an active product (link path only),
+ *   - the `unknown_items` UPDATE ... RETURNING returns `updateRows` rows,
+ * and lets a test inject a fault via `onWork(sql)` (throw to simulate a DB
+ * error) on any other query. All control queries (BEGIN/COMMIT/ROLLBACK/
+ * set_config) and unmatched queries return empty results.
+ *
+ * `updateRows` defaults to 1 (UPDATE matched the locked pending row). Set it
+ * to 0 to drive the defensive `if (!updated) throw` invariant branches.
+ */
+function buildMockClient(opts: {
+  lockRow: Record<string, unknown> | null;
+  updateRows?: number;
+  onWork?: (sql: string) => void;
+}): { client: PoolClient; rolledBack: () => boolean } {
+  let rolledBack = false;
+  let lockServed = false;
+  const updateRows = opts.updateRows ?? 1;
+
+  const query = async (sql: string): Promise<QueryResult> => {
+    if (sql === "ROLLBACK") rolledBack = true;
+    // The FOR UPDATE lock select — serve the discriminator row once.
+    if (!lockServed && /FROM unknown_items/i.test(sql) && /FOR UPDATE/i.test(sql)) {
+      lockServed = true;
+      return {
+        ...emptyResult(),
+        rowCount: opts.lockRow ? 1 : 0,
+        rows: opts.lockRow ? [opts.lockRow] : [],
+      };
+    }
+    // Link path's target-product check — serve an active product.
+    if (/FROM tenant_products/i.test(sql)) {
+      return { ...emptyResult(), rowCount: 1, rows: [activeProductRow()] };
+    }
+    // The terminal UPDATE ... RETURNING — control rowCount to exercise the
+    // invariant guard. The locked pending row is echoed back when matched.
+    if (/UPDATE unknown_items/i.test(sql) && /RETURNING/i.test(sql)) {
+      if (opts.onWork) opts.onWork(sql);
+      return {
+        ...emptyResult(),
+        rowCount: updateRows,
+        rows: updateRows > 0 ? [pendingLockRow()] : [],
+      };
+    }
+    if (opts.onWork) opts.onWork(sql);
+    return emptyResult();
+  };
+
+  const client = {
+    query: query as PoolClient["query"],
+    release: (() => undefined) as PoolClient["release"],
+  } as unknown as PoolClient;
+
+  return { client, rolledBack: () => rolledBack };
+}
+
+function buildMockPool(client: PoolClient): Pool {
+  return { connect: async () => client } as unknown as Pool;
+}
+
+/** A pending lock row good enough for the create path to proceed to INSERT. */
+const pendingLockRow = (): Record<string, unknown> => ({
+  id: UNIT_ITEM,
+  tenant_id: UNIT_TENANT,
+  store_id: UNIT_STORE,
+  identifier_type: "barcode",
+  value: "T645-UNIT-001",
+  source_system: null,
+  resolution_status: "pending",
+  resolution_action: null,
+  resolved_at: null,
+  resolved_by: null,
+  resolved_product_id: null,
+  encountered_at: new Date(),
+  sale_context: null,
+});
+
+/** A non-pending lock row → service returns already_reconciled (a rejection kind). */
+const resolvedLockRow = (): Record<string, unknown> => ({
+  ...pendingLockRow(),
+  resolution_status: "resolved",
+  resolution_action: "linked",
+  resolved_at: new Date(),
+  resolved_by: UNIT_ACTOR,
+  resolved_product_id: UNIT_PRODUCT,
+});
+
+describe("T645 / 005-WAVE2-AUDIT — service error-path branches [FR-082]", () => {
+  it("logs (does not throw) when the conflict-rejection audit enqueue fails — logger present", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const errorSpy = jest.fn();
+    const logger = { error: errorSpy } as unknown as Logger;
+    // already_reconciled is a rejection kind → emitConflictRejection runs →
+    // the rejecting enqueuer drives the best-effort .catch + logger?.error.
+    const { client } = buildMockClient({ lockRow: resolvedLockRow() });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer, logger);
+
+    const result = await svc.linkUnknownItem({
+      tenantId: UNIT_TENANT,
+      storeId: UNIT_STORE,
+      unknownItemId: UNIT_ITEM,
+      productId: UNIT_PRODUCT,
+      actorUserId: UNIT_ACTOR,
+    });
+
+    // The HTTP outcome is unchanged by the failed enqueue (best-effort).
+    expect(result.kind).toBe("already_reconciled");
+    expect(enqueuer.calls).toBe(1);
+    // FR-082: the dropped rejection event is observable via the logger.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows the failed enqueue silently when no logger is injected — logger absent", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const { client } = buildMockClient({ lockRow: resolvedLockRow() });
+    // No third constructor arg → this.logger is undefined → logger? short-circuits.
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    const result = await svc.linkUnknownItem({
+      tenantId: UNIT_TENANT,
+      storeId: UNIT_STORE,
+      unknownItemId: UNIT_ITEM,
+      productId: UNIT_PRODUCT,
+      actorUserId: UNIT_ACTOR,
+    });
+
+    expect(result.kind).toBe("already_reconciled");
+    expect(enqueuer.calls).toBe(1);
+  });
+
+  it("re-throws a non-sentinel DB error from the create transaction (else branch)", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const boom = new Error("simulated connection drop");
+    // Throw on the tenant_products INSERT (a non-AliasConflictSentinel error).
+    // runWithTenantContext rolls back and re-throws; the create-path outer
+    // catch hits `else { throw err }` rather than mapping to a 4xx kind.
+    const { client, rolledBack } = buildMockClient({
+      lockRow: pendingLockRow(),
+      onWork: (sql) => {
+        if (/INSERT INTO tenant_products/i.test(sql)) throw boom;
+      },
+    });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    await expect(
+      svc.createProductFromUnknownItem({
+        tenantId: UNIT_TENANT,
+        storeId: UNIT_STORE,
+        unknownItemId: UNIT_ITEM,
+        actorUserId: UNIT_ACTOR,
+        name: "Widget T645",
+        taxCategory: "standard",
+        categoryId: null,
+      }),
+    ).rejects.toThrow("simulated connection drop");
+
+    // The transaction rolled back; no rejection audit was emitted for a
+    // non-domain error (the throw bypasses the post-transaction block).
+    expect(rolledBack()).toBe(true);
+    expect(enqueuer.calls).toBe(0);
+  });
+
+  it("LINK: re-throws a non-23505 error from the alias INSERT (catch fall-through)", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const boom = new Error("simulated deadlock");
+    // A non-unique-violation error from the product_aliases INSERT is NOT
+    // mapped to alias_conflict — the link-path catch falls through to
+    // `throw err`. (The 23505 path is covered by the integration alias_conflict
+    // case; this covers its complement.)
+    const { client, rolledBack } = buildMockClient({
+      lockRow: pendingLockRow(),
+      onWork: (sql) => {
+        if (/INSERT INTO product_aliases/i.test(sql)) throw boom;
+      },
+    });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    await expect(
+      svc.linkUnknownItem({
+        tenantId: UNIT_TENANT,
+        storeId: UNIT_STORE,
+        unknownItemId: UNIT_ITEM,
+        productId: UNIT_PRODUCT,
+        actorUserId: UNIT_ACTOR,
+      }),
+    ).rejects.toThrow("simulated deadlock");
+
+    expect(rolledBack()).toBe(true);
+    expect(enqueuer.calls).toBe(0);
+  });
+
+  it("CREATE: re-throws a non-23505 error from the alias INSERT (sentinel catch fall-through)", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const boom = new Error("simulated deadlock");
+    // Inside the create transaction, a non-23505 alias INSERT error skips the
+    // AliasConflictSentinel throw and falls through to `throw err`, which the
+    // outer catch then re-throws (not mapped to alias_conflict).
+    const { client, rolledBack } = buildMockClient({
+      lockRow: pendingLockRow(),
+      onWork: (sql) => {
+        if (/INSERT INTO product_aliases/i.test(sql)) throw boom;
+      },
+    });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    await expect(
+      svc.createProductFromUnknownItem({
+        tenantId: UNIT_TENANT,
+        storeId: UNIT_STORE,
+        unknownItemId: UNIT_ITEM,
+        actorUserId: UNIT_ACTOR,
+        name: "Widget T645",
+        taxCategory: "standard",
+        categoryId: null,
+      }),
+    ).rejects.toThrow("simulated deadlock");
+
+    expect(rolledBack()).toBe(true);
+    expect(enqueuer.calls).toBe(0);
+  });
+
+  it("LINK: throws the invariant error when the terminal UPDATE matches 0 rows", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    // FOR UPDATE locked a pending row, alias INSERT succeeded, but the
+    // unknown_items UPDATE matched 0 rows — a logic-error invariant. The
+    // service throws to abort and roll back rather than commit inconsistent
+    // state.
+    const { client, rolledBack } = buildMockClient({
+      lockRow: pendingLockRow(),
+      updateRows: 0,
+    });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    await expect(
+      svc.linkUnknownItem({
+        tenantId: UNIT_TENANT,
+        storeId: UNIT_STORE,
+        unknownItemId: UNIT_ITEM,
+        productId: UNIT_PRODUCT,
+        actorUserId: UNIT_ACTOR,
+      }),
+    ).rejects.toThrow(/invariant/i);
+
+    expect(rolledBack()).toBe(true);
+  });
+
+  it("CREATE: throws the invariant error when the terminal UPDATE matches 0 rows", async () => {
+    const enqueuer = new RejectingAuditEnqueuer();
+    const { client, rolledBack } = buildMockClient({
+      lockRow: pendingLockRow(),
+      updateRows: 0,
+    });
+    const svc = new ReconciliationService(buildMockPool(client), enqueuer);
+
+    await expect(
+      svc.createProductFromUnknownItem({
+        tenantId: UNIT_TENANT,
+        storeId: UNIT_STORE,
+        unknownItemId: UNIT_ITEM,
+        actorUserId: UNIT_ACTOR,
+        name: "Widget T645",
+        taxCategory: "standard",
+        categoryId: null,
+      }),
+    ).rejects.toThrow(/invariant/i);
+
+    expect(rolledBack()).toBe(true);
+  });
+});
