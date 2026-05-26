@@ -82,12 +82,17 @@ class ConfigurableContextGuard implements CanActivate {
   public tenantId: string = TENANT_A;
   public storeId: string | null = STORE_A_X;
   public userId: string = TENANT_A_ADMIN_USER;
+  /** When true, do NOT attach req.context — exercises the controller's `!ctx` 401. */
+  public skipContext = false;
 
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest<{
       context?: ResolvedContext;
       principal?: { userId?: string };
     }>();
+    if (this.skipContext) {
+      return true;
+    }
     req.context = {
       userId: this.userId,
       tenantId: this.tenantId,
@@ -170,6 +175,7 @@ beforeEach(() => {
   contextGuard.tenantId = TENANT_A;
   contextGuard.storeId = STORE_A_X;
   contextGuard.userId = TENANT_A_ADMIN_USER;
+  contextGuard.skipContext = false;
 });
 
 function http() {
@@ -219,6 +225,41 @@ describe("T640 / 005-WAVE2-AUDIT — link action emits resolved.linked audit [FR
 
     // Null tenant context -> 401 before the handler; no audit event.
     contextGuard.tenantId = null as unknown as string;
+
+    const res = await http()
+      .post(LINK_URL(UNK_T640_LINK))
+      .send({ product_id: PRODUCT_A_ACTIVE });
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    expect(
+      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.linked"),
+    ).toHaveLength(0);
+  });
+
+  it("returns 401 (no event) when the resolved context is entirely absent", async () => {
+    if (dockerSkipped) return;
+
+    // No req.context attached at all -> controller's `if (!ctx)` 401 branch.
+    contextGuard.skipContext = true;
+
+    const res = await http()
+      .post(LINK_URL(UNK_T640_LINK))
+      .send({ product_id: PRODUCT_A_ACTIVE });
+    expect(res.status).toBe(401);
+    await drainMicrotasks();
+
+    expect(
+      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.linked"),
+    ).toHaveLength(0);
+  });
+
+  it("returns 401 (no event) when the resolved context has a null userId", async () => {
+    if (dockerSkipped) return;
+
+    // Context present, tenant present, but userId null -> controller's
+    // `if (ctx.userId === null)` 401 branch.
+    contextGuard.userId = null as unknown as string;
 
     const res = await http()
       .post(LINK_URL(UNK_T640_LINK))
