@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Data-Pulse-2 Catalog — Unknown Items API
-  version: "1.0.0-draft"
+  version: "1.1.0-draft"
   description: >
-    Spec 005 Wave 1 (capture path) contract surface. Defines three
+    Spec 005 Wave 1 + Wave 2 contract surface. Defines five
     operations for the POS-Pulse catalog-sync / unknown-item-reconciliation
     workflow:
 
@@ -15,9 +15,16 @@ info:
          operators per RLS) read the pending review queue per FR-014.
       3. `tenantAdminDismissUnknownItem` — tenant admins terminate a
          pending item as invalid per FR-003, FR-004 (monotonic lifecycle).
+      4. `tenantAdminLinkUnknownItem` (Wave 2) — tenant admin links a
+         pending unknown item to an existing tenant product, creating or
+         reactivating the appropriate alias in a single atomic transaction
+         per FR-050, FR-051, FR-052, FR-053.
+      5. `tenantAdminCreateProductFromUnknownItem` (Wave 2) — tenant admin
+         creates a new tenant product directly from a pending unknown item,
+         producing product + alias + lifecycle transition atomically per
+         FR-060, FR-061, FR-062, FR-063.
 
-    Wave 2 reconciliation operations (link, create-new) are deferred to
-    a separate gated extension of this YAML.
+    Wave 2 operationIds added by 005-WAVE2-CONTRACT (T600/T601).
 
     Schemas align with `specs/005-pos-catalog-sync-reconciliation/data-model.md`
     §2.1 (lifecycle) and §2.2 (tenant + store scoping). Failure-response
@@ -342,6 +349,183 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/v1/catalog/unknown-items/{id}/link:
+    post:
+      summary: Link a pending unknown item to an existing tenant product.
+      operationId: tenantAdminLinkUnknownItem
+      tags: [catalog-unknown-items]
+      description: >
+        Atomically: (1) verify the target product is active in the same
+        tenant; (2) create or reactivate a `product_aliases` row binding
+        the unknown item's identifier to the target product; (3) transition
+        the unknown item from `pending` to `resolved` with
+        `resolution_action = linked`. All three effects commit together or
+        none do (FR-053).
+
+        Failure-response error codes follow research.md §R2 taxonomy:
+        `alias_conflict` (FR-052 — identifier already bound to a different
+        product), `target_unavailable` (FR-051 — product is retired or
+        deleted), `already_reconciled` (race-loser per US3 #3 — item was
+        concurrently resolved before this request committed),
+        `validation_failure` (malformed request body).
+
+        Cross-tenant or out-of-scope addresses receive a non-disclosing
+        404 (SI-001 / SI-004 / FR-013 / FR-092). The conflict response
+        MUST NOT disclose the conflicting product to an actor without
+        authority to see it (FR-042).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUIDv7 primary key of the unknown-item row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkUnknownItemRequest"
+      responses:
+        "200":
+          description: >
+            Item linked. Unknown item transitioned to `resolved` with
+            `resolution_action = linked`. The response carries the updated
+            lifecycle fields so the client can refresh its view without a
+            follow-up GET.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnknownItem"
+        "400":
+          description: >
+            Bad request. `error.code = "validation_failure"` (malformed
+            path UUID or invalid request body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Caller lacks the tenant-admin / store-operator role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            Not found OR not in scope. Non-disclosing per SI-004.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Conflict. Possible `error.code` values: `alias_conflict`
+            (FR-052 — identifier already bound to a different active
+            product; conflicting product NOT disclosed per FR-042),
+            `target_unavailable` (FR-051 — target product is retired or
+            deleted), `already_reconciled` (US3 #3 race — item was
+            concurrently resolved).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items/{id}/create-product:
+    post:
+      summary: Create a new tenant product from a pending unknown item.
+      operationId: tenantAdminCreateProductFromUnknownItem
+      tags: [catalog-unknown-items]
+      description: >
+        Atomically: (1) INSERT a new `tenant_products` row in the
+        authenticated tenant (body-supplied `tenant_id` is discarded per
+        Constitution §III — backend authority); (2) INSERT a
+        `product_aliases` row binding the unknown item's identifier to the
+        new product; (3) transition the unknown item from `pending` to
+        `resolved` with `resolution_action = created`. All three effects
+        commit together or none do (FR-063).
+
+        Failure-response error codes follow research.md §R2 taxonomy:
+        `alias_conflict` (FR-062 — identifier already bound to a different
+        product; neither the product nor the alias is created),
+        `already_reconciled` (race-loser — item was concurrently resolved),
+        `validation_failure` (missing or malformed required fields).
+
+        Cross-tenant or out-of-scope addresses receive a non-disclosing
+        404 (SI-001 / SI-004 / FR-013 / FR-092).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUIDv7 primary key of the unknown-item row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductFromUnknownItemRequest"
+      responses:
+        "201":
+          description: >
+            New product created and unknown item resolved. Returns the
+            updated `UnknownItem` row (now `resolved` with
+            `resolution_action = created`) so the client can refresh its
+            view. The `resolved_product_id` field references the newly
+            created product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnknownItem"
+        "400":
+          description: >
+            Bad request. `error.code = "validation_failure"` (malformed
+            path UUID, missing `name`, or missing `tax_category`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Caller lacks the tenant-admin / store-operator role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            Not found OR not in scope. Non-disclosing per SI-004.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Conflict. Possible `error.code` values: `alias_conflict`
+            (FR-062 — identifier already bound to a different active
+            product; neither the new product nor the alias is created; the
+            conflicting product is NOT disclosed per FR-042),
+            `already_reconciled` (US3 #3 race — item was concurrently
+            resolved before this request committed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   securitySchemes:
     cookieAuth:
@@ -544,6 +728,65 @@ components:
           description: >
             Opaque cursor for the next page; null on the last page.
             Clients MUST treat as opaque.
+
+    LinkUnknownItemRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Wave 2 (005-WAVE2-CONTRACT T600). Request body for
+        `tenantAdminLinkUnknownItem`. Carries the target product reference
+        only; all tenant / store scoping is resolved from the
+        authenticated principal (Constitution §III — backend authority).
+        Snake_case on the wire per Wave 1 conventions.
+      required:
+        - product_id
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: >
+            UUID of the existing `tenant_products` row to link to. Must
+            be active (not retired / deleted) in the authenticated
+            tenant (FR-051).
+
+    CreateProductFromUnknownItemRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Wave 2 (005-WAVE2-CONTRACT T600). Request body for
+        `tenantAdminCreateProductFromUnknownItem`. Carries the minimal
+        fields required by 003 §5 for `tenant_products` (FR-060). The
+        persisted `tenant_id` is always taken from the authenticated
+        principal (Constitution §III — body-supplied `tenant_id` is
+        silently discarded). Snake_case on the wire per Wave 1 conventions.
+      required:
+        - name
+        - tax_category
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >
+            Human-readable product name. Non-empty after trim.
+            Mirrors the `tenant_products.name` NOT NULL constraint
+            in 003 §5.
+        tax_category:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: >
+            Tax category identifier for the new product. Non-empty
+            after trim. Mirrors `tenant_products.tax_category` in
+            003 §5.
+        category_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Optional tenant-product category UUID. Null if the product
+            is uncategorized. Mirrors `tenant_products.category_id`
+            in 003 §5.
 
     Error:
       type: object

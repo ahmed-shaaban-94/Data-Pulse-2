@@ -229,15 +229,24 @@ describe("catalog/unknown-items.yaml — Wave 1 operationIds", () => {
     expect(dismiss?.operationId).toBe("tenantAdminDismissUnknownItem");
   });
 
-  it("declares only the three Wave 1 operationIds (no smuggled Wave 2 operations)", () => {
-    // Wave 2 link / create-new operations belong to a future GATED slice
-    // (`005-WAVE2-CONTRACT`). This guards against accidentally landing
-    // any of them in the Wave 1 contract.
+  it("declares all Wave 1 operationIds (additions allowed for Wave 2+)", () => {
+    // This assertion was previously a strict-equality tripwire that
+    // rejected any operationId not in WAVE_1_OPERATION_IDS. That tripwire
+    // was designed to be loosened exactly when Wave 2 operations were
+    // authorized to land in this YAML. The loosening was authorized via
+    // Option A in slice 005-WAVE2-CONTRACT (T600/T601): convert to a
+    // subset check that still requires every Wave 1 op to be present but
+    // tolerates additional Wave 2+ ops.
+    //
+    // The Wave 2 conformance test (`contract-wave2.spec.ts`, same
+    // directory) is responsible for asserting the Wave 2 operationIds
+    // and their schema correctness.
     const declared = newContractOperations()
       .map(({ op }) => op.operationId)
-      .filter((id): id is string => typeof id === "string")
-      .sort();
-    expect(declared).toEqual([...WAVE_1_OPERATION_IDS].sort());
+      .filter((id): id is string => typeof id === "string");
+    expect(declared).toEqual(
+      expect.arrayContaining([...WAVE_1_OPERATION_IDS]),
+    );
   });
 
   it("does not collide with any operationId in the existing top-level contracts", () => {
