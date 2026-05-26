@@ -1001,11 +1001,13 @@ slices:
       - packages/db/**
       - specs/003-catalog-foundation/**
     validation:
-      # NOTE: stale post-#361. Specs now mount ReconciliationController and
-      # are expected GREEN against the live LINK-HAPPY + LINK-EDGES surface.
-      - command: pnpm --filter `@data-pulse-2/api` test "reconciliation/conflict"
-        expected: GREEN — specs mount ReconciliationController/ReconciliationService and now validate live conflict behavior
-        docker_required: true
+      # Validation flipped from RED-by-design to GREEN in PR #361, which
+      # wired both T610/T611 specs to mount ReconciliationController +
+      # ReconciliationService. Before #361 the specs returned 404 on every
+      # POST regardless of src/ correctness — a TestingModule latent, not
+      # a service gap.
+      - command: pnpm --filter @data-pulse-2/api test "reconciliation/conflict"
+        expected: GREEN — specs mount ReconciliationController/ReconciliationService and validate live conflict behavior
         docker_required: true
 
   # ===== Wave 2 Phase 4: US2 #1 link reconciliation =========================
