@@ -1,30 +1,42 @@
 /**
- * ReconciliationController — 005-WAVE2-LINK-HAPPY (T622).
+ * ReconciliationController — 005-WAVE2-LINK-HAPPY (T622) +
+ *                            005-WAVE2-CREATE-HAPPY (T632).
  *
  * Implements the tenant-admin reconciliation routes defined in:
  *   packages/contracts/openapi/catalog/unknown-items.yaml
  *
- * Wave 2 / LINK-HAPPY scope: only the link endpoint. Subsequent Wave 2
- * slices add the create-new (T630) operation.
- *
- * Route:
+ * Routes:
  *   POST /api/v1/catalog/unknown-items/:id/link
- *   operationId: tenantAdminLinkUnknownItem
+ *     operationId: tenantAdminLinkUnknownItem
+ *   POST /api/v1/catalog/unknown-items/:id/create-product
+ *     operationId: tenantAdminCreateProductFromUnknownItem
  *
- * Request body (LinkUnknownItemRequest, snake_case per OpenAPI):
- *   { product_id: UUID }
- *   additionalProperties: false  — enforced via .strict() on the Zod schema.
- *   Note: tasks.md T622 references "productId" (camelCase) but the OpenAPI
- *   YAML is the source of truth per Constitution §IV; snake_case wins.
+ * Request bodies (snake_case per OpenAPI — Constitution §IV):
+ *   LinkUnknownItemRequest:                   { product_id: UUID }
+ *   CreateProductFromUnknownItemRequest:      { name: string,
+ *                                               tax_category: string,
+ *                                               category_id?: UUID | null }
+ *   Both schemas use `additionalProperties: false`; enforced via `.strict()`
+ *   on the Zod definitions below. The body-supplied `tenantId` (if any)
+ *   is rejected with 400 `validation_failure` — Constitution §III.
  *
  * Auth gap (carried forward from Wave 1 slices):
  *   No @UseGuards(AuthGuard, TenantContextGuard, RolesGuard). The
- *   `apps/api/src/auth/**` surface remains forbidden for 005. The resolved
- *   context is injected by integration tests via ConfigurableContextGuard
- *   and will be wired by a subsequent auth-integration slice. Tracked in
- *   wave-status.md "Outstanding known gap" section.
+ *   `apps/api/src/auth/**` surface remains forbidden for 005. The
+ *   resolved context is injected by integration tests via
+ *   ConfigurableContextGuard and will be wired by a subsequent
+ *   auth-integration slice.
  *
- * Spec anchors: FR-040, FR-053, FR-080, FR-081, FR-092, SI-001.
+ * Audit subjects (no dual-emission — tasks.md L477):
+ *   link        → @Auditable("unknown_item.resolved.linked")
+ *   create      → @Auditable("unknown_item.resolved.created")
+ *   The service owns raw `INSERT INTO tenant_products` SQL on the create
+ *   path; it does NOT call TenantCatalogService.create (which would
+ *   emit a second `catalog.product.create` audit row in the same
+ *   transaction).
+ *
+ * Spec anchors: FR-040, FR-053, FR-060, FR-061, FR-062, FR-063, FR-080,
+ *               FR-081, FR-092, SI-001, Constitution §III, §IV.
  */
 import {
   Body,
@@ -62,6 +74,30 @@ const LinkUnknownItemRequestSchema = z
   .strict();
 
 type LinkUnknownItemRequestDto = z.infer<typeof LinkUnknownItemRequestSchema>;
+
+/**
+ * Zod schema for `tenantAdminCreateProductFromUnknownItem` request body.
+ * Mirrors OpenAPI `CreateProductFromUnknownItemRequest`:
+ *   required: [name, tax_category]
+ *   additionalProperties: false  → .strict()
+ *
+ * The .strict() is what enforces Constitution §III backend authority on
+ * tenant_id: a request that smuggles `tenantId: "<attacker>"` is rejected
+ * with 400 `validation_failure` instead of silently stripping. The
+ * persisted `tenant_products.tenant_id` is always the resolved principal
+ * tenant from `request.context`.
+ */
+const CreateProductFromUnknownItemRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    tax_category: z.string().trim().min(1).max(64),
+    category_id: z.string().uuid().nullable().optional(),
+  })
+  .strict();
+
+type CreateProductFromUnknownItemRequestDto = z.infer<
+  typeof CreateProductFromUnknownItemRequestSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Wire shape (snake_case, matches OpenAPI UnknownItem schema)
@@ -185,6 +221,86 @@ export class ReconciliationController {
     // are handled by the `target_unavailable` branch above (409); this
     // fallthrough represents truly absent items (RLS-filtered cross-tenant
     // or fabricated UUID).
+    throw new NotFoundException("Not Found");
+  }
+
+  /**
+   * POST /api/v1/catalog/unknown-items/:id/create-product
+   *
+   * Creates a brand-new tenant product directly from a pending unknown
+   * item. Server-resolved tenant_id (Constitution §III); body-supplied
+   * tenantId is rejected with 400 validation_failure by the `.strict()`
+   * Zod schema.
+   *
+   * On success: 201 Created + updated UnknownItem shape (resolution_status
+   *   = 'resolved', resolution_action = 'created', resolved_product_id
+   *   pointing at the new tenant_products row).
+   * On error:
+   *   400 validation_failure   — malformed :id, missing name / tax_category,
+   *                              or body smuggling an additional property
+   *   401 Unauthorized         — missing resolved context
+   *   404 Not Found            — unknown item absent (non-disclosing per
+   *                              SI-001 / FR-092)
+   *   409 alias_conflict       — product_aliases unique index violated
+   *                              (FR-062); the would-be new product is
+   *                              NOT created (transaction rollback)
+   *   409 already_reconciled   — item already resolved/dismissed (FR-004)
+   */
+  @Post("api/v1/catalog/unknown-items/:id/create-product")
+  @HttpCode(HttpStatus.CREATED)
+  @Auditable("unknown_item.resolved.created")
+  async tenantAdminCreateProductFromUnknownItem(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+    @Body(new ZodValidationPipe(CreateProductFromUnknownItemRequestSchema))
+    body: CreateProductFromUnknownItemRequestDto,
+  ): Promise<UnknownItemWireShape> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const result = await this.reconciliationService.createProductFromUnknownItem({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      unknownItemId: id,
+      actorUserId: ctx.userId,
+      // The Zod schema already trims; the .min(1) check guarantees the
+      // trimmed string is non-empty.
+      name: body.name.trim(),
+      taxCategory: body.tax_category.trim(),
+      categoryId: body.category_id ?? null,
+    });
+
+    if (result.kind === "ok") {
+      return rowToWireShape(result.row);
+    }
+
+    if (result.kind === "alias_conflict") {
+      throw new ConflictException({
+        code: "alias_conflict",
+        message:
+          "A product alias with this identifier already exists for a different product. " +
+          "Creating would violate the unique alias constraint (FR-062).",
+      });
+    }
+
+    if (result.kind === "already_reconciled") {
+      throw new ConflictException({
+        code: "already_reconciled",
+        message:
+          "The unknown item is already resolved or dismissed; lifecycle transitions are monotonic per FR-004.",
+      });
+    }
+
+    // SI-001 / FR-092: non-disclosing 404 — RLS-filtered cross-tenant
+    // or fabricated UUID.
     throw new NotFoundException("Not Found");
   }
 }
