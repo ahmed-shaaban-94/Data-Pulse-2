@@ -359,6 +359,11 @@ beforeAll(
     const moduleRef = await Test.createTestingModule({
       controllers: [UnknownItemsController],
       providers: [
+        // PG_POOL bound to admin (superuser, RLS-bypassed) — this spec asserts
+        // latency / performance timing — admin pool eliminates RLS overhead
+        // from the measurement, not the data-access path. RLS coverage for the
+        // data path is asserted by capture-happy-path.spec.ts. Pattern:
+        // dismiss-audit.spec.ts:162-164.
         { provide: PG_POOL, useFactory: (): Pool => localEnv.admin },
         UnknownItemsService,
         { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },

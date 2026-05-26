@@ -215,9 +215,12 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     controllers: [UnknownItemsController],
     providers: [
+      // PG_POOL bound to app (non-superuser app_test role, RLS-active) —
+      // this spec exercises the capture data path, so RLS policies must run
+      // for real. Pattern set by link-happy-path.spec.ts:181-184 after PR #357.
       {
         provide: PG_POOL,
-        useFactory: (): Pool => localEnv.admin,
+        useFactory: (): Pool => localEnv.app,
       },
       UnknownItemsService,
       { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
