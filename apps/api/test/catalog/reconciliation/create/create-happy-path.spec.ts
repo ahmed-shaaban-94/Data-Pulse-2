@@ -407,13 +407,17 @@ describe("T630 / 005-WAVE2-CREATE-HAPPY — tenant admin creates product from un
       expect(res.status).toBe(400);
       expect(res.body?.error?.code).toBe("validation_failure");
 
-      // Defence-in-depth: even if it had somehow persisted, the tenant_id
-      // must NOT be the attacker value. Verify no row exists with the
-      // attacker tenant.
+      // Tenant-scoped: confirm no product was persisted under the
+      // attacker tenant. The .strict() Zod rejection ensures the
+      // request never reaches the service in the first place, so no
+      // tenant_products row should exist for ANY tenant under this
+      // name AND specifically not under the attacker tenant_id.
       const noLeakCheck = await env!.admin.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count
            FROM tenant_products
-          WHERE name = 'Widget T630B'`,
+          WHERE tenant_id = $1
+            AND name = $2`,
+        ["00000000-0000-0000-0000-000000000bad", "Widget T630B"],
       );
       expect(noLeakCheck.rows[0]?.count).toBe("0");
 

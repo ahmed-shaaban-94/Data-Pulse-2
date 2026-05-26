@@ -110,6 +110,20 @@ export type CreateResult =
   | { kind: "already_reconciled" }
   | { kind: "alias_conflict" };
 
+/**
+ * Sentinel thrown inside the transaction callback to force
+ * `runWithTenantContext` to ROLLBACK. Caught outside the transaction
+ * and mapped to `{ kind: "alias_conflict" }`. Without this rollback the
+ * preceding `INSERT INTO tenant_products` would commit even though the
+ * operation reports a conflict, violating FR-062 atomicity.
+ */
+class AliasConflictSentinel extends Error {
+  constructor() {
+    super("alias_conflict");
+    this.name = "AliasConflictSentinel";
+  }
+}
+
 @Injectable()
 export class ReconciliationService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -356,10 +370,12 @@ export class ReconciliationService {
     readonly taxCategory: string;
     readonly categoryId: string | null;
   }): Promise<CreateResult> {
-    const result = await runWithTenantContext(
-      this.pool,
-      { tenantId: input.tenantId, isPlatformAdmin: false },
-      async (client): Promise<CreateResult> => {
+    let result: CreateResult;
+    try {
+      result = await runWithTenantContext(
+        this.pool,
+        { tenantId: input.tenantId, isPlatformAdmin: false },
+        async (client): Promise<CreateResult> => {
         // Set app.current_store GUC — required by the
         // unknown_items_store_read RLS policy (same pattern as
         // linkUnknownItem).
@@ -459,7 +475,11 @@ export class ReconciliationService {
             "code" in err &&
             (err as { code: unknown }).code === "23505"
           ) {
-            return { kind: "alias_conflict" };
+            // Throw to abort runWithTenantContext — the prior
+            // INSERT INTO tenant_products MUST roll back to satisfy
+            // FR-062 atomicity. Caught outside the transaction and
+            // mapped to { kind: "alias_conflict" }.
+            throw new AliasConflictSentinel();
           }
           throw err;
         }
@@ -532,6 +552,16 @@ export class ReconciliationService {
         };
       },
     );
+    } catch (err: unknown) {
+      // Sentinel thrown from the alias INSERT catch to force ROLLBACK
+      // of the prior tenant_products INSERT (FR-062 atomicity). Map
+      // back to the discriminated union AFTER the transaction has
+      // already rolled back.
+      if (err instanceof AliasConflictSentinel) {
+        return { kind: "alias_conflict" };
+      }
+      throw err;
+    }
 
     if (result.kind === "ok") {
       // FR-081: increment the resolved counter on successful create.
