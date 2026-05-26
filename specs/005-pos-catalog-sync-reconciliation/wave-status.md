@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-26 (Phase 5+ cleared: FR-005, AUDIT (partial), IDEMP-EDGES, and DISMISS-CARVEOUT-FIX all landed within an 18-minute window. METRICS is the last blocker before POLISH.)
+**Last updated:** 2026-05-26 (METRICS merged partial PR #349 — T552-mismatch-case skipped pending harness refactor; POLISH now fully unblocked.)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `043c1c2` (PR #345, 2026-05-26 — `005-WAVE1-IDEMP-EDGES` merged)
+**Base:** `origin/main` at `3e915b7` (PR #349, 2026-05-26 — `005-WAVE1-METRICS` merged)
 **Active findings:** 0
 **Resolved findings:** 3
 
@@ -10,7 +10,7 @@
 
 ## TL;DR
 
-**19 Wave 1 slices merged + 1 hotfix (DISMISS-CARVEOUT-FIX). Phase 3 COMPLETE, Phase 4 COMPLETE, Phase 5 nearly complete — METRICS is the sole remaining blocker before POLISH.** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, `005-WAVE1-IDEMP-MISMATCH` PR #339, `005-WAVE1-DISMISS` PR #341, **`005-WAVE1-FR005` PR #343, `005-WAVE1-AUDIT` PR #344 (partial), `005-WAVE1-IDEMP-EDGES` PR #345, `005-WAVE1-DISMISS-CARVEOUT-FIX` PR #346** — new this closeout). **1 Wave 1 candidate slice remains at `status: proposed` (METRICS). T550/T551 deferred from AUDIT (#344) are a known follow-up item.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. All three findings (`005-METRICS-ALLOWLIST-PRECONDITION`, `005-IDEMP-STATUS-CAPTURE-DEFECT`, `005-DISMISS-SENTINEL-REGRESSION`) are resolved.
+**20 Wave 1 slices merged + 1 hotfix (DISMISS-CARVEOUT-FIX). Phase 3 COMPLETE, Phase 4 COMPLETE, Phase 5 COMPLETE (partial) — POLISH is now READY TO DISPATCH.** (`005-WAVE1-METRICS-ALLOWLIST` PR #299, `005-WAVE1-SETUP` PR #304, `005-WAVE1-IDEMP-VERIFY` PR #306, `005-WAVE1-HARNESS` PR #307, `005-WAVE1-CONTRACT` PR #315, `005-WAVE1-CAPTURE-HAPPY` PR #317, `005-WAVE1-CAPTURE-RESOLVE` PR #321, `005-WAVE1-IDEMP-STATUS-CAPTURE` PR #324, `005-WAVE1-CAPTURE-STORE-SCOPE` PR #326, `005-WAVE1-CAPTURE-DEDUP` PR #328, `005-WAVE1-VALIDATION` PR #331, `005-WAVE1-NON-DISCLOSING` PR #332, `005-WAVE1-LIST` PR #334, `005-WAVE1-IDEMP-WIRE` PR #336, `005-WAVE1-IDEMP-MISMATCH` PR #339, `005-WAVE1-DISMISS` PR #341, `005-WAVE1-FR005` PR #343, `005-WAVE1-AUDIT` PR #344 (partial), `005-WAVE1-IDEMP-EDGES` PR #345, `005-WAVE1-DISMISS-CARVEOUT-FIX` PR #346, **`005-WAVE1-METRICS` PR #349 (partial)** — new this closeout). **1 proposed follow-up slice added (`005-WAVE1-METRICS-MISMATCH-FOLLOWUP`) to resolve the T552-mismatch-case harness issue deferred from PR #349. T550/T551 deferred from AUDIT (#344) are a known follow-up item.** Planning artifacts (spec, plan, research, data-model, quickstart, contracts placeholder, tasks.md, execution-map, wave-status) are all merged on `main`. All three findings (`005-METRICS-ALLOWLIST-PRECONDITION`, `005-IDEMP-STATUS-CAPTURE-DEFECT`, `005-DISMISS-SENTINEL-REGRESSION`) are resolved.
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 appended to `tasks.md` (§§13–21); 9 `005-WAVE2-*` slices added to `execution-map.yaml`. Dependency cleared: 003 `PHASE3_RED_WAVE` merged (PRs #300/#301/#302/#303); T336 `MISSING_WITHSTORE_HELPER` merged (PR #310).
 
@@ -27,6 +27,8 @@
 **Outstanding known gap (deferred):** Auth-guard wiring on the unknown-items controller. CAPTURE-HAPPY (PR #317), NON-DISCLOSING (PR #332), LIST (PR #334), IDEMP-WIRE (PR #336), IDEMP-MISMATCH (PR #339), and DISMISS (PR #341 — adds the 6th unguarded route) all ship without `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)`. Of the new PRs: FR005 (PR #343) touches only the service file, not the controller; AUDIT (PR #344) adds `@Auditable` decorators to the controller but no new routes; IDEMP-EDGES (PR #345) is test-only. The unguarded route count remains 6. CodeRabbit flagged this on PR #334 (twice); not re-raised on subsequent PRs since the JSDoc disclaimer + this section serve as the durable deferral mechanism. Deferred-with-rationale because `apps/api/src/auth/**` is forbidden surface for 005 and adding guards to one route alone creates inconsistency. A follow-up "auth-wiring" slice should address all 6 routes consistently — POS routes use bearer tokens while admin routes use session cookies, so the guard parameterization will differ. Will need `[GATED]` approval per Standing Rules §3.
 
 **Outstanding known gap (deferred):** T550/T551 (idempotency-mismatch-audit.spec.ts) were deferred from AUDIT PR #344 because the DISMISS-CARVEOUT-FIX (#346) had not yet landed at authoring time. Both are now unblocked. Can be picked up as a standalone micro-slice or absorbed into POLISH.
+
+**Outstanding known gap (deferred):** T552-mismatch-case integration harness latent bug. The `retry-mismatch.spec.ts` suite was red when PR #339 (IDEMP-MISMATCH) merged with red CI; the harness failure is in how `IdempotencyMismatchFilter` is wired in the Supertest test-module context. Three separate fix-up attempts during PR #349 (commits `b8a9dd4`, `3771569`, `c15f669`) were all reverted or narrowed to avoid broader regressions. Open question: is the mismatch counter emission broken in production, or only in the test harness wiring? Slice `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` (proposed) owns the investigation and resolution — either fix the harness (Path A) or verify production correctness and document the harness limitation (Path B). This slice is parallel-safe with POLISH (disjoint file sets).
 
 ---
 
@@ -56,6 +58,7 @@
 | `005-WAVE1-FR005` (slice) | T544/T545 — FR-005 dismissed-then-resubmit invariant. Tightened `captureUnknownItem`'s natural-dedup query to filter on `resolution_status = 'pending'` so a POS resubmission after a dismiss creates a fresh pending row rather than silently returning the dismissed record. The partial index `idx_unknown_items_lookup_value` already enforces uniqueness only over pending rows at the DB layer; this slice adds the service-layer assertion and the RED spec (`dismissed-then-resubmit.spec.ts`, 484 lines). | PR #343 @ `83eb810` |
 | `005-WAVE1-AUDIT` (slice — partial) | T546–T549 shipped: `capture-audit.spec.ts` (325 lines) + `dismiss-audit.spec.ts` (255 lines) verifying FR-080/082 audit emission for the capture and dismiss paths. **T550/T551 deferred** (idempotency-mismatch-audit.spec.ts) — DISMISS-CARVEOUT-FIX had not yet landed when this PR was authored; now that PR #346 is merged, T550/T551 can be picked up as the next follow-up slice or absorbed into POLISH. | PR #344 @ `0a7cb10` |
 | `005-WAVE1-IDEMP-EDGES` (slice) | T534–T536 — FR-021a (per-device key scoping), FR-021b (24h TTL expiry), FR-022 (post-resolved idempotency behaviour). Three disjoint test-only specs (`cross-device-keys.spec.ts` 459 lines, `ttl-expiry.spec.ts` 433 lines, `post-resolved.spec.ts` 504 lines). Completes the FR-021 family coverage. No service or controller edits. | PR #345 @ `043c1c2` |
+| `005-WAVE1-METRICS` (slice — partial) | T553 shipped: `metrics.spec.ts` (500 lines) verifying FR-081 counter increments for `unknown_item_captured_total` and `unknown_item_resolved_total{action="dismissed"}` at the service layer, plus `idempotency_token_mismatch_total` unit coverage in `idempotency-mismatch.filter.unit.spec.ts`. **T552-mismatch-case deferred** (the `describe.skip` block in `metrics.spec.ts` for the mismatch integration assertion) — the integration harness for the mismatch path has been latently broken since PR #339 merged with red CI on `retry-mismatch.spec.ts`; three fix-up attempts in PR #349 commit history were all reverted or narrowed. Follow-up slice `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` (proposed) owns the harness investigation. | PR #349 @ `3e915b7` |
 
 ### Planning artifacts merged (for context)
 
@@ -188,7 +191,7 @@ See `005-DISMISS-SENTINEL-REGRESSION` in Resolved findings above for the full na
 
 _None._
 
-1 Wave 1 slice remains at `status: proposed` (METRICS). T550/T551 are a deferred follow-up not yet represented as a separate slice. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
+METRICS merged (partial) PR #349. 1 new follow-up slice proposed (`005-WAVE1-METRICS-MISMATCH-FOLLOWUP`). POLISH is now unblocked and **READY TO DISPATCH**. T550/T551 are a deferred follow-up not yet represented as a separate slice. 9 Wave 2 slices at `status: proposed` (authored 2026-05-24). None have been approved for dispatch.
 
 ### Process note — recovery threshold calibration (from PR #328 retrospective)
 
@@ -208,11 +211,12 @@ _**Phase 3 is COMPLETE** as of PR #334. Phase 0/1/2 prerequisites and all 7 Phas
 
 - **`005-WAVE1-FR005`** (T544, T545) — **MERGED** PR #343 @ `83eb810` (2026-05-26).
 - **`005-WAVE1-AUDIT`** (T546–T549 shipped, T550/T551 deferred) — **MERGED (partial)** PR #344 @ `0a7cb10` (2026-05-26). T550/T551 are a follow-up item (see "Other known issues" above).
-- **`005-WAVE1-METRICS`** (T552, T553) — counter-increment verification at all 3 emission sites. **READY TO DISPATCH** (METRICS is now the last Wave 1 slice; dispatching it unlocks POLISH).
+- **`005-WAVE1-METRICS`** (T552, T553) — **MERGED (partial)** PR #349 @ `3e915b7` (2026-05-26). T552-mismatch-case deferred; see follow-up slice below.
+- **`005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** — harness investigation + fix for the T552-mismatch-case `describe.skip`. **Proposed.** Parallel-safe with POLISH. See "Outstanding known gaps" above for the two resolution paths.
 
 ### Phase 6 — Polish
 
-- **`005-WAVE1-POLISH`** (T560, T561, T562, T563, T564) — perf smoke test (SC-008), regression sweeps (T341/T342/T343/T344 + 001 idempotency + audit-fanout), header-name drift fixup, wave-status closeout.
+- **`005-WAVE1-POLISH`** (T560, T561, T562, T563, T564) — perf smoke test (SC-008), regression sweeps (T341/T342/T343/T344 + 001 idempotency + audit-fanout), header-name drift fixup, wave-status closeout. **READY TO DISPATCH** (METRICS PR #349 cleared the last `depends_on` blocker).
 
 ---
 
@@ -292,19 +296,19 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Next recommended action
 
-**METRICS (T552/T553) is the last Wave 1 slice before POLISH.** Dispatching it unlocks `005-WAVE1-POLISH` (the only slice still blocked). The service will need at least a small counter call addition for the `dismissed` action — the DISMISS slice explicitly deferred that for METRICS to author.
+**POLISH (T560–T564) is the canonical next dispatch.** METRICS PR #349 cleared the last `depends_on` blocker. The follow-up slice `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` is parallel-safe with POLISH (disjoint file sets) and can be dispatched concurrently or after POLISH at the owner's discretion.
 
 ```text
-# Dispatch Phase 5 — METRICS (last Wave 1 blocker):
-Use Agent OS. Execute slice 005-WAVE1-METRICS. Stop before commit.
+# Dispatch Phase 6 — POLISH (now fully unblocked):
+Use Agent OS. Execute slice 005-WAVE1-POLISH. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
-**Parallel-safe alternative**: T550/T551 (idempotency-mismatch-audit.spec.ts, deferred from AUDIT PR #344). Now that DISMISS-CARVEOUT-FIX is merged, these are unblocked and file-disjoint from METRICS. They can be dispatched in parallel or absorbed into POLISH at the owner's discretion.
+**Parallel-safe alongside POLISH**: `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — investigate and resolve the T552-mismatch-case harness bug (see "Outstanding known gaps" above). File sets are disjoint from POLISH.
 
 ```text
-# Optional follow-up T550/T551 (parallel-safe with METRICS):
-Use Agent OS. Execute slice 005-WAVE1-AUDIT (T550/T551 follow-up only). Stop before commit.
+# Optional parallel dispatch — mismatch harness follow-up:
+Use Agent OS. Execute slice 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
 
