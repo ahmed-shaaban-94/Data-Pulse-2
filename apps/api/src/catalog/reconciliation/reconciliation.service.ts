@@ -76,7 +76,7 @@ export class ReconciliationService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   /**
-   * Link a pending unknown item to an existing, active tenant product.
+   * Link a pending unknown item to an existing tenant product.
    *
    * Steps (inside a single transaction):
    *   1. SELECT unknown_items WHERE id=$unknownItemId FOR UPDATE
@@ -84,8 +84,10 @@ export class ReconciliationService {
    *      RLS + store GUC filter means a cross-tenant or cross-store row
    *      returns 0 rows.
    *   2. Discriminate: 0 rows → not_found | non-pending → already_reconciled
-   *   3. SELECT tenant_products WHERE id=$productId AND retired_at IS NULL
-   *      — confirm target exists and is active; 0 rows → not_found
+   *   3. SELECT tenant_products WHERE id=$productId
+   *      — fetch target and check retired_at: absent (0 rows) → not_found
+   *        (RLS-filtered cross-tenant or non-existent UUID); retired
+   *        (retired_at IS NOT NULL) → target_unavailable per FR-051.
    *   4. INSERT product_aliases — catch PG error 23505 → alias_conflict
    *   5. UPDATE unknown_items SET resolution_status='resolved' WHERE
    *      id=$unknownItemId AND resolution_status='pending'

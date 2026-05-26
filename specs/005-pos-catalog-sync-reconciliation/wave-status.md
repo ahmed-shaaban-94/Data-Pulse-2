@@ -245,3 +245,33 @@ A grep of the 005 catalog test suite found that **10 specs** bind `PG_POOL` to `
 - `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`
 - T550 / T551 audit-coverage gaps
 - auth-guard wiring across Wave 1 controllers
+
+### 2026-05-26 — LINK-EDGES landed + Wave 1 filter contract restoration
+
+**Slice state:** `005-WAVE2-LINK-EDGES` complete. CONFLICT specs (T610/T611) now exercise the real `POST /api/v1/catalog/unknown-items/:id/link` route through the wired `ReconciliationController`, flipping them from RED to GREEN.
+
+**PRs merged (this closeout covers all four):**
+
+- **#359** `feat/005-wave2-link-edges` — implemented T623 (link-target-unavailable.spec.ts), T624 (service `retired_at` discriminator + new `target_unavailable` LinkResult variant), T625 (link-already-reconciled.spec.ts covering resolved + dismissed race paths), T626 (one-line race-safety verification comment at the `FOR UPDATE` site — no code change). Option A scope expansion authorized for one controller-mapping line.
+- **#360** `fix/exception-filter-code-passthrough` — Wave 1 cross-cutting filter contract restoration. `GlobalExceptionFilter` was silently overwriting every `HttpException`'s `error.code` with the status-derived canonical code (`"conflict"` for all 409s), violating Constitution §IV (OpenAPI fine-grained codes are contract-of-record). 6-file PR: 1 filter fix + 1 new unit spec + 3 bug-codifying assertion corrections (idempotency-key-conflict path) + 1 stale-comment fix in `idempotency-mismatch.filter.ts`. One docblock at `existing-primitive-coverage.spec.ts:27-32` had explicitly documented the discard as "production behavior" — rewriting it to describe the corrected wire shape reverses that institutional drift.
+- **#361** (this PR) — docs closeout + CodeRabbit nits + CONFLICT spec module wiring.
+
+**Cross-cutting bug surface unblocked by #360:**
+
+The filter fix unblocked latent contract violations across the API surface, not just LINK-EDGES:
+- `idempotency.interceptor.ts:172/184/256` — now correctly surfaces `idempotency_key_required` / `idempotency_key_malformed` / `idempotency_key_conflict` on the wire.
+- `unknown-items.service.ts:936` — Wave 1 LINK-HAPPY's `already_reconciled` code now reaches the envelope.
+- `reconciliation.controller.ts:159/168/176` — all three Wave 2 fine-grained codes surface as contract specifies.
+
+**LINK-EDGES landing latents (this PR resolves):**
+
+- **CodeRabbit nit #1** (`reconciliation.service.ts:79-88`): method docblock said "active tenant product" but post-T624 the method handles retired products via the `target_unavailable` branch. Rewrote the summary + Step 3 prose.
+- **CodeRabbit nit #2** (`reconciliation.controller.ts:185`): catch-all `NotFoundException` comment said the 404 "does not reveal whether the unknown item was absent vs. the product was absent/retired" — but retired now goes to 409. Removed the "or retired" phrasing.
+- **CONFLICT spec module-wiring latent**: `alias-conflict.spec.ts` and `store-scoped-conflict.spec.ts` were authored when no `ReconciliationController` existed and hardcoded `controllers: [], providers: []` in their TestingModule. After LINK-HAPPY, LINK-EDGES, and the filter fix all landed, the CONFLICT specs were STILL RED — not because of any code in `src/`, but because their own TestingModule didn't mount the controller. Wired both specs to register `ReconciliationController` + `ReconciliationService` + `PG_POOL` (bound to `localEnv.app`, RLS-active per PR #357 audit) + `AuditEmitterInterceptor` + `SpyAuditEnqueuer`. After this PR merges, both CONFLICT specs should be GREEN against the actual reconciliation surface.
+
+**Outstanding follow-ups (deferred, tracked):**
+
+- `005-WAVE2-RLS-TEST-AUDIT` — still pending; 7 docs + 2 pool swaps across the 005 catalog test suite.
+- `retry-mismatch.spec.ts:392-394` second-assertion latent — `error.details.code` checks against a field the IdempotencyInterceptor doesn't supply on the wire. Flagged by PR #360's agent; left for `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` harness refactor.
+
+**Next slice:** `005-WAVE2-CREATE-HAPPY` (T630–T632) per the Wave 2 dependency graph. CREATE-EDGES, AUDIT, METRICS, POLISH follow.
