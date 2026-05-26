@@ -160,7 +160,7 @@ class FakeMarker {
 
 class ConfigurableContextGuard implements CanActivate {
   public tenantId: string = TENANT_A;
-  public storeId: string = STORE_A_X;
+  public storeId: string | null = STORE_A_X;
   public userId: string = DEVICE_USER_ID;
 
   canActivate(ctx: ExecutionContext): boolean {
