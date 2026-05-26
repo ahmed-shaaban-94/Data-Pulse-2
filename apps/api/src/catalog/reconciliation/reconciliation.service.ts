@@ -70,6 +70,10 @@ import type { Pool } from "pg";
 import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../../audit/audit-job.enqueuer";
 import { PG_POOL } from "../../auth/auth.module";
 import { recordUnknownItemResolved } from "../../observability/metrics/api.metrics";
 
@@ -124,9 +128,51 @@ class AliasConflictSentinel extends Error {
   }
 }
 
+/** Rejection reasons that emit `unknown_item.reconciliation_conflict_rejected`. */
+type RejectionReason = "alias_conflict" | "target_unavailable" | "already_reconciled";
+
+/** Subject for conflict-rejection audit events (FR-082). */
+const RECONCILIATION_CONFLICT_REJECTED = "unknown_item.reconciliation_conflict_rejected";
+
 @Injectable()
 export class ReconciliationService {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    @Inject(AUDIT_JOB_ENQUEUER) private readonly auditEnqueuer: AuditJobEnqueuer,
+  ) {}
+
+  /**
+   * Emit a `reconciliation_conflict_rejected` audit event for a 4xx rejection.
+   *
+   * T645 / FR-082: the AuditEmitterInterceptor only fires on the success
+   * (tap.next) path — a thrown 4xx never reaches it. So rejection events are
+   * emitted explicitly here, AFTER the transaction has resolved/rolled back
+   * (so the audit row is never itself rolled back). The discriminating
+   * `reason` lands in `metadata` (PII-safe — only the enum reason, no row data).
+   * Best-effort: a failed enqueue must not change the caller's HTTP outcome.
+   */
+  private async emitConflictRejection(
+    reason: RejectionReason,
+    ctx: {
+      readonly tenantId: string;
+      readonly storeId: string | null;
+      readonly actorUserId: string;
+    },
+  ): Promise<void> {
+    await this.auditEnqueuer
+      .enqueue({
+        actor_user_id: ctx.actorUserId,
+        actor_label: null,
+        tenant_id: ctx.tenantId,
+        store_id: ctx.storeId,
+        action: RECONCILIATION_CONFLICT_REJECTED,
+        target_type: null,
+        target_id: null,
+        request_id: null,
+        metadata: { reason },
+      })
+      .catch(() => undefined);
+  }
 
   /**
    * Link a pending unknown item to an existing tenant product.
@@ -331,6 +377,19 @@ export class ReconciliationService {
     if (result.kind === "ok") {
       // FR-081: increment the resolved counter on successful link.
       recordUnknownItemResolved({ action: "linked" });
+    } else if (
+      result.kind === "alias_conflict" ||
+      result.kind === "target_unavailable" ||
+      result.kind === "already_reconciled"
+    ) {
+      // T645 / FR-082: emit the rejection audit event after the transaction
+      // has resolved. not_found is intentionally excluded — a non-disclosing
+      // 404 must not confirm the item's existence via an audit row.
+      await this.emitConflictRejection(result.kind, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+      });
     }
 
     return result;
@@ -566,6 +625,19 @@ export class ReconciliationService {
     if (result.kind === "ok") {
       // FR-081: increment the resolved counter on successful create.
       recordUnknownItemResolved({ action: "created" });
+    } else if (
+      result.kind === "alias_conflict" ||
+      result.kind === "already_reconciled"
+    ) {
+      // T645 / FR-082: emit the rejection audit event after the transaction
+      // has resolved/rolled back. not_found excluded (non-disclosing 404).
+      // The create path has no target_unavailable kind (no retired-product
+      // check — it creates a brand-new product).
+      await this.emitConflictRejection(result.kind, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+      });
     }
 
     return result;
