@@ -64,17 +64,20 @@
 import {
   Inject,
   Injectable,
+  Optional,
 } from "@nestjs/common";
 import type { Pool } from "pg";
 
 import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
+import type { Logger } from "@data-pulse-2/shared";
 
 import {
   AUDIT_JOB_ENQUEUER,
   type AuditJobEnqueuer,
 } from "../../audit/audit-job.enqueuer";
 import { PG_POOL } from "../../auth/auth.module";
+import { ROOT_LOGGER } from "../../common/logging.interceptor";
 import { recordUnknownItemResolved } from "../../observability/metrics/api.metrics";
 
 // Re-export the common row shape so the controller does not need a separate
@@ -139,6 +142,7 @@ export class ReconciliationService {
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
     @Inject(AUDIT_JOB_ENQUEUER) private readonly auditEnqueuer: AuditJobEnqueuer,
+    @Optional() @Inject(ROOT_LOGGER) private readonly logger?: Logger,
   ) {}
 
   /**
@@ -171,7 +175,15 @@ export class ReconciliationService {
         request_id: null,
         metadata: { reason },
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        // Best-effort: a failed audit enqueue must not change the caller's
+        // HTTP outcome, but it must not be silent either — log so the
+        // dropped rejection event is observable (no PII; only the reason).
+        this.logger?.error(
+          { err, action: RECONCILIATION_CONFLICT_REJECTED, reason },
+          "ReconciliationService: conflict-rejection audit enqueue failed",
+        );
+      });
   }
 
   /**
@@ -615,11 +627,15 @@ export class ReconciliationService {
       // Sentinel thrown from the alias INSERT catch to force ROLLBACK
       // of the prior tenant_products INSERT (FR-062 atomicity). Map
       // back to the discriminated union AFTER the transaction has
-      // already rolled back.
+      // already rolled back. Assign `result` (rather than returning here)
+      // so control falls through to the post-transaction rejection-audit
+      // block below — otherwise create-path alias_conflict would skip the
+      // unknown_item.reconciliation_conflict_rejected emission (T645/FR-082).
       if (err instanceof AliasConflictSentinel) {
-        return { kind: "alias_conflict" };
+        result = { kind: "alias_conflict" };
+      } else {
+        throw err;
       }
-      throw err;
     }
 
     if (result.kind === "ok") {

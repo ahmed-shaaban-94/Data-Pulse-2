@@ -50,16 +50,30 @@ import {
   seedCatalogIsolationFixture,
   TENANT_A,
   STORE_A_X,
+  PRODUCT_A_ACTIVE,
 } from "../../__support__/isolation-harness";
 
 const UNK_T642_CREATE = "0a000000-0000-7000-8000-00000642a001";
 const UNK_T642_CREATE_CORR = "0a000000-0000-7000-8000-000006420c01";
 const T642_BARCODE = "T642-CREATE-AUDIT-001";
+
+// alias_conflict rejection fixture: store-scoped alias + item sharing it.
+const UNK_T642_CONFLICT = "0a000000-0000-7000-8000-00000642a002";
+const UNK_T642_CONFLICT_CORR = "0a000000-0000-7000-8000-000006420c02";
+const T642_CONFLICT_BARCODE = "T642-CONFLICT-001";
+const ALIAS_T642_SCOPED = "0a000000-0000-7000-8000-000006420aa1";
+
+// already_reconciled rejection fixture: pre-resolved item.
+const UNK_T642_RESOLVED = "0a000000-0000-7000-8000-00000642a003";
+const UNK_T642_RESOLVED_CORR = "0a000000-0000-7000-8000-000006420c03";
+const T642_RESOLVED_BARCODE = "T642-RESOLVED-001";
+
 const TENANT_A_ADMIN_USER = "0a000000-0000-7000-8000-000006420001";
 
 const CREATE_URL = (id: string) =>
   `/api/v1/catalog/unknown-items/${id}/create-product`;
 const CREATE_BODY = { name: "Widget T642", tax_category: "standard" };
+const REJECTION_ACTION = "unknown_item.reconciliation_conflict_rejected";
 
 class SpyAuditEnqueuer implements AuditJobEnqueuer {
   public calls: AuditJobPayload[] = [];
@@ -126,6 +140,46 @@ beforeAll(async () => {
      VALUES ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5)
      ON CONFLICT DO NOTHING`,
     [UNK_T642_CREATE, TENANT_A, STORE_A_X, T642_BARCODE, UNK_T642_CREATE_CORR],
+  );
+
+  // Store-scoped alias for the create-path alias_conflict rejection case.
+  await env.admin.query(
+    `INSERT INTO product_aliases
+       (id, tenant_id, product_id, identifier_type, value,
+        source_system, store_id, created_by)
+     VALUES ($1, $2, $3, 'barcode', $4, NULL, $5, $6)
+     ON CONFLICT DO NOTHING`,
+    [
+      ALIAS_T642_SCOPED, TENANT_A, PRODUCT_A_ACTIVE,
+      T642_CONFLICT_BARCODE, STORE_A_X, TENANT_A_ADMIN_USER,
+    ],
+  );
+
+  // Pending item sharing the conflicting barcode (create -> alias_conflict).
+  await env.admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value,
+        source_system, resolution_status, correlation_id)
+     VALUES ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5)
+     ON CONFLICT DO NOTHING`,
+    [UNK_T642_CONFLICT, TENANT_A, STORE_A_X, T642_CONFLICT_BARCODE, UNK_T642_CONFLICT_CORR],
+  );
+
+  // Pre-resolved item (create -> already_reconciled). Resolved fields must be
+  // consistent per unknown_items_resolved_fields_consistent +
+  // unknown_items_linked_product_present (0007_catalog.sql:414-425).
+  await env.admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value, source_system,
+        resolution_status, resolution_action, resolved_at, resolved_by,
+        resolved_product_id, correlation_id)
+     VALUES ($1, $2, $3, 'barcode', $4, NULL,
+             'resolved', 'created', now(), $5, $6, $7)
+     ON CONFLICT DO NOTHING`,
+    [
+      UNK_T642_RESOLVED, TENANT_A, STORE_A_X, T642_RESOLVED_BARCODE,
+      TENANT_A_ADMIN_USER, PRODUCT_A_ACTIVE, UNK_T642_RESOLVED_CORR,
+    ],
   );
 
   const localEnv = env;
@@ -238,6 +292,52 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
         (c) => c.action === "catalog.product.create",
       );
       expect(productCreateEvents).toHaveLength(0);
+    },
+  );
+
+  it(
+    "create alias_conflict emits reconciliation_conflict_rejected{reason=alias_conflict}",
+    async () => {
+      if (dockerSkipped) return;
+
+      const res = await http()
+        .post(CREATE_URL(UNK_T642_CONFLICT))
+        .send({ name: "Widget T642C", tax_category: "standard" });
+      expect(res.status).toBe(409);
+      expect(res.body?.error?.code).toBe("alias_conflict");
+
+      await drainMicrotasks();
+
+      const rejections = auditSpy.calls.filter(
+        (c) => c.action === REJECTION_ACTION,
+      );
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0]!.metadata).toMatchObject({ reason: "alias_conflict" });
+      expect(rejections[0]!.tenant_id).toBe(TENANT_A);
+      expect(rejections[0]!.actor_user_id).toBe(TENANT_A_ADMIN_USER);
+    },
+  );
+
+  it(
+    "create already_reconciled emits reconciliation_conflict_rejected{reason=already_reconciled}",
+    async () => {
+      if (dockerSkipped) return;
+
+      const res = await http()
+        .post(CREATE_URL(UNK_T642_RESOLVED))
+        .send({ name: "Widget T642R", tax_category: "standard" });
+      expect(res.status).toBe(409);
+      expect(res.body?.error?.code).toBe("already_reconciled");
+
+      await drainMicrotasks();
+
+      const rejections = auditSpy.calls.filter(
+        (c) => c.action === REJECTION_ACTION,
+      );
+      expect(rejections).toHaveLength(1);
+      expect(rejections[0]!.metadata).toMatchObject({
+        reason: "already_reconciled",
+      });
     },
   );
 });

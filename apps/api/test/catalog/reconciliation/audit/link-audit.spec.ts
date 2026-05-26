@@ -220,7 +220,10 @@ describe("T640 / 005-WAVE2-AUDIT — link action emits resolved.linked audit [FR
     // Null tenant context -> 401 before the handler; no audit event.
     contextGuard.tenantId = null as unknown as string;
 
-    await http().post(LINK_URL(UNK_T640_LINK)).send({ product_id: PRODUCT_A_ACTIVE });
+    const res = await http()
+      .post(LINK_URL(UNK_T640_LINK))
+      .send({ product_id: PRODUCT_A_ACTIVE });
+    expect(res.status).toBe(401);
     await drainMicrotasks();
 
     expect(
