@@ -785,10 +785,25 @@ slices:
   - id: 005-WAVE1-METRICS
     task_ids: [T552, T553]
     type: test
-    status: proposed
+    # T553 (captured_total + dismissed_total counter increments) shipped.
+    # T552-mismatch-case (the describe.skip block in
+    # apps/api/test/catalog/unknown-items/audit/metrics.spec.ts) was left
+    # skipped because the integration harness for the mismatch path has been
+    # latently broken since PR #339 merged with red CI on the
+    # retry-mismatch.spec.ts suite.  Three fix-up attempts were documented in
+    # the PR #349 commit history and all were reverted to keep the branch
+    # green; the correct resolution requires a dedicated harness refactor
+    # tracked in the follow-up slice 005-WAVE1-METRICS-MISMATCH-FOLLOWUP.
+    status: merged
+    partial: true
+    deferred_tasks: [T552-mismatch-case]   # describe.skip in metrics.spec.ts; harness refactor needed — see 005-WAVE1-METRICS-MISMATCH-FOLLOWUP
+    merged_in_pr: 349
+    merged_at_commit: 3e915b76507ad0e9b1733e1d3ceff74b8b6f3e2c
+    merged_at_date: 2026-05-26
     approval_required: false
     depends_on: []   # CAPTURE-HAPPY via PR #317, IDEMP-MISMATCH via PR #339, DISMISS via PR #341 (1ff755f) — all three predecessors cleared
     blocks: []
+    previously_blocked: []   # blocks was already [] at authoring time; preserved for audit symmetry with AUDIT slice
     agent: sonnet-test
     allowed_files:
       - apps/api/src/catalog/unknown-items/unknown-items.service.ts   # add counter-increment calls if needed
@@ -803,6 +818,55 @@ slices:
     parallel_safety: unsafe   # touches service file
     branch_template: "test/005-wave1-metrics"
 
+  # ===== METRICS mismatch-case harness follow-up ============================
+  # Context:
+  #   (1) Open question: is the mismatch path ACTUALLY broken in production, or
+  #       is it only the test harness that is wrong?  PR #349 commit history
+  #       shows the interceptor raises a ConflictException that the harness
+  #       Supertest client sees as a 409, but the spec expects the
+  #       IdempotencyMismatchFilter to catch that exception and re-emit metrics
+  #       BEFORE the 409 response.  It is unclear whether the filter fires
+  #       in the Supertest context or whether the harness wiring omits it.
+  #   (2) Three fix-up attempts in PR #349 (commits b8a9dd4, 3771569, c15f669):
+  #       all three were reverted or narrowed because they either broke the
+  #       broader test suite (interceptor change attempt), moved the skip without
+  #       fixing the underlying harness wiring (second attempt), or only restored
+  #       branch coverage via a unit spec without confirming the integration
+  #       assertion (third attempt — the IdempotencyMismatchFilter unit spec in
+  #       idempotency-mismatch.filter.unit.spec.ts).
+  #   (3) Two valid resolution paths for the follow-up:
+  #       Path A — fix the integration harness so the filter IS applied in the
+  #         Supertest context (likely requires adjusting how the test app module
+  #         is bootstrapped or ensuring @UseFilters is wired in the test module).
+  #       Path B — verify empirically that production behavior is correct (filter
+  #         does fire on a real app) and then reclassify the skip as a known
+  #         harness limitation with a clear comment, rather than a production bug.
+  #   (4) The follow-up's job: pick and execute one of the two paths, flip the
+  #       describe.skip to describe.only or remove it, and ensure both T532 and
+  #       T552-mismatch assertions pass GREEN under Docker/Testcontainers.
+
+  - id: 005-WAVE1-METRICS-MISMATCH-FOLLOWUP
+    task_ids: []
+    type: fix
+    status: proposed
+    approval_required: false
+    depends_on: []
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/audit/metrics.spec.ts
+      - apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts
+      - apps/api/src/idempotency/idempotency.interceptor.ts
+      - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts
+    validation:
+      command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics" "test/catalog/unknown-items/idempotency/retry-mismatch"
+      expected: GREEN — T532 and T552-mismatch both pass; production behavior either confirmed correct or fixed
+      docker_required: true
+    stop: []
+    report_fields: [changed_files, validation_results, forbidden_path_check, harness_decision, production_behavior_verification]
+    parallel_safety: unsafe
+    branch_template: "fix/005-wave1-metrics-mismatch-followup"
+
   # ===== Phase 6: Polish ====================================================
 
   - id: 005-WAVE1-POLISH
@@ -810,9 +874,8 @@ slices:
     type: chore
     status: proposed
     approval_required: false
-    depends_on:
-      - 005-WAVE1-METRICS        # last remaining blocker; IDEMP-WIRE/DISMISS/IDEMP-MISMATCH/AUDIT all merged
-    # Previously depended on: IDEMP-WIRE (PR #336), DISMISS (PR #341),
+    depends_on: []   # METRICS cleared by PR #349 (merge commit 3e915b7, 2026-05-26); IDEMP-WIRE/DISMISS/IDEMP-MISMATCH/AUDIT all merged previously
+    # Previously depended on: 005-WAVE1-METRICS (PR #349), IDEMP-WIRE (PR #336), DISMISS (PR #341),
     # IDEMP-MISMATCH (PR #339), AUDIT (PR #344 partial) — all merged.
     blocks: []
     agent: sonnet-test
