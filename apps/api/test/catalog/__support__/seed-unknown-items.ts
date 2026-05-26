@@ -1,5 +1,6 @@
 /**
  * T506 — 005 `unknown_items` isolation-fixture extension.
+ * T610/T611 additions — alias-conflict fixture helpers (005-WAVE2-CONFLICT).
  *
  * Purpose
  * -------
@@ -57,6 +58,8 @@ import {
   STORE_A_Y,
   STORE_B_X,
   STORE_B_Y,
+  PRODUCT_A_ACTIVE,
+  ACTOR_A,
   type SeedableEnv,
 } from "./isolation-harness";
 
@@ -254,4 +257,143 @@ export async function seedUnknownItemsFixture(
   );
 
   return UNKNOWN_ITEMS_FIXTURE_IDS;
+}
+
+// ============================================================================
+// T610 / T611 — Alias-conflict fixture (005-WAVE2-CONFLICT)
+// ============================================================================
+//
+// These IDs and helpers are exclusively for the alias-conflict safety-floor
+// specs. They are disjoint from the T506 Wave 1 fixture above.
+//
+// UUIDv7-shaped literals; `t610` and `t611` mnemonics (hex-safe: all a-f
+// digits). The memory rule (feedback_uuid_hex_literals) prohibits
+// non-hex mnemonic prefix bytes — `t` is dropped; numerals are decimal.
+
+// ----------------------------------------------------------------------------
+// T610 conflict items — two pending unknown items in TENANT_A, both with
+// identifier_type='barcode', value='T340-A-BAR-001', which is the same
+// value as ALIAS_A_BARCODE in isolation-harness.ts (product_aliases row
+// bound to PRODUCT_A_ACTIVE, tenant-wide, store_id=NULL). Linking either
+// of these items to PRODUCT_A_ACTIVE (or any product) triggers a 23505
+// unique-violation on the (tenant_id, identifier_type, value, store_id)
+// partial index, producing 409 alias_conflict per FR-040.
+// ----------------------------------------------------------------------------
+
+/** Pending unknown item U1 in TENANT_A / STORE_A_X — barcode 'T340-A-BAR-001'. */
+export const UNK_CONFLICT_A_X_U1 = "0a000000-0000-7000-8000-00000610c001";
+/** Pending unknown item U2 in TENANT_A / STORE_A_Y — barcode 'T340-A-BAR-001' (identifier symmetry). */
+export const UNK_CONFLICT_A_Y_U2 = "0a000000-0000-7000-8000-00000610c002";
+/** Correlation IDs for the conflict items. */
+export const UNK_CONFLICT_A_X_U1_CORR = "0a000000-0000-7000-8000-000006100c01";
+export const UNK_CONFLICT_A_Y_U2_CORR = "0a000000-0000-7000-8000-000006100c02";
+/** Shared barcode value that collides with ALIAS_A_BARCODE from isolation-harness. */
+export const CONFLICT_BARCODE_VALUE = "T340-A-BAR-001";
+
+// ----------------------------------------------------------------------------
+// T611 store-scoped conflict items — TENANT_A, barcode 'T611-STORE-BAR-Y01'
+// bound to PRODUCT_A_ACTIVE at store STORE_A_X only (store-scoped alias).
+// Linking an item from STORE_A_X produces 409; linking from STORE_A_Y
+// should succeed (different store scope, no collision).
+// ----------------------------------------------------------------------------
+
+/** Store-scoped product_aliases row ID — for T611 setup only. */
+export const ALIAS_CONFLICT_A_X_SCOPED = "0a000000-0000-7000-8000-000006110a01";
+/** Barcode value for the T611 store-scoped alias. */
+export const CONFLICT_STORE_BARCODE_VALUE = "T611-STORE-BAR-Y01";
+/** Pending unknown item in TENANT_A / STORE_A_X — barcode 'T611-STORE-BAR-Y01' (CONFLICT). */
+export const UNK_CONFLICT_STORE_X = "0a000000-0000-7000-8000-000006110c01";
+/** Pending unknown item in TENANT_A / STORE_A_Y — barcode 'T611-STORE-BAR-Y01' (should succeed). */
+export const UNK_CONFLICT_STORE_Y = "0a000000-0000-7000-8000-000006110c02";
+/** Correlation IDs for T611 items. */
+export const UNK_CONFLICT_STORE_X_CORR = "0a000000-0000-7000-8000-00000611c001";
+export const UNK_CONFLICT_STORE_Y_CORR = "0a000000-0000-7000-8000-00000611c002";
+
+/**
+ * Seed fixture for T610 (FR-040, FR-041, FR-042):
+ *
+ * Inserts two pending unknown_items rows in TENANT_A whose
+ * (identifier_type='barcode', value='T340-A-BAR-001') exactly matches the
+ * tenant-wide product_aliases row ALIAS_A_BARCODE (seeded by the 003
+ * isolation harness against PRODUCT_A_ACTIVE, store_id=NULL). Attempting
+ * to link either item will trigger the unique-constraint on the
+ * product_aliases table, surfacing as 409 alias_conflict.
+ *
+ * Preconditions:
+ *   - applyAllUpAndCreateAppRole done
+ *   - seedCatalogIsolationFixture done (seeds the conflicting alias row)
+ *
+ * Idempotent via ON CONFLICT DO NOTHING.
+ */
+export async function seedAliasConflictFixture(env: SeedableEnv): Promise<void> {
+  const { admin }: { admin: Pool } = env;
+
+  await admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value,
+        source_system, resolution_status, correlation_id)
+     VALUES
+       ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5),
+       ($6, $2, $7, 'barcode', $4, NULL, 'pending', $8)
+     ON CONFLICT DO NOTHING`,
+    [
+      UNK_CONFLICT_A_X_U1, TENANT_A, STORE_A_X, CONFLICT_BARCODE_VALUE, UNK_CONFLICT_A_X_U1_CORR,
+      UNK_CONFLICT_A_Y_U2, STORE_A_Y, UNK_CONFLICT_A_Y_U2_CORR,
+    ],
+  );
+}
+
+/**
+ * Seed fixture for T611 (FR-040 store-scoped variant):
+ *
+ * Inserts a store-scoped product_aliases row binding barcode
+ * 'T611-STORE-BAR-Y01' to PRODUCT_A_ACTIVE at STORE_A_X (TENANT_A).
+ * Then inserts two pending unknown_items:
+ *   - UNK_CONFLICT_STORE_X in STORE_A_X — conflicts with the store-scoped alias
+ *   - UNK_CONFLICT_STORE_Y in STORE_A_Y — no alias at that store; should succeed
+ *
+ * The product_aliases_store_scope_consistency check allows
+ * (store_id IS NOT NULL, identifier_type='barcode') — per 0007_catalog.sql.
+ * source_system must be NULL for barcode rows per
+ * product_aliases_source_system_required.
+ *
+ * Preconditions:
+ *   - applyAllUpAndCreateAppRole done
+ *   - seedCatalogIsolationFixture done (seeds PRODUCT_A_ACTIVE, TENANT_A,
+ *     STORE_A_X, STORE_A_Y, ACTOR_A)
+ *
+ * Idempotent via ON CONFLICT DO NOTHING.
+ */
+export async function seedStoreScopedConflictFixture(env: SeedableEnv): Promise<void> {
+  const { admin }: { admin: Pool } = env;
+
+  // Store-scoped alias: barcode 'T611-STORE-BAR-Y01' bound to PRODUCT_A_ACTIVE
+  // at STORE_A_X, tenant_id=TENANT_A. Triggers alias_conflict only when a
+  // link attempt specifies the same (identifier_type, value, store_id=STORE_A_X).
+  await admin.query(
+    `INSERT INTO product_aliases
+       (id, tenant_id, product_id, identifier_type, value,
+        source_system, store_id, created_by)
+     VALUES ($1, $2, $3, 'barcode', $4, NULL, $5, $6)
+     ON CONFLICT DO NOTHING`,
+    [
+      ALIAS_CONFLICT_A_X_SCOPED, TENANT_A, PRODUCT_A_ACTIVE,
+      CONFLICT_STORE_BARCODE_VALUE, STORE_A_X, ACTOR_A,
+    ],
+  );
+
+  // Two pending unknown items with the same barcode value but different stores
+  await admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value,
+        source_system, resolution_status, correlation_id)
+     VALUES
+       ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5),
+       ($6, $2, $7, 'barcode', $4, NULL, 'pending', $8)
+     ON CONFLICT DO NOTHING`,
+    [
+      UNK_CONFLICT_STORE_X, TENANT_A, STORE_A_X, CONFLICT_STORE_BARCODE_VALUE, UNK_CONFLICT_STORE_X_CORR,
+      UNK_CONFLICT_STORE_Y, STORE_A_Y, UNK_CONFLICT_STORE_Y_CORR,
+    ],
+  );
 }
