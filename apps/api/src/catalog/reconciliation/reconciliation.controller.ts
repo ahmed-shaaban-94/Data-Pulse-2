@@ -55,6 +55,10 @@ import { z } from "zod";
 import { Auditable } from "../../audit/auditable.decorator";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import type { TenantContextRequest } from "../../context/types";
+import {
+  CreateProductFromUnknownItemRequestSchema,
+  type CreateProductFromUnknownItemRequestDto,
+} from "./dto/create-product-request.dto";
 import { ReconciliationService, type UnknownItemRow } from "./reconciliation.service";
 
 // ---------------------------------------------------------------------------
@@ -75,29 +79,9 @@ const LinkUnknownItemRequestSchema = z
 
 type LinkUnknownItemRequestDto = z.infer<typeof LinkUnknownItemRequestSchema>;
 
-/**
- * Zod schema for `tenantAdminCreateProductFromUnknownItem` request body.
- * Mirrors OpenAPI `CreateProductFromUnknownItemRequest`:
- *   required: [name, tax_category]
- *   additionalProperties: false  → .strict()
- *
- * The .strict() is what enforces Constitution §III backend authority on
- * tenant_id: a request that smuggles `tenantId: "<attacker>"` is rejected
- * with 400 `validation_failure` instead of silently stripping. The
- * persisted `tenant_products.tenant_id` is always the resolved principal
- * tenant from `request.context`.
- */
-const CreateProductFromUnknownItemRequestSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200),
-    tax_category: z.string().trim().min(1).max(64),
-    category_id: z.string().uuid().nullable().optional(),
-  })
-  .strict();
-
-type CreateProductFromUnknownItemRequestDto = z.infer<
-  typeof CreateProductFromUnknownItemRequestSchema
->;
+// The CreateProductFromUnknownItemRequest schema lives in
+// ./dto/create-product-request.dto.ts (T636) so the request contract has a
+// single named home. Imported above.
 
 // ---------------------------------------------------------------------------
 // Wire shape (snake_case, matches OpenAPI UnknownItem schema)
