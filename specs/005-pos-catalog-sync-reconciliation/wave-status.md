@@ -206,3 +206,42 @@ Stop before commit.
 Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
 Spec: specs/005-pos-catalog-sync-reconciliation
 ```
+
+---
+
+## Wave 2 progress
+
+### 2026-05-26 — LINK-HAPPY landed with cross-slice + RLS-quality fix-ups
+
+**Slice state:** `005-WAVE2-LINK-HAPPY` complete. CONFLICT tests remain RED until LINK-EDGES ships — this is the documented expected-red per the slice contract, not the PR #339 antipattern (red is intended, named, slice-contract-anticipated).
+
+**PRs merged (this closeout covers all three):**
+
+- **#355** `feat/005-wave2-link-happy` — implemented `ReconciliationService.linkUnknownItem` (atomic alias INSERT + unknown_items UPDATE under `FOR UPDATE` lock, discriminated-union return), `ReconciliationController` (`POST /api/v1/catalog/unknown-items/:id/link`, `@HttpCode(200)`, `@Auditable("unknown_item.resolved.linked")`, Zod `product_id` UUID validation), `ReconciliationModule` (skeleton, NOT yet wired into `app.module.ts` — same gap as `UnknownItemsModule`), and `link-happy-path.spec.ts` (4 sub-cases + 1 it.todo for atomicity).
+- **#356** `fix/005-wave2-conflict-request-body-snake-case` — addressed cross-slice latent between PR #354 (CONFLICT tests authored with camelCase `productId`) and PR #353 (OpenAPI YAML committed snake_case). 3-line literal substitution across `alias-conflict.spec.ts` and `store-scoped-conflict.spec.ts`. No logic change.
+- **#357** `fix/005-wave2-link-happy-coderabbit-followup` — addressed CodeRabbit critical + major findings on PR #355:
+  - Critical: `reconciliation.service.ts:230-233` impossible-state silent `return { kind: "already_reconciled" }` after a successful alias INSERT could commit inconsistent state. Converted to thrown invariant; aligns code with the L196-199 comment already documenting this branch as a logic error.
+  - Major: `link-happy-path.spec.ts:182` was binding `PG_POOL` to `localEnv.admin` (superuser, bypasses RLS). Swapped to `localEnv.app` (non-superuser `app_test` role) so the controller/service path exercises RLS for real — per Standing Rules §6.
+
+**Deferred / declined CodeRabbit findings on #355 (not addressed in #357, tracked here):**
+
+- `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)` on the controller — deferred to a future module-wire slice. `ReconciliationModule` isn't yet imported by `app.module.ts`, so the route isn't actually serving traffic; guard wiring belongs in the slice that mounts the module.
+- Zod schema at the service-layer boundary — declined. Controller already enforces Zod `product_id` UUID validation at the API boundary; per `validate-at-boundaries` convention, internal services trust their callers.
+
+**Cross-cutting RLS-superuser audit (finding):**
+
+A grep of the 005 catalog test suite found that **10 specs** bind `PG_POOL` to `localEnv.admin` (superuser, RLS-bypassed):
+
+- Documented intentional admin use (1): `dismiss-audit.spec.ts:162-164` (explicit comment isolating audit assertion from orthogonal RLS plumbing concern).
+- Undocumented admin use (9):
+  - Plausibly orthogonal-concern (7): `capture-latency`, `metrics`, `capture-audit`, `cross-device-keys`, `ttl-expiry`, `retry-mismatch`, `retry-identical`, `post-resolved` — these assert audit/idempotency/perf mechanics where RLS is a side concern.
+  - Warrant pool swap (2): `capture-happy-path.spec.ts:251`, `capture-resolves-to-alias.spec.ts:220` — exercise the data path where RLS should be exercised. Same false-green risk CodeRabbit flagged on LINK-HAPPY.
+
+**Action:** A new slice `005-WAVE2-RLS-TEST-AUDIT` is added to `execution-map.yaml` to track (a) adding justification comments to the 7 orthogonal-concern admin-bound specs, and (b) swapping `localEnv.admin` -> `localEnv.app` on the 2 data-path specs with CI verification. Out of scope for LINK-HAPPY; not urgent (the specs have been on main without surfacing regressions); records the pattern so future slices apply it correctly.
+
+**Next slice:** `005-WAVE2-LINK-EDGES` (T623–T626) — implements link-path edge cases that will flip CONFLICT tests fully green.
+
+**Wave 1 deferred items still outstanding (separate tracking):**
+- `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`
+- T550 / T551 audit-coverage gaps
+- auth-guard wiring across Wave 1 controllers

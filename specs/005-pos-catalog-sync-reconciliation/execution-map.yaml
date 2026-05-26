@@ -998,7 +998,22 @@ slices:
   - id: 005-WAVE2-LINK-HAPPY
     task_ids: [T620, T621, T622]
     type: feature
-    status: proposed
+    status: merged
+    merged_in_pr: 355
+    merged_at_commit: f923fda94611120f6c907623e2755e2c5b0bf79c
+    merged_at_date: 2026-05-26
+    # Follow-up PRs landed on top of #355 immediately after merge:
+    #   - PR #356 (fix/005-wave2-conflict-request-body-snake-case, merge 89aeb16, 2026-05-26)
+    #     cross-slice snake_case fix on CONFLICT spec request bodies (latent
+    #     between PR #354 CONFLICT and PR #353 OpenAPI YAML). Touched only
+    #     test files owned by 005-WAVE2-CONFLICT; LINK-HAPPY allowed_files
+    #     unaffected.
+    #   - PR #357 (fix/005-wave2-link-happy-coderabbit-followup, merge cf55ef4, 2026-05-26)
+    #     CodeRabbit critical (impossible-state silent return -> throw) +
+    #     major (link-happy-path.spec.ts PG_POOL swap admin -> app for RLS-active
+    #     test path). Same allowed_files as this slice.
+    # Cross-cutting RLS-superuser audit finding surfaced by CodeRabbit's
+    # major; tracked in new slice 005-WAVE2-RLS-TEST-AUDIT below.
     approval_required: false
     depends_on:
       - 005-WAVE2-CONFLICT
@@ -1025,6 +1040,59 @@ slices:
       - command: pnpm --filter @data-pulse-2/api test "reconciliation/conflict"
         expected: RED still (conflict harness T610/T611 fail until GREEN impl lands); no new import errors
         docker_required: true
+
+  # ===== Wave 2 cross-cutting: RLS-test-audit (surfaced by CodeRabbit on #355)
+  # Cross-cutting test-quality slice. CodeRabbit flagged link-happy-path.spec.ts
+  # for binding PG_POOL to localEnv.admin (superuser, bypasses RLS), masking
+  # potential RLS authorization regressions. PR #357 fixed that one file; a
+  # grep of the 005 catalog test suite found 9 more specs with the same
+  # pattern (7 plausibly orthogonal-concern, 2 data-path warranting swap).
+  # See wave-status.md "Wave 2 progress" entry 2026-05-26 for the full audit.
+
+  - id: 005-WAVE2-RLS-TEST-AUDIT
+    task_ids: []   # not in tasks.md — surfaced by CodeRabbit review on PR #355
+    type: fix
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 005-WAVE2-LINK-HAPPY
+    blocks: []
+    agent: sonnet-test
+    parallel_safety: safe   # 10 disjoint test spec files; no shared service/controller edits
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/capture/capture-happy-path.spec.ts        # data-path: swap admin -> app
+      - apps/api/test/catalog/unknown-items/capture/capture-resolves-to-alias.spec.ts # data-path: swap admin -> app
+      - apps/api/test/catalog/unknown-items/perf/capture-latency.spec.ts              # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/audit/metrics.spec.ts                     # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/audit/capture-audit.spec.ts               # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/idempotency/cross-device-keys.spec.ts     # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/idempotency/ttl-expiry.spec.ts            # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts        # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/idempotency/retry-identical.spec.ts       # orthogonal: add justification comment
+      - apps/api/test/catalog/unknown-items/idempotency/post-resolved.spec.ts         # orthogonal: add justification comment
+    forbidden_files:
+      - apps/api/src/**
+      - packages/contracts/openapi/**
+      - packages/db/**
+      - specs/003-catalog-foundation/**
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/capture/capture-happy-path" "test/catalog/unknown-items/capture/capture-resolves-to-alias"
+        expected: GREEN — the two data-path specs still pass after swapping localEnv.admin -> localEnv.app; if any goes red, the surfaced RLS gap becomes a separate slice (escalate, do not paper over)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items"
+        expected: GREEN — full 005 catalog suite unchanged; the 7 comment-only files compile and run
+        docker_required: true
+    stop:
+      - if any file outside allowed_files is modified
+      - if either data-path spec goes red after the pool swap (means the masked RLS gap is real — STOP and escalate, do not paper over)
+      - if any service/controller code is modified (this is a test-quality slice; production code stays untouched)
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - confirmation_no_unauthorized_git_ops
+      - rls_gap_findings   # if pool swap surfaces a real RLS hole, document it here
+    branch_template: "fix/005-wave2-rls-test-audit"
 
   - id: 005-WAVE2-LINK-EDGES
     task_ids: [T623, T624, T625, T626]
