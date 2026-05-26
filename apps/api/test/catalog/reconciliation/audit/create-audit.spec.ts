@@ -51,6 +51,7 @@ import {
   TENANT_A,
   STORE_A_X,
   PRODUCT_A_ACTIVE,
+  CATEGORY_A,
 } from "../../__support__/isolation-harness";
 
 const UNK_T642_CREATE = "0a000000-0000-7000-8000-00000642a001";
@@ -277,6 +278,29 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       expect(payload.tenant_id).toBe(TENANT_A);
       expect(payload.store_id).toBe(STORE_A_X);
       expect(payload.actor_user_id).toBe(TENANT_A_ADMIN_USER);
+    },
+  );
+
+  it(
+    "succeeds with a non-null category_id (category passthrough; ?? left branch)",
+    async () => {
+      if (dockerSkipped) return;
+
+      // Every other create test omits category_id, so the controller's
+      // `body.category_id ?? null` only ever takes the nullish (right) side.
+      // Sending a real CATEGORY_A FK exercises the present (left) side and
+      // confirms the category flows through to the new product.
+      const res = await http()
+        .post(CREATE_URL(UNK_T642_CREATE))
+        .send({ ...CREATE_BODY, category_id: CATEGORY_A });
+      expect(res.status).toBe(201);
+
+      await drainMicrotasks();
+
+      const createdEvents = auditSpy.calls.filter(
+        (c) => c.action === "unknown_item.resolved.created",
+      );
+      expect(createdEvents).toHaveLength(1);
     },
   );
 
