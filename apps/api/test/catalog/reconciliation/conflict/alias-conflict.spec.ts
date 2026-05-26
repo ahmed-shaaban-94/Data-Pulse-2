@@ -55,9 +55,20 @@ import {
   type ExecutionContext,
   type INestApplication,
 } from "@nestjs/common";
+import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
+import type { Pool } from "pg";
 import request from "supertest";
 
+import { AuditEmitterInterceptor } from "../../../../src/audit/audit-emitter.interceptor";
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../../../../src/audit/audit-job.enqueuer";
+import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
+import { PG_POOL } from "../../../../src/auth/auth.module";
+import { ReconciliationController } from "../../../../src/catalog/reconciliation/reconciliation.controller";
+import { ReconciliationService } from "../../../../src/catalog/reconciliation/reconciliation.service";
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import type { ResolvedContext } from "../../../../src/context/types";
 
@@ -89,6 +100,20 @@ const TENANT_B_ADMIN_USER = "0b000000-0000-7000-8000-000006100002";
 
 const LINK_URL = (id: string) => `/api/v1/catalog/unknown-items/${id}/link`;
 const LINK_BODY = { product_id: PRODUCT_A_ACTIVE };
+
+// ---------------------------------------------------------------------------
+// SpyAuditEnqueuer
+// ---------------------------------------------------------------------------
+
+class SpyAuditEnqueuer implements AuditJobEnqueuer {
+  public calls: AuditJobPayload[] = [];
+  async enqueue(payload: AuditJobPayload): Promise<void> {
+    this.calls.push(payload);
+  }
+  reset(): void {
+    this.calls = [];
+  }
+}
 
 // ---------------------------------------------------------------------------
 // ConfigurableContextGuard
@@ -123,6 +148,7 @@ class ConfigurableContextGuard implements CanActivate {
 let env: PgTestEnv | null = null;
 let app: INestApplication | null = null;
 let contextGuard: ConfigurableContextGuard;
+let auditSpy: SpyAuditEnqueuer;
 let dockerSkipped = false;
 
 beforeAll(async () => {
@@ -146,14 +172,28 @@ beforeAll(async () => {
   await seedCatalogIsolationFixture(env);
   await seedAliasConflictFixture(env);
 
+  // CONFLICT spec wiring: now that LINK-HAPPY + LINK-EDGES + the filter fix
+  // (PR #360 — exception filter honors user-supplied error.code per
+  // Constitution §IV) have landed on main, this spec mounts the real
+  // ReconciliationController so its alias_conflict assertions exercise the
+  // actual surface. PG_POOL bound to localEnv.app (RLS-active per PR #357
+  // audit pattern). The earlier "no controller exists" stub returned 404
+  // for every test — a contract violation that landed silently and was
+  // surfaced by the LINK-EDGES landing.
+  const localEnv = env;
   contextGuard = new ConfigurableContextGuard();
+  auditSpy = new SpyAuditEnqueuer();
+  const reflector = new Reflector();
+  const auditInterceptor = new AuditEmitterInterceptor(reflector, auditSpy);
 
   const moduleRef = await Test.createTestingModule({
-    // No ReconciliationController exists yet — this is a RED-only slice.
-    // All POST /api/v1/catalog/unknown-items/:id/link requests return 404
-    // (route not found) until WAVE2-LINK-HAPPY ships the controller.
-    controllers: [],
-    providers: [],
+    controllers: [ReconciliationController],
+    providers: [
+      { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
+      ReconciliationService,
+      { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
+      { provide: APP_INTERCEPTOR, useValue: auditInterceptor },
+    ],
   }).compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });

@@ -968,6 +968,18 @@ slices:
 
   # ===== Wave 2 Phase 3: US3 alias-conflict safety floor ====================
 
+  # NOTE (2026-05-26, PR #361): the two T610/T611 spec files originally
+  # authored under this slice hardcoded `controllers: [], providers: []`
+  # in their TestingModule (RED-by-design until LINK-HAPPY shipped a
+  # controller). After LINK-HAPPY (#355), LINK-EDGES (#359), and the
+  # exception filter fix (#360) landed, those specs remained RED purely
+  # because their TestingModule did not mount the controller — a
+  # module-wiring latent, not a src/ gap. PR #361 wires both specs to
+  # mount ReconciliationController + ReconciliationService + PG_POOL
+  # (localEnv.app) + AuditEmitterInterceptor; the validation contract
+  # below (`expected: RED`) is now stale. Treat as effectively GREEN
+  # post-#361; left as `proposed` to avoid inventing a non-existent
+  # absorbed-slice state. Will be observed-green by CI on PR #361.
   - id: 005-WAVE2-CONFLICT
     task_ids: [T610, T611]
     type: test
@@ -989,8 +1001,11 @@ slices:
       - packages/db/**
       - specs/003-catalog-foundation/**
     validation:
-      - command: pnpm --filter @data-pulse-2/api test "reconciliation/conflict"
-        expected: RED — tests run and fail predictably (no ReconciliationService yet); no unhandled exceptions or import errors
+      # NOTE: stale post-#361. Specs now mount ReconciliationController and
+      # are expected GREEN against the live LINK-HAPPY + LINK-EDGES surface.
+      - command: pnpm --filter `@data-pulse-2/api` test "reconciliation/conflict"
+        expected: GREEN — specs mount ReconciliationController/ReconciliationService and now validate live conflict behavior
+        docker_required: true
         docker_required: true
 
   # ===== Wave 2 Phase 4: US2 #1 link reconciliation =========================
@@ -1097,7 +1112,24 @@ slices:
   - id: 005-WAVE2-LINK-EDGES
     task_ids: [T623, T624, T625, T626]
     type: feature
-    status: proposed
+    status: merged
+    merged_in_pr: 359
+    merged_at_commit: 9d72ef3a7a0d54848321e98617ff0647bec27109
+    merged_at_date: 2026-05-26
+    # Follow-up PRs that ride on the LINK-EDGES landing:
+    #   - PR #360 (fix/exception-filter-code-passthrough, merge 48b9a8b, 2026-05-26)
+    #     Wave 1 cross-cutting filter contract restoration. GlobalExceptionFilter
+    #     was overwriting every HttpException's error.code with the status-derived
+    #     canonical code ("conflict" for all 409s) — Constitution §IV (OpenAPI
+    #     fine-grained codes are contract-of-record) violation. Unblocked the
+    #     4 LINK-EDGES test failures (CR error.code reading "conflict" instead
+    #     of fine-grained code) AND latent contract violations across the
+    #     idempotency + Wave 1 unknown-items surfaces. See wave-status.md
+    #     "2026-05-26 — LINK-EDGES landed" for full surface unblocked.
+    #   - PR #361 (docs/005-wave2-link-edges-closeout, this PR) —
+    #     closeout + CodeRabbit nits on LINK-EDGES docblocks + CONFLICT
+    #     spec module-wiring (T610/T611 specs now mount the controller,
+    #     flipping 005-WAVE2-CONFLICT from RED-by-design to GREEN).
     approval_required: false
     depends_on:
       - 005-WAVE2-LINK-HAPPY
