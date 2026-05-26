@@ -1,1 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" aria-labelledby="title desc" role="img" viewBox="0 0 96 96"><title id="title">Worker icon</title><desc id="desc">Background worker processing icon.</desc><rect width="96" height="96" fill="#ecfdf5" rx="20"/><circle cx="48" cy="48" r="24" fill="#0f766e"/><path stroke="#14b8a6" stroke-linecap="round" stroke-width="5" d="M48 20v10M48 66v10M20 48h10M66 48h10M28 28l7 7M61 61l7 7M68 28l-7 7M35 61l-7 7"/><path fill="#ccfbf1" d="M43 38 58 48 43 58z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-labelledby="t d">
+  <title id="t">Worker</title>
+  <desc id="d">Background worker gear rotating around an active core.</desc>
+  <defs>
+    <radialGradient id="wk-gear" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#F0CB6B"/>
+      <stop offset="0.5" stop-color="#C8A24A"/>
+      <stop offset="1" stop-color="#5A4310"/>
+    </radialGradient>
+    <radialGradient id="wk-core" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#A8F4FB"/>
+      <stop offset="0.6" stop-color="#22D6F6"/>
+      <stop offset="1" stop-color="#0E7A93"/>
+    </radialGradient>
+    <filter id="wk-sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.6" stdDeviation="1.4" flood-color="#0B0F18" flood-opacity="0.7"/>
+    </filter>
+  </defs>
+  <g filter="url(#wk-sh)">
+    <g transform-origin="24 24">
+      <animateTransform attributeName="transform" type="rotate" from="0 24 24" to="360 24 24" dur="12s" repeatCount="indefinite"/>
+      <circle cx="24" cy="24" r="14" fill="url(#wk-gear)"/>
+      <g fill="url(#wk-gear)">
+        <rect x="22" y="2" width="4" height="8" rx="1"/>
+        <rect x="22" y="38" width="4" height="8" rx="1"/>
+        <rect x="2" y="22" width="8" height="4" rx="1"/>
+        <rect x="38" y="22" width="8" height="4" rx="1"/>
+        <rect x="22" y="2" width="4" height="8" rx="1" transform="rotate(45 24 24)"/>
+        <rect x="22" y="2" width="4" height="8" rx="1" transform="rotate(-45 24 24)"/>
+        <rect x="22" y="38" width="4" height="8" rx="1" transform="rotate(45 24 24)"/>
+        <rect x="22" y="38" width="4" height="8" rx="1" transform="rotate(-45 24 24)"/>
+      </g>
+    </g>
+  </g>
+  <circle cx="24" cy="24" r="7" fill="#0B0F18"/>
+  <circle cx="24" cy="24" r="4" fill="url(#wk-core)">
+    <animate attributeName="r" values="3.4;4.6;3.4" dur="1.8s" repeatCount="indefinite"/>
+  </circle>
+</svg>

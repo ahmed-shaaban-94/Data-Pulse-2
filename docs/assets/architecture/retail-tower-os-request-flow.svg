@@ -1,93 +1,179 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 620" width="440" height="620" fill="none" font-family="system-ui, ui-sans-serif, sans-serif" font-size="12">
-  <title>Retail Tower OS — API Request Flow</title>
-  <desc>Request pipeline through AuthGuard, TenantContextGuard, RolesGuard, service layer, DB with RLS, audit log, and response with request id.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 700" width="520" height="700" role="img" aria-labelledby="t d" fill="none" font-family="system-ui, ui-sans-serif, sans-serif" font-size="12">
+  <title id="t">Retail Tower OS — Animated API Request Flow</title>
+  <desc id="d">Animated request pipeline: AuthGuard, TenantContextGuard, RolesGuard, service layer, RLS-enforced PostgreSQL, audit log, and uniform response envelope.</desc>
+  <defs>
+    <linearGradient id="rfbg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#0D1117"/>
+    </linearGradient>
+    <linearGradient id="rfstep" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1B2330"/>
+      <stop offset="1" stop-color="#101720"/>
+    </linearGradient>
+    <linearGradient id="rfhi" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rfgold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F0CB6B"/>
+      <stop offset="1" stop-color="#7A5A14"/>
+    </linearGradient>
+    <linearGradient id="rfcyan" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A8F4FB"/>
+      <stop offset="1" stop-color="#22D6F6"/>
+    </linearGradient>
+    <filter id="rfdrop" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <filter id="rfglow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <marker id="rfarr" markerWidth="10" markerHeight="10" refX="7" refY="3.5" orient="auto">
+      <path d="M0 0 L8 3.5 L0 7 z" fill="#22D6F6"/>
+    </marker>
+    <marker id="rfarr-dim" markerWidth="10" markerHeight="10" refX="7" refY="3.5" orient="auto">
+      <path d="M0 0 L8 3.5 L0 7 z" fill="#8B949E"/>
+    </marker>
+    <path id="rfm" d="M260 90 V120 M260 175 V200 M260 250 V275 M260 330 V355 M260 395 V420 M260 480 V505 M260 555 V580 M260 635 V655"/>
+    <path id="rfflow" d="M260 90 V655" />
+  </defs>
 
-  <!-- background -->
-  <rect width="440" height="620" fill="#0D1117"/>
+  <rect width="520" height="700" fill="url(#rfbg)"/>
 
   <!-- title -->
-  <text x="220" y="30" fill="#C8A24A" font-size="13" font-weight="700" text-anchor="middle" letter-spacing="0.5">API Request Pipeline</text>
-  <text x="220" y="48" fill="#8B949E" font-size="10" text-anchor="middle">apps/api · NestJS guard chain</text>
+  <text x="260" y="34" fill="#F0CB6B" font-size="15" font-weight="700" text-anchor="middle" letter-spacing="0.5">API Request Pipeline</text>
+  <text x="260" y="54" fill="#8B949E" font-size="10.5" text-anchor="middle">apps/api · NestJS guard chain · live request token highlighted</text>
 
-  <!-- step boxes -->
-  <!-- 1: incoming request -->
-  <rect x="60" y="68" width="320" height="52" rx="5" fill="#161B22" stroke="#22D6F6" stroke-width="1.5"/>
-  <text x="220" y="90" fill="#22D6F6" font-size="11" font-weight="600" text-anchor="middle">Incoming HTTP Request</text>
-  <text x="220" y="107" fill="#8B949E" font-size="9.5" text-anchor="middle">assign request id · helmet · cookies · body parse</text>
+  <!-- vertical track (background line) -->
+  <path d="M260 90 V655" stroke="#22D6F6" stroke-width="1" stroke-dasharray="3 5" opacity="0.3"/>
 
-  <!-- arrow 1→2 -->
-  <line x1="220" y1="120" x2="220" y2="140" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 1: Incoming -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="68" width="400" height="52" rx="6" fill="url(#rfstep)" stroke="#22D6F6" stroke-width="1.6"/>
+    <rect x="60" y="68" width="400" height="52" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="90" fill="#22D6F6" font-size="11" font-weight="700">1 · Incoming HTTP Request</text>
+  <text x="80" y="108" fill="#8B949E" font-size="10">assign request id · helmet · cookies · body parse</text>
 
-  <!-- 2: exception / validation envelope -->
-  <rect x="60" y="140" width="320" height="44" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
-  <text x="220" y="159" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">Validation + Exception Envelope</text>
-  <text x="220" y="175" fill="#8B949E" font-size="9.5" text-anchor="middle">Zod body validation · normalize error shape</text>
+  <line x1="260" y1="120" x2="260" y2="140" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 2→3 -->
-  <line x1="220" y1="184" x2="220" y2="204" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 2: Validation -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="140" width="400" height="48" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.3"/>
+    <rect x="60" y="140" width="400" height="48" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="161" fill="#E6EDF3" font-size="11" font-weight="700">2 · Validation + Exception Envelope</text>
+  <text x="80" y="178" fill="#8B949E" font-size="10">Zod body validation · uniform error shape</text>
 
-  <!-- 3: AuthGuard -->
-  <rect x="60" y="204" width="320" height="50" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
-  <text x="220" y="224" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">AuthGuard</text>
-  <text x="220" y="240" fill="#8B949E" font-size="9.5" text-anchor="middle">validate session token or bearer token</text>
-  <!-- DB lookup side note -->
-  <rect x="390" y="210" width="42" height="28" rx="3" fill="#1C2128" stroke="#30363D" stroke-width="1"/>
-  <text x="411" y="222" fill="#8B949E" font-size="8.5" text-anchor="middle">PG</text>
-  <text x="411" y="233" fill="#8B949E" font-size="8" text-anchor="middle">lookup</text>
-  <line x1="380" y1="224" x2="390" y2="224" stroke="#8B949E" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="260" y1="188" x2="260" y2="208" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 3→4 -->
-  <line x1="220" y1="254" x2="220" y2="274" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 3: AuthGuard -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="208" width="400" height="54" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.3"/>
+    <rect x="60" y="208" width="400" height="54" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="230" fill="#E6EDF3" font-size="11" font-weight="700">3 · AuthGuard</text>
+  <text x="80" y="247" fill="#8B949E" font-size="10">validate session token or bearer token · constant-time</text>
+  <g filter="url(#rfdrop)">
+    <rect x="470" y="216" width="42" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="0.8"/>
+    <text x="491" y="232" fill="#F0CB6B" font-size="9.5" text-anchor="middle" font-weight="700">PG</text>
+    <text x="491" y="246" fill="#8B949E" font-size="8.5" text-anchor="middle">lookup</text>
+  </g>
 
-  <!-- 4: TenantContextGuard -->
-  <rect x="60" y="274" width="320" height="52" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
-  <text x="220" y="294" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">TenantContextGuard</text>
-  <text x="220" y="310" fill="#8B949E" font-size="9.5" text-anchor="middle">resolve tenant + store from membership</text>
-  <text x="220" y="322" fill="#8B949E" font-size="9" text-anchor="middle" font-style="italic">cross-tenant access → safe 404</text>
-  <rect x="390" y="280" width="42" height="28" rx="3" fill="#1C2128" stroke="#30363D" stroke-width="1"/>
-  <text x="411" y="292" fill="#8B949E" font-size="8.5" text-anchor="middle">PG</text>
-  <text x="411" y="303" fill="#8B949E" font-size="8" text-anchor="middle">lookup</text>
-  <line x1="380" y1="294" x2="390" y2="294" stroke="#8B949E" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="260" y1="262" x2="260" y2="282" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 4→5 -->
-  <line x1="220" y1="326" x2="220" y2="346" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 4: TenantContextGuard -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="282" width="400" height="62" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.3"/>
+    <rect x="60" y="282" width="400" height="62" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="304" fill="#E6EDF3" font-size="11" font-weight="700">4 · TenantContextGuard</text>
+  <text x="80" y="321" fill="#8B949E" font-size="10">resolve tenant + store from membership</text>
+  <text x="80" y="335" fill="#C8A24A" font-size="9.5" font-style="italic">cross-tenant access → safe 404 (no enumeration)</text>
+  <g filter="url(#rfdrop)">
+    <rect x="470" y="293" width="42" height="38" rx="4" fill="#1C2128" stroke="#C8A24A" stroke-width="0.8"/>
+    <text x="491" y="309" fill="#F0CB6B" font-size="9.5" text-anchor="middle" font-weight="700">PG</text>
+    <text x="491" y="323" fill="#8B949E" font-size="8.5" text-anchor="middle">lookup</text>
+  </g>
 
-  <!-- 5: RolesGuard -->
-  <rect x="60" y="346" width="320" height="44" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
-  <text x="220" y="366" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">RolesGuard</text>
-  <text x="220" y="382" fill="#8B949E" font-size="9.5" text-anchor="middle">check role · permission · default deny</text>
+  <line x1="260" y1="344" x2="260" y2="364" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 5→6 -->
-  <line x1="220" y1="390" x2="220" y2="410" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 5: RolesGuard -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="364" width="400" height="46" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.3"/>
+    <rect x="60" y="364" width="400" height="46" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="385" fill="#E6EDF3" font-size="11" font-weight="700">5 · RolesGuard</text>
+  <text x="80" y="401" fill="#8B949E" font-size="10">check role · permission · default deny</text>
 
-  <!-- 6: service layer -->
-  <rect x="60" y="410" width="320" height="52" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.5"/>
-  <text x="220" y="430" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">Service Layer</text>
-  <text x="220" y="446" fill="#8B949E" font-size="9.5" text-anchor="middle">business logic · tenant-scoped DB access</text>
-  <text x="220" y="458" fill="#8B949E" font-size="9.5" text-anchor="middle">RLS enforced · PostgreSQL system of record</text>
+  <line x1="260" y1="410" x2="260" y2="430" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 6→7 -->
-  <line x1="220" y1="462" x2="220" y2="482" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 6: Service Layer -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="430" width="400" height="64" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.6"/>
+    <rect x="60" y="430" width="400" height="64" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="452" fill="#E6EDF3" font-size="11" font-weight="700">6 · Service Layer</text>
+  <text x="80" y="469" fill="#8B949E" font-size="10">business logic · tenant-scoped DB access</text>
+  <text x="80" y="485" fill="#22D6F6" font-size="10">RLS enforced · PostgreSQL system of record</text>
 
-  <!-- 7: audit log -->
-  <rect x="60" y="482" width="320" height="44" rx="5" fill="#161B22" stroke="#C8A24A" stroke-width="1.25"/>
-  <text x="220" y="501" fill="#E6EDF3" font-size="11" font-weight="600" text-anchor="middle">Audit Log</text>
-  <text x="220" y="517" fill="#8B949E" font-size="9.5" text-anchor="middle">actor · tenant · store · op · outcome · correlationId</text>
+  <line x1="260" y1="494" x2="260" y2="514" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
 
-  <!-- arrow 7→8 -->
-  <line x1="220" y1="526" x2="220" y2="546" stroke="#22D6F6" stroke-width="1.5" marker-end="url(#rf-arrow-cyan)"/>
+  <!-- Step 7: Audit Log -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="514" width="400" height="50" rx="6" fill="url(#rfstep)" stroke="#C8A24A" stroke-width="1.3"/>
+    <rect x="60" y="514" width="400" height="50" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="536" fill="#E6EDF3" font-size="11" font-weight="700">7 · Audit Log</text>
+  <text x="80" y="554" fill="#8B949E" font-size="10">actor · tenant · store · op · outcome · correlationId</text>
 
-  <!-- 8: response -->
-  <rect x="60" y="546" width="320" height="48" rx="5" fill="#161B22" stroke="#22D6F6" stroke-width="1.5"/>
-  <text x="220" y="567" fill="#22D6F6" font-size="11" font-weight="600" text-anchor="middle">Response</text>
-  <text x="220" y="583" fill="#8B949E" font-size="9.5" text-anchor="middle">uniform envelope · includes request id</text>
+  <line x1="260" y1="564" x2="260" y2="584" stroke="#22D6F6" stroke-width="1.6" marker-end="url(#rfarr)"/>
+
+  <!-- Step 8: Response -->
+  <g filter="url(#rfdrop)">
+    <rect x="60" y="584" width="400" height="56" rx="6" fill="url(#rfstep)" stroke="#22D6F6" stroke-width="1.6"/>
+    <rect x="60" y="584" width="400" height="56" rx="6" fill="url(#rfhi)"/>
+  </g>
+  <text x="80" y="606" fill="#22D6F6" font-size="11" font-weight="700">8 · Response</text>
+  <text x="80" y="624" fill="#8B949E" font-size="10">uniform envelope · includes request id · structured logs</text>
 
   <!-- left rail label -->
-  <text x="18" y="350" fill="#C8A24A" font-size="9" text-anchor="middle" transform="rotate(-90,18,350)">GUARD CHAIN</text>
+  <text x="20" y="380" fill="#C8A24A" font-size="10" text-anchor="middle" transform="rotate(-90 20 380)" letter-spacing="2" font-weight="700">GUARD CHAIN</text>
 
-  <defs>
-    <marker id="rf-arrow-cyan" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L8,3 z" fill="#22D6F6"/>
-    </marker>
-  </defs>
+  <!-- Animated request token travelling the pipeline -->
+  <circle r="7" fill="#22D6F6" filter="url(#rfglow)">
+    <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
+      <mpath href="#rfflow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;1;0" keyTimes="0;0.05;0.5;0.95;1" dur="7s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="4" fill="#A8F4FB">
+    <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
+      <mpath href="#rfflow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;1;1;1;0" keyTimes="0;0.05;0.5;0.95;1" dur="7s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Second offset token -->
+  <circle r="6" fill="#C8A24A" filter="url(#rfglow)" opacity="0.85">
+    <animateMotion dur="7s" begin="3.5s" repeatCount="indefinite" rotate="0">
+      <mpath href="#rfflow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values="0;0.85;0.85;0.85;0" keyTimes="0;0.05;0.5;0.95;1" dur="7s" begin="3.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Pulse rings on critical steps -->
+  <g opacity="0">
+    <circle cx="260" cy="94" r="14" fill="none" stroke="#22D6F6" stroke-width="1.5">
+      <animate attributeName="r" values="6;18;6" dur="2.4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;0;0.6" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="260" cy="612" r="14" fill="none" stroke="#22D6F6" stroke-width="1.5">
+      <animate attributeName="r" values="6;18;6" dur="2.4s" begin="1.2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;0;0.6" dur="2.4s" begin="1.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- timer label -->
+  <text x="500" y="660" fill="#8B949E" font-size="9" text-anchor="end" font-style="italic">one request, one path · 7s loop</text>
 </svg>
