@@ -1,5 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-  <!-- audit-compliance: shield with check / audit trail -->
-  <path d="M12 2 L20 5.5 V11.5 C20 16 16.5 19.5 12 22 C7.5 19.5 4 16 4 11.5 V5.5 Z"/>
-  <polyline points="8.5,12 11,14.5 15.5,9.5" stroke="#22D6F6" stroke-width="1.75"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-labelledby="t d">
+  <title id="t">Audit compliance</title>
+  <desc id="d">Shield with verified audit checkmark and animated trace.</desc>
+  <defs>
+    <linearGradient id="au-shield" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#F0CB6B"/>
+      <stop offset="0.5" stop-color="#C8A24A"/>
+      <stop offset="1" stop-color="#7A5A14"/>
+    </linearGradient>
+    <linearGradient id="au-hi" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="au-sh" x="-30%" y="-20%" width="160%" height="140%">
+      <feDropShadow dx="0" dy="1.6" stdDeviation="1.4" flood-color="#0B0F18" flood-opacity="0.7"/>
+    </filter>
+  </defs>
+  <g filter="url(#au-sh)">
+    <path d="M24 4 L40 11 V23 C40 32 33 39 24 44 C15 39 8 32 8 23 V11 Z" fill="url(#au-shield)"/>
+    <path d="M24 4 L40 11 V23 C40 32 33 39 24 44 C15 39 8 32 8 23 V11 Z" fill="url(#au-hi)"/>
+  </g>
+  <path d="M16 24 L22 30 L32 18" fill="none" stroke="#22D6F6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <animate attributeName="stroke-dasharray" values="0 30;30 0" dur="2s" repeatCount="indefinite"/>
+  </path>
 </svg>

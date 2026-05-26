@@ -1,9 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#C8A24A" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-  <!-- catalog: structured product index / layered pages -->
-  <rect x="4" y="5" width="16" height="3" rx="1"/>
-  <rect x="4" y="10.5" width="16" height="3" rx="1"/>
-  <rect x="4" y="16" width="16" height="3" rx="1"/>
-  <line x1="7" y1="6.5" x2="9" y2="6.5" stroke="#22D6F6" stroke-width="1.5"/>
-  <line x1="7" y1="12" x2="9" y2="12" stroke="#22D6F6" stroke-width="1.5"/>
-  <line x1="7" y1="17.5" x2="9" y2="17.5" stroke="#22D6F6" stroke-width="1.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-labelledby="t d">
+  <title id="t">Catalog authority</title>
+  <desc id="d">Layered catalog pages forming a structured product index.</desc>
+  <defs>
+    <linearGradient id="ct-gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F0CB6B"/>
+      <stop offset="0.5" stop-color="#C8A24A"/>
+      <stop offset="1" stop-color="#8A6A1F"/>
+    </linearGradient>
+    <linearGradient id="ct-hi" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="ct-sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.2" flood-color="#0B0F18" flood-opacity="0.7"/>
+    </filter>
+  </defs>
+  <g filter="url(#ct-sh)">
+    <rect x="6" y="10" width="36" height="7" rx="2" fill="url(#ct-gold)"/>
+    <rect x="6" y="10" width="36" height="7" rx="2" fill="url(#ct-hi)"/>
+    <rect x="6" y="20.5" width="36" height="7" rx="2" fill="url(#ct-gold)"/>
+    <rect x="6" y="20.5" width="36" height="7" rx="2" fill="url(#ct-hi)"/>
+    <rect x="6" y="31" width="36" height="7" rx="2" fill="url(#ct-gold)"/>
+    <rect x="6" y="31" width="36" height="7" rx="2" fill="url(#ct-hi)"/>
+  </g>
+  <g fill="#22D6F6">
+    <rect x="11" y="13" width="6" height="1.6" rx="0.8"/>
+    <rect x="11" y="23.5" width="6" height="1.6" rx="0.8"/>
+    <rect x="11" y="34" width="6" height="1.6" rx="0.8"/>
+  </g>
+  <g stroke="#0B0F18" stroke-opacity="0.6" stroke-width="0.5">
+    <path d="M20 13.5 H37"/>
+    <path d="M20 24 H37"/>
+    <path d="M20 34.5 H37"/>
+  </g>
+  <circle cx="42" cy="13.5" r="1.4" fill="#22D6F6">
+    <animate attributeName="opacity" values="0.4;1;0.4" dur="1.8s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="42" cy="24" r="1.4" fill="#22D6F6">
+    <animate attributeName="opacity" values="0.4;1;0.4" dur="1.8s" begin="0.6s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="42" cy="34.5" r="1.4" fill="#22D6F6">
+    <animate attributeName="opacity" values="0.4;1;0.4" dur="1.8s" begin="1.2s" repeatCount="indefinite"/>
+  </circle>
 </svg>
