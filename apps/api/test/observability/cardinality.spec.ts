@@ -195,6 +195,8 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "unknown_item_captured_total",
     "unknown_item_resolved_total",
     "idempotency_token_mismatch_total",
+    // Catalog domain — 005 Wave 2 (signals.md §1.1, registered via 005-WAVE2-METRICS-ALLOWLIST)
+    "catalog_duplicate_alias_conflict_total",
   ];
 
   for (const name of expectedSignals) {

@@ -96,6 +96,7 @@ they are not part of the original T444 platform catalogue.
 | `unknown_item_captured_total` | counter | (none) | 005 FR-081, plan §3.4 — successful POS capture into `unknown_items` table |
 | `unknown_item_resolved_total` | counter | `action` ∈ {`linked`, `created`, `dismissed`} | 005 FR-081, plan §3.4 — terminal-state transition out of `pending`. Wave 1 only emits `dismissed`; `linked` and `created` are Wave 2 (blocked on 003 PHASE3_RED_WAVE) |
 | `idempotency_token_mismatch_total` | counter | (none) | 005 FR-021c, FR-082 — POS replay with same `Idempotency-Key` but a different payload. Increments alongside the existing platform-level `idempotency_conflict_total{route}` (§1) — the platform counter is route-bucketed; this one is catalog-domain bucketed |
+| `catalog_duplicate_alias_conflict_total` | counter | (none) | 005 FR-043 / 003 §9 canonical — increments on every reconciliation rejection caused by an alias unique-index violation (link or create-new). Registered by `005-WAVE2-METRICS-ALLOWLIST`, emitted at the conflict catch site by `005-WAVE2-METRICS` (T651). Unlabeled: the FR-043 principal + correlation-id attribution is carried by the `unknown_item.reconciliation_conflict_rejected` audit event, not metric labels (FR-B-006) |
 
 ### Notes
 

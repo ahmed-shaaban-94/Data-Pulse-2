@@ -148,6 +148,14 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   unknown_item_captured_total: [],
   unknown_item_resolved_total: ["action"],
   idempotency_token_mismatch_total: [],
+  // ---- Catalog domain — 005 Wave 2 (signals.md §1.1; 003 §9 canonical) ----
+  // Unlabeled per 003 tasks.md §13.2 ("No values, names, or PII in labels")
+  // and 005 FR-043. The acting principal + correlation id called for by
+  // FR-043 are carried by the `unknown_item.reconciliation_conflict_rejected`
+  // AUDIT event (already live, T645), NOT by metric labels — principal/
+  // correlation are high-cardinality / PII-adjacent and forbidden here (FR-B-006).
+  // Emission lands in 005-WAVE2-METRICS (T651) at the conflict catch site.
+  catalog_duplicate_alias_conflict_total: [],
 };
 
 /**
