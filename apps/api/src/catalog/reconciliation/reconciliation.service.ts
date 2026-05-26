@@ -229,7 +229,15 @@ export class ReconciliationService {
 
         const updated = updateResult.rows[0];
         if (!updated) {
-          return { kind: "already_reconciled" };
+          // FOR UPDATE lock + 'pending' status was confirmed at the top of
+          // this transaction (see step 2 above). Reaching this branch means
+          // the alias INSERT succeeded but the unknown_items UPDATE matched
+          // zero rows — a logic error per the comment at the start of
+          // step 5. Throw to abort the transaction and roll back the alias
+          // INSERT rather than committing inconsistent state.
+          throw new Error(
+            "reconciliation.linkUnknownItem invariant: unknown_items UPDATE returned 0 rows after FOR UPDATE lock + pending check",
+          );
         }
 
         return {
