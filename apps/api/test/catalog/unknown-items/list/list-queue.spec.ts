@@ -68,7 +68,13 @@ import {
   stopPgEnv,
   type PgTestEnv,
 } from "../../../_helpers/postgres-container";
-import { seedCatalogIsolationFixture } from "../../__support__/isolation-harness";
+import {
+  seedCatalogIsolationFixture,
+  UNKNOWN_A_X,
+  UNKNOWN_A_Y,
+  UNKNOWN_B_X,
+  UNKNOWN_B_Y,
+} from "../../__support__/isolation-harness";
 import {
   seedUnknownItemsFixture,
   UNKNOWN_ITEMS_FIXTURE_IDS,
@@ -200,12 +206,15 @@ describe("T523 / 005-WAVE1-LIST — tenant admin sees all stores", () => {
 
     // 3 pending rows seeded for tenant A: 1 barcode at A.X, 1 barcode
     // at A.Y, 1 external_pos_id at A.X.
+    // + 2 pending rows from 003 isolation harness (A.X, A.Y) — see isolation-harness.ts L122-123
     const ids = result.items.map((r) => r.id).sort();
     expect(ids).toEqual(
       [
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+        UNKNOWN_A_X,
+        UNKNOWN_A_Y,
       ].sort(),
     );
 
@@ -229,12 +238,15 @@ describe("T523 / 005-WAVE1-LIST — tenant admin sees all stores", () => {
       limit: 50,
     });
 
+    // + 2 pending rows from 003 isolation harness (B.X, B.Y) — see isolation-harness.ts L124-125
     const ids = result.items.map((r) => r.id).sort();
     expect(ids).toEqual(
       [
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownBYBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownBXPos,
+        UNKNOWN_B_X,
+        UNKNOWN_B_Y,
       ].sort(),
     );
 
@@ -264,11 +276,13 @@ describe("T523 / 005-WAVE1-LIST — store-scoped operator sees only their store"
     });
 
     // 2 pending rows at A.X: 1 barcode + 1 external_pos_id.
+    // + 1 pending row from 003 isolation harness at A.X — see isolation-harness.ts L122, L393
     const ids = result.items.map((r) => r.id).sort();
     expect(ids).toEqual(
       [
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+        UNKNOWN_A_X,
       ].sort(),
     );
 
@@ -298,8 +312,14 @@ describe("T523 / 005-WAVE1-LIST — store-scoped operator sees only their store"
     });
 
     // 1 pending row at A.Y (barcode only — no external_pos_id seeded at A.Y).
-    const ids = result.items.map((r) => r.id);
-    expect(ids).toEqual([UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode]);
+    // + 1 pending row from 003 isolation harness at A.Y — see isolation-harness.ts L123, L394
+    const ids = result.items.map((r) => r.id).sort();
+    expect(ids).toEqual(
+      [
+        UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode,
+        UNKNOWN_A_Y,
+      ].sort(),
+    );
   });
 });
 
@@ -408,12 +428,15 @@ describe("T523 / 005-WAVE1-LIST — HTTP boundary (supertest)", () => {
     // the wire-shape adapter — proves snake_case conversion + adapter
     // mapping survives. (`identifier_value` vs service-level
     // `identifierValue`, etc.)
+    // + 2 pending rows from 003 isolation harness (A.X, A.Y) — see isolation-harness.ts L122-123
     const ids = res.body.items.map((it: { id: string }) => it.id).sort();
     expect(ids).toEqual(
       [
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAYBarcode,
         UNKNOWN_ITEMS_FIXTURE_IDS.unknownAXPos,
+        UNKNOWN_A_X,
+        UNKNOWN_A_Y,
       ].sort(),
     );
 
