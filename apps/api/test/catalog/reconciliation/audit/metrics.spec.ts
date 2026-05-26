@@ -94,6 +94,13 @@ const UNK_T650_CONFLICT_CORR = "0a000000-0000-7000-8000-000006500c03";
 const T650_CONFLICT_BARCODE = "T650-CONFLICT-001";
 const ALIAS_T650_SCOPED = "0a000000-0000-7000-8000-000006500a01";
 
+// Create-path conflict: a second pending item sharing the SAME store-scoped
+// barcode as the alias above. Creating a new product from it tries to insert
+// a colliding alias -> 23505 -> alias_conflict (FR-062), exercising the
+// duplicate-alias counter on the create path (symmetric to the link case).
+const UNK_T650_CREATE_CONFLICT = "0a000000-0000-7000-8000-00000650a004";
+const UNK_T650_CREATE_CONFLICT_CORR = "0a000000-0000-7000-8000-000006500c04";
+
 const TENANT_A_ADMIN_USER = "0a000000-0000-7000-8000-000006500001";
 
 const LINK_URL = (id: string) => `/api/v1/catalog/unknown-items/${id}/link`;
@@ -207,11 +214,14 @@ beforeAll(async () => {
     `INSERT INTO unknown_items
        (id, tenant_id, store_id, identifier_type, value,
         source_system, resolution_status, correlation_id)
-     VALUES ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5)
+     VALUES
+       ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5),
+       ($6, $2, $3, 'barcode', $4, NULL, 'pending', $7)
      ON CONFLICT DO NOTHING`,
     [
       UNK_T650_CONFLICT, TENANT_A, STORE_A_X, T650_CONFLICT_BARCODE,
       UNK_T650_CONFLICT_CORR,
+      UNK_T650_CREATE_CONFLICT, UNK_T650_CREATE_CONFLICT_CORR,
     ],
   );
 
@@ -334,7 +344,7 @@ describe("T650 / 005-WAVE2-METRICS — reconciliation counter emission [FR-081, 
     expect(duplicateCount).toBe(0);
   });
 
-  it("(c) alias-conflict rejection increments catalog_duplicate_alias_conflict_total", async () => {
+  it("(c) link alias-conflict increments catalog_duplicate_alias_conflict_total", async () => {
     if (dockerSkipped) return;
 
     const res = await http()
@@ -348,6 +358,26 @@ describe("T650 / 005-WAVE2-METRICS — reconciliation counter emission [FR-081, 
     expect(duplicateSpy).toHaveBeenCalledTimes(1);
     expect(duplicateCount).toBe(1);
     // A rejection is not a resolution — the resolved counter must NOT fire.
+    expect(resolvedCalls).toEqual([]);
+  });
+
+  it("(d) create-new alias-conflict increments catalog_duplicate_alias_conflict_total", async () => {
+    if (dockerSkipped) return;
+
+    // The create path inserts a new product then a colliding alias -> 23505
+    // -> alias_conflict (rolled back). Exercises the counter on the create
+    // path's discriminator, symmetric to the link case (c).
+    const res = await http()
+      .post(CREATE_URL(UNK_T650_CREATE_CONFLICT))
+      .send({ name: "Widget T650 Conflict", tax_category: "standard" });
+    expect(res.status).toBe(409);
+    expect(res.body?.error?.code).toBe("alias_conflict");
+
+    await drainMicrotasks();
+
+    expect(duplicateSpy).toHaveBeenCalledTimes(1);
+    expect(duplicateCount).toBe(1);
+    // The rolled-back create is not a resolution.
     expect(resolvedCalls).toEqual([]);
   });
 });
