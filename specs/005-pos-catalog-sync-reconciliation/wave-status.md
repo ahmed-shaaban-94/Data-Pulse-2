@@ -81,7 +81,7 @@ _None._
 **Other known issues** (planning-time decisions, not findings):
 - Header-name drift `Idempotency-Token` → `Idempotency-Key` in `spec.md` §5 and `quickstart.md` — fixup tracked in `tasks.md` T564.
 - `PHASE3_RED_WAVE` dependency for Wave 2 (T350 + T383 on spec 003) — tracked in `plan.md §4` and `tasks.md §12`.
-- **T550/T551 follow-up** (idempotency-mismatch-audit.spec.ts): deferred from AUDIT PR #344; DISMISS-CARVEOUT-FIX is now merged so these are unblocked. Can be picked up as a standalone micro-slice or absorbed into POLISH (T564).
+- **T550/T551 follow-up** (idempotency-mismatch-audit.spec.ts): deferred from AUDIT PR `#344`; DISMISS-CARVEOUT-FIX is now merged so these are unblocked. **These tasks** can be picked up as a standalone micro-slice or absorbed into POLISH (T564).
 
 ---
 
