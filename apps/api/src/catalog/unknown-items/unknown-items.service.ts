@@ -67,7 +67,10 @@ import { randomUUID } from "node:crypto";
 import { runWithTenantContext } from "@data-pulse-2/db";
 
 import { PG_POOL } from "../../auth/auth.module";
-import { recordUnknownItemCaptured } from "../../observability/metrics/api.metrics";
+import {
+  recordUnknownItemCaptured,
+  recordUnknownItemResolved,
+} from "../../observability/metrics/api.metrics";
 
 /**
  * Inputs accepted at the service boundary. Mirrors the contract's
@@ -811,11 +814,11 @@ export class UnknownItemsService {
    *   that's deferred to a future enhancement (would require a
    *   pattern similar to PR #339's IDEMP-MISMATCH filter).
    *
-   *   No metric increment in Wave 1 — `unknown_item_resolved_total{action}`
-   *   was allowlisted with `action ∈ {linked, created, dismissed}` in
-   *   PR #299, and the `dismissed` action is the natural counter
-   *   site here. The METRICS slice (T552/T553) authors the explicit
-   *   counter increment after this slice ships.
+   *   `unknown_item_resolved_total{action='dismissed'}` is incremented on
+   *   the `ok` branch (T553 / 005-WAVE1-METRICS). The counter was
+   *   allowlisted with `action ∈ {linked, created, dismissed}` in PR #299;
+   *   Wave 1 emits only `dismissed`. Wave 2 "linked"/"created" sites land
+   *   in separate slices.
    */
   async dismissUnknownItem(input: {
     readonly id: string;
@@ -917,6 +920,11 @@ export class UnknownItemsService {
     );
 
     if (result.kind === "ok") {
+      // T553 / FR-081: increment the dismiss counter on successful
+      // transition. The action is always "dismissed" here — this is the
+      // only Wave 1 emission site for `unknown_item_resolved_total`.
+      // Wave 2 "linked" / "created" actions land in separate slices.
+      recordUnknownItemResolved({ action: "dismissed" });
       return result.row;
     }
     if (result.kind === "already_reconciled") {
