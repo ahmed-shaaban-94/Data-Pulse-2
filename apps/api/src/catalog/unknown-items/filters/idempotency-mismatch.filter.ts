@@ -181,10 +181,13 @@ export class IdempotencyMismatchFilter implements ExceptionFilter {
       }
     }
 
-    // Re-throw so GlobalExceptionFilter formats the canonical envelope
-    // (`{ error: { code: "conflict", message: "...", request_id, ... } }`).
-    // The filter's only job is the catalog-domain side-effects; the
-    // response shape stays in the platform-level filter.
+    // Re-throw so GlobalExceptionFilter formats the envelope. Post-PR
+    // #360 the platform-level filter honors the interceptor's
+    // user-supplied fine-grained code (Constitution §IV), so the wire
+    // shape is
+    //   `{ error: { code: "idempotency_key_conflict", message: "...", request_id, ... } }`.
+    // The catalog-domain filter's only job is the catalog-domain
+    // side-effects; the response shape stays in the platform-level filter.
     throw exception;
   }
 }

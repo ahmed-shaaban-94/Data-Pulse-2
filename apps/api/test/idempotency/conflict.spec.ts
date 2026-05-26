@@ -179,9 +179,12 @@ describe("T511 — conflict: same key, different body → 409", () => {
       .set("Idempotency-Key", IDEMPOTENCY_KEY)
       .send(BODY_B);
 
-    // The exception filter wraps the error in a uniform envelope
+    // The exception filter wraps the error in a uniform envelope.
+    // Post-PR #360: GlobalExceptionFilter honors the user-supplied
+    // fine-grained code from `IdempotencyInterceptor` (Constitution §IV),
+    // so the wire envelope reads `error.code: "idempotency_key_conflict"`.
     expect(res.body.error).toMatchObject({
-      code: "conflict",
+      code: "idempotency_key_conflict",
       message: expect.any(String),
     });
   });

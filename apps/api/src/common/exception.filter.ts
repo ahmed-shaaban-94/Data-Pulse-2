@@ -41,33 +41,43 @@ function statusToCode(status: number): string {
 }
 
 /**
- * Pull a usable `message` from an HttpException's response payload.
- * Nest stores the response as either a string or an object with a
- * `message` field (often a string or array of strings, e.g., from
- * ValidationPipe).
+ * Pull usable envelope fields (code, message, details) from an
+ * HttpException's response payload. Nest stores the response as either
+ * a string or an object. When callers supply a structured object —
+ *
+ *   throw new ConflictException({ code: "alias_conflict", message: "..." })
+ *
+ * — the `code` field is the contract-of-record fine-grained code that
+ * MUST surface in the response envelope (Constitution §IV). When the
+ * response payload does not supply a `code`, the caller falls back to
+ * the canonical status-derived code via `statusToCode`.
  */
-function extractMessage(
+function extractEnvelopeFields(
   exception: HttpException,
   fallback: string,
-): { message: string; details?: unknown } {
+): { code: string | undefined; message: string; details?: unknown } {
   const response = exception.getResponse();
   if (typeof response === "string") {
-    return { message: response };
+    return { code: undefined, message: response };
   }
   if (response && typeof response === "object") {
     const r = response as Record<string, unknown>;
+    const code =
+      typeof r["code"] === "string" ? (r["code"] as string) : undefined;
     const msg = r["message"];
     if (typeof msg === "string") {
-      return { message: msg, details: r["details"] };
+      return { code, message: msg, details: r["details"] };
     }
     if (Array.isArray(msg)) {
       return {
+        code,
         message: msg.length > 0 ? String(msg[0]) : fallback,
-        details: msg.length > 1 ? msg : undefined,
+        details: msg.length > 1 ? msg : r["details"],
       };
     }
+    return { code, message: fallback, details: r["details"] };
   }
-  return { message: fallback };
+  return { code: undefined, message: fallback };
 }
 
 /**
@@ -118,11 +128,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      const code = statusToCode(status);
-      const { message, details } = extractMessage(
-        exception,
-        statusDefaultMessage(status),
-      );
+      const {
+        code: userCode,
+        message,
+        details,
+      } = extractEnvelopeFields(exception, statusDefaultMessage(status));
+      // Honor user-supplied fine-grained code (e.g., "alias_conflict") when
+      // present; fall back to the canonical status-derived code otherwise.
+      // Constitution §IV: OpenAPI contract-of-record specifies fine-grained
+      // codes; the filter must surface them rather than overwriting with
+      // statusToCode (silently discarding contract-of-record).
+      const code = userCode ?? statusToCode(status);
       if (status >= 500) {
         recordHttp5xxError({ route, status: String(status) });
       } else if (status >= 400) {

@@ -25,11 +25,18 @@
  *     `expiresAt - now >= 24h` (FR-021b floor) AND falls inside a 71h–73h
  *     window (documented 72h default).
  *   - tasks.md §5.2 says the 409 body carries `error.code = "idempotency_key_conflict"`.
- *     Reality: the inner code is dropped by `GlobalExceptionFilter.extractMessage`
- *     (which lifts only `message`), and `statusToCode(409)` returns the
- *     canonical `"conflict"`. The thrown `ConflictException` retains the
- *     inner code, but on the wire the envelope reads `error.code: "conflict"`.
- *     This is the production behavior; the spec asserts the wire shape.
+ *     Post-PR #360: this is now the actual wire shape. The
+ *     `IdempotencyInterceptor` throws ConflictException with a structured
+ *     payload `{ code: "idempotency_key_conflict", message: ... }`, and
+ *     `GlobalExceptionFilter` honors that user-supplied fine-grained code
+ *     (Constitution §IV — OpenAPI contract-of-record specifies the codes;
+ *     the filter must surface them, not silently overwrite with the
+ *     status-derived canonical). The earlier note that the inner code was
+ *     being dropped reflected a filter bug (every HttpException's code
+ *     was being rewritten to `statusToCode(status)`); that bug was fixed
+ *     in PR #360 by extracting the `code` field from the response payload
+ *     and only falling back to `statusToCode` when the caller did not
+ *     supply one.
  *   - Slice brief lists `docker_required: true`. The four assertions are
  *     pure interceptor behavior over fake Redis + fake in-progress marker
  *     (same Docker-free pattern as every existing 001 idempotency spec).
@@ -312,13 +319,13 @@ describe("FR-021c mismatched payload — same (tenant, device, key) + different 
 
     expect(conflict.status).toBe(HttpStatus.CONFLICT);
 
-    // Wire envelope: GlobalExceptionFilter normalizes 409 → error.code = "conflict".
-    // The inner `idempotency_key_conflict` is preserved only on the thrown
-    // ConflictException's payload, which extractMessage discards. See drift
-    // notes at the top of this file.
+    // Wire envelope: GlobalExceptionFilter honors the user-supplied
+    // fine-grained code from IdempotencyInterceptor (Constitution §IV).
+    // Post-PR #360, `error.code: "idempotency_key_conflict"` flows
+    // straight through from the throwing site to the wire envelope.
     expect(conflict.body).toMatchObject({
       error: {
-        code: "conflict",
+        code: "idempotency_key_conflict",
         message: expect.any(String),
       },
     });

@@ -376,19 +376,25 @@ describe.skip("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", ()
         identifier_value: SECOND_VALUE,
       });
 
-    // FR-021c — the 409 outcome itself (envelope shape comes from
-    // GlobalExceptionFilter's HttpException branch). The interceptor's
-    // error code travels through as `details.code`.
+    // FR-021c — the 409 outcome itself. Envelope shape comes from
+    // GlobalExceptionFilter's HttpException branch. Post-PR #360, the
+    // filter honors the user-supplied fine-grained code from the
+    // IdempotencyInterceptor (Constitution §IV), so the wire envelope
+    // surfaces `error.code: "idempotency_key_conflict"` directly.
     expect(second.status).toBe(409);
     expect(second.body).toMatchObject({
       error: {
-        code: "conflict", // GlobalExceptionFilter's canonical envelope code for 409
+        code: "idempotency_key_conflict",
         message: expect.any(String),
         request_id: expect.any(String),
       },
     });
-    // The original interceptor's code lives in `error.details.code` —
-    // the filter does not alter the wire-shape, only the side-effects.
+    // NOTE: `error.details.code` assertion below is left as-authored
+    // for the follow-up slice (005-WAVE1-METRICS-MISMATCH-FOLLOWUP)
+    // that unskips this block. Post-PR #360 the interceptor still
+    // throws `{ code, message }` only — no `details` field — so when
+    // the skip is lifted, this assertion will need revisiting along
+    // with the surrounding harness refactor.
     expect(second.body.error.details).toMatchObject({
       code: "idempotency_key_conflict",
     });
