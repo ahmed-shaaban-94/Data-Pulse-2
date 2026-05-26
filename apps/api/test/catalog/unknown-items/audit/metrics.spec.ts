@@ -278,7 +278,11 @@ beforeAll(async () => {
   }).compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
-  app.useGlobalFilters(new GlobalExceptionFilter());
+  // See retry-mismatch.spec.ts for the rationale: register
+  // IdempotencyMismatchFilter as a global filter so RxJS-routed errors from
+  // the interceptor are caught in the test harness. Order matters: filters
+  // are applied right-to-left, so the mismatch filter runs first.
+  app.useGlobalFilters(app.get(IdempotencyMismatchFilter), new GlobalExceptionFilter());
   app.useGlobalGuards(contextGuard);
   await app.init();
 }, 180_000);
