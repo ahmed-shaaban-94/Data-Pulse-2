@@ -301,6 +301,17 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
         (c) => c.action === "unknown_item.resolved.created",
       );
       expect(createdEvents).toHaveLength(1);
+
+      // Prove the passthrough: the newly created product carries CATEGORY_A,
+      // not null. Without this, the test would pass even if the controller
+      // dropped category_id on the floor.
+      const newProductId = res.body?.resolved_product_id as string;
+      expect(newProductId).toBeTruthy();
+      const productRow = await env!.admin.query<{ category_id: string | null }>(
+        `SELECT category_id FROM tenant_products WHERE id = $1`,
+        [newProductId],
+      );
+      expect(productRow.rows[0]?.category_id).toBe(CATEGORY_A);
     },
   );
 
@@ -399,9 +410,8 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
-    ).toHaveLength(0);
+    // No audit action of ANY kind may leak on an unauthorized request.
+    expect(auditSpy.calls).toHaveLength(0);
   });
 
   it("returns 401 (no event) when the resolved context has a null userId", async () => {
@@ -414,9 +424,7 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
-    ).toHaveLength(0);
+    expect(auditSpy.calls).toHaveLength(0);
   });
 
   it("returns 401 (no event) when the resolved context has a null tenantId", async () => {
@@ -431,8 +439,6 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
-    ).toHaveLength(0);
+    expect(auditSpy.calls).toHaveLength(0);
   });
 });

@@ -232,9 +232,8 @@ describe("T640 / 005-WAVE2-AUDIT — link action emits resolved.linked audit [FR
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.linked"),
-    ).toHaveLength(0);
+    // No audit action of ANY kind may leak on an unauthorized request.
+    expect(auditSpy.calls).toHaveLength(0);
   });
 
   it("returns 401 (no event) when the resolved context is entirely absent", async () => {
@@ -249,9 +248,7 @@ describe("T640 / 005-WAVE2-AUDIT — link action emits resolved.linked audit [FR
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.linked"),
-    ).toHaveLength(0);
+    expect(auditSpy.calls).toHaveLength(0);
   });
 
   it("returns 401 (no event) when the resolved context has a null userId", async () => {
@@ -267,8 +264,6 @@ describe("T640 / 005-WAVE2-AUDIT — link action emits resolved.linked audit [FR
     expect(res.status).toBe(401);
     await drainMicrotasks();
 
-    expect(
-      auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.linked"),
-    ).toHaveLength(0);
+    expect(auditSpy.calls).toHaveLength(0);
   });
 });

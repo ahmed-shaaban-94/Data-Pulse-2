@@ -32,8 +32,10 @@ import {
 } from "@nestjs/common";
 import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
-import type { Pool } from "pg";
+import type { Pool, PoolClient, QueryResult } from "pg";
 import request from "supertest";
+
+import type { Logger } from "@data-pulse-2/shared";
 
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import { AuditEmitterInterceptor } from "../../../../src/audit/audit-emitter.interceptor";
@@ -346,11 +348,6 @@ describe("T644 / 005-WAVE2-AUDIT — conflict-rejection audit emission [FR-043, 
 // satisfies the runWithTenantContext contract (BEGIN, set_config x2, the
 // service's own queries, then COMMIT/ROLLBACK, then release).
 
-import type { Pool, PoolClient, QueryResult } from "pg";
-import type { Logger } from "@data-pulse-2/shared";
-
-import { ROOT_LOGGER } from "../../../../src/common/logging.interceptor";
-
 const UNIT_TENANT = TENANT_A;
 const UNIT_STORE = STORE_A_X;
 const UNIT_ACTOR = TENANT_A_ADMIN_USER;
@@ -492,6 +489,23 @@ describe("T645 / 005-WAVE2-AUDIT — service error-path branches [FR-082]", () =
     expect(enqueuer.calls).toBe(1);
     // FR-082: the dropped rejection event is observable via the logger.
     expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    // PII-safe logging contract: the log payload carries ONLY the bounded
+    // reason + action (and the error), never tenant/store/user identifiers.
+    // A regression that logged ctx fields would leak PII into log sinks.
+    const logPayload = errorSpy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(logPayload).toMatchObject({
+      action: "unknown_item.reconciliation_conflict_rejected",
+      reason: "already_reconciled",
+    });
+    expect(Object.keys(logPayload).sort()).toEqual(["action", "err", "reason"]);
+    const serialized = JSON.stringify({
+      ...logPayload,
+      err: String((logPayload as { err?: unknown }).err),
+    });
+    expect(serialized).not.toContain(UNIT_TENANT);
+    expect(serialized).not.toContain(UNIT_STORE);
+    expect(serialized).not.toContain(UNIT_ACTOR);
   });
 
   it("swallows the failed enqueue silently when no logger is injected — logger absent", async () => {
@@ -626,6 +640,9 @@ describe("T645 / 005-WAVE2-AUDIT — service error-path branches [FR-082]", () =
     ).rejects.toThrow(/invariant/i);
 
     expect(rolledBack()).toBe(true);
+    // An invariant throw is not a domain rejection — the post-transaction
+    // rejection-audit block must be bypassed entirely (no enqueue attempt).
+    expect(enqueuer.calls).toBe(0);
   });
 
   it("CREATE: throws the invariant error when the terminal UPDATE matches 0 rows", async () => {
@@ -649,5 +666,6 @@ describe("T645 / 005-WAVE2-AUDIT — service error-path branches [FR-082]", () =
     ).rejects.toThrow(/invariant/i);
 
     expect(rolledBack()).toBe(true);
+    expect(enqueuer.calls).toBe(0);
   });
 });
