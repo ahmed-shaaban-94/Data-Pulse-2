@@ -389,7 +389,7 @@ describe("T630 / 005-WAVE2-CREATE-HAPPY — tenant admin creates product from un
   // -------------------------------------------------------------------------
 
   it(
-    "(b) rejects body-supplied tenantId with 400 validation_failure (Zod .strict() per OpenAPI additionalProperties: false)",
+    "(b) rejects body-supplied tenantId with 400 validation_error (Zod .strict() per OpenAPI additionalProperties: false)",
     async () => {
       if (dockerSkipped) return;
 
@@ -403,9 +403,14 @@ describe("T630 / 005-WAVE2-CREATE-HAPPY — tenant admin creates product from un
 
       // OpenAPI L754 — additionalProperties: false. The Zod .strict() on
       // CreateProductFromUnknownItemRequestSchema turns this into a 400
-      // validation_failure rather than silently stripping.
+      // rather than silently stripping. The envelope code is
+      // `validation_error` (ErrorCodes.VALIDATION) — the operating
+      // convention emitted by ZodValidationPipe -> GlobalExceptionFilter.
+      // The OpenAPI prose says "validation_failure" but that is documented
+      // drift (research.md §R2; see capture-validation.spec.ts:26-29) — the
+      // enforced wire code is `validation_error`.
       expect(res.status).toBe(400);
-      expect(res.body?.error?.code).toBe("validation_failure");
+      expect(res.body?.error?.code).toBe("validation_error");
 
       // Tenant-scoped: confirm no product was persisted under the
       // attacker tenant. The .strict() Zod rejection ensures the

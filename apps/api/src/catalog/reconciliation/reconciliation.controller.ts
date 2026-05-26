@@ -18,7 +18,9 @@
  *                                               category_id?: UUID | null }
  *   Both schemas use `additionalProperties: false`; enforced via `.strict()`
  *   on the Zod definitions below. The body-supplied `tenantId` (if any)
- *   is rejected with 400 `validation_failure` — Constitution §III.
+ *   is rejected with 400 `validation_error` — Constitution §III. (OpenAPI
+ *   prose says `validation_failure`; that is documented drift — the
+ *   enforced wire code is `validation_error` / ErrorCodes.VALIDATION.)
  *
  * Auth gap (carried forward from Wave 1 slices):
  *   No @UseGuards(AuthGuard, TenantContextGuard, RolesGuard). The
@@ -55,6 +57,10 @@ import { z } from "zod";
 import { Auditable } from "../../audit/auditable.decorator";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import type { TenantContextRequest } from "../../context/types";
+import {
+  CreateProductFromUnknownItemRequestSchema,
+  type CreateProductFromUnknownItemRequestDto,
+} from "./dto/create-product-request.dto";
 import { ReconciliationService, type UnknownItemRow } from "./reconciliation.service";
 
 // ---------------------------------------------------------------------------
@@ -75,29 +81,9 @@ const LinkUnknownItemRequestSchema = z
 
 type LinkUnknownItemRequestDto = z.infer<typeof LinkUnknownItemRequestSchema>;
 
-/**
- * Zod schema for `tenantAdminCreateProductFromUnknownItem` request body.
- * Mirrors OpenAPI `CreateProductFromUnknownItemRequest`:
- *   required: [name, tax_category]
- *   additionalProperties: false  → .strict()
- *
- * The .strict() is what enforces Constitution §III backend authority on
- * tenant_id: a request that smuggles `tenantId: "<attacker>"` is rejected
- * with 400 `validation_failure` instead of silently stripping. The
- * persisted `tenant_products.tenant_id` is always the resolved principal
- * tenant from `request.context`.
- */
-const CreateProductFromUnknownItemRequestSchema = z
-  .object({
-    name: z.string().trim().min(1).max(200),
-    tax_category: z.string().trim().min(1).max(64),
-    category_id: z.string().uuid().nullable().optional(),
-  })
-  .strict();
-
-type CreateProductFromUnknownItemRequestDto = z.infer<
-  typeof CreateProductFromUnknownItemRequestSchema
->;
+// The CreateProductFromUnknownItemRequest schema lives in
+// ./dto/create-product-request.dto.ts (T636) so the request contract has a
+// single named home. Imported above.
 
 // ---------------------------------------------------------------------------
 // Wire shape (snake_case, matches OpenAPI UnknownItem schema)
@@ -229,14 +215,14 @@ export class ReconciliationController {
    *
    * Creates a brand-new tenant product directly from a pending unknown
    * item. Server-resolved tenant_id (Constitution §III); body-supplied
-   * tenantId is rejected with 400 validation_failure by the `.strict()`
+   * tenantId is rejected with 400 validation_error by the `.strict()`
    * Zod schema.
    *
    * On success: 201 Created + updated UnknownItem shape (resolution_status
    *   = 'resolved', resolution_action = 'created', resolved_product_id
    *   pointing at the new tenant_products row).
    * On error:
-   *   400 validation_failure   — malformed :id, missing name / tax_category,
+   *   400 validation_error     — malformed :id, missing name / tax_category,
    *                              or body smuggling an additional property
    *   401 Unauthorized         — missing resolved context
    *   404 Not Found            — unknown item absent (non-disclosing per
