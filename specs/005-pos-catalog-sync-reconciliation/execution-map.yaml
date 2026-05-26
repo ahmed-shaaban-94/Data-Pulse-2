@@ -868,16 +868,23 @@ slices:
     branch_template: "fix/005-wave1-metrics-mismatch-followup"
 
   # ===== Phase 6: Polish ====================================================
+  # WAVE 1 TERMINAL SLICE — its merge on 2026-05-26 marks Wave 1 feature-complete.
+  # All 21 implementation slices + 1 hotfix are now merged on main.
+  # Only deferred item: 005-WAVE1-METRICS-MISMATCH-FOLLOWUP (harness fix-up, proposed).
 
   - id: 005-WAVE1-POLISH
     task_ids: [T560, T561, T562, T563, T564]
     type: chore
-    status: proposed
+    status: merged
+    merged_in_pr: 351
+    merged_at_commit: bb98ff4f7bd3b9f7433b3d899680db8b4531f8b1
+    merged_at_date: 2026-05-26
     approval_required: false
     depends_on: []   # METRICS cleared by PR #349 (merge commit 3e915b7, 2026-05-26); IDEMP-WIRE/DISMISS/IDEMP-MISMATCH/AUDIT all merged previously
     # Previously depended on: 005-WAVE1-METRICS (PR #349), IDEMP-WIRE (PR #336), DISMISS (PR #341),
     # IDEMP-MISMATCH (PR #339), AUDIT (PR #344 partial) — all merged.
     blocks: []
+    previously_blocked: []   # blocks was already [] at authoring time; preserved for audit symmetry
     agent: sonnet-test
     allowed_files:
       - apps/api/test/catalog/unknown-items/perf/capture-latency.spec.ts
