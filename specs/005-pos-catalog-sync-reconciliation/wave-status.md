@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-26 (POLISH slice — Wave 1 COMPLETE)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `2424e15` (LOC badge update after PR #350 METRICS-CLOSEOUT, 2026-05-26)
+**Base:** `origin/main` at `bb98ff4` (PR #351 POLISH merged, 2026-05-26 — Wave 1 COMPLETE)
 **Active findings:** 0
 **Resolved findings:** 3
 
@@ -45,7 +45,7 @@ Known deferred items carried into Wave 2 staging: T550/T551 (idempotency-mismatc
 | `005-WAVE1-AUDIT` (partial) | T546–T549 shipped: `capture-audit.spec.ts` + `dismiss-audit.spec.ts` verifying FR-080/082 audit emission; **T550/T551 deferred** (idempotency-mismatch-audit) | PR #344 @ `0a7cb10` |
 | `005-WAVE1-IDEMP-EDGES` | T534–T536 — FR-021a (per-device key scoping), FR-021b (24h TTL expiry), FR-022 (post-resolved idempotency); three disjoint test-only specs | PR #345 @ `043c1c2` |
 | `005-WAVE1-METRICS` (partial) | T553 shipped: `metrics.spec.ts` + `idempotency-mismatch.filter.unit.spec.ts` verifying FR-081 counters; **T552-mismatch-case deferred** (harness bug, `describe.skip`) | PR #349 @ `3e915b7` |
-| `005-WAVE1-POLISH` | T560 perf smoke test (SC-008, soft-skip gate) + T561–T563 regression sweeps confirmed GREEN + T564 closeout doc + header-name drift fix (3 `Idempotency-Token` → `Idempotency-Key` in `quickstart.md`) | this PR |
+| `005-WAVE1-POLISH` | T560 perf smoke test (SC-008, soft-skip gate) + T561–T563 regression sweeps confirmed GREEN + T564 closeout doc + header-name drift fix (3 `Idempotency-Token` → `Idempotency-Key` in `quickstart.md`) | PR #351 @ `bb98ff4` |
 
 ### Planning artifacts merged
 
