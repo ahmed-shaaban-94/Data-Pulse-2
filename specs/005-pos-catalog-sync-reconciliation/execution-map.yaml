@@ -22,7 +22,7 @@
 
 spec: 005-pos-catalog-sync-reconciliation
 version: 1
-base: origin/main  # 622e509 (PR #304, 005-WAVE1-SETUP merged)
+base: origin/main  # 043c1c2 (PR #345, 005-WAVE1-IDEMP-EDGES merged 2026-05-26)
 
 # ----------------------------------------------------------------------------
 # findings
@@ -582,7 +582,10 @@ slices:
   - id: 005-WAVE1-IDEMP-EDGES
     task_ids: [T534, T535, T536]
     type: test
-    status: proposed
+    status: merged
+    merged_in_pr: 345
+    merged_at_commit: 043c1c2ce51083fadd95ea989b73f2ae743b297b
+    merged_at_date: 2026-05-26
     approval_required: false
     depends_on: []   # IDEMP-WIRE merged via PR #336 (d57efc6); CAPTURE-RESOLVE merged via PR #321; both predecessors cleared
     blocks: []
@@ -693,7 +696,10 @@ slices:
   - id: 005-WAVE1-FR005
     task_ids: [T544, T545]
     type: feat
-    status: proposed
+    status: merged
+    merged_in_pr: 343
+    merged_at_commit: 83eb81032755887e70c00e38726ce5cb330fbc97
+    merged_at_date: 2026-05-26
     approval_required: false
     depends_on: []   # CAPTURE-DEDUP merged via PR #328; DISMISS merged via PR #341 (1ff755f); both predecessors cleared
     blocks: []
@@ -710,12 +716,55 @@ slices:
     parallel_safety: unsafe
     branch_template: "feat/005-wave1-fr005"
 
+  # ===== Phase 5 (hotfix): Cross-spec regression fix ========================
+  # Migration 0011 in 003-catalog-foundation PR #295 changed the
+  # tenant-wide read carve-out sentinel from '' (empty string) to '*'
+  # and made '' fail-closed.  Three call sites in UnknownItemsService
+  # (listForTenant, dismissUnknownItem, findByIdForTenant) still passed
+  # `input.storeId ?? ""`, so all three broke in CI when the next slice's
+  # tests ran against real Postgres.  This surgical 3-line fix was the
+  # prerequisite for #343 / #344 / #345 to clear db-integration CI.
+
+  - id: 005-WAVE1-DISMISS-CARVEOUT-FIX
+    task_ids: []   # unplanned hotfix — not in tasks.md; driven by 003 PR #295 cross-spec regression
+    type: fix
+    status: merged
+    merged_in_pr: 346
+    merged_at_commit: 08ab0445ff02fcae1430f99e21c7b1d8828f7af4
+    merged_at_date: 2026-05-26
+    approval_required: false
+    depends_on: []
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items"
+        expected: GREEN — all three affected call sites (listForTenant, dismissUnknownItem, findByIdForTenant) use '*' sentinel; db-integration CI passes
+        docker_required: true
+    stop:
+      - if any file outside allowed_files is modified
+    report_fields: [changed_files, validation_results, forbidden_path_check]
+    parallel_safety: safe   # surgical 3-line literal replacement; no behavioural change for store-scoped callers
+    branch_template: "fix/005-wave1-dismiss-carveout"
+
   - id: 005-WAVE1-AUDIT
     task_ids: [T546, T547, T548, T549, T550, T551]
     type: test
-    status: proposed
+    # T546-T549 shipped (capture-audit.spec.ts + dismiss-audit.spec.ts).
+    # T550 (idempotency-mismatch-audit.spec.ts) and T551 deferred — the
+    # idempotency-mismatch-audit.spec.ts file was not included in PR #344
+    # because DISMISS-CARVEOUT-FIX (#346) had not yet landed at authoring
+    # time.  Now that #346 is merged, T550/T551 can be picked up as the
+    # next small follow-up slice or as part of POLISH.
+    status: merged
+    partial: true
+    deferred_tasks: [T550, T551]
+    merged_in_pr: 344
+    merged_at_commit: 0a7cb1049d9207e259c27de0487f2c44fff5fa1c
+    merged_at_date: 2026-05-26
     approval_required: false
-    depends_on: []   # CAPTURE-HAPPY via PR #317, IDEMP-MISMATCH via PR #339, DISMISS via PR #341 (1ff755f) — all three predecessors cleared
+    depends_on: []   # CAPTURE-HAPPY via PR #317, IDEMP-MISMATCH via PR #339, DISMISS via PR #341 (1ff755f) — all three predecessors cleared; DISMISS-CARVEOUT-FIX via PR #346 now also landed
     blocks: []
     agent: sonnet-test
     allowed_files:
@@ -762,10 +811,9 @@ slices:
     status: proposed
     approval_required: false
     depends_on:
-      - 005-WAVE1-IDEMP-WIRE     # T560 perf test needs full capture path
-      - 005-WAVE1-DISMISS        # T561 regression sweep needs reconciliation paths wired
-      - 005-WAVE1-IDEMP-MISMATCH # T562 verifies 001 idempotency suite still GREEN
-      - 005-WAVE1-AUDIT          # T563 audit-fanout regression
+      - 005-WAVE1-METRICS        # last remaining blocker; IDEMP-WIRE/DISMISS/IDEMP-MISMATCH/AUDIT all merged
+    # Previously depended on: IDEMP-WIRE (PR #336), DISMISS (PR #341),
+    # IDEMP-MISMATCH (PR #339), AUDIT (PR #344 partial) — all merged.
     blocks: []
     agent: sonnet-test
     allowed_files:
