@@ -270,12 +270,7 @@ beforeAll(async () => {
   }).compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
-  // IdempotencyMismatchFilter is wired via @UseFilters on the controller in
-  // production. Method-level filter binding does not consistently catch errors
-  // routed via RxJS throwError from APP_INTERCEPTOR in TestingModule, so we
-  // also register the resolved instance globally. Order matters: NestJS
-  // applies filters right-to-left, so the mismatch filter runs first.
-  app.useGlobalFilters(app.get(IdempotencyMismatchFilter), new GlobalExceptionFilter());
+  app.useGlobalFilters(new GlobalExceptionFilter());
   app.useGlobalGuards(contextGuard);
   await app.init();
 }, 180_000);

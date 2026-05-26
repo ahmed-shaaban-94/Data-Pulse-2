@@ -38,7 +38,7 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { createHash } from "node:crypto";
-import { EMPTY, Observable, from, of, throwError } from "rxjs";
+import { EMPTY, Observable, from, of } from "rxjs";
 import { switchMap, tap } from "rxjs/operators";
 
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
@@ -250,20 +250,13 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
       if (stored.hit === "collision") {
         // Same key, different body — conflict.
-        // Use throwError() (Shape A) so the erroring Observable propagates
-        // through the RxJS chain to NestJS's exception-filter pipeline.
-        // A sync throw inside an async function wrapped by switchMap can
-        // fail to reach the filter and cause supertest to hang on timeout.
         await this.marker.del(tuple);
         recordIdempotencyConflict({ route });
-        return throwError(
-          () =>
-            new ConflictException({
-              code: "idempotency_key_conflict",
-              message:
-                "The provided Idempotency-Key has already been used for a different request body. Generate a new key.",
-            }),
-        );
+        throw new ConflictException({
+          code: "idempotency_key_conflict",
+          message:
+            "The provided Idempotency-Key has already been used for a different request body. Generate a new key.",
+        });
       }
 
       // Step 7 already done (marker set above). Step 8: invoke handler.
