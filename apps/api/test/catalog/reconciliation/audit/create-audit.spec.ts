@@ -314,7 +314,16 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       expect(rejections).toHaveLength(1);
       expect(rejections[0]!.metadata).toMatchObject({ reason: "alias_conflict" });
       expect(rejections[0]!.tenant_id).toBe(TENANT_A);
+      expect(rejections[0]!.store_id).toBe(STORE_A_X);
       expect(rejections[0]!.actor_user_id).toBe(TENANT_A_ADMIN_USER);
+      // The rejection path must emit ONLY the rejection — never a success
+      // resolved.created nor a dual-emission catalog.product.create.
+      expect(
+        auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
+      ).toHaveLength(0);
+      expect(
+        auditSpy.calls.filter((c) => c.action === "catalog.product.create"),
+      ).toHaveLength(0);
     },
   );
 
@@ -338,6 +347,15 @@ describe("T642 / 005-WAVE2-AUDIT — create-new emits resolved.created; no dual 
       expect(rejections[0]!.metadata).toMatchObject({
         reason: "already_reconciled",
       });
+      expect(rejections[0]!.tenant_id).toBe(TENANT_A);
+      expect(rejections[0]!.store_id).toBe(STORE_A_X);
+      expect(rejections[0]!.actor_user_id).toBe(TENANT_A_ADMIN_USER);
+      expect(
+        auditSpy.calls.filter((c) => c.action === "unknown_item.resolved.created"),
+      ).toHaveLength(0);
+      expect(
+        auditSpy.calls.filter((c) => c.action === "catalog.product.create"),
+      ).toHaveLength(0);
     },
   );
 });
