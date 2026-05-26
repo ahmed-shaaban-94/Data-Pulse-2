@@ -26,15 +26,11 @@
  * Dataset scale note
  * ------------------
  * The brief asks for 50,000 tenant_products + 100,000 product_aliases.
- * In Testcontainers on a developer machine (single-core, shared resources)
- * this dataset CAN be seeded in ~30-60 s using a single COPY-style INSERT.
- * However, this spec is a local smoke test, not a CI throughput benchmark.
- * To keep the suite runtime under 3 minutes (the Testcontainers timeout
- * budget used by other Wave 1 specs), the seeding is done in two batch
- * INSERTs of 10,000 products and 20,000 aliases -- 20 % of the target
- * but still large enough to make a sequence scan ~5x slower than an
- * index scan and confirm the index is used. If CI has capacity, the
- * FULL_SCALE_PERF_TEST=1 env var enables the full 50 k / 100 k dataset.
+ * This spec defaults to the full SC-008 contract scale (50k + 100k) so
+ * that CI and local runs both exercise the actual index-scan surface.
+ * Index-scan cost is non-linear: passing at 20k gives no guarantees at
+ * 100k. Set REDUCED_SCALE_PERF_TEST=1 to fall back to 10k products +
+ * 20k aliases for ergonomic local Docker runs where seeding time matters.
  *
  * Performance is measured by wrapping each Supertest call in
  * performance.now() and collecting the array of elapsed ms. p95/p99 are
@@ -119,13 +115,14 @@ import {
 const SAMPLE_COUNT = 100;
 
 /**
- * Seeding scale: default to 10k products + 20k aliases (fast, still
- * large enough to confirm index usage). Set FULL_SCALE_PERF_TEST=1 to
- * use the research.md §R3 target of 50k products + 100k aliases.
+ * Seeding scale: default to the SC-008 contract scale of 50k products +
+ * 100k aliases (research.md SS R3). Set REDUCED_SCALE_PERF_TEST=1 to
+ * fall back to 10k products + 20k aliases for ergonomic local Docker
+ * runs where seeding time is a constraint.
  */
-const FULL_SCALE = process.env["FULL_SCALE_PERF_TEST"] === "1";
-const PRODUCT_COUNT = FULL_SCALE ? 50_000 : 10_000;
-const ALIAS_COUNT = FULL_SCALE ? 100_000 : 20_000;
+const REDUCED_SCALE = process.env["REDUCED_SCALE_PERF_TEST"] === "1";
+const PRODUCT_COUNT = REDUCED_SCALE ? 10_000 : 50_000;
+const ALIAS_COUNT = REDUCED_SCALE ? 20_000 : 100_000;
 
 const DEVICE_USER_ID = "0d000000-0000-7000-8000-000000005601";
 
@@ -228,9 +225,9 @@ function percentile(sorted: number[], p: number): number {
  * multi-row INSERT via VALUES unnest approach (fast, avoids N round-trips).
  * Uses the admin pool (RLS bypass) so no GUC is required.
  *
- * Decision (documented per T560 brief): to keep beforeAll < 3 min on a
- * developer Testcontainer, we use 10k/20k in the default path. The full
- * 50k/100k path is gated behind FULL_SCALE_PERF_TEST=1.
+ * Decision (documented per T560 brief): default is the SC-008 contract
+ * scale (50k/100k). Set REDUCED_SCALE_PERF_TEST=1 to use 10k/20k for
+ * faster local developer runs where seeding time is a constraint.
  */
 async function seedPerfFixture(pool: Pool): Promise<void> {
   // Product category required for tenant_products FK (tenant_product_categories)
@@ -416,7 +413,7 @@ function http() {
 // ---------------------------------------------------------------------------
 
 describe(
-  `T560 / 005-WAVE1-POLISH -- SC-008 capture latency (${FULL_SCALE ? "full scale: 50k products / 100k aliases" : "reduced scale: 10k products / 20k aliases"})`,
+  `T560 / 005-WAVE1-POLISH -- SC-008 capture-path p95/p99 budget (${REDUCED_SCALE ? "reduced scale: 10k products / 20k aliases" : "full scale: 50k products / 100k aliases"})`,
   () => {
     it(
       `${SAMPLE_COUNT} sequential captures hit p95 <= 500 ms and p99 <= 1000 ms`,
@@ -475,10 +472,6 @@ describe(
         expect(p99).toBeLessThanOrEqual(1000);
       },
       120_000, // 2 min for 100 sequential calls against Testcontainers
-    );
-
-    it.todo(
-      "full-scale (50k products / 100k aliases) — enabled via FULL_SCALE_PERF_TEST=1",
     );
   },
 );
