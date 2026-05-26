@@ -271,6 +271,11 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     controllers: [UnknownItemsController],
     providers: [
+      // PG_POOL bound to admin (superuser, RLS-bypassed) — this spec asserts
+      // idempotency over an already-resolved item — admin isolates the
+      // lifecycle assertion from RLS, not the data-access path. RLS coverage
+      // for the data path is asserted by capture-happy-path.spec.ts. Pattern:
+      // dismiss-audit.spec.ts:162-164.
       { provide: PG_POOL, useFactory: (): Pool => localEnv.admin },
       UnknownItemsService,
       { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
