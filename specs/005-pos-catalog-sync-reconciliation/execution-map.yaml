@@ -1272,8 +1272,9 @@ slices:
     type: docs
     status: proposed
     approval_required: false
-    # T670 merge-audit (self-amending). Wave 2 predecessor slices merged to
-    # origin/main as of 2026-05-27; POLISH (this slice) carries the closeout.
+    # T670 merge-audit (self-amending). The eight Wave 2 predecessor slices
+    # below are merged on origin/main (2026-05-26..27); POLISH (this slice) is
+    # still open and carries the closeout — it is NOT yet merged.
     # Predecessor merges:
     #   CONTRACT #353 @ 2b8b851 · CONFLICT #354 @ 0724361
     #   LINK-HAPPY #355 @ f923fda (+#357) · LINK-EDGES #359 @ 9d72ef3

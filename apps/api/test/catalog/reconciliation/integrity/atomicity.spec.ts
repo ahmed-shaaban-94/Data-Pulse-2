@@ -265,6 +265,10 @@ function buildMockClient(): { client: PoolClient; rolledBack: () => boolean } {
   let rolledBack = false;
   let lockServed = false;
 
+  // ReconciliationService calls client.query(sqlString, params) exclusively —
+  // never the pg QueryConfig-object overload. This mock matches that contract;
+  // if the service ever switched to QueryConfig, the string branches below
+  // would stop matching and this test would (correctly) fail loudly.
   const query = async (sql: string): Promise<QueryResult> => {
     if (sql === "ROLLBACK") rolledBack = true;
     if (!lockServed && /FROM unknown_items/i.test(sql) && /FOR UPDATE/i.test(sql)) {

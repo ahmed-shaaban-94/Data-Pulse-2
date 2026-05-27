@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-27 (Wave 2 POLISH — Wave 2 COMPLETE)
+**Last updated:** 2026-05-27 (Wave 2 POLISH — Wave 2 complete pending this POLISH merge)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `5565c32` (PR #373 metrics-coverage follow-up merged, 2026-05-27 — Wave 2 COMPLETE)
+**Base:** `origin/main` at `5565c32` (PR #373 metrics-coverage follow-up merged, 2026-05-27; this POLISH PR is the final Wave 2 slice)
 **Active findings:** 0
 **Resolved findings:** 3
 
@@ -16,7 +16,7 @@ Known deferred items carried into Wave 2 staging: T550/T551 (idempotency-mismatc
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 in `tasks.md`; 9 `005-WAVE2-*` slices in `execution-map.yaml`. Gated by `[GATED]` approval for `005-WAVE2-CONTRACT` (T600/T601).
 
-**Wave 2 is COMPLETE (2026-05-27).** All 9 `005-WAVE2-*` slices merged: CONTRACT (gated), CONFLICT floor, LINK-HAPPY + LINK-EDGES, CREATE-HAPPY + CREATE-EDGES, AUDIT, METRICS (with a gated allowlist precursor), and POLISH. The reconciliation surface — `ReconciliationService` + `ReconciliationController` with link and create-product routes — is on `main`. Conflict rejections emit the `unknown_item.reconciliation_conflict_rejected` audit subject and increment `catalog_duplicate_alias_conflict_total` (FR-043); successful resolutions increment `unknown_item_resolved_total{action}`; all writes are transactional (SC-007 verified by `atomicity.spec.ts`). Two coverage-gate follow-ups (#369, #373) and one FR-040 fixture fix (#366) were required along the way.
+**Wave 2 is COMPLETE pending this POLISH merge (2026-05-27).** Eight of nine `005-WAVE2-*` slices are merged on `main`: CONTRACT (gated), CONFLICT floor, LINK-HAPPY + LINK-EDGES, CREATE-HAPPY + CREATE-EDGES, AUDIT, and METRICS (with a gated allowlist precursor). POLISH (this slice) is the ninth and final — it lands with this PR. The reconciliation surface — `ReconciliationService` + `ReconciliationController` with link and create-product routes — is on `main`. Conflict rejections emit the `unknown_item.reconciliation_conflict_rejected` audit subject and increment `catalog_duplicate_alias_conflict_total` (FR-043); successful resolutions increment `unknown_item_resolved_total{action}`; all writes are transactional (SC-007 verified by `atomicity.spec.ts`). Two coverage-gate follow-ups (#369, #373) and one FR-040 fixture fix (#366) were required along the way.
 
 ---
 
