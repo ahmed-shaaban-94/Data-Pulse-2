@@ -1,8 +1,8 @@
 # Wave Status — `005-pos-catalog-sync-reconciliation`
 
-**Last updated:** 2026-05-26 (POLISH slice — Wave 1 COMPLETE)
+**Last updated:** 2026-05-27 (Wave 2 POLISH — Wave 2 complete pending this POLISH merge)
 **Spec:** [`specs/005-pos-catalog-sync-reconciliation/`](.)
-**Base:** `origin/main` at `bb98ff4` (PR #351 POLISH merged, 2026-05-26 — Wave 1 COMPLETE)
+**Base:** `origin/main` at `5565c32` (PR #373 metrics-coverage follow-up merged, 2026-05-27; this POLISH PR is the final Wave 2 slice)
 **Active findings:** 0
 **Resolved findings:** 3
 
@@ -15,6 +15,8 @@
 Known deferred items carried into Wave 2 staging: T550/T551 (idempotency-mismatch-audit), T552-mismatch-case harness bug (`005-WAVE1-METRICS-MISMATCH-FOLLOWUP` proposed slice), and auth-guard wiring on the 6 unknown-items controller routes.
 
 **Wave 2 tasks authored (2026-05-24)** — T600–T670 in `tasks.md`; 9 `005-WAVE2-*` slices in `execution-map.yaml`. Gated by `[GATED]` approval for `005-WAVE2-CONTRACT` (T600/T601).
+
+**Wave 2 is COMPLETE pending this POLISH merge (2026-05-27).** Eight of nine `005-WAVE2-*` slices are merged on `main`: CONTRACT (gated), CONFLICT floor, LINK-HAPPY + LINK-EDGES, CREATE-HAPPY + CREATE-EDGES, AUDIT, and METRICS (with a gated allowlist precursor). POLISH (this slice) is the ninth and final — it lands with this PR. The reconciliation surface — `ReconciliationService` + `ReconciliationController` with link and create-product routes — is on `main`. Conflict rejections emit the `unknown_item.reconciliation_conflict_rejected` audit subject and increment `catalog_duplicate_alias_conflict_total` (FR-043); successful resolutions increment `unknown_item_resolved_total{action}`; all writes are transactional (SC-007 verified by `atomicity.spec.ts`). Two coverage-gate follow-ups (#369, #373) and one FR-040 fixture fix (#366) were required along the way.
 
 ---
 
@@ -46,6 +48,23 @@ Known deferred items carried into Wave 2 staging: T550/T551 (idempotency-mismatc
 | `005-WAVE1-IDEMP-EDGES` | T534–T536 — FR-021a (per-device key scoping), FR-021b (24h TTL expiry), FR-022 (post-resolved idempotency); three disjoint test-only specs | PR #345 @ `043c1c2` |
 | `005-WAVE1-METRICS` (partial) | T553 shipped: `metrics.spec.ts` + `idempotency-mismatch.filter.unit.spec.ts` verifying FR-081 counters; **T552-mismatch-case deferred** (harness bug, `describe.skip`) | PR #349 @ `3e915b7` |
 | `005-WAVE1-POLISH` | T560 perf smoke test (SC-008, soft-skip gate) + T561–T563 regression sweeps confirmed GREEN + T564 closeout doc + header-name drift fix (3 `Idempotency-Token` → `Idempotency-Key` in `quickstart.md`) | PR #351 @ `bb98ff4` |
+
+### Wave 2 implementation slices
+
+| Slice | Summary | Reference |
+|---|---|---|
+| `005-WAVE2-CONTRACT` (gated) | T600/T601 — OpenAPI link + create-product operations (`tenantAdminLinkUnknownItem`, `tenantAdminCreateProductFromUnknownItem`) + conformance | PR #353 @ `2b8b851` |
+| `005-WAVE2-CONFLICT` | T610/T611 — US3 alias-conflict safety floor RED suite (FR-040–FR-043) | PR #354 @ `0724361` |
+| `005-WAVE2-LINK-HAPPY` | T620–T622 — `ReconciliationService` + `ReconciliationController` + module; link route happy path (FR-050–FR-053) | PR #355 @ `f923fda` (+ CodeRabbit follow-up #357 @ `cf55ef4`) |
+| `005-WAVE2-LINK-EDGES` | T623–T626 — target-unavailable (FR-051) + already-reconciled (FR-004) link rejections | PR #359 @ `9d72ef3` |
+| `005-WAVE2-CREATE-HAPPY` | T630–T632 — create-new product from unknown item (FR-060–FR-063) | PR #364 @ `22dee63` (+ follow-up #365 @ `5a05b79`) |
+| `005-WAVE2-CREATE-EDGES` | T633–T636 — create-path alias-conflict + body validation + §III non-trust; `create-product-request.dto.ts` | PR #367 @ `8700d2c` |
+| `005-WAVE2-AUDIT` | T640–T645 — `unknown_item.resolved.{linked,created}` + `reconciliation_conflict_rejected` audit subjects (FR-080/082); explicit post-transaction emit | PR #368 @ `2e6959e` (+ coverage follow-up #369 @ `b918c6d`) |
+| `005-WAVE2-METRICS-ALLOWLIST` (gated) | Precursor: register `catalog_duplicate_alias_conflict_total` (unlabeled) in `ALLOWED_METRIC_LABELS` + signals.md §1.1 + cardinality drift contract | PR #371 @ `69bd873` |
+| `005-WAVE2-METRICS` | T650/T651 — wire `catalog_duplicate_alias_conflict_total` at both conflict catch sites (FR-043) + resolved-counter verification spec | PR #372 @ `2b25656` (+ create-path coverage follow-up #373 @ `5565c32`) |
+| `005-WAVE2-POLISH` | T660/T661 regression sweeps (Wave 1 + 003 isolation GREEN) + T662 SC-007 `atomicity.spec.ts` (FR-053/FR-063 fault injection) + T670 closeout | _this slice_ |
+
+**Wave 2 fixups along the way:** #356 (conflict request-body snake_case), #362 (execution-map validation-typo), #363 (RLS-test-audit), #366 (FR-040 store-partition fixture fix), #361/#358 (link-edges/link-happy closeouts).
 
 ### Planning artifacts merged
 
@@ -175,7 +194,7 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Post-merge closeout
 
-When this PR's POLISH slice merges, run the closeout to mark `005-WAVE1-POLISH` as `merged` in `execution-map.yaml`.
+When this PR's POLISH slice merges, run the closeout to mark `005-WAVE2-POLISH` as `merged` in `execution-map.yaml`.
 
 Full workflow: [`docs/agent-os/maestro-playbook.md`](../../docs/agent-os/maestro-playbook.md) "Workflow — post-merge closeout".
 
@@ -185,7 +204,7 @@ Short prompt template:
 Use Agent OS.
 Close out PR #<PR_NUMBER>.
 Spec: specs/005-pos-catalog-sync-reconciliation
-Expected slice: 005-WAVE1-POLISH
+Expected slice: 005-WAVE2-POLISH
 Update execution-map.yaml and wave-status.md.
 Stop before commit.
 ```
@@ -194,18 +213,14 @@ Stop before commit.
 
 ## Next recommended action
 
-**Wave 1 is COMPLETE.** The only remaining Wave 1 deferred items are:
-1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness investigation for T552-mismatch-case. Parallel-safe; can dispatch now.
-2. T550/T551 micro-slice — idempotency-mismatch-audit spec. Unblocked; can dispatch as a standalone or defer to Wave 2 prep.
-3. Auth-guard wiring slice — needs `[GATED]` approval; deferred until 6 routes are ready to be guarded consistently.
+**Wave 1 and Wave 2 are both COMPLETE** (Wave 2 closed out by this POLISH slice, 2026-05-27). The reconciliation surface — link + create-product routes, conflict audit + metrics, transactional integrity — is on `main`.
 
-**Next primary action**: Request `[GATED]` approval for `005-WAVE2-CONTRACT` to unblock Wave 2.
+Carried-forward / deferred items (not blocking; tracked for a future wave or micro-slice):
+1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness investigation for the `describe.skip`'d T552-mismatch-case. Parallel-safe.
+2. T550/T551 — idempotency-mismatch-audit spec. Unblocked; standalone micro-slice.
+3. Auth-guard wiring — `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)` on the unknown-items + reconciliation controller routes; needs `[GATED]` approval and a slice that mounts the modules into `app.module.ts`. The reconciliation routes are not yet serving production traffic until that wiring lands.
 
-```text
-# Request Wave 2 contract approval:
-Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
-Spec: specs/005-pos-catalog-sync-reconciliation
-```
+**Next primary action**: none required for 005 Wave 2. The deferred items above can be picked up independently; the auth-guard wiring is the most material (the routes are inert until mounted).
 
 ---
 

@@ -1272,6 +1272,16 @@ slices:
     type: docs
     status: proposed
     approval_required: false
+    # T670 merge-audit (self-amending). The eight Wave 2 predecessor slices
+    # below are merged on origin/main (2026-05-26..27); POLISH (this slice) is
+    # still open and carries the closeout — it is NOT yet merged.
+    # Predecessor merges:
+    #   CONTRACT #353 @ 2b8b851 · CONFLICT #354 @ 0724361
+    #   LINK-HAPPY #355 @ f923fda (+#357) · LINK-EDGES #359 @ 9d72ef3
+    #   CREATE-HAPPY #364 @ 22dee63 (+#365) · CREATE-EDGES #367 @ 8700d2c
+    #   AUDIT #368 @ 2e6959e (+#369 coverage) · METRICS-ALLOWLIST #371 @ 69bd873 (gated)
+    #   METRICS #372 @ 2b25656 (+#373 create-path coverage)
+    # Wave 2 status: COMPLETE pending this POLISH merge.
     depends_on:
       - 005-WAVE2-AUDIT
       - 005-WAVE2-METRICS
