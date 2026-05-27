@@ -194,7 +194,7 @@ Wave 2 covers the reconciliation path: tenant admin links an unknown item to an 
 
 ## Post-merge closeout
 
-When this PR's POLISH slice merges, run the closeout to mark `005-WAVE1-POLISH` as `merged` in `execution-map.yaml`.
+When this PR's POLISH slice merges, run the closeout to mark `005-WAVE2-POLISH` as `merged` in `execution-map.yaml`.
 
 Full workflow: [`docs/agent-os/maestro-playbook.md`](../../docs/agent-os/maestro-playbook.md) "Workflow — post-merge closeout".
 
@@ -204,7 +204,7 @@ Short prompt template:
 Use Agent OS.
 Close out PR #<PR_NUMBER>.
 Spec: specs/005-pos-catalog-sync-reconciliation
-Expected slice: 005-WAVE1-POLISH
+Expected slice: 005-WAVE2-POLISH
 Update execution-map.yaml and wave-status.md.
 Stop before commit.
 ```
@@ -213,18 +213,14 @@ Stop before commit.
 
 ## Next recommended action
 
-**Wave 1 is COMPLETE.** The only remaining Wave 1 deferred items are:
-1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness investigation for T552-mismatch-case. Parallel-safe; can dispatch now.
-2. T550/T551 micro-slice — idempotency-mismatch-audit spec. Unblocked; can dispatch as a standalone or defer to Wave 2 prep.
-3. Auth-guard wiring slice — needs `[GATED]` approval; deferred until 6 routes are ready to be guarded consistently.
+**Wave 1 and Wave 2 are both COMPLETE** (Wave 2 closed out by this POLISH slice, 2026-05-27). The reconciliation surface — link + create-product routes, conflict audit + metrics, transactional integrity — is on `main`.
 
-**Next primary action**: Request `[GATED]` approval for `005-WAVE2-CONTRACT` to unblock Wave 2.
+Carried-forward / deferred items (not blocking; tracked for a future wave or micro-slice):
+1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness investigation for the `describe.skip`'d T552-mismatch-case. Parallel-safe.
+2. T550/T551 — idempotency-mismatch-audit spec. Unblocked; standalone micro-slice.
+3. Auth-guard wiring — `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)` on the unknown-items + reconciliation controller routes; needs `[GATED]` approval and a slice that mounts the modules into `app.module.ts`. The reconciliation routes are not yet serving production traffic until that wiring lands.
 
-```text
-# Request Wave 2 contract approval:
-Use Agent OS. Execute slice 005-WAVE2-CONTRACT. Stop before commit.
-Spec: specs/005-pos-catalog-sync-reconciliation
-```
+**Next primary action**: none required for 005 Wave 2. The deferred items above can be picked up independently; the auth-guard wiring is the most material (the routes are inert until mounted).
 
 ---
 
