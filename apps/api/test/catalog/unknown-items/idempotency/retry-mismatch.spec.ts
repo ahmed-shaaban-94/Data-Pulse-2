@@ -75,7 +75,7 @@ import {
   type AuditJobEnqueuer,
 } from "../../../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
+import { IdempotencyMismatchInterceptor } from "../../../../src/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -293,7 +293,7 @@ beforeAll(async () => {
       // its `AUDIT_JOB_ENQUEUER` injection. The `@UseFilters` decorator
       // on `posCaptureItem` is what actually opts the route in — same
       // wiring as production.
-      IdempotencyMismatchFilter,
+      IdempotencyMismatchInterceptor,
       // Override the AUDIT_JOB_ENQUEUER token with the spy so we can
       // assert exactly what the filter enqueued without needing
       // BullMQ / Redis. Canonical pattern per

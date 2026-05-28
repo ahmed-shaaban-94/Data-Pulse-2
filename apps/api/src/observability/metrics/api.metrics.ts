@@ -357,8 +357,10 @@ export function recordUnknownItemResolved(attrs: UnknownItemResolvedAttrs): void
 
 /**
  * Increment idempotency_token_mismatch_total (005 FR-021c, FR-082).
- * Emission site: IdempotencyMismatchFilter on the catalog capture route
- * (lands in 005-WAVE1-IDEMP-MISMATCH / T533). Co-increments with the
+ * Emission site: IdempotencyMismatchInterceptor on the catalog capture
+ * route (lands in 005-WAVE1-IDEMP-MISMATCH / T533; architectural pivot
+ * from the prior IdempotencyMismatchFilter in PR 2 of
+ * 005-WAVE1-METRICS-MISMATCH-FOLLOWUP). Co-increments with the
  * platform-level recordIdempotencyConflict — both are intentional;
  * see signals.md §1.1 Notes.
  */

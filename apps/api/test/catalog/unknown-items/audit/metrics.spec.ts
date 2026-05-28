@@ -78,7 +78,7 @@ import {
   INFLIGHT_REDIS,
   InProgressMarker,
 } from "../../../../src/idempotency/in-progress-marker";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
+import { IdempotencyMismatchInterceptor } from "../../../../src/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor";
 import { UnknownItemsController } from "../../../../src/catalog/unknown-items/unknown-items.controller";
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
@@ -277,10 +277,10 @@ beforeAll(async () => {
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-      // IdempotencyMismatchFilter registered as a provider so NestJS resolves
-      // its AUDIT_JOB_ENQUEUER injection. The @UseFilters on posCaptureItem
-      // opts the route in. Mirrors retry-mismatch.spec.ts wiring.
-      IdempotencyMismatchFilter,
+      // IdempotencyMismatchInterceptor registered as a provider so NestJS
+      // resolves its AUDIT_JOB_ENQUEUER injection. The @UseInterceptors on
+      // posCaptureItem opts the route in. Mirrors retry-mismatch.spec.ts wiring.
+      IdempotencyMismatchInterceptor,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
       { provide: APP_INTERCEPTOR, useClass: AuditEmitterInterceptor },
     ],

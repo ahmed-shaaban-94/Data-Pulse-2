@@ -891,6 +891,11 @@ slices:
       - apps/api/src/catalog/unknown-items/unknown-items.module.ts                           # PR 2 (architectural pivot)
       - apps/api/test/catalog/unknown-items/filters/idempotency-mismatch.filter.unit.spec.ts # deleted in PR 2 (filter unit spec)
       - apps/api/test/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor.unit.spec.ts  # PR 2 (ported IMI1-5)
+      - apps/api/test/catalog/unknown-items/idempotency/ttl-expiry.spec.ts                              # PR 2 (filter→interceptor harness swap, sibling)
+      - apps/api/test/catalog/unknown-items/idempotency/cross-device-keys.spec.ts                       # PR 2 (filter→interceptor harness swap, sibling)
+      - apps/api/test/catalog/unknown-items/idempotency/post-resolved.spec.ts                           # PR 2 (filter→interceptor harness swap, sibling)
+      - apps/api/test/catalog/unknown-items/perf/capture-latency.spec.ts                                # PR 2 (filter→interceptor harness swap, sibling)
+      - apps/api/src/observability/metrics/api.metrics.ts                                               # PR 2 (comment update — emission site relabel)
     validation:
       command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics" "test/catalog/unknown-items/audit/idempotency-mismatch-audit" "test/catalog/unknown-items/idempotency/retry-mismatch"
       expected: GREEN — T532 + T552-mismatch + T550 all pass against the refactored harness; production behavior confirmed correct or fixed

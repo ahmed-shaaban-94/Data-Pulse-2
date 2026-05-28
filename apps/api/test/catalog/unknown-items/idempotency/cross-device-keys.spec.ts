@@ -32,8 +32,8 @@
  * `IdempotencyInterceptor` registered as `APP_INTERCEPTOR`, FakeRedis
  * + FakeMarker in-memory replacements. The ConfigurableContextGuard
  * is reconfigured between requests to flip the device principal
- * (`userId`) while keeping tenant/store stable. The IdempotencyMismatchFilter
- * is registered as a provider so the controller's `@UseFilters(...)`
+ * (`userId`) while keeping tenant/store stable. The IdempotencyMismatchInterceptor
+ * is registered as a provider so the controller's `@UseInterceptors(...)`
  * binding can resolve it even though we expect no mismatch firing on
  * the happy path of this spec.
  *
@@ -60,7 +60,7 @@ import {
   type AuditJobEnqueuer,
 } from "../../../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
+import { IdempotencyMismatchInterceptor } from "../../../../src/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -185,7 +185,7 @@ class ConfigurableContextGuard implements CanActivate {
 }
 
 // ---------------------------------------------------------------------------
-// Audit enqueuer stub — IdempotencyMismatchFilter injects AUDIT_JOB_ENQUEUER
+// Audit enqueuer stub — IdempotencyMismatchInterceptor injects AUDIT_JOB_ENQUEUER
 // even though no mismatch should fire in this spec; record calls so we can
 // defensively assert zero mismatch audits.
 // ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ beforeAll(async () => {
       // so Nest can resolve its `AUDIT_JOB_ENQUEUER` injection. Mirrors
       // retry-mismatch.spec.ts. The filter never fires on this spec's
       // happy path; we assert zero mismatch audits as a defensive check.
-      IdempotencyMismatchFilter,
+      IdempotencyMismatchInterceptor,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
     ],
   })
@@ -425,7 +425,7 @@ describe("T534 / 005-WAVE1-IDEMP-EDGES — FR-021a cross-device Idempotency-Key 
     // raise 409 (counter=1 + a 409 envelope).
     expect(captureCounter).toBe(2);
 
-    // Defensive: the IdempotencyMismatchFilter never fired — no 409 path
+    // Defensive: the IdempotencyMismatchInterceptor never fired — no 409 path
     // was taken. (The 001 interceptor's conflict counter is not asserted
     // directly here; it's owned by the platform spec.)
     expect(
