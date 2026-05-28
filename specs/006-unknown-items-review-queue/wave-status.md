@@ -37,6 +37,7 @@
 |---|---|---|
 | Spec + plan + Phase 0/1 artefacts | 006 product-level UX brief — 10 user stories, 38 FRs (incl. FR-001a / FR-021a / FR-062a / FR-070a / FR-100 with `forbidden`), 9 SI requirements, 8 SCs, 12 edge cases, 4 clarifications + 3 external-review revisions | PR #308 @ `678cbd2` (2026-05-23) |
 | `tasks.md` + `execution-map.yaml` + `wave-status.md` | Agent OS compatibility artefacts — slice schema, T001..T023 coordination tasks, execution map with parallel groups, wave-status initial authoring | PR #311 @ `8ea103a` (2026-05-24) |
+| T001 close-by-vacuity + T002 + T003 | T001: CodeRabbit posted "No actionable comments" on PR #308 at `7cfe25c` → close-by-vacuity recorded in `execution-map.yaml`. T002: 006 row added to `CLAUDE.md` Specs summary. T003: forward-link from 005's wave-status.md to 006. Validation greps all pass. | PR #380 (this PR) (2026-05-28) |
 
 ---
 

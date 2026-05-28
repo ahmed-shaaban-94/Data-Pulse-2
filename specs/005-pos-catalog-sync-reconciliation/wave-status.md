@@ -18,6 +18,8 @@ Known deferred items carried into Wave 2 staging: T550/T551 (idempotency-mismatc
 
 **Wave 2 is COMPLETE pending this POLISH merge (2026-05-27).** Eight of nine `005-WAVE2-*` slices are merged on `main`: CONTRACT (gated), CONFLICT floor, LINK-HAPPY + LINK-EDGES, CREATE-HAPPY + CREATE-EDGES, AUDIT, and METRICS (with a gated allowlist precursor). POLISH (this slice) is the ninth and final — it lands with this PR. The reconciliation surface — `ReconciliationService` + `ReconciliationController` with link and create-product routes — is on `main`. Conflict rejections emit the `unknown_item.reconciliation_conflict_rejected` audit subject and increment `catalog_duplicate_alias_conflict_total` (FR-043); successful resolutions increment `unknown_item_resolved_total{action}`; all writes are transactional (SC-007 verified by `atomicity.spec.ts`). Two coverage-gate follow-ups (#369, #373) and one FR-040 fixture fix (#366) were required along the way.
 
+**Forward link:** [`specs/006-unknown-items-review-queue/`](../006-unknown-items-review-queue/) — 006 is the docs-only product brief for the future Unknown Items Review Queue feature. It cites 005's reconciliation surface (link / create-product / conflict audit + metrics) as its API substrate. Informational only; no operational dependency between 005 and 006.
+
 ---
 
 ## Merged on `main`

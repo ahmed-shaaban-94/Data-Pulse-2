@@ -53,7 +53,10 @@ slices:
   - id: T001
     task_ids: [T001]
     type: docs
-    status: proposed
+    status: complete-by-vacuity   # 2026-05-28 — CR posted "No actionable comments were generated in the recent review. 🎉" on PR #308 at 7cfe25c (Run ID df9d5369-6567-4d09-b0a8-e86dc866e220). No findings to address; slice closes without code/doc changes.
+    closed_by_pr: 379   # docs absorption ran the verification; this PR records the outcome
+    closed_at_commit: TBD
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -62,6 +65,7 @@ slices:
     validation:
       - command: gh pr view 308 --json reviews --jq '[.reviews[] | select(.author.login=="coderabbitai") | .state] | last'
         expected: "Either COMMENTED with no actionable comments unresolved, or APPROVED. If CHANGES_REQUESTED, address findings and re-trigger via @coderabbitai review."
+        outcome: COMMENTED with "No actionable comments were generated in the recent review." — close-by-vacuity satisfied.
     stop:
       - standing-rules universal stops
       - "stop if CodeRabbit posts findings touching files outside specs/006-unknown-items-review-queue/**"
