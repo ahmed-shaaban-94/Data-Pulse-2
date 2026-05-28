@@ -19,7 +19,7 @@
 - **10 sign-off slices** (T010–T019) — one per spec.md user story (US1–US10); all share `checklists/requirements.md` so they are `parallel_safety: unsafe` and serialise.
 - **4 handoff slices** (T020–T023) — open the future API feature spec, open the future UI feature spec, final sign-off-log sweep, CLAUDE.md Active-feature verification.
 
-**Next moves (superseded — see [§ Next recommended action](#next-recommended-action) below for the current state as of 2026-05-29):**
+**Next moves (superseded — see [§ Next recommended action](#next-recommended-action) below for the current state as of 2026-05-28):**
 
 The authoring-time plan below is retained for history. All of steps 1–3 are now DONE: PR #308/#311 merged the artefacts; T002 + T003 crosslinks landed in PR #380; the `PHASE2-DRIFT-CHECKS` group (T007–T009) closed in PR #381. Only steps 4–5 remain, and neither is Claude-executable (reviewer sign-offs + external-gated feature-spec openings).
 
@@ -117,7 +117,7 @@ These slices have no unsatisfied dependencies and can dispatch when their slot o
 
 ## Next recommended action
 
-**All Claude-executable 006 slices are CLOSED.** As of 2026-05-29, every docs/coordination slice an agent can run is `complete-by-execution` (or `complete-by-vacuity`): T001 (#379), T002 + T003 (#380 — crosslinks; status reconciled from stale `proposed` on 2026-05-29), T004 + T005 + T006 (#383/#381), T007 + T008 + T009 drift checks (#381), T023 handoff (#382). The deliverables for T002 (CLAUDE.md Specs-summary row) and T003 (006 forward-link in 005's wave-status) were already on `main` via PR #380; the execution-map's `proposed` status for them was stale bookkeeping, now reconciled.
+**All Claude-executable 006 slices are CLOSED.** As of 2026-05-28, every docs/coordination slice an agent can run is `complete-by-execution` (or `complete-by-vacuity`): T001 (#379), T002 + T003 (#380 — crosslinks; status reconciled from stale `proposed` on 2026-05-28), T004 + T005 + T006 (#383/#381), T007 + T008 + T009 drift checks (#381), T023 handoff (#382). The deliverables for T002 (CLAUDE.md Specs-summary row) and T003 (006 forward-link in 005's wave-status) were already on `main` via PR #380; the execution-map's `proposed` status for them was stale bookkeeping, now reconciled.
 
 **What remains is NOT Claude-executable:**
 
