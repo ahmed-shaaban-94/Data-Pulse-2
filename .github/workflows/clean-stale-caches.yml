@@ -1,0 +1,136 @@
+name: Clean Stale Caches
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — list deletions without executing'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '0 3 * * *'  # 03:00 UTC daily
+
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cache usage (before)
+        id: before
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          usage=$(gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage")
+          bytes=$(jq '.active_caches_size_in_bytes' <<< "$usage")
+          count=$(jq '.active_caches_count'         <<< "$usage")
+          echo "before_bytes=$bytes" >> "$GITHUB_OUTPUT"
+          gb=$(awk "BEGIN{printf \"%.2f\", $bytes/1073741824}")
+          echo "Before: count=$count  size=$bytes B ($gb GB)"
+
+      - name: Clean stale caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+        run: |
+          set -euo pipefail
+          REPO="$GITHUB_REPOSITORY"
+          NOW=$(date -u +%s)
+
+          # ── Protected: open PRs ───────────────────────────────────────────
+          open_refs=$(
+            gh api "repos/$REPO/pulls?state=open&per_page=100" --paginate \
+              --jq '.[] | "refs/pull/\(.number)/merge", "refs/heads/\(.head.ref)"' \
+            | sort -u
+          )
+
+          # ── Protected: merged within 24 h ────────────────────────────────
+          recent_refs=$(
+            gh api "repos/$REPO/pulls?state=closed&per_page=100" --paginate \
+              --jq '.[] | select(.merged_at != null)
+                        | "\(.number)\t\(.merged_at)\t\(.head.ref)"' \
+            | while IFS=$'\t' read -r num merged_at head_ref; do
+                merged_epoch=$(date -u -d "$merged_at" +%s 2>/dev/null) || continue
+                (( (NOW - merged_epoch) < 86400 )) || continue
+                echo "refs/pull/$num/merge"
+                echo "refs/heads/$head_ref"
+              done \
+            | sort -u
+          )
+
+          # ── All caches ────────────────────────────────────────────────────
+          all_caches=$(
+            gh api "repos/$REPO/actions/caches?per_page=100" --paginate \
+              --jq '.actions_caches[] | "\(.id)\t\(.ref)\t\(.size_in_bytes)"'
+          )
+
+          scanned=0; deleted=0; freed=0
+          kept_main=0; kept_open=0; kept_recent=0; kept_unknown=0
+          unknown_list=""
+
+          if [ -n "$all_caches" ]; then
+            while IFS=$'\t' read -r id ref size; do
+              scanned=$((scanned + 1))
+
+              # 1. main branch
+              if [[ "$ref" == "refs/heads/main" ]]; then
+                kept_main=$((kept_main + 1)); continue
+              fi
+
+              # 2. open PR
+              if [ -n "$open_refs" ] && grep -qxF "$ref" <<< "$open_refs"; then
+                kept_open=$((kept_open + 1)); continue
+              fi
+
+              # 3. recently merged (< 24 h)
+              if [ -n "$recent_refs" ] && grep -qxF "$ref" <<< "$recent_refs"; then
+                kept_recent=$((kept_recent + 1)); continue
+              fi
+
+              # 4. unknown ref format → skip + log
+              if ! [[ "$ref" =~ ^refs/(heads|pull)/ ]]; then
+                kept_unknown=$((kept_unknown + 1))
+                unknown_list+="  ref=$ref  size=$size B"$'\n'
+                continue
+              fi
+
+              # Eligible → delete
+              deleted=$((deleted + 1))
+              freed=$((freed + size))
+              if [[ "$DRY_RUN" != "true" ]]; then
+                gh api -X DELETE "repos/$REPO/actions/caches/$id" --silent || true
+              fi
+
+            done <<< "$all_caches"
+          fi
+
+          freed_gb=$(awk "BEGIN{printf \"%.3f\", $freed/1073741824}")
+          tag=$([ "$DRY_RUN" = "true" ] && echo " [DRY RUN — no deletions performed]" || echo "")
+
+          echo ""
+          echo "=== Cache Cleanup Summary${tag} ==="
+          printf "Scanned                 : %d\n"           "$scanned"
+          printf "Deleted                 : %d (%.3f GB)\n" "$deleted" "$freed_gb"
+          printf "Kept — main             : %d\n"           "$kept_main"
+          printf "Kept — open PR          : %d\n"           "$kept_open"
+          printf "Kept — merged < 24 h    : %d\n"           "$kept_recent"
+          printf "Kept — unknown ref      : %d\n"           "$kept_unknown"
+          if [ -n "$unknown_list" ]; then
+            echo ""
+            echo "Unknown-ref entries (skipped — investigate manually):"
+            printf "%s" "$unknown_list"
+          fi
+
+      - name: Cache usage (after)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          usage=$(gh api "repos/$GITHUB_REPOSITORY/actions/cache/usage")
+          after=$(jq '.active_caches_size_in_bytes' <<< "$usage")
+          count=$(jq '.active_caches_count'         <<< "$usage")
+          before=${{ steps.before.outputs.before_bytes }}
+          freed=$((before - after))
+          echo "After : count=$count  size=$after B ($(awk "BEGIN{printf \"%.2f\", $after/1073741824}") GB)"
+          echo "Net freed: $freed B ($(awk "BEGIN{printf \"%.3f\", $freed/1073741824}") GB)"
