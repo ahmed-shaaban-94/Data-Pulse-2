@@ -49,7 +49,7 @@ import { RolesGuard } from "../../auth/roles.guard";
 import { ContextModule } from "../../context/context.module";
 import { IdempotencyModule } from "../../idempotency/idempotency.module";
 
-import { IdempotencyMismatchFilter } from "./filters/idempotency-mismatch.filter";
+import { IdempotencyMismatchInterceptor } from "./interceptors/idempotency-mismatch.interceptor";
 import { UnknownItemsController } from "./unknown-items.controller";
 import { UnknownItemsService } from "./unknown-items.service";
 
@@ -61,17 +61,21 @@ import { UnknownItemsService } from "./unknown-items.service";
   // token), deferred to a separate wiring slice.
   imports: [AuthModule, IdempotencyModule, AuditModule, ContextModule],
   controllers: [UnknownItemsController],
-  // `IdempotencyMismatchFilter` is registered as a provider so NestJS
-  // resolves its `AUDIT_JOB_ENQUEUER` injection from the audit module
-  // (imported above). The filter is NOT registered as APP_FILTER —
+  // `IdempotencyMismatchInterceptor` is registered as a provider so
+  // NestJS resolves its `AUDIT_JOB_ENQUEUER` injection from the audit
+  // module (imported above). It is NOT registered as APP_INTERCEPTOR —
   // module-global scope would run it on every route, violating the
-  // slice's stop rule ("filter must not modify IdempotencyInterceptor
-  // behavior on routes other than the capture route"). Method-scope
-  // is applied via `@UseFilters(IdempotencyMismatchFilter)` on
-  // `posCaptureItem` in `unknown-items.controller.ts`.
+  // slice's stop rule ("interceptor must not modify behavior on routes
+  // other than the capture route"). Method-scope is applied via
+  // `@UseInterceptors(IdempotencyMismatchInterceptor)` on `posCaptureItem`
+  // in `unknown-items.controller.ts`.
+  // Architectural pivot from the prior `IdempotencyMismatchFilter`
+  // (PR 2 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP) — see
+  // specs/005-pos-catalog-sync-reconciliation/wave-status.md
+  // §"Investigation update — 2026-05-28 (PR #386 CI evidence)".
   // RolesGuard is registered as a plain class provider; @nestjs/core auto-
   // provides Reflector and MembershipRepository comes from ContextModule.
-  providers: [UnknownItemsService, IdempotencyMismatchFilter, RolesGuard],
+  providers: [UnknownItemsService, IdempotencyMismatchInterceptor, RolesGuard],
   exports: [UnknownItemsService],
 })
 export class UnknownItemsModule {}
