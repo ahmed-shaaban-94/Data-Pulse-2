@@ -459,7 +459,10 @@ export class UnknownItemsController {
   // CodeRabbit Critical catch on PR #341.
   @HttpCode(HttpStatus.OK)
   @UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
-  @Roles("owner", "tenant_admin")
+  // Per tasks.md T540 + spec.md US2 #3: tenant-admin OR store-manager (scoped
+  // to the item's store via RLS) can dismiss. The store_manager role is
+  // intentional — store-scoped operators reconcile within their store.
+  @Roles("owner", "tenant_admin", "store_manager")
   @Auditable("unknown_item.dismissed")
   async tenantAdminDismissUnknownItem(
     @Req() request: TenantContextRequest,

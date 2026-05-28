@@ -28,8 +28,8 @@
  *   context as `request.context`. Per-method `RolesGuard` + `@Roles`
  *   gate writes:
  *
- *     - POST link            → @Roles("owner","tenant_admin")  // denyAs: 404
- *     - POST create-product  → @Roles("owner","tenant_admin")  // denyAs: 404
+ *     - POST link            → @Roles("owner","tenant_admin","store_manager")  // denyAs: 404
+ *     - POST create-product  → @Roles("owner","tenant_admin")                  // denyAs: 404
  *
  *   Both are state changes against an existing `:id` (an unknown
  *   item the caller may or may not have access to); per FR-013 /
@@ -165,7 +165,10 @@ export class ReconciliationController {
   @Post("api/v1/catalog/unknown-items/:id/link")
   @HttpCode(HttpStatus.OK)
   @UseGuards(RolesGuard)
-  @Roles("owner", "tenant_admin")
+  // Per spec.md US2 #5 + tasks.md T622: tenant-admin OR store-manager
+  // (scoped to the item's store via RLS) can link. The store_manager role
+  // is intentional — store-scoped operators reconcile within their store.
+  @Roles("owner", "tenant_admin", "store_manager")
   @Auditable("unknown_item.resolved.linked")
   async tenantAdminLinkUnknownItem(
     @Req() request: TenantContextRequest,
