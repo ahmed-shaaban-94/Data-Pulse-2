@@ -75,13 +75,18 @@ import {
   Res,
   UnauthorizedException,
   UseFilters,
+  UseGuards,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
+import { DashboardAuthGuard } from "../../auth/dashboard-auth.guard";
+import { Roles } from "../../auth/roles.decorator";
+import { RolesGuard } from "../../auth/roles.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
 import { Idempotent } from "../../idempotency/idempotent.decorator";
 import {
@@ -373,6 +378,7 @@ export class UnknownItemsController {
    *   `tenantAdminListUnknownItems` consistently.
    */
   @Get("api/v1/catalog/unknown-items")
+  @UseGuards(DashboardAuthGuard, TenantContextGuard)
   async tenantAdminListUnknownItems(
     @Req() request: TenantContextRequest,
     @Query(new ZodValidationPipe(ListUnknownItemsQuerySchema))
@@ -452,6 +458,8 @@ export class UnknownItemsController {
   // code — static `@HttpCode(HttpStatus.OK)` is the right shape.
   // CodeRabbit Critical catch on PR #341.
   @HttpCode(HttpStatus.OK)
+  @UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
+  @Roles("owner", "tenant_admin")
   @Auditable("unknown_item.dismissed")
   async tenantAdminDismissUnknownItem(
     @Req() request: TenantContextRequest,

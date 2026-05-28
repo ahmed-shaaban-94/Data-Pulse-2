@@ -23,13 +23,22 @@ import { Module } from "@nestjs/common";
 
 import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
+import { RolesGuard } from "../../auth/roles.guard";
+import { ContextModule } from "../../context/context.module";
 import { ReconciliationController } from "./reconciliation.controller";
 import { ReconciliationService } from "./reconciliation.service";
 
 @Module({
-  imports: [AuthModule, AuditModule],
+  // ContextModule is imported for both TenantContextGuard (class-level on
+  // ReconciliationController) and MembershipRepository (transitively
+  // required by RolesGuard for membership-role lookup). Mirrors the
+  // StoresModule wiring — see stores.module.ts for the canonical pattern.
+  imports: [AuthModule, AuditModule, ContextModule],
   controllers: [ReconciliationController],
-  providers: [ReconciliationService],
+  // RolesGuard is registered as a plain class provider; @nestjs/core auto-
+  // provides Reflector, and MembershipRepository is reachable via the
+  // ContextModule import. No useFactory needed.
+  providers: [ReconciliationService, RolesGuard],
   exports: [ReconciliationService],
 })
 export class ReconciliationModule {}

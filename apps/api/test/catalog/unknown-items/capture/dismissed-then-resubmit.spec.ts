@@ -81,6 +81,9 @@ import { UnknownItemsController } from "../../../../src/catalog/unknown-items/un
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import type { ResolvedContext } from "../../../../src/context/types";
+import { DashboardAuthGuard } from "../../../../src/auth/dashboard-auth.guard";
+import { RolesGuard } from "../../../../src/auth/roles.guard";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 
 import {
@@ -250,7 +253,16 @@ beforeAll(async () => {
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
     ],
-  }).compile();
+  })
+    // Real DashboardAuthGuard + TenantContextGuard + RolesGuard are wired
+    // class-level / per-method on the controller as of the auth-guard wiring
+    // slice. Tests inject context via the global ConfigurableContextGuard
+    // (registered below); override the production guards with no-op
+    // pass-throughs so the global guard's context survives to the handler.
+    .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+    .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
   app.useGlobalFilters(new GlobalExceptionFilter());

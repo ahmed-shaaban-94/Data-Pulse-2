@@ -80,6 +80,9 @@ import { ReconciliationController } from "../../../../src/catalog/reconciliation
 import { ReconciliationService } from "../../../../src/catalog/reconciliation/reconciliation.service";
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import type { ResolvedContext } from "../../../../src/context/types";
+import { DashboardAuthGuard } from "../../../../src/auth/dashboard-auth.guard";
+import { RolesGuard } from "../../../../src/auth/roles.guard";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 
 import {
   applyAllUpAndCreateAppRole,
@@ -204,7 +207,16 @@ beforeAll(async () => {
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
       { provide: APP_INTERCEPTOR, useValue: auditInterceptor },
     ],
-  }).compile();
+  })
+    // Real DashboardAuthGuard + TenantContextGuard + RolesGuard are wired
+    // class-level / per-method on the controller as of the auth-guard wiring
+    // slice. Tests inject context via the global ConfigurableContextGuard
+    // (registered below); override the production guards with no-op
+    // pass-throughs so the global guard's context survives to the handler.
+    .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+    .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
   // GlobalExceptionFilter only — do NOT add IdempotencyMismatchFilter globally
