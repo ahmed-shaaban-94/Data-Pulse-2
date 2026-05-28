@@ -83,6 +83,7 @@ import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { DashboardAuthGuard } from "../../auth/dashboard-auth.guard";
+import { PosOperatorAuthGuard } from "../../auth/pos-operator-auth.guard";
 import { Roles } from "../../auth/roles.decorator";
 import { RolesGuard } from "../../auth/roles.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
@@ -270,6 +271,7 @@ export class UnknownItemsController {
    * CAPTURE-DEDUP).
    */
   @Post("api/pos/v1/catalog/unknown-items")
+  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
   @Idempotent("required")
   @Auditable("unknown_item.captured")
   // METHOD-SCOPED filter — T533 / 005-WAVE1-IDEMP-MISMATCH. Catches

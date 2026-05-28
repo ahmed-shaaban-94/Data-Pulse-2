@@ -63,6 +63,7 @@ import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unkno
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import type { ResolvedContext } from "../../../../src/context/types";
 import { DashboardAuthGuard } from "../../../../src/auth/dashboard-auth.guard";
+import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
 import { RolesGuard } from "../../../../src/auth/roles.guard";
 import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 
@@ -152,6 +153,7 @@ beforeAll(async () => {
     // production guards with no-op pass-throughs so the global guard's
     // context survives to the handler.
     .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+    .overrideGuard(PosOperatorAuthGuard).useValue({ canActivate: () => true })
     .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
     .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
     .compile();
