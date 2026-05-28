@@ -128,6 +128,7 @@ Three counters registered in `api.metrics.ts`, allowlisted in `packages/shared/s
 | **T550/T551 + T552 + T532** — integration coverage for the mismatch path | AUDIT PR #344, METRICS PR #349, IDEMP-MISMATCH PR #339 | **Absorbed into `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** (2026-05-28). See **Slice brief** below for the 2026-05-28 investigation outcome. No production-behavior gap: filter logic is unit-tested (IMF1–5); the gap is end-to-end wiring evidence. |
 | **Auth-guard wiring** — 6 unguarded routes on `UnknownItemsController` | CAPTURE-HAPPY PR #317 (and 5 subsequent PRs) | Deferred-with-rationale: `apps/api/src/auth/**` is forbidden surface for 005. A follow-up "auth-wiring" slice must address all 6 routes consistently (POS routes use bearer tokens; admin routes use session cookies). Requires `[GATED]` approval per Standing Rules §3. CodeRabbit flagged this on PR #334 (twice); deferral documented here as the canonical record. |
 | **Header-name concept alignment** — `idempotency-token-mismatch` in `spec.md` FR-091 and Assumptions | n/a | Intentionally left as-is: `idempotency-token-mismatch` is a failure *category* name, not an HTTP header. Changing it to `idempotency-key-mismatch` would create new drift with the existing metric name `idempotency_token_mismatch_total` (PR #299 allowlist) and the audit subject `unknown_item.idempotency_mismatch_rejected`. These concept names reflect the metric name as the stable anchor. |
+| **T560 perf-budget threshold brittleness** — SC-008 `p95 <= 500ms` assertion in `capture-latency.spec.ts` | POLISH PR #351 | **Observed flake on 2026-05-28**: same-SHA back-to-back CI runs on `main` produced p95 = **760ms (FAIL)** then p95 = **446ms (PASS)** — a 1.7× spread on identical code, from GitHub-hosted runner variance against the 50k-product / 100k-alias full-scale fixture. Headroom on the passing run was **10.8%** (446 vs 500). The spec's `dockerSkipped` gate (line 440-448) only handles the Windows-host-no-Docker case; there is **no runner-variance escape hatch** in CI. Expected recurrence: ~5–15% of runs. Recommended fix: widen `p95` threshold to ~750ms OR add a 5-call warmup-discard before percentile computation. Tracking as a low-priority follow-up; **not** in scope for `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` (different test category — perf-budget assertion vs. mismatch-path harness wiring). |
 
 ---
 
@@ -193,6 +194,58 @@ Per `execution-map.yaml` `allowed_files`:
 - Do **not** restart the harness investigation from scratch — primary-source evidence above stands.
 - Do **not** trust the skip-block comment's "the harness pattern is wrong" framing as diagnostic; treat 001's `conflict.spec.ts` as the working-pattern comparator.
 - Do **not** attempt PR 2 before PR 1 produces logged evidence — PR #349's two reverted attempts already demonstrate that "try another fix shape" without diagnostic data is rework.
+
+### Investigation update — 2026-05-28 (PR #386 CI evidence)
+
+**PR #386** (commit `1e759b9`) instrumented 4 of 5 boundary points and unskipped T532. CI run `26593824760` failed as expected, but the boundary logs **refute both hypotheses 1 and 2 of this brief**. Primary-source evidence from the CI logs:
+
+| Boundary | Fired? | Timestamp | Source |
+|---|---|---|---|
+| B5 — supertest pre-call | ✅ | `1779992669942` | `retry-mismatch.spec.ts:426` |
+| B1 — interceptor pre-throw | ✅ | `1779992669959` (+17ms) | `idempotency.interceptor.ts:259` |
+| B2 — interceptor outer catch | ✅ | `1779992669970` (+11ms) | `idempotency.interceptor.ts:313` |
+| B3 — filter `catch()` entry | ✅ | `1779992669972` (+2ms) | `idempotency-mismatch.filter.ts:127` |
+| B5 — supertest post-call | ❌ never fired | — | timeout at 30s |
+
+All four instrumented boundaries fire **in order, within 30 milliseconds** of the second supertest call. The test then sits idle for 30 seconds and times out at the `await http().post(...)` call. The `ConflictException` reaches the `IdempotencyMismatchFilter.catch()` method without issue — but the response never reaches supertest.
+
+**What this refutes:**
+
+- ❌ PR #349's skip-block framing ("ConflictException escapes Jest before any filter side-effect can run") — falsified. The filter side-effects (B3 log, counter increment, audit enqueue) all execute.
+- ❌ Hypothesis 1 ("`@UseFilters(IdempotencyMismatchFilter)` method-level binding is the issue") — falsified. The filter is *receiving* the exception; the binding works.
+- ❌ Hypothesis 2 ("`useGlobalGuards(contextGuard)` ordering") — falsified. Guards run before interceptors; if guards were the issue, B1 would never have fired.
+
+**Narrowed hypothesis (PR 2):**
+
+The failure is **post-B3, pre-B5-post-call** — i.e., between the filter's `catch()` entry and supertest's response receipt. Three sub-hypotheses to discriminate:
+
+3a. **Filter re-throw doesn't propagate to `GlobalExceptionFilter`** — NestJS may not chain an async filter's re-throw to the next filter in the pipeline reliably when the catch is `Promise<void>`. (Most likely structural explanation; see `idempotency-mismatch.filter.ts:191`.)
+3b. **`GlobalExceptionFilter` receives the exception but `response.json()` hangs** — exotic; would point to Express/Supertest interaction.
+3c. **`response.headersSent` is somehow true** — `GlobalExceptionFilter.catch():101` early-returns when headers are already sent. If something committed the response before the exception path, this short-circuits without writing the envelope. The mismatch branch doesn't write to the response, so this shouldn't trigger — but worth logging.
+
+**PR 2 scope (revised):**
+
+Add two new boundary points and run one CI cycle to discriminate 3a/3b/3c:
+
+- **B3.5** — `idempotency-mismatch.filter.ts:191` — log immediately before `throw exception;`. Confirms enqueue completed and the re-throw is being attempted. In scope (filter is in `allowed_files`).
+- **B4** — `common/exception.filter.ts:93` — log at `GlobalExceptionFilter.catch()` entry, including `response.headersSent` value. Confirms whether the global filter ever receives the exception. **`common/exception.filter.ts` is NOT in this slice's `allowed_files` — PR 2 requires a `[GATED]` allowed_files expansion to add it.**
+
+**Discriminator matrix for PR 2's CI output:**
+
+| B3.5 fires? | B4 fires? | `response.headersSent` at B4 | Diagnosis |
+|---|---|---|---|
+| ❌ | — | — | Filter `catch` hangs internally between B3 and the throw (unexpected; investigate enqueue or audit path) |
+| ✅ | ❌ | — | **3a confirmed** — NestJS filter chain doesn't propagate the async re-throw. Fix: change filter to non-async, OR call `super.catch(exception, host)` pattern, OR refactor to side-effects-via-interceptor-tap pattern. |
+| ✅ | ✅ | `true` | **3c confirmed** — investigate what wrote to the response prior to the exception. Fix: identify and remove the premature write. |
+| ✅ | ✅ | `false` | **3b confirmed** — `response.json()` hangs. Fix: investigate Express/Supertest interaction (potential Express-version mismatch or middleware that buffers). |
+
+**Refuted, do NOT attempt in PR 2:**
+
+- Porting 001's `.overrideGuard(...).useValue(...)` pattern (hypothesis 2's fix) — the guards are not the issue.
+- Removing the `@UseFilters` method-level binding (hypothesis 1's fix) — the filter IS firing.
+- Refactoring to `Test.createTestingModule({ imports: [AppModule] })` — premature; we don't yet have evidence that the harness shape matters.
+
+PR 2's job is to add 2 logs and read CI output. PR 3 applies the fix based on which sub-hypothesis the discriminator matrix selects.
 
 ---
 
