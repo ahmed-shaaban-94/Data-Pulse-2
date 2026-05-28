@@ -96,6 +96,9 @@ import {
 } from "../../__support__/isolation-harness";
 
 import * as apiMetrics from "../../../../src/observability/metrics/api.metrics";
+import { DashboardAuthGuard } from "../../../../src/auth/dashboard-auth.guard";
+import { RolesGuard } from "../../../../src/auth/roles.guard";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -244,7 +247,17 @@ beforeAll(async () => {
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
     ],
-  }).compile();
+  })
+    // Real DashboardAuthGuard + TenantContextGuard + RolesGuard are wired
+    // method-level on LIST + dismiss as of the auth-guard wiring slice.
+    // Even tests that only hit the POS capture route must override these
+    // because NestJS resolves all controller-declared guards at compile time.
+    // Override with no-op pass-throughs so the test harness compiles and
+    // the global ConfigurableContextGuard's context survives to the handler.
+    .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+    .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
   app.useGlobalFilters(new GlobalExceptionFilter());

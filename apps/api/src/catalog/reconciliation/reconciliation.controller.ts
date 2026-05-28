@@ -22,12 +22,23 @@
  *   prose says `validation_failure`; that is documented drift — the
  *   enforced wire code is `validation_error` / ErrorCodes.VALIDATION.)
  *
- * Auth gap (carried forward from Wave 1 slices):
- *   No @UseGuards(AuthGuard, TenantContextGuard, RolesGuard). The
- *   `apps/api/src/auth/**` surface remains forbidden for 005. The
- *   resolved context is injected by integration tests via
- *   ConfigurableContextGuard and will be wired by a subsequent
- *   auth-integration slice.
+ * Authentication & authorization (wired by 005-WAVE2-AUTH-GUARD-WIRING):
+ *   Class-level `@UseGuards(DashboardAuthGuard, TenantContextGuard)`
+ *   authenticates every request and publishes the resolved tenant
+ *   context as `request.context`. Per-method `RolesGuard` + `@Roles`
+ *   gate writes:
+ *
+ *     - POST link            → @Roles("owner","tenant_admin","store_manager")  // denyAs: 404
+ *     - POST create-product  → @Roles("owner","tenant_admin")                  // denyAs: 404
+ *
+ *   Both are state changes against an existing `:id` (an unknown
+ *   item the caller may or may not have access to); per FR-013 /
+ *   FR-092 / SI-001, a wrong-role caller MUST NOT be able to
+ *   distinguish "you exist but lack permission" from "this item
+ *   does not exist", so the default `denyAs: 404` shape is correct.
+ *   Integration tests `.overrideGuard()` these three guards with
+ *   no-op passthroughs and continue to inject context via the
+ *   global ConfigurableContextGuard registered on the test app.
  *
  * Audit subjects (no dual-emission — tasks.md L477):
  *   link        → @Auditable("unknown_item.resolved.linked")
@@ -51,11 +62,16 @@ import {
   Post,
   Req,
   UnauthorizedException,
+  UseGuards,
 } from "@nestjs/common";
 import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
+import { DashboardAuthGuard } from "../../auth/dashboard-auth.guard";
+import { Roles } from "../../auth/roles.decorator";
+import { RolesGuard } from "../../auth/roles.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
 import {
   CreateProductFromUnknownItemRequestSchema,
@@ -128,6 +144,7 @@ function rowToWireShape(row: UnknownItemRow): UnknownItemWireShape {
 // ---------------------------------------------------------------------------
 
 @Controller()
+@UseGuards(DashboardAuthGuard, TenantContextGuard)
 export class ReconciliationController {
   constructor(private readonly reconciliationService: ReconciliationService) {}
 
@@ -147,6 +164,11 @@ export class ReconciliationController {
    */
   @Post("api/v1/catalog/unknown-items/:id/link")
   @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  // Per spec.md US2 #5 + tasks.md T622: tenant-admin OR store-manager
+  // (scoped to the item's store via RLS) can link. The store_manager role
+  // is intentional — store-scoped operators reconcile within their store.
+  @Roles("owner", "tenant_admin", "store_manager")
   @Auditable("unknown_item.resolved.linked")
   async tenantAdminLinkUnknownItem(
     @Req() request: TenantContextRequest,
@@ -234,6 +256,8 @@ export class ReconciliationController {
    */
   @Post("api/v1/catalog/unknown-items/:id/create-product")
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
   @Auditable("unknown_item.resolved.created")
   async tenantAdminCreateProductFromUnknownItem(
     @Req() request: TenantContextRequest,

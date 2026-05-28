@@ -84,6 +84,9 @@ import { UnknownItemsController } from "../../../../src/catalog/unknown-items/un
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import type { ResolvedContext } from "../../../../src/context/types";
+import { DashboardAuthGuard } from "../../../../src/auth/dashboard-auth.guard";
+import { RolesGuard } from "../../../../src/auth/roles.guard";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 
 // --------------------------------------------------------------------------
 // Suite-level state — mirrors cross-tenant.spec.ts (PR #332) for service-direct
@@ -161,7 +164,18 @@ beforeAll(async () => {
       { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
       UnknownItemsService,
     ],
-  }).compile();
+  })
+    // Real DashboardAuthGuard + TenantContextGuard + RolesGuard are wired
+    // method-level on LIST + dismiss as of the auth-guard wiring slice
+    // (UnknownItemsController has no class-level guards because the POS
+    // capture route uses a different auth model). Tests inject context via
+    // the global ConfigurableContextGuard (registered below); override the
+    // production guards with no-op pass-throughs so the global guard's
+    // context survives to the handler.
+    .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+    .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
+    .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
+    .compile();
 
   app = moduleRef.createNestApplication({ bufferLogs: true });
   app.useGlobalFilters(new GlobalExceptionFilter());

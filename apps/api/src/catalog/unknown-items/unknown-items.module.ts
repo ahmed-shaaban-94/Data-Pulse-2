@@ -45,6 +45,8 @@ import { Module } from "@nestjs/common";
 
 import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
+import { RolesGuard } from "../../auth/roles.guard";
+import { ContextModule } from "../../context/context.module";
 import { IdempotencyModule } from "../../idempotency/idempotency.module";
 
 import { IdempotencyMismatchFilter } from "./filters/idempotency-mismatch.filter";
@@ -52,7 +54,12 @@ import { UnknownItemsController } from "./unknown-items.controller";
 import { UnknownItemsService } from "./unknown-items.service";
 
 @Module({
-  imports: [AuthModule, IdempotencyModule, AuditModule],
+  // ContextModule provides TenantContextGuard (method-level on LIST + dismiss)
+  // and MembershipRepository (transitively required by RolesGuard on dismiss).
+  // Wired by 005-WAVE2-AUTH-GUARD-WIRING. POS capture route is intentionally
+  // unguarded by these — that route uses a different auth model (POS device
+  // token), deferred to a separate wiring slice.
+  imports: [AuthModule, IdempotencyModule, AuditModule, ContextModule],
   controllers: [UnknownItemsController],
   // `IdempotencyMismatchFilter` is registered as a provider so NestJS
   // resolves its `AUDIT_JOB_ENQUEUER` injection from the audit module
@@ -62,7 +69,9 @@ import { UnknownItemsService } from "./unknown-items.service";
   // behavior on routes other than the capture route"). Method-scope
   // is applied via `@UseFilters(IdempotencyMismatchFilter)` on
   // `posCaptureItem` in `unknown-items.controller.ts`.
-  providers: [UnknownItemsService, IdempotencyMismatchFilter],
+  // RolesGuard is registered as a plain class provider; @nestjs/core auto-
+  // provides Reflector and MembershipRepository comes from ContextModule.
+  providers: [UnknownItemsService, IdempotencyMismatchFilter, RolesGuard],
   exports: [UnknownItemsService],
 })
 export class UnknownItemsModule {}
