@@ -405,15 +405,15 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
         request_id: expect.any(String),
       },
     });
-    // NOTE: `error.details.code` assertion below is left as-authored
-    // for the follow-up slice (005-WAVE1-METRICS-MISMATCH-FOLLOWUP)
-    // that unskips this block. Post-PR #360 the interceptor still
-    // throws `{ code, message }` only — no `details` field — so when
-    // the skip is lifted, this assertion will need revisiting along
-    // with the surrounding harness refactor.
-    expect(second.body.error.details).toMatchObject({
-      code: "idempotency_key_conflict",
-    });
+    // No `error.details.code` assertion: post-PR #360, the
+    // IdempotencyInterceptor throws `new ConflictException({ code, message })`
+    // with no `details` field. GlobalExceptionFilter.extractEnvelopeFields
+    // only populates the envelope's `details` when the response payload
+    // carries one, so `error.details` is undefined here. The canonical
+    // code is already asserted at envelope-level above; a second `.details`
+    // check would be redundant and contractually wrong. The original
+    // PR #339 author flagged this with a "will need revisiting" note that
+    // is now resolved by this deletion (PR 2 of FOLLOWUP).
 
     // Catalog-domain counter incremented exactly once on the mismatch.
     expect(mismatchCounter).toBe(1);
