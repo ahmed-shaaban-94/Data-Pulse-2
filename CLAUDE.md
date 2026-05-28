@@ -26,11 +26,11 @@ Do not duplicate standing-rules content here. When in doubt about an operating r
 
 ## Active feature
 
-**`004-platform-production-readiness`** — observability instrumentation, idempotency, outbox, k6 load testing, SDK strategy. Authoritative phase-by-phase status: [docs/production-readiness/004-closeout-status.md](docs/production-readiness/004-closeout-status.md).
+**No single feature is currently in active development.** Confirm via GitHub (open PRs, recent commits) before acting. Recent shipped work and documented partials:
 
-Current state (as of last verified merge — confirm via GitHub before acting):
-- **T483** — `live /metrics` operator scrape validation: PARTIAL. Full signal-catalogue coverage (DB pool, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login) not yet live-scraped. See [docs/observability/operator-validation-report.md](docs/observability/operator-validation-report.md).
-- **T565, T595, T596, T597–T600** — all merged (PRs #255, #251, #253, #259 and P7 exit-gate); refer to `004-closeout-status.md` for details.
+- **`005-pos-catalog-sync-reconciliation`** — shipped 2026-05-23 to 2026-05-28. Waves 1 + 2 both COMPLETE on `main` (POS capture + reconciliation surface — link / create-product / conflict audit + metrics); auth-guard wiring complete on all five reconciliation routes (PRs #377 + #378). One follow-up slice deferred: **`005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** — multi-PR harness refactor that closes T532 + T550 + T551 + T552-mismatch-case together (see [specs/005-pos-catalog-sync-reconciliation/wave-status.md](specs/005-pos-catalog-sync-reconciliation/wave-status.md)).
+- **`006-unknown-items-review-queue`** — docs-only product brief; Claude-executable scope exhausted 2026-05-28 (10 of 23 slices closed via PRs #380, #381, #382, #383). Remaining 13 slices are reviewer-owned (T010–T019 per-US sign-offs) or external-gate-blocked on future API + UI feature specs that don't yet exist.
+- **`004-platform-production-readiness`** — P7 exit-gate **PASS for exercised API/worker/outbox paths** as of 2026-05-21. P4 full signal-catalogue live-scrape coverage **PARTIAL** with explicit deferrals (DB pool, Redis, idempotency, auth-failure, RLS-failure, cross-tenant, suspicious-login signals not yet live-scraped). Authoritative status: [docs/production-readiness/004-closeout-status.md](docs/production-readiness/004-closeout-status.md). T483 partial documented in [docs/observability/operator-validation-report.md](docs/observability/operator-validation-report.md).
 
 For slice state, always read the spec's `execution-map.yaml` and `wave-status.md` — do not rely on this file for task-level detail.
 
@@ -39,8 +39,9 @@ For slice state, always read the spec's `execution-map.yaml` and `wave-status.md
 - **`001-foundation-auth-tenant-store`** — shipped. Auth, tenant/store/memberships, audit pipeline, idempotency interceptor, outbox first slice all merged. [specs/001-foundation-auth-tenant-store/](specs/001-foundation-auth-tenant-store/)
 - **`002-pos-operator-identity`** — specification + OpenAPI contracts only. POS app is a separate repo integrating exclusively via `packages/contracts/openapi/`. [specs/002-pos-operator-identity/](specs/002-pos-operator-identity/)
 - **`003-catalog-foundation`** — complete. All 22 slices merged on main through PR #310. Schema modules, schema-shape tests, 5 gated SQL migrations (0007–0011), and Phase 3 RED+GREEN service-layer pairs all on main; all 5 findings resolved. [specs/003-catalog-foundation/](specs/003-catalog-foundation/)
-- **`004-platform-production-readiness`** — active; see above and `004-closeout-status.md`.
-- **`006-unknown-items-review-queue`** — Unknown Items Review Queue, docs-only product brief. 10 user stories, 38 FRs, 9 SI requirements, 8 SCs. Spec/plan/Phase 0–1 artefacts + Agent OS coordination (T001–T023) merged on `main` via PRs #308 + #311. No application code, no schema, no OpenAPI YAML. Downstream features (a future API feature, then a future UI feature) cite 006 as their product brief. [specs/006-unknown-items-review-queue/](specs/006-unknown-items-review-queue/)
+- **`004-platform-production-readiness`** — P7 exit-gate PASS for exercised paths; P4 PARTIAL with explicit deferrals. See above and `004-closeout-status.md`.
+- **`005-pos-catalog-sync-reconciliation`** — POS Catalog Sync + Reconciliation. Shipped 2026-05-23 to 2026-05-28. Wave 1 (POS capture + dismiss + idempotency-mismatch audit + metrics) and Wave 2 (link + create-product + conflict + atomicity) both COMPLETE on `main`; auth-guard wiring complete on all five reconciliation routes (PRs #377 + #378). One follow-up deferred: `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` (harness refactor closing T532 + T550 + T551 + T552-mismatch-case together). [specs/005-pos-catalog-sync-reconciliation/](specs/005-pos-catalog-sync-reconciliation/)
+- **`006-unknown-items-review-queue`** — Unknown Items Review Queue, docs-only product brief. 10 user stories, 38 FRs, 9 SI requirements, 8 SCs. Spec/plan/Phase 0–1 artefacts + Agent OS coordination (T001–T023) merged on `main` via PRs #308 + #311; Claude-executable slice scope exhausted 2026-05-28 (10 of 23 closed via PRs #380, #381, #382, #383). Remaining 13 are reviewer-owned or external-gate-blocked. [specs/006-unknown-items-review-queue/](specs/006-unknown-items-review-queue/)
 
 ## What this repo does NOT own
 
