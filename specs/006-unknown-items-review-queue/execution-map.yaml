@@ -430,7 +430,9 @@ slices:
   - id: T023
     task_ids: [T023]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-28 — validation passed: 006 is referenced only in Specs summary (added in PR #380). No unexpected in-flight 006 follow-up work exists.
+    closed_by_pr: 382
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -439,6 +441,7 @@ slices:
     validation:
       - command: grep -A 3 "^## Active feature" CLAUDE.md
         expected: Active feature reflects current state — 006 referenced only in Specs summary unless explicit follow-up work exists.
+        outcome: Active feature section names 004 (unrelated to 006); 006 appears only in the Specs summary row added by T002 (PR #380 @ 8e543b1). Slice's expected state holds; no CLAUDE.md edit required. Separately-flagged doc-debt — the Active feature framing itself is stale (004 has been substantially closed; 005 has shipped Waves 1+2) — is out of T023's slice scope and should be addressed by a dedicated CLAUDE.md-refresh slice.
     stop:
       - standing-rules universal stops
       - "stop if 006 has unexpected in-flight follow-up work — surface it before editing CLAUDE.md"
