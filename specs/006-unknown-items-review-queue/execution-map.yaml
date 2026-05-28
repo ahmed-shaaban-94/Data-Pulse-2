@@ -113,7 +113,9 @@ slices:
   - id: T004
     task_ids: [T004]
     type: docs
-    status: blocked   # waits for 005 Wave 1 closeout on origin/main
+    status: complete-by-execution   # 2026-05-28 — intent satisfied: 005 Wave 1 is COMPLETE on main. Literal slice grep fails (snake_case mismatch — see outcome below); flagged as slice-grammar doc-debt.
+    closed_by_pr: 383
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -122,6 +124,17 @@ slices:
     validation:
       - command: grep -E "wave_1.*(closed|complete|done)" specs/005-pos-catalog-sync-reconciliation/wave-status.md
         expected: "One match indicating 005 Wave 1 is closed."
+        outcome: |
+          Two-layer verification on 2026-05-28 against main:
+          (1) LITERAL grep `wave_1.*(closed|complete|done)` (snake_case, lowercase): exit=1, no match.
+              The slice's expected grammar (`wave_1`) does not appear in 005's wave-status.md; the doc uses
+              `Wave 1` (title case, space separator) instead.
+          (2) INTENT grep `Wave 1.*(complete|closed|done)` (case-insensitive, broader): 2 matches —
+              "Wave 1 is COMPLETE" (TL;DR line 13) and "Wave 1 and Wave 2 are both COMPLETE" (TL;DR line 19).
+              005 Wave 1 IS closed on main (PR #351 @ bb98ff4, 2026-05-26 — the WAVE1-POLISH terminal slice merge).
+          Slice intent satisfied; literal grep mismatch flagged as slice-grammar doc-debt.
+          No plan.md edit required — the gate fires informationally and the next-action is signalled
+          by 006's wave-status.md "Merged on main" closeout row recording this PR.
     stop:
       - standing-rules universal stops
       - "stop if 005 Wave 1 status is still 'in progress' — leave slice blocked and update wave-status.md instead"
@@ -130,7 +143,9 @@ slices:
   - id: T005
     task_ids: [T005]
     type: docs
-    status: blocked   # waits for 005 Wave 2 reconciliation spec authoring + merge
+    status: complete-by-execution   # 2026-05-28 — both literal and intent: 005 Wave 2 reconciliation surface is COMPLETE on main; ReconciliationService/Controller live; AUDIT + METRICS + POLISH all merged.
+    closed_by_pr: 383
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -139,6 +154,18 @@ slices:
     validation:
       - command: ls specs/005-pos-catalog-sync-reconciliation/execution-map.yaml && grep -E "reconciliation|wave.?2" specs/005-pos-catalog-sync-reconciliation/execution-map.yaml | head -5
         expected: "005 execution-map shows Wave 2 reconciliation slices listed and at least one merged."
+        outcome: |
+          Two-layer verification on 2026-05-28 against main:
+          (1) LITERAL ls + grep: ls exit=0 (execution-map.yaml present); grep exit=0 with 5 matches (head limit).
+              The 5 matches returned are header/comment references rather than slice IDs, so the literal
+              command technically passes but does not directly demonstrate the slice's "at least one merged"
+              criterion.
+          (2) INTENT grep `^  - id: 005-WAVE2`: 10 explicit Wave 2 slice IDs listed
+              (CONTRACT / CONFLICT / LINK-HAPPY / LINK-EDGES / CREATE-HAPPY / CREATE-EDGES / AUDIT /
+              METRICS-ALLOWLIST / METRICS / POLISH). Total `status: merged` entries in the file: 24.
+              005 Wave 2 closeout: PR #374 @ a96706d, merged 2026-05-27 (the WAVE2-POLISH terminal slice).
+          Slice intent strongly satisfied; literal command passes vacuously but the underlying state is
+          much richer than the head-limited grep demonstrates. No plan.md edit required.
     stop:
       - standing-rules universal stops
       - "stop if 005 Wave 2 has not yet been authored — gate remains blocked"
