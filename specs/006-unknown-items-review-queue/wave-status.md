@@ -19,13 +19,15 @@
 - **10 sign-off slices** (T010–T019) — one per spec.md user story (US1–US10); all share `checklists/requirements.md` so they are `parallel_safety: unsafe` and serialise.
 - **4 handoff slices** (T020–T023) — open the future API feature spec, open the future UI feature spec, final sign-off-log sweep, CLAUDE.md Active-feature verification.
 
-**Next moves:**
+**Next moves (superseded — see [§ Next recommended action](#next-recommended-action) below for the current state as of 2026-05-29):**
 
-1. **PR #308 and PR #311 are merged** — 006 artefacts are on `main` and the spec is citable.
-2. **Dispatch the Phase 1 crosslink pair** — T002 (CLAUDE.md Specs summary) and T003 (005 wave-status forward-link). They have non-overlapping files but share the parallel group `PHASE1-CROSSLINK` with T001; safer to dispatch sequentially. T001 (CodeRabbit follow-through) should run first if any CR findings remain from `7cfe25c`.
-3. **Run the drift checks** — `PHASE2-DRIFT-CHECKS` group (T007 + T008 + T009) is `parallel_safety: safe` and can dispatch together once Phase 1 lands.
-4. **Open the Phase 3–12 sign-off sweep** — schedule reviewers against `quickstart.md` scenarios; sign-offs serialise on `checklists/requirements.md`.
-5. **Hold T020 / T021** until the foundational gates (T004 + T005 + T006) observe their external triggers.
+The authoring-time plan below is retained for history. All of steps 1–3 are now DONE: PR #308/#311 merged the artefacts; T002 + T003 crosslinks landed in PR #380; the `PHASE2-DRIFT-CHECKS` group (T007–T009) closed in PR #381. Only steps 4–5 remain, and neither is Claude-executable (reviewer sign-offs + external-gated feature-spec openings).
+
+1. ~~**PR #308 and PR #311 are merged**~~ — done; 006 artefacts on `main`.
+2. ~~**Dispatch the Phase 1 crosslink pair** (T002 + T003)~~ — done (PR #380).
+3. ~~**Run the drift checks** (`PHASE2-DRIFT-CHECKS`: T007 + T008 + T009)~~ — done (PR #381).
+4. **Open the Phase 3–12 sign-off sweep** — schedule reviewers against `quickstart.md` scenarios; sign-offs serialise on `checklists/requirements.md`. *(reviewer-owned)*
+5. **Hold T020 / T021** until the foundational gates observe their external triggers (T004–T006 already complete; the gates now wait on the future API/UI feature specs being prioritised). *(external-gated, `approval_required`)*
 
 **No waves.** Unlike 005 (which has Wave 1 capture + Wave 2 reconciliation), 006 has phases mapping to spec.md §5 user stories. The "Wave" in the filename is convention; 006's narrative below is single-phase coordination.
 
@@ -106,37 +108,23 @@ These slices have no unsatisfied dependencies and can dispatch when their slot o
 | T006 | 2 — Foundational gate | opus-maestro | `specs/006-unknown-items-review-queue/plan.md` | T004, T005 (different files) |
 | T023 | 13 — Handoff | opus-maestro | `CLAUDE.md` | — (T002 also touches CLAUDE.md) |
 
-**Proposed parallel groups** (awaiting endorsement):
+**Parallel groups** (both executed; retained as the dispatch-grammar record):
 
-- `PHASE2-DRIFT-CHECKS` — { T007, T008, T009 } — `parallel_safety: safe`. Three independent drift-verification reads with no file overlap.
+- `PHASE1-CROSSLINK` — { T001, T002, T003 } — closed via PR #380 (T001 close-by-vacuity + T002/T003 crosslinks).
+- `PHASE2-DRIFT-CHECKS` — { T007, T008, T009 } — `parallel_safety: safe`; three independent drift-verification reads, all closed via PR #381.
 
 ---
 
 ## Next recommended action
 
-**PR #308 and PR #311 are merged.** 006 is now active on `origin/main`. Next steps:
+**All Claude-executable 006 slices are CLOSED.** As of 2026-05-29, every docs/coordination slice an agent can run is `complete-by-execution` (or `complete-by-vacuity`): T001 (#379), T002 + T003 (#380 — crosslinks; status reconciled from stale `proposed` on 2026-05-29), T004 + T005 + T006 (#383/#381), T007 + T008 + T009 drift checks (#381), T023 handoff (#382). The deliverables for T002 (CLAUDE.md Specs-summary row) and T003 (006 forward-link in 005's wave-status) were already on `main` via PR #380; the execution-map's `proposed` status for them was stale bookkeeping, now reconciled.
 
-1. **Dispatch T002 + T003** sequentially — T002 updates the `CLAUDE.md` Specs summary row for 006; T003 adds a forward-link to 006 in `specs/005-pos-catalog-sync-reconciliation/wave-status.md`. They touch different files so can run in parallel, but T001 (CodeRabbit follow-through, if CR findings arrived after `7cfe25c`) should land first if any are open.
-2. **Dispatch `PHASE2-DRIFT-CHECKS` group** (T007 + T008 + T009 in parallel — `safe`). Three independent drift-verification reads.
-3. **Schedule the Phase 3–12 sign-off sweep** with reviewers. Aim for one P1 sign-off per week (T010–T015), then a single batch for P2 sign-offs (T016–T019).
+**What remains is NOT Claude-executable:**
 
-The downstream-feature gates (T004 + T005 + T006) are background-monitored — they don't actively block 006's planning-artefact lifecycle, only the eventual T020 + T021 spec-opening dispatch.
+1. **Per-user-story sign-offs (T010–T019) + final review (T022)** — `agent: reviewer`. These require a human reviewer to judge the spec/quickstart against `checklists/requirements.md` and sign off. Dispatch one P1 sign-off at a time (T010–T015 share the checklist file; serialise), then batch the P2 sign-offs (T016–T019).
+2. **Downstream feature-spec openings (T020 + T021)** — `status: blocked`, `approval_required: true`. They open *new* API + UI feature specs that do not yet exist; gated on explicit user authorisation and on the upstream feature being prioritised. Not actionable until then.
 
----
-
-## Next short Maestro prompt
-
-```text
-Use Agent OS. Execute slice T002. Stop before commit.
-```
-
-```text
-Use Agent OS. Execute slice T003. Stop before commit.
-```
-
-```text
-Use Agent OS. Schedule group PHASE2-DRIFT-CHECKS. Stop before dispatch.
-```
+There is no remaining agent-runnable planning work in 006. The next move is the human reviewer sweep (T010–T019), outside Claude's scope.
 
 ---
 
@@ -145,4 +133,4 @@ Use Agent OS. Schedule group PHASE2-DRIFT-CHECKS. Stop before dispatch.
 - 006 has **no waves** — single-phase coordination. The "Wave 1 / Wave 2" terminology in 005 maps to wave-status sections in 005, not to 006.
 - All 23 slices touch documentation only. There is no `[GATED]` slice in 006's execution-map; `approval_required: true` appears only on T020 + T021 because they open *new feature specs* (downstream work), not because they touch a gated path.
 - Sign-off slices (T010–T019) share `checklists/requirements.md`. To serialise correctly, dispatch them one at a time. Each slice's validation grep targets a unique `T0NN sign-off` heading anchor.
-- The two `proposed: true` groups in `execution-map.yaml` are awaiting explicit user endorsement before parallel dispatch.
+- Both Phase-1/Phase-2 parallel groups (`PHASE1-CROSSLINK`, `PHASE2-DRIFT-CHECKS`) have executed and closed (PRs #380/#381). The only un-dispatched slices remaining are reviewer-owned sign-offs (T010–T019, T022) and the external-gated, `approval_required` feature-spec openings (T020, T021).
