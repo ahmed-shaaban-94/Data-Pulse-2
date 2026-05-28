@@ -160,7 +160,11 @@ export class TenantContextGuard implements CanActivate {
     return {
       userId: principal.userId,
       tenantId: principal.tenantId,
-      storeId: null, // tokens don't carry a store binding in the current Principal type
+      // Token store binding (002 FR-POS-AUTH-4): pos_operator tokens are issued
+      // bound to a specific (tenant_id, store_id) at sign-in, and AuthGuard now
+      // propagates storeId from auth_tokens.store_id into the Principal. For
+      // dashboard_api / pos scopes the column is null and we pass through.
+      storeId: principal.storeId,
       isPlatformAdmin: false,
       source: "token",
     };

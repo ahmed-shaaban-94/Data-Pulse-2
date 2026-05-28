@@ -232,6 +232,7 @@ const TOKEN_PRINCIPAL: Principal = {
   tokenId: TOKEN_ID,
   tenantId: TENANT_ID,
   userId: USER_ID,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -241,6 +242,7 @@ const PLATFORM_TOKEN_NO_USER_NO_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: null,
   userId: null,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -250,6 +252,7 @@ const PLATFORM_TOKEN_NO_USER_WITH_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: TENANT_ID,
   userId: null,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -259,6 +262,7 @@ const TOKEN_WITH_USER_NO_TENANT: Principal = {
   tokenId: TOKEN_ID,
   tenantId: null,
   userId: USER_ID,
+  storeId: null,
   scope: "dashboard_api",
 };
 

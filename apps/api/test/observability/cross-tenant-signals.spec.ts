@@ -314,6 +314,7 @@ describe("T475 — TenantContextGuard emits cross_tenant_rejection_total on NotF
       principal: {
         kind: "token",
         userId: "user-a",
+        storeId: null,
         tenantId: "tenant-a",
       },
     };

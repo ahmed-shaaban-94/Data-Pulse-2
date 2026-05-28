@@ -104,6 +104,7 @@ const tokenPrincipal = (overrides: Partial<Principal & { scope: BearerAuthScope 
     tokenId: TOKEN_ID,
     tenantId: TENANT_ID,
     userId: USER_ID,
+    storeId: null,
     scope: "dashboard_api" as BearerAuthScope,
     ...overrides,
   }) as Principal;

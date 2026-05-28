@@ -86,6 +86,8 @@ function makeToken(overrides: Partial<AuthTokenRow> = {}): AuthTokenRow {
     id: TOKEN_ID,
     tenantId: TENANT_ID,
     userId: USER_ID,
+    deviceId: null,
+    storeId: null,
     scope: "dashboard_api",
     expiresAt: new Date(Date.now() + 86_400_000),
     revokedAt: null,
@@ -191,6 +193,7 @@ describe("AuthGuard — bearer-token path", () => {
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "dashboard_api",
     });
     expect(sessions.findActiveById).not.toHaveBeenCalled();
@@ -367,6 +370,7 @@ describe("AuthGuard — principal shape", () => {
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "dashboard_api",
     });
   });
@@ -385,6 +389,7 @@ describe("AuthGuard — principal shape", () => {
       tokenId: TOKEN_ID,
       tenantId: null,
       userId: null,
+      storeId: null,
       scope: "dashboard_api",
     });
   });
