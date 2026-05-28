@@ -508,6 +508,10 @@ describe("T552 / 005-WAVE1-METRICS -- idempotency mismatch emission", () => {
       });
 
     expect(second.status).toBe(409);
+    // Tie the rejection to the mismatch contract, not just the status code.
+    expect(second.body).toMatchObject({
+      error: { code: "idempotency_key_conflict" },
+    });
 
     for (let i = 0; i < 50; i += 1) {
       await new Promise((resolve) => setImmediate(resolve));

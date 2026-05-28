@@ -113,7 +113,7 @@ T550/T551 (CLOSED — `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` PR 3, 2026-05-29): `
 Three counters registered in `api.metrics.ts`, allowlisted in `packages/shared/src/observability/metrics-labels.ts` (PR #299):
 - `unknown_item_captured_total{tenant_bucket}` — incremented on each successful capture INSERT
 - `unknown_item_resolved_total{action="dismissed"}` — incremented on successful dismiss (PR #349 T553)
-- `idempotency_token_mismatch_total` — incremented in `IdempotencyMismatchFilter.catch`
+- `idempotency_token_mismatch_total` — incremented inline on `IdempotencyInterceptor`'s collision branch, route-scoped to the capture path (re-homed from the deleted `IdempotencyMismatchFilter` by `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` PR 2)
 
 ### RLS carve-out (sentinel `*`)
 
