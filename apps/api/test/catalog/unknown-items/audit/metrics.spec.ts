@@ -12,9 +12,10 @@
  *     - `unknown_item_captured_total` was already wired in T511
  *       (UnknownItemsService.captureItem line ~479: `recordUnknownItemCaptured()`
  *       on the `result.inserted` branch) -- assertion passes immediately.
- *     - `idempotency_token_mismatch_total` was already wired in T533
- *       (IdempotencyMismatchFilter.catch line ~138: `recordIdempotencyTokenMismatch()`)
- *       -- assertion passes immediately.
+ *     - `idempotency_token_mismatch_total` was already wired in T533, and
+ *       re-homed by `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` PR 2 into the
+ *       `IdempotencyInterceptor` collision branch (inline, route-scoped to the
+ *       capture path) -- `recordIdempotencyTokenMismatch()` -- assertion passes.
  *     - `unknown_item_resolved_total{action='dismissed'}` was explicitly
  *       deferred (service.ts docstring at the dismissUnknownItem `ok` branch
  *       says "The METRICS slice T552/T553 authors the explicit counter
@@ -37,14 +38,16 @@
  * App wiring:
  *   Mirrors `retry-mismatch.spec.ts` (the most complete prior Wave 1
  *   spec): real UnknownItemsController + UnknownItemsService against a
- *   Testcontainers pg.Pool, real IdempotencyInterceptor, real
- *   IdempotencyMismatchFilter, real AuditEmitterInterceptor, spy
- *   AuditJobEnqueuer. This wiring exercises all three emission paths
- *   from a single module fixture.
+ *   Testcontainers pg.Pool, real IdempotencyInterceptor (constructed with
+ *   the spy AuditJobEnqueuer so its inline collision-branch catalog audit
+ *   lands on the spy), real AuditEmitterInterceptor, spy AuditJobEnqueuer.
+ *   This wiring exercises all three emission paths from a single module
+ *   fixture.
  *
  *   Dismiss does NOT carry `@Idempotent("required")` so the
- *   IdempotencyInterceptor is a no-op on that route. The filter is
- *   `@UseFilters` method-level on `posCaptureItem` only.
+ *   IdempotencyInterceptor is a no-op on that route. The mismatch counter +
+ *   audit fire inline on the interceptor's collision branch, route-scoped to
+ *   the `posCaptureItem` path (`005-WAVE1-METRICS-MISMATCH-FOLLOWUP` PR 2).
  *
  * Docker: Testcontainers Postgres 16 required; honors
  * `MIGRATION_TEST_ALLOW_SKIP=1` per repo convention.
@@ -450,27 +453,23 @@ describe("T552 / 005-WAVE1-METRICS -- dismiss emission", () => {
 // ---------------------------------------------------------------------------
 // T552-C -- idempotency mismatch increments `idempotency_token_mismatch_total`
 //
-// SKIPPED: this case exercises the same harness path as
-// `apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts`
-// (T532), which has never been GREEN on db-integration CI -- it was authored
-// in PR #339 and merged with db-integration RED. The shared harness uses a
-// no-op `IdempotencyKeyStore` pgWriter/pgReader plus a method-level
-// `@UseFilters(IdempotencyMismatchFilter)` binding on the controller. When
-// `APP_INTERCEPTOR` returns/throws inside that harness, the
-// `ConflictException` escapes Jest before any filter side-effect can run,
-// causing a 30s test timeout with a bare RxJS stack trace.
-//
-// T553's actual production change (the `recordUnknownItemResolved({
-// action: "dismissed" })` call added in `unknown-items.service.ts`) is fully
-// covered by the dismiss-emission case above. The mismatch site's counter
-// call was added in T533 (PR #339) and is not part of T553's diff.
-//
-// Follow-up: a `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` slice will re-enable
-// this case after a proper harness refactor that mirrors production's
-// exception-filter pipeline (and will also unblock T532).
+// UNSKIPPED by `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` PR 3. Previously skipped
+// because the mismatch path was wired through the now-deleted
+// `IdempotencyMismatchFilter` (an async `@Catch(ConflictException)` filter
+// `@UseFilters`-bound on `posCaptureItem`). PR 2 of this slice proved that
+// pattern never fired its side effects under the test harness: when the
+// global `IdempotencyInterceptor` (APP_INTERCEPTOR) throws `ConflictException`
+// on the collision branch BEFORE calling `next.handle()`, NestJS never
+// subscribes the inner chain, so no downstream filter/interceptor observes the
+// rejection. PR 2 pivoted to firing the catalog telemetry INLINE inside
+// `IdempotencyInterceptor.handle()`'s collision branch (same code-site as the
+// platform `recordIdempotencyConflict`), route-scoped to the unknown-items
+// capture path. The sibling `retry-mismatch.spec.ts` (T532) now passes on
+// db-integration CI with that wiring; this case uses the identical harness
+// (see the `idempInterceptor` constructed with `auditSpy` in `beforeAll`).
 // ---------------------------------------------------------------------------
 
-describe.skip("T552 / 005-WAVE1-METRICS -- idempotency mismatch emission", () => {
+describe("T552 / 005-WAVE1-METRICS -- idempotency mismatch emission", () => {
   it("same key + different payload -> 409; idempotency_token_mismatch_total incremented exactly once", async () => {
     if (dockerSkipped) return;
 
@@ -496,8 +495,10 @@ describe.skip("T552 / 005-WAVE1-METRICS -- idempotency mismatch emission", () =>
     mismatchCount = 0;
 
     // Second call -- same key, different identifier_value.
-    // IdempotencyInterceptor detects mismatch, throws ConflictException.
-    // IdempotencyMismatchFilter catches it, calls recordIdempotencyTokenMismatch().
+    // IdempotencyInterceptor detects the payload mismatch on its collision
+    // branch, fires recordIdempotencyTokenMismatch() INLINE (route-scoped to
+    // the capture path), enqueues the catalog audit, then throws
+    // ConflictException. GlobalExceptionFilter formats the 409 envelope.
     const second = await http()
       .post("/api/pos/v1/catalog/unknown-items")
       .set("Idempotency-Key", IDEMP_KEY_MISMATCH)
