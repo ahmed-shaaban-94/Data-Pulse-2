@@ -72,11 +72,14 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 
+import type { Logger } from "@data-pulse-2/shared";
+
 import {
   AUDIT_JOB_ENQUEUER,
   type AuditJobEnqueuer,
 } from "../../../audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../audit/audit-job.types";
+import { ROOT_LOGGER } from "../../../common/logging.interceptor";
 import { recordIdempotencyTokenMismatch } from "../../../observability/metrics/api.metrics";
 
 /**
@@ -115,9 +118,28 @@ export class IdempotencyMismatchFilter implements ExceptionFilter {
     @Optional()
     @Inject(AUDIT_JOB_ENQUEUER)
     private readonly enqueuer: AuditJobEnqueuer | null = null,
+    @Optional()
+    @Inject(ROOT_LOGGER)
+    private readonly logger?: Logger,
   ) {}
 
   async catch(exception: ConflictException, host: ArgumentsHost): Promise<void> {
+    // [T532-DIAG B3] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
+    // Logs whether the filter ever receives the ConflictException. If B1 fires
+    // but B3 does NOT, the exception is escaping the filter pipeline upstream
+    // of @UseFilters resolution. Remove in PR 2.
+    if (process.env["T532_DIAG"] === "1") {
+      this.logger?.debug(
+        {
+          event: "T532-DIAG-B3",
+          boundary: "filter-catch-entry",
+          exception_name: exception?.name,
+          status: exception?.getStatus?.(),
+          ts: Date.now(),
+        },
+        "T532 diagnostic: filter received exception at catch entry",
+      );
+    }
     // Narrow check — only run catalog-domain telemetry for the
     // specific 409 the IdempotencyInterceptor throws on payload
     // mismatch. Other 409s on this route (none today; Wave 2 may add
