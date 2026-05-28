@@ -74,7 +74,9 @@ slices:
   - id: T002
     task_ids: [T002]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — validation satisfied on main: CLAUDE.md Specs summary carries the 006 row (added in PR #380). No further edit required; status reconciled from stale `proposed`.
+    closed_by_pr: 380
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -83,6 +85,7 @@ slices:
     validation:
       - command: grep -n "006.*Unknown Items Review Queue" CLAUDE.md
         expected: "One match in the Specs summary section."
+        outcome: One match on main (`006-unknown-items-review-queue` row in the Specs summary section). The deliverable landed via PR #380's docs absorption; this slice's `proposed` status was stale bookkeeping, reconciled to complete-by-execution on 2026-05-29. The Active-feature section was NOT edited (that is T023's slice, which is also complete).
     stop:
       - standing-rules universal stops
       - "stop if CLAUDE.md Active feature section needs editing — that's T023's slice"
@@ -91,7 +94,9 @@ slices:
   - id: T003
     task_ids: [T003]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — validation satisfied on main: 005's wave-status.md carries the 006 forward-link (informational only). No further edit required; status reconciled from stale `proposed`.
+    closed_by_pr: 380
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -100,6 +105,7 @@ slices:
     validation:
       - command: grep -n "006-unknown-items-review-queue\|006 / Unknown Items Review Queue" specs/005-pos-catalog-sync-reconciliation/wave-status.md
         expected: "One forward-link to 006 in 005's wave-status.md (informational only, no semantic change)."
+        outcome: One match on main — the "Forward link" line in 005's wave-status.md points to specs/006-unknown-items-review-queue/ and states the relationship is informational with no operational dependency. The forward-link was already present; this slice's `proposed` status was stale bookkeeping, reconciled to complete-by-execution on 2026-05-29.
     stop:
       - standing-rules universal stops
       - "stop if the edit changes 005's slice / finding state in any way — this slice must be informational only"
