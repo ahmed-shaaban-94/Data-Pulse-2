@@ -104,7 +104,7 @@ Three Wave 1 audit subjects emitted via `@Auditable` decorator + `AuditEmitterIn
 - `unknown_item.dismissed` — on successful dismiss transition
 - `unknown_item.idempotency_mismatch_rejected` — on mismatch 409 (best-effort, wrapped in try/catch so transient audit failure cannot replace deterministic 409 with 500)
 
-Deferred (T550/T551): `unknown_item.idempotency_mismatch_rejected` audit spec (the emit call is wired; the test spec is pending the harness refactor in `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`).
+Deferred (T550/T551): `unknown_item.idempotency_mismatch_rejected` integration audit spec is **absorbed into `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** as of 2026-05-28. Unit-level branch coverage exists in `apps/api/test/catalog/unknown-items/filters/idempotency-mismatch.filter.unit.spec.ts` (IMF1–5); the production emit is wired and live. The integration spec (T550) is blocked by the same harness pattern that blocks T532/T552 (see `retry-mismatch.spec.ts:334-357`); resolving the harness in FOLLOWUP unblocks all three together. **Not a standalone micro-slice.**
 
 ### Metrics signals
 
@@ -123,8 +123,7 @@ Three counters registered in `api.metrics.ts`, allowlisted in `packages/shared/s
 
 | Item | Deferred from | Status |
 |---|---|---|
-| **T550/T551** — `idempotency-mismatch-audit.spec.ts` | AUDIT PR #344 | Unblocked; can be picked up as standalone micro-slice or absorbed into a Wave 2 prep slice. No production-behavior gap — the audit emit call is wired; only the integration test spec is missing. |
-| **T552-mismatch-case** — `describe.skip` in `metrics.spec.ts` | METRICS PR #349 | `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` slice proposed. Harness bug: `IdempotencyMismatchFilter` DI wiring in Supertest module context. Parallel-safe with POLISH (disjoint files). |
+| **T550/T551 + T552 + T532** — integration coverage for the mismatch path | AUDIT PR #344, METRICS PR #349, IDEMP-MISMATCH PR #339 | **Absorbed into `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** (2026-05-28). All three are blocked by the same harness pattern documented in `retry-mismatch.spec.ts:334-357`: PR #349 tried two fixes (`30ca9e0` interceptor `throwError` shape; `951ee84` global filter binding) with byte-identical CI failure — confirming the `APP_INTERCEPTOR + TestingModule + @UseFilters` shape itself is the issue, not the production code. FOLLOWUP slice refactors the harness, then unskips T532 + T552 and adds T550 in a single coherent slice (2–3 PRs). No production-behavior gap: filter logic is unit-tested (IMF1–5); the gap is end-to-end wiring evidence. |
 | **Auth-guard wiring** — 6 unguarded routes on `UnknownItemsController` | CAPTURE-HAPPY PR #317 (and 5 subsequent PRs) | Deferred-with-rationale: `apps/api/src/auth/**` is forbidden surface for 005. A follow-up "auth-wiring" slice must address all 6 routes consistently (POS routes use bearer tokens; admin routes use session cookies). Requires `[GATED]` approval per Standing Rules §3. CodeRabbit flagged this on PR #334 (twice); deferral documented here as the canonical record. |
 | **Header-name concept alignment** — `idempotency-token-mismatch` in `spec.md` FR-091 and Assumptions | n/a | Intentionally left as-is: `idempotency-token-mismatch` is a failure *category* name, not an HTTP header. Changing it to `idempotency-key-mismatch` would create new drift with the existing metric name `idempotency_token_mismatch_total` (PR #299 allowlist) and the audit subject `unknown_item.idempotency_mismatch_rejected`. These concept names reflect the metric name as the stable anchor. |
 
@@ -215,12 +214,11 @@ Stop before commit.
 
 **Wave 1 and Wave 2 are both COMPLETE** (Wave 2 closed out by this POLISH slice, 2026-05-27). The reconciliation surface — link + create-product routes, conflict audit + metrics, transactional integrity — is on `main`.
 
-Carried-forward / deferred items (not blocking; tracked for a future wave or micro-slice):
-1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness investigation for the `describe.skip`'d T552-mismatch-case. Parallel-safe.
-2. T550/T551 — idempotency-mismatch-audit spec. Unblocked; standalone micro-slice.
-3. Auth-guard wiring — `@UseGuards(AuthGuard, TenantContextGuard, RolesGuard)` on the unknown-items + reconciliation controller routes; needs `[GATED]` approval and a slice that mounts the modules into `app.module.ts`. The reconciliation routes are not yet serving production traffic until that wiring lands.
+Carried-forward / deferred items (not blocking; tracked for a future wave):
+1. `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` — harness refactor for the mismatch path. **Absorbs T550/T551 (audit integration spec), T552-mismatch-case (metrics integration spec), and unskips T532 (`retry-mismatch.spec.ts`).** Multi-PR (2–3 PRs: harness refactor → audit spec → metrics unskip + T532 unskip). All four tasks closed by this single slice; the unit-level filter spec (IMF1–5) carries branch coverage until then.
+2. Auth-guard wiring — **DONE 2026-05-28** via PRs #377 (tenant-admin routes) and #378 (POS capture route). All five reconciliation surface routes are now mounted in `app.module.ts` behind their appropriate guard chains. Listed here only as completed audit trail.
 
-**Next primary action**: none required for 005 Wave 2. The deferred items above can be picked up independently; the auth-guard wiring is the most material (the routes are inert until mounted).
+**Next primary action**: none required for 005. FOLLOWUP is the only remaining 005 work; it can be picked up when the harness investigation is prioritized. The reconciliation surface is production-ready.
 
 ---
 

@@ -752,11 +752,17 @@ slices:
     task_ids: [T546, T547, T548, T549, T550, T551]
     type: test
     # T546-T549 shipped (capture-audit.spec.ts + dismiss-audit.spec.ts).
-    # T550 (idempotency-mismatch-audit.spec.ts) and T551 deferred — the
-    # idempotency-mismatch-audit.spec.ts file was not included in PR #344
-    # because DISMISS-CARVEOUT-FIX (#346) had not yet landed at authoring
-    # time.  Now that #346 is merged, T550/T551 can be picked up as the
-    # next small follow-up slice or as part of POLISH.
+    # T550 (idempotency-mismatch-audit.spec.ts) + T551 ABSORBED INTO
+    # 005-WAVE1-METRICS-MISMATCH-FOLLOWUP as of 2026-05-28 (docs PR).
+    # Reason: PR #349 investigation proved the integration harness pattern
+    # (APP_INTERCEPTOR + TestingModule + @UseFilters) is broken for the
+    # mismatch path — see retry-mismatch.spec.ts:334-357. T550 cannot land
+    # as a standalone micro-slice; it requires the harness refactor that
+    # FOLLOWUP performs. Unit-level branch coverage exists at
+    # apps/api/test/catalog/unknown-items/filters/idempotency-mismatch.filter.unit.spec.ts
+    # (IMF1-5); production audit emit is wired in idempotency-mismatch.filter.ts
+    # and live (FR-082 satisfied at the wire). FOLLOWUP closes T532 + T550
+    # + T551 + T552-mismatch-case together.
     status: merged
     partial: true
     deferred_tasks: [T550, T551]
@@ -796,7 +802,7 @@ slices:
     # tracked in the follow-up slice 005-WAVE1-METRICS-MISMATCH-FOLLOWUP.
     status: merged
     partial: true
-    deferred_tasks: [T552-mismatch-case]   # describe.skip in metrics.spec.ts; harness refactor needed — see 005-WAVE1-METRICS-MISMATCH-FOLLOWUP
+    deferred_tasks: [T552-mismatch-case]   # describe.skip in metrics.spec.ts; harness refactor needed. FOLLOWUP slice (005-WAVE1-METRICS-MISMATCH-FOLLOWUP) now also absorbs T550/T551 (see AUDIT slice notes above) and unskips T532 in retry-mismatch.spec.ts — four tasks closed by one harness refactor.
     merged_in_pr: 349
     merged_at_commit: 3e915b76507ad0e9b1733e1d3ceff74b8b6f3e2c
     merged_at_date: 2026-05-26
@@ -846,21 +852,43 @@ slices:
   #       T552-mismatch assertions pass GREEN under Docker/Testcontainers.
 
   - id: 005-WAVE1-METRICS-MISMATCH-FOLLOWUP
-    task_ids: []
+    task_ids: [T532, T550, T551, T552-mismatch-case]   # absorbed 2026-05-28 — see AUDIT slice deferred_tasks note
     type: fix
     status: proposed
     approval_required: false
     depends_on: []
     blocks: []
     agent: sonnet-test
+    # Scope (absorbed):
+    #   1. Refactor the mismatch-path integration harness — the shared
+    #      APP_INTERCEPTOR + TestingModule + @UseFilters pattern in
+    #      retry-mismatch.spec.ts / metrics.spec.ts caused the
+    #      ConflictException to escape Jest before any filter side-effect
+    #      ran (30s timeout, bare RxJS stack). PR #349 commits 30ca9e0
+    #      and 951ee84 tried two fixes with byte-identical CI output —
+    #      the pattern itself is wrong, tweaks don't unstick it.
+    #   2. Unskip T532 (retry-mismatch.spec.ts describe.skip block) and
+    #      assert the FR-021c mismatch contract end-to-end.
+    #   3. Unskip the T552-mismatch-case in metrics.spec.ts and assert
+    #      idempotency_token_mismatch_total increments at the right call
+    #      site.
+    #   4. Author T550 — apps/api/test/catalog/unknown-items/audit/
+    #      idempotency-mismatch-audit.spec.ts — proving the audit subject
+    #      unknown_item.idempotency_mismatch_rejected emits on the live
+    #      request path (FR-082). Unit-level branch coverage already
+    #      exists at filters/idempotency-mismatch.filter.unit.spec.ts
+    #      (IMF1-5); this spec adds the wiring-level guarantee.
+    # Sequencing: harness-refactor PR first; T532+T552 unskip + T550
+    # author can land in one or two follow-up PRs.
     allowed_files:
       - apps/api/test/catalog/unknown-items/audit/metrics.spec.ts
+      - apps/api/test/catalog/unknown-items/audit/idempotency-mismatch-audit.spec.ts   # T550 new file
       - apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts
       - apps/api/src/idempotency/idempotency.interceptor.ts
       - apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts
     validation:
-      command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics" "test/catalog/unknown-items/idempotency/retry-mismatch"
-      expected: GREEN — T532 and T552-mismatch both pass; production behavior either confirmed correct or fixed
+      command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics" "test/catalog/unknown-items/audit/idempotency-mismatch-audit" "test/catalog/unknown-items/idempotency/retry-mismatch"
+      expected: GREEN — T532 + T552-mismatch + T550 all pass against the refactored harness; production behavior confirmed correct or fixed
       docker_required: true
     stop: []
     report_fields: [changed_files, validation_results, forbidden_path_check, harness_decision, production_behavior_verification]
