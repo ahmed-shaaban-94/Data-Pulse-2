@@ -13,11 +13,12 @@ info:
     success — returns the device's long-lived `device_token` (SECRET)
     plus the terminal's full tenant + store binding + display +
     operational config. The endpoint is the ONLY backend operation
-    that runs WITHOUT a prior `device_token`; every other POS
-    operation requires the token via the device-authentication header.
-    The terminal MUST store the returned `device_token` in OS-level
-    secret storage (Electron `safeStorage` / DPAPI on Windows) and
-    MUST NEVER log or echo it to the renderer.
+    that runs WITHOUT a prior `clerkJwt`; every other POS operation
+    is `clerkJwt`-authenticated (see the "Authentication boundary"
+    note below for the full auth posture). The terminal MUST store
+    the returned `device_token` in OS-level secret storage (Electron
+    `safeStorage` / DPAPI on Windows) and MUST NEVER log or echo it
+    to the renderer.
 
 
     **Why this is unauthenticated**: pairing IS the bootstrap step.
@@ -51,15 +52,18 @@ info:
       - `printer_vendor_id`, `printer_product_id`, `printer_com_port`:
         terminal-resident printer config used by the POS print pipeline
         (008 AD-1 / Slice 3). The vendor + product IDs are USB
-        identifiers in hex string form (e.g. `0x04B8` for Epson). The
-        `printer_com_port` is OPTIONAL; populated when the printer is
-        attached over RS-232 serial instead of USB. At least one of
-        the USB-pair or the COM port must be present in a valid
-        terminal config, but contract-level validation is delegated to
-        the backend's domain layer (this contract permits all three to
-        be present, the two USB fields to be present, or only the COM
-        port to be present; an explicit nullability declaration is
-        used).
+        identifiers in hex string form (e.g. `0x04B8` for Epson) and
+        are ALWAYS required — every supported printer model in
+        008 v1 is USB-connected (per docs/hardware-matrix.md, the
+        committed pair is Epson TM-T20III + APG VBS320, both USB).
+        The `printer_com_port` is an OPTIONAL additional field set
+        ONLY when an RS-232 serial path is also available alongside
+        the USB connection (some Epson models expose both); it is
+        sent as `null` for USB-only printers. The contract enforces:
+        `printer_vendor_id` non-null, `printer_product_id` non-null,
+        `printer_com_port` nullable string. A "COM-port-only" terminal
+        config is NOT permitted by this contract in 008 v1; pure-serial
+        printer support would require a future contract revision.
 
 
     Authentication boundary: this surface is the ONLY backend operation
@@ -348,11 +352,14 @@ components:
           minLength: 1
           maxLength: 32
           description: >
-            Optional COM port (e.g. `COM3` on Windows, `/dev/ttyS0`
-            on Linux) when the printer is attached over RS-232
-            serial instead of USB. NULL when the printer is USB-only.
-            Added 2026-05-28 to satisfy the Slice 3 prep-audit
-            finding.
+            OPTIONAL additional COM port (e.g. `COM3` on Windows,
+            `/dev/ttyS0` on Linux) set ONLY when an RS-232 serial path
+            is also available alongside the required USB connection
+            (some Epson models expose both). NULL for USB-only
+            printers. `printer_vendor_id` + `printer_product_id`
+            remain required regardless — a "COM-port-only" terminal
+            config is NOT permitted by this contract in 008 v1. Added
+            2026-05-28 to satisfy the Slice 3 prep-audit finding.
 
     Error:
       type: object

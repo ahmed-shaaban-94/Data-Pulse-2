@@ -67,7 +67,7 @@ import { loadOpenApiContracts } from "../../src/openapi/loader";
 // Constants
 // ---------------------------------------------------------------------------
 
-const NEW_CONTRACT_ID = "pos-terminal-pairing";
+const NEW_CONTRACT_ID = "pos-terminal-pairing.openapi";
 
 const PAIRING_OPERATION_IDS = ["posPairTerminal"] as const;
 
@@ -387,15 +387,32 @@ describe("pos-terminal-pairing.yaml — TerminalPairRequest shape", () => {
     expect(required).toEqual(["pairing_code"]);
   });
 
-  it("pairing_code is a bounded-length string (defence against pathologically long inputs)", () => {
+  it("declares pairing_code as the only property (drift guard against silent optional additions)", () => {
+    // CR1 fix: a bare `required` check would still pass if someone
+    // adds optional properties (e.g. `device_fingerprint`) to the
+    // request. Pin the property set explicitly so additions land in
+    // the diff and force a contract review.
+    const schema = pairingDoc.components?.schemas?.["TerminalPairRequest"];
+    const props = schema?.["properties"] as
+      | Record<string, unknown>
+      | undefined;
+    expect(Object.keys(props ?? {})).toEqual(["pairing_code"]);
+  });
+
+  it("pairing_code bounds are EXACTLY 6 to 32 chars (not a loose range)", () => {
+    // CR1 fix: bounds-as-range assertions (`.toBeGreaterThanOrEqual` /
+    // `.toBeLessThanOrEqual`) would silently allow the contract to
+    // drift to `minLength: 1` / `maxLength: 64`. Pin the exact
+    // numbers — the contract's value is the precise shape, not a
+    // permissive envelope.
     const schema = pairingDoc.components?.schemas?.["TerminalPairRequest"];
     const props = schema?.["properties"] as
       | Record<string, { type?: string; minLength?: number; maxLength?: number }>
       | undefined;
     const code = props?.["pairing_code"];
     expect(code?.type).toBe("string");
-    expect(code?.minLength).toBeGreaterThanOrEqual(1);
-    expect(code?.maxLength).toBeLessThanOrEqual(64);
+    expect(code?.minLength).toBe(6);
+    expect(code?.maxLength).toBe(32);
   });
 });
 
@@ -580,5 +597,27 @@ describe("pos-terminal-pairing.yaml — failure-response coverage", () => {
     const op = pairingDoc.paths?.[POS_PAIR_PATH]?.["post"];
     const responses = op?.responses ?? {};
     expect(responses["200"]).toBeDefined();
+  });
+
+  it("429 response declares the mandatory Retry-After integer header bounded [1, 300]", () => {
+    // CR2 fix: a bare `expect(responses["429"]).toBeDefined()` check
+    // would still pass if a future edit deletes the Retry-After header
+    // or widens its bounds. POS-Pulse `src/main/pairing/network.ts:69-71`
+    // clamps the parsed value to [1, 300] defensively; the contract
+    // MUST declare the same bounds so the client clamp doesn't surface
+    // surprising server behavior. Verify the header shape end-to-end.
+    interface RetryAfterHeader {
+      schema?: { type?: string; minimum?: number; maximum?: number };
+    }
+    interface ResponseObject {
+      headers?: Record<string, RetryAfterHeader>;
+    }
+    const op = pairingDoc.paths?.[POS_PAIR_PATH]?.["post"];
+    const r429 = op?.responses?.["429"] as ResponseObject | undefined;
+    const retryAfter = r429?.headers?.["Retry-After"];
+    expect(retryAfter).toBeDefined();
+    expect(retryAfter?.schema?.type).toBe("integer");
+    expect(retryAfter?.schema?.minimum).toBe(1);
+    expect(retryAfter?.schema?.maximum).toBe(300);
   });
 });
