@@ -74,8 +74,8 @@ import {
   Req,
   Res,
   UnauthorizedException,
-  UseFilters,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -94,7 +94,7 @@ import {
   PosCaptureItemRequestSchema,
   type PosCaptureItemRequestDto,
 } from "./dto/capture-request.dto";
-import { IdempotencyMismatchFilter } from "./filters/idempotency-mismatch.filter";
+import { IdempotencyMismatchInterceptor } from "./interceptors/idempotency-mismatch.interceptor";
 import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
@@ -274,15 +274,18 @@ export class UnknownItemsController {
   @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
   @Idempotent("required")
   @Auditable("unknown_item.captured")
-  // METHOD-SCOPED filter — T533 / 005-WAVE1-IDEMP-MISMATCH. Catches
-  // the `ConflictException` the IdempotencyInterceptor throws on a
-  // payload mismatch (`code: "idempotency_key_conflict"`), emits the
-  // catalog-domain `unknown_item.idempotency_mismatch_rejected` audit
-  // subject + increments `idempotency_token_mismatch_total`, then
-  // re-throws so GlobalExceptionFilter formats the canonical envelope.
-  // Class-level scoping would inherit to LIST / DISMISS (forbidden
-  // per slice stop rule).
-  @UseFilters(IdempotencyMismatchFilter)
+  // METHOD-SCOPED interceptor — T533 / 005-WAVE1-IDEMP-MISMATCH. Observes
+  // the `ConflictException` the IdempotencyInterceptor throws on a payload
+  // mismatch (`code: "idempotency_key_conflict"`) via RxJS `tap({ error })`,
+  // emits the catalog-domain `unknown_item.idempotency_mismatch_rejected`
+  // audit subject + increments `idempotency_token_mismatch_total`. The
+  // original error continues propagating to GlobalExceptionFilter unchanged.
+  // Class-level scoping would inherit to LIST / DISMISS (forbidden per
+  // slice stop rule). Architectural pivot from `@UseFilters(...)` →
+  // `@UseInterceptors(...)` (PR 2 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP)
+  // — see specs/005-pos-catalog-sync-reconciliation/wave-status.md
+  // §"Investigation update — 2026-05-28 (PR #386 CI evidence)".
+  @UseInterceptors(IdempotencyMismatchInterceptor)
   async posCaptureItem(
     @Req() request: TenantContextRequest,
     @Body(new ZodValidationPipe(PosCaptureItemRequestSchema))
