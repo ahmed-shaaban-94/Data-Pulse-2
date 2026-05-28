@@ -10,7 +10,7 @@
  *       IdempotencyInterceptor's outcome — unchanged by this slice)
  *     - NO new `unknown_items` row created (request never reaches the
  *       service)
- *     - the `IdempotencyMismatchFilter` fires:
+ *     - the `IdempotencyMismatchInterceptor` fires:
  *         · `recordIdempotencyTokenMismatch()` counter incremented
  *         · `AUDIT_JOB_ENQUEUER.enqueue(...)` called with
  *           `action: "unknown_item.idempotency_mismatch_rejected"`
@@ -18,8 +18,9 @@
  *           carried
  *     - the platform-level `recordIdempotencyConflict` counter (in
  *       the 001 interceptor) also fired (not directly asserted here
- *       — it fires inside the interceptor at line 254, before the
- *       filter runs; we trust the interceptor's existing coverage).
+ *       — it fires inside the interceptor at the collision branch,
+ *       before the catalog-domain interceptor observes the error;
+ *       we trust the platform interceptor's existing coverage).
  *
  * Spec anchors:
  *   - FR-021c: token/payload mismatch fails closed with a
@@ -34,9 +35,10 @@
  * Full Nest app via `Test.createTestingModule` (mirrors PR #336 /
  * retry-identical.spec.ts). The key additional pieces vs. retry-identical:
  *
- *   - `IdempotencyMismatchFilter` is registered as a provider AND
- *     applied as a method-level filter on `posCaptureItem` — both
- *     pieces are needed for the filter to actually fire on the 409.
+ *   - `IdempotencyMismatchInterceptor` is registered as a provider AND
+ *     applied as a method-level interceptor on `posCaptureItem` via
+ *     `@UseInterceptors(...)` — both pieces are needed for the
+ *     interceptor to observe the 409 via `tap({ error: ... })`.
  *   - `AUDIT_JOB_ENQUEUER` is overridden with a spy that records
  *     every enqueue call. We assert exactly one call with the
  *     catalog-domain subject.
@@ -56,8 +58,6 @@
  *   `docker_required: true` flag.
  */
 import "reflect-metadata";
-
-import { createHash } from "node:crypto";
 
 import {
   type CanActivate,
@@ -88,7 +88,7 @@ import { UnknownItemsController } from "../../../../src/catalog/unknown-items/un
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import type { ResolvedContext } from "../../../../src/context/types";
-import { createLogger, IdempotencyKeyStore } from "@data-pulse-2/shared";
+import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 
 import {
   applyAllUpAndCreateAppRole,
@@ -114,20 +114,6 @@ import { TenantContextGuard } from "../../../../src/context/tenant-context.guard
 
 const DEVICE_USER_ID = "0d000000-0000-7000-8000-0000000005f1";
 const IDEMP_KEY = "abcdef1234567890abcdef1234567890";
-
-// [T532-DIAG] Module-local pino logger for B5 boundary diagnostics. Mirrors
-// the createLogger pattern in apps/api/src/main.ts. Removed in PR 2.
-const diagLogger = createLogger({ service: "test.t532.retry-mismatch" });
-
-/**
- * [T532-DIAG] Returns a SHA-256 hex fingerprint (first 8 chars) of the
- * Idempotency-Key for safe-to-log identification. Mirrors the
- * `keyFingerprint` helper in apps/api/src/idempotency/idempotency.interceptor.ts.
- * No raw key material is logged.
- */
-function diagKeyFingerprint(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 8);
-}
 const FIRST_VALUE = "T532-MISMATCH-A";
 const SECOND_VALUE = "T532-MISMATCH-B"; // distinct payload triggers the mismatch
 
@@ -224,15 +210,7 @@ let mismatchCounter = 0;
 let mismatchSpy: jest.SpyInstance;
 let dockerSkipped = false;
 
-// [T532-DIAG] Save+restore T532_DIAG around the suite so the flag does not
-// leak into other Jest workers that may share this process. Removed in PR 2
-// once the failure boundary is identified.
-let prevT532Diag: string | undefined;
-
 beforeAll(async () => {
-  prevT532Diag = process.env["T532_DIAG"];
-  process.env["T532_DIAG"] = "1";
-
   try {
     env = await startPgEnv();
   } catch (err: unknown) {
@@ -322,12 +300,6 @@ beforeAll(async () => {
 afterAll(async () => {
   if (app) await app.close();
   if (env) await stopPgEnv(env);
-  // [T532-DIAG] Restore prior T532_DIAG value so the flag does not leak.
-  if (prevT532Diag === undefined) {
-    delete process.env["T532_DIAG"];
-  } else {
-    process.env["T532_DIAG"] = prevT532Diag;
-  }
 }, 60_000);
 
 beforeEach(() => {
@@ -361,55 +333,23 @@ function http() {
 // T532 — FR-021c payload mismatch fires catalog-domain telemetry
 // ---------------------------------------------------------------------------
 
-// [T532-DIAG] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP — DIAGNOSTIC ONLY.
+// T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch end-to-end.
 //
-// CI RED IS EXPECTED on this PR. The unskip + diagnostic logging exist to
-// collect *evidence* about where the ConflictException dies in the harness
-// pipeline. PR 2 of the slice will apply the actual fix based on what the
-// boundary logs reveal.
+// History: this spec was authored in PR #339 and merged with db-integration
+// RED. Three prior fix attempts (PR #349 30ca9e0, PR #349 951ee84, and the
+// b8a9dd4 revert) all failed because they targeted symptoms in the test
+// harness rather than the underlying architectural issue: the
+// IdempotencyMismatchFilter was the only async exception filter in the
+// codebase, and its async `Promise<void>` re-throw from `catch()` did not
+// propagate to GlobalExceptionFilter. PR #386's diagnostic instrumentation
+// proved the failure was post-filter-catch, pre-supertest-response, leading
+// to the architectural pivot in PR 2 of the FOLLOWUP slice: the filter is
+// replaced by IdempotencyMismatchInterceptor (using RxJS tap({ error })),
+// mirroring AuditEmitterInterceptor's working pattern.
 //
-// What this PR does:
-//   1. Removes `.skip` from the describe block below so the test runs.
-//   2. Sets process.env.T532_DIAG = "1" before the suite runs so that
-//      `console.log` statements at boundaries B1/B2/B3 (instrumented in
-//      apps/api/src/idempotency/idempotency.interceptor.ts and
-//      apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts)
-//      fire under this CI run only. The env-gate keeps the diagnostics
-//      inert in production and every other test suite.
-//   3. Adds B5 console.log around the second supertest call to capture
-//      the response (or absence thereof on timeout).
-//
-// The five boundary points the slice brief specified:
-//   B1 — interceptor pre-throw (instrumented in interceptor.ts)
-//   B2 — interceptor outer try/catch (instrumented in interceptor.ts)
-//   B3 — IdempotencyMismatchFilter.catch entry (instrumented in filter.ts)
-//   B4 — GlobalExceptionFilter.catch entry: NOT INSTRUMENTED in PR 1
-//        because apps/api/src/common/exception.filter.ts is outside this
-//        slice's allowed_files. Inferred from absence-of-B3-log.
-//   B5 — supertest response receipt (instrumented below)
-//
-// Original PR #349 framing (preserved below for reference; per the
-// FOLLOWUP brief in specs/005-pos-catalog-sync-reconciliation/wave-status.md
-// §"Correction to the existing skip-block framing", the claim that
-// "the harness pattern is wrong" overstated the evidence — 001's
-// conflict.spec.ts uses the same Test.createTestingModule + APP_INTERCEPTOR
-// + sync-throw shape and passes CI today, so the pattern itself is NOT
-// broken. This diagnostic PR exists to find the actual structural
-// difference between 001's working spec and this one):
-//
-//   Root cause (original framing, retained for context): the test harness
-//   uses a no-op `IdempotencyKeyStore` pgWriter/pgReader plus a method-level
-//   `@UseFilters(IdempotencyMismatchFilter)` binding on the controller. When
-//   `APP_INTERCEPTOR` throws (or returns `throwError`) inside that harness,
-//   the `ConflictException` escapes Jest before any filter side-effect can
-//   run, causing a 30s test timeout with a bare RxJS stack trace ending at
-//   `switchMap.ts` — no NestJS request frames, no supertest frames, no
-//   filter frames. Fix attempts in PR #349 (`30ca9e0` interceptor
-//   `throwError` shape, `951ee84` global filter binding) failed with
-//   byte-identical CI output.
-//
-// Slice brief: specs/005-pos-catalog-sync-reconciliation/wave-status.md
-// §"Slice brief — 005-WAVE1-METRICS-MISMATCH-FOLLOWUP"
+// Reference: specs/005-pos-catalog-sync-reconciliation/wave-status.md
+// §"Investigation update — 2026-05-28 (PR #386 CI evidence)"
+//          + §"Slice brief — 005-WAVE1-METRICS-MISMATCH-FOLLOWUP"
 describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
   it("same key + different payload → 409 idempotency_key_conflict; catalog audit + counter fire; no row created", async () => {
     if (dockerSkipped) return;
@@ -441,24 +381,9 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
 
     // Second call — same key, DIFFERENT identifier_value. The
     // IdempotencyInterceptor detects payload mismatch and throws
-    // ConflictException. The filter catches it, fires catalog
-    // telemetry, re-throws. GlobalExceptionFilter formats the envelope.
-    //
-    // [T532-DIAG B5] Pre/post-call structured pino logs around supertest. If
-    // the call times out without ever returning, only the pre-call log fires —
-    // that combined with which of B1/B2/B3 also fired tells us where in the
-    // pipeline the exception was swallowed. Key is logged as a SHA-256
-    // fingerprint only — no raw key material.
-    diagLogger.debug(
-      {
-        event: "T532-DIAG-B5",
-        boundary: "supertest-pre-call",
-        key_fingerprint: diagKeyFingerprint(IDEMP_KEY),
-        value: SECOND_VALUE,
-        ts: Date.now(),
-      },
-      "T532 diagnostic: about to issue mismatch-triggering POST",
-    );
+    // ConflictException. The route-scoped IdempotencyMismatchInterceptor's
+    // tap({ error }) fires catalog telemetry. GlobalExceptionFilter
+    // formats the 409 envelope.
     const second = await http()
       .post("/api/pos/v1/catalog/unknown-items")
       .set("Idempotency-Key", IDEMP_KEY)
@@ -466,17 +391,6 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
         identifier_type: "barcode",
         identifier_value: SECOND_VALUE,
       });
-    diagLogger.debug(
-      {
-        event: "T532-DIAG-B5",
-        boundary: "supertest-post-call",
-        key_fingerprint: diagKeyFingerprint(IDEMP_KEY),
-        status: second.status,
-        body_keys: Object.keys(second.body ?? {}),
-        ts: Date.now(),
-      },
-      "T532 diagnostic: mismatch POST returned",
-    );
 
     // FR-021c — the 409 outcome itself. Envelope shape comes from
     // GlobalExceptionFilter's HttpException branch. Post-PR #360, the
