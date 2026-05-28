@@ -125,9 +125,74 @@ Three counters registered in `api.metrics.ts`, allowlisted in `packages/shared/s
 
 | Item | Deferred from | Status |
 |---|---|---|
-| **T550/T551 + T552 + T532** — integration coverage for the mismatch path | AUDIT PR #344, METRICS PR #349, IDEMP-MISMATCH PR #339 | **Absorbed into `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** (2026-05-28). All three are blocked by the same harness pattern documented in `retry-mismatch.spec.ts:334-357`: PR #349 tried two fixes (`30ca9e0` interceptor `throwError` shape; `951ee84` global filter binding) with byte-identical CI failure — confirming the `APP_INTERCEPTOR + TestingModule + @UseFilters` shape itself is the issue, not the production code. FOLLOWUP slice refactors the harness, then unskips T532 + T552 and adds T550 in a single coherent slice (2–3 PRs). No production-behavior gap: filter logic is unit-tested (IMF1–5); the gap is end-to-end wiring evidence. |
+| **T550/T551 + T552 + T532** — integration coverage for the mismatch path | AUDIT PR #344, METRICS PR #349, IDEMP-MISMATCH PR #339 | **Absorbed into `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`** (2026-05-28). See **Slice brief** below for the 2026-05-28 investigation outcome. No production-behavior gap: filter logic is unit-tested (IMF1–5); the gap is end-to-end wiring evidence. |
 | **Auth-guard wiring** — 6 unguarded routes on `UnknownItemsController` | CAPTURE-HAPPY PR #317 (and 5 subsequent PRs) | Deferred-with-rationale: `apps/api/src/auth/**` is forbidden surface for 005. A follow-up "auth-wiring" slice must address all 6 routes consistently (POS routes use bearer tokens; admin routes use session cookies). Requires `[GATED]` approval per Standing Rules §3. CodeRabbit flagged this on PR #334 (twice); deferral documented here as the canonical record. |
 | **Header-name concept alignment** — `idempotency-token-mismatch` in `spec.md` FR-091 and Assumptions | n/a | Intentionally left as-is: `idempotency-token-mismatch` is a failure *category* name, not an HTTP header. Changing it to `idempotency-key-mismatch` would create new drift with the existing metric name `idempotency_token_mismatch_total` (PR #299 allowlist) and the audit subject `unknown_item.idempotency_mismatch_rejected`. These concept names reflect the metric name as the stable anchor. |
+
+---
+
+## Slice brief — `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`
+
+**Investigation date:** 2026-05-28 (this session). Brief authored to give the next session a clean entry point — primary-source findings, corrected framing, narrowed hypothesis, suggested first PR shape.
+
+### Correction to the existing `retry-mismatch.spec.ts:334-357` skip-block framing
+
+The skip-block comment says PR #349's fix attempts (`30ca9e0`, `951ee84`) "failed with byte-identical CI output." Git history says something more specific:
+
+- **`30ca9e0`** changed the interceptor's collision branch from sync `throw new ConflictException(...)` to `return throwError(() => new ConflictException(...))` ("Shape A"). This was reverted by `b8a9dd4`.
+- **`951ee84`** registered `IdempotencyMismatchFilter` globally before `GlobalExceptionFilter` in both `retry-mismatch.spec.ts` and `metrics.spec.ts`. This was reverted by `b8a9dd4`.
+- **`b8a9dd4`** is the revert commit. Its body says *"the binding was not the issue"* — phrased as "we don't know what is." The skip-block was authored after the reverts and overstated the conclusion as *"the harness pattern is wrong."* That framing misled a subsequent investigation; the actual b8a9dd4 evidence is *"incomplete diagnosis; deferred to follow-up."*
+
+Current state on `main`: the interceptor uses sync `throw new ConflictException(...)` inside `from(asyncFn()).pipe(switchMap(...))` (the original PR #339 shape). Production has shipped real 409s under this pattern without operator reports. The mismatch *condition* (same `Idempotency-Key` + different body) is rare; the absence of operator reports is weak evidence either way — treat as "not yet observed to fail in prod," not "verified working in prod."
+
+### Working comparator — `apps/api/test/idempotency/conflict.spec.ts` (001)
+
+001's idempotency test suite contains a successfully-running integration spec of the *same throw pattern*:
+
+- `Test.createTestingModule({ controllers: [InvitationsController], providers: [...] })` — the same hand-built shape `retry-mismatch.spec.ts` uses (NOT `imports: [AppModule]`)
+- `{ provide: APP_INTERCEPTOR, useValue: interceptor }` — same DI binding
+- `app.useGlobalFilters(new GlobalExceptionFilter())` — same filter setup at `app.init()`
+- Asserts `409 idempotency_key_conflict` via Supertest end-to-end (T511, lines 147-190)
+
+001's spec passes CI today. So the `TestingModule + APP_INTERCEPTOR + sync throw` shape itself is **not** broken — contrary to the skip-block's framing.
+
+### Narrowed hypothesis (single, falsifiable)
+
+The two structural differences between 001's working spec and 005's failing spec, in order of suspicion:
+
+1. **`@UseFilters(IdempotencyMismatchFilter)` method-level binding on `UnknownItemsController.posCaptureItem`** — 001 has *no* `@UseFilters` decorator; only `GlobalExceptionFilter` runs. NestJS resolves filters in a specific order, and method-level filters wrapping an `APP_INTERCEPTOR`-thrown exception may diverge from production wiring in ways `951ee84` *tried* to compensate for. The revert was not based on diagnosing this — `b8a9dd4` admits "the binding was not the issue" without evidence.
+
+2. **`useGlobalGuards(contextGuard)` after `useGlobalFilters(...)`** — 001 uses `Pass*Guard` instances via `.overrideGuard(...).useValue(...)`; 005's spec adds a separate `useGlobalGuards(contextGuard)` call. The order/precedence of guard execution vs. interceptor exception propagation may differ from production.
+
+**Test minimally per systematic-debugging Phase 3:** start by porting *only* 001's guard pattern (drop the global `ConfigurableContextGuard`; use `.overrideGuard().useValue(...)` per 001) and keep `@UseFilters` as-is. If the spec turns GREEN, hypothesis 2 is correct in isolation. If still RED, try removing `@UseFilters` next — if that turns it GREEN, hypothesis 1.
+
+### Suggested first PR shape
+
+**PR 1 — harness diagnostic:** add structured console logging at five boundary points in `retry-mismatch.spec.ts` (interceptor pre-throw, interceptor post-throw, filter `catch()` entry, `GlobalExceptionFilter.catch()` entry, supertest response receipt). Unskip the test, push, let CI run. Read the failure signature *with evidence* this time, not guesses. Local Docker is unavailable on the Windows host — CI is the only feedback loop, so structured logging is non-optional.
+
+**PR 2 — fix per hypothesis:** based on PR 1's evidence, apply the minimal-change fix to the harness. Most-likely candidates ranked by 001-comparator structure:
+- (a) port 001's guard pattern (single-variable change vs. current 005 spec)
+- (b) remove `@UseFilters` method binding and register filter globally per `951ee84`'s original intent
+- (c) only if (a) and (b) both fail: refactor to `Test.createTestingModule({ imports: [AppModule] })` — biggest change, but matches production exactly
+
+**PR 3 — unskip + T550 author:** once T532's case is GREEN, port the working pattern to `metrics.spec.ts` (unskip T552-mismatch-case) and author `idempotency-mismatch-audit.spec.ts` (T550). All three close together.
+
+**Scope estimate:** 2 PRs likely (PR 1 + PR 2-or-PR 3); 3 PRs if (c) is needed.
+
+### Files the FOLLOWUP slice will touch
+
+Per `execution-map.yaml` `allowed_files`:
+- `apps/api/test/catalog/unknown-items/audit/metrics.spec.ts` (T552 unskip)
+- `apps/api/test/catalog/unknown-items/audit/idempotency-mismatch-audit.spec.ts` (T550 new)
+- `apps/api/test/catalog/unknown-items/idempotency/retry-mismatch.spec.ts` (T532 unskip)
+- `apps/api/src/idempotency/idempotency.interceptor.ts` (only if hypothesis requires interceptor change — likely NOT)
+- `apps/api/src/catalog/unknown-items/filters/idempotency-mismatch.filter.ts` (only if hypothesis requires filter change — likely NOT)
+
+### What NOT to do
+
+- Do **not** restart the harness investigation from scratch — primary-source evidence above stands.
+- Do **not** trust the skip-block comment's "the harness pattern is wrong" framing as diagnostic; treat 001's `conflict.spec.ts` as the working-pattern comparator.
+- Do **not** attempt PR 2 before PR 1 produces logged evidence — PR #349's two reverted attempts already demonstrate that "try another fix shape" without diagnostic data is rework.
 
 ---
 
