@@ -37,7 +37,8 @@
 |---|---|---|
 | Spec + plan + Phase 0/1 artefacts | 006 product-level UX brief — 10 user stories, 38 FRs (incl. FR-001a / FR-021a / FR-062a / FR-070a / FR-100 with `forbidden`), 9 SI requirements, 8 SCs, 12 edge cases, 4 clarifications + 3 external-review revisions | PR #308 @ `678cbd2` (2026-05-23) |
 | `tasks.md` + `execution-map.yaml` + `wave-status.md` | Agent OS compatibility artefacts — slice schema, T001..T023 coordination tasks, execution map with parallel groups, wave-status initial authoring | PR #311 @ `8ea103a` (2026-05-24) |
-| T001 close-by-vacuity + T002 + T003 | T001: CodeRabbit posted "No actionable comments" on PR #308 at `7cfe25c` → close-by-vacuity recorded in `execution-map.yaml`. T002: 006 row added to `CLAUDE.md` Specs summary. T003: forward-link from 005's wave-status.md to 006. Validation greps all pass. | PR #380 (this PR) (2026-05-28) |
+| T001 close-by-vacuity + T002 + T003 | T001: CodeRabbit posted "No actionable comments" on PR #308 at `7cfe25c` → close-by-vacuity recorded in `execution-map.yaml`. T002: 006 row added to `CLAUDE.md` Specs summary. T003: forward-link from 005's wave-status.md to 006. Validation greps all pass. | PR #380 @ `8e543b1` (2026-05-28) |
+| T006 + T007 + T008 + T009 close-by-execution | T006: 003 services (`tenant-catalog.service.ts` 232 LOC, `product-aliases.service.ts` 245 LOC) both on main, GREEN (no skeleton markers). T007: constitution at `v3.0.0` (SemVer-patch range satisfied). T008: standing-rules.md §3 forbidden-paths list matches plan.md §9.4 claim — drift-free. T009: both coordination artefacts on disk; plan.md §6.1.1 narrative holds. All four slices validated without requiring file edits — outcomes recorded in `execution-map.yaml`. | PR #381 (this PR) (2026-05-28) |
 
 ---
 

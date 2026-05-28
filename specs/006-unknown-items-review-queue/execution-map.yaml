@@ -147,7 +147,9 @@ slices:
   - id: T006
     task_ids: [T006]
     type: docs
-    status: proposed   # external trigger cleared: 003 PHASE3_RED_WAVE GREEN pairs on main (T351 PR #300, T384 PR #303)
+    status: complete-by-execution   # 2026-05-28 — validation passed: both 003 services on main, GREEN (tenant-catalog.service.ts 232 LOC, product-aliases.service.ts 245 LOC); no "Not implemented" / "RED" / "skeleton" / "TODO" markers.
+    closed_by_pr: 381
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -156,6 +158,7 @@ slices:
     validation:
       - command: ls apps/api/src/modules/catalog/tenant-catalog.service.ts apps/api/src/modules/catalog/product-aliases.service.ts 2>&1
         expected: "Both files exist and contain GREEN implementations (not RED skeletons)."
+        outcome: Both files exist on main. tenant-catalog.service.ts = 232 LOC, product-aliases.service.ts = 245 LOC. Negative-grep for skeleton markers ("Not implemented" / "RED" / "skeleton" / "TODO") returned zero matches. GREEN confirmed; no edit to plan.md required.
     stop:
       - standing-rules universal stops
       - "stop if either service is still RED-only — gate remains blocked"
@@ -164,7 +167,9 @@ slices:
   - id: T007
     task_ids: [T007]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-28 — drift check passed: constitution.md header at v3.0.0 (SemVer-compatible patch range satisfied).
+    closed_by_pr: 381
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -174,6 +179,7 @@ slices:
     validation:
       - command: grep -n "v3\\.0\\." .specify/memory/constitution.md
         expected: "Header version is v3.0.1 or a SemVer-compatible patch (v3.0.x)."
+        outcome: Constitution at v3.0.0. No bump to v3.1.x or higher; no /speckit-clarify re-run needed. No edit to spec.md / plan.md required.
     stop:
       - standing-rules universal stops
       - "stop if constitution bumped to v3.1.x or higher — re-run /speckit-clarify against 006"
@@ -182,7 +188,9 @@ slices:
   - id: T008
     task_ids: [T008]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-28 — drift check passed: standing-rules.md §3 forbidden-paths list matches plan.md §9.4 claim (package.json, pnpm-lock, drizzle migrations, openapi contracts, .github CI).
+    closed_by_pr: 381
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -190,6 +198,7 @@ slices:
     validation:
       - command: grep -E "package\\.json|pnpm-lock|drizzle|openapi|\\.github" docs/agent-os/standing-rules.md | head -10
         expected: "Standing rules §3 forbidden-paths list matches 006 plan.md §9.4 claim verbatim."
+        outcome: Standing rules §3 returns "package.json (root) and any package-level package.json / pnpm-lock.yaml / packages/db/drizzle/** SQL migrations / packages/contracts/openapi/** OpenAPI spec / .github/** CI workflows". Drift-free; no plan.md §9.4 amendment slice needed.
     stop:
       - standing-rules universal stops
       - "stop if forbidden-paths list has drifted — propose a plan.md §9.4 amendment slice"
@@ -198,7 +207,9 @@ slices:
   - id: T009
     task_ids: [T009]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-28 — drift check passed: both coordination artefacts on disk; plan.md §6.1.1 narrative matches reality.
+    closed_by_pr: 381
+    closed_at_date: 2026-05-28
     approval_required: false
     depends_on: []
     agent: opus-maestro
@@ -206,6 +217,7 @@ slices:
     validation:
       - command: ls specs/006-unknown-items-review-queue/execution-map.yaml specs/006-unknown-items-review-queue/wave-status.md
         expected: "Both files exist. plan.md §6.1.1 narrative matches reality (006 carries them, compact form)."
+        outcome: Both files present on main. plan.md §6.1.1 narrative (006 carries execution-map + wave-status in compact form) holds. No regression.
     stop:
       - standing-rules universal stops
       - "stop if either file is missing — that means a regression slipped through"
