@@ -88,7 +88,6 @@ import {
   INFLIGHT_REDIS,
   InProgressMarker,
 } from "../../../../src/idempotency/in-progress-marker";
-import { IdempotencyMismatchInterceptor } from "../../../../src/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor";
 import { UnknownItemsController } from "../../../../src/catalog/unknown-items/unknown-items.controller";
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
@@ -374,7 +373,6 @@ beforeAll(
         { provide: INFLIGHT_REDIS, useValue: fakeRedis },
         { provide: InProgressMarker, useValue: fakeMarker },
         { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-        IdempotencyMismatchInterceptor,
         { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
         { provide: APP_INTERCEPTOR, useClass: AuditEmitterInterceptor },
       ],

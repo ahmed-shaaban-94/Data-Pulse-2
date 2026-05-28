@@ -532,7 +532,8 @@ pnpm --filter @data-pulse-2/api exec jest test/catalog/unknown-items/interceptor
 ```
 
 Expected:
-```
+
+```text
 PASS test/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor.unit.spec.ts
   IdempotencyMismatchInterceptor (unit, no harness)
     ✓ IMI1: non-ConflictException error propagates unchanged with no side effects
@@ -825,7 +826,8 @@ ls apps/api/test/catalog/unknown-items/filters/ 2>&1
 ```
 
 Expected output for each:
-```
+
+```text
 ls: cannot access 'apps/api/src/catalog/unknown-items/filters/': No such file or directory
 ```
 
@@ -1494,7 +1496,8 @@ git log --oneline main..HEAD 2>&1
 Expected branch output: `## fix/005-wave1-metrics-mismatch-followup-pr2`. Expected `git status` body: only the three known-protected untracked dirs (`bin/`, `externals/`, `.understand-anything/`), nothing else modified.
 
 Expected commit log (7 commits since main):
-```
+
+```text
 <sha> test(005): port T532 integration spec to IdempotencyMismatchInterceptor
 <sha> chore(005): remove T532_DIAG diagnostic scaffolding from interceptor
 <sha> refactor(005): delete IdempotencyMismatchFilter and its unit spec

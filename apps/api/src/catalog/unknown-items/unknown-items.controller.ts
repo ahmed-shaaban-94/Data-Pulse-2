@@ -75,7 +75,6 @@ import {
   Res,
   UnauthorizedException,
   UseGuards,
-  UseInterceptors,
 } from "@nestjs/common";
 import type { Response } from "express";
 import { randomUUID } from "node:crypto";
@@ -94,7 +93,6 @@ import {
   PosCaptureItemRequestSchema,
   type PosCaptureItemRequestDto,
 } from "./dto/capture-request.dto";
-import { IdempotencyMismatchInterceptor } from "./interceptors/idempotency-mismatch.interceptor";
 import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
@@ -274,18 +272,23 @@ export class UnknownItemsController {
   @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
   @Idempotent("required")
   @Auditable("unknown_item.captured")
-  // METHOD-SCOPED interceptor — T533 / 005-WAVE1-IDEMP-MISMATCH. Observes
-  // the `ConflictException` the IdempotencyInterceptor throws on a payload
-  // mismatch (`code: "idempotency_key_conflict"`) via RxJS `tap({ error })`,
-  // emits the catalog-domain `unknown_item.idempotency_mismatch_rejected`
-  // audit subject + increments `idempotency_token_mismatch_total`. The
-  // original error continues propagating to GlobalExceptionFilter unchanged.
-  // Class-level scoping would inherit to LIST / DISMISS (forbidden per
-  // slice stop rule). Architectural pivot from `@UseFilters(...)` →
-  // `@UseInterceptors(...)` (PR 2 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP)
-  // — see specs/005-pos-catalog-sync-reconciliation/wave-status.md
-  // §"Investigation update — 2026-05-28 (PR #386 CI evidence)".
-  @UseInterceptors(IdempotencyMismatchInterceptor)
+  // T533 / 005-WAVE1-IDEMP-MISMATCH catalog-domain telemetry — the
+  // `idempotency_token_mismatch_total` counter (FR-021c) and the
+  // `unknown_item.idempotency_mismatch_rejected` audit subject (FR-082)
+  // fire inline inside `IdempotencyInterceptor.handle()`'s collision
+  // branch (apps/api/src/idempotency/idempotency.interceptor.ts).
+  // No route-level decorator is required: the platform interceptor
+  // observes the collision and emits the catalog-axis side effects
+  // at the same point it emits the platform-axis ones.
+  //
+  // Architectural history: this slice originally used
+  // `@UseFilters(IdempotencyMismatchFilter)` (async exception filter,
+  // broken in this codebase — see PR #386 evidence) and then
+  // `@UseInterceptors(IdempotencyMismatchInterceptor)` (route-level
+  // RxJS tap.error, which never fires because the collision is thrown
+  // by an APP_INTERCEPTOR BEFORE next.handle() is invoked, so the
+  // route-level interceptor's inner observable is never subscribed —
+  // see PR #389 CI evidence). The inline approach is what works.
   async posCaptureItem(
     @Req() request: TenantContextRequest,
     @Body(new ZodValidationPipe(PosCaptureItemRequestSchema))

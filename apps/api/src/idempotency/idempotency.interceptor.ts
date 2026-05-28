@@ -32,6 +32,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  Optional,
   type CallHandler,
   type ExecutionContext,
   type NestInterceptor,
@@ -41,9 +42,15 @@ import { createHash } from "node:crypto";
 import { EMPTY, Observable, from, of } from "rxjs";
 import { switchMap, tap } from "rxjs/operators";
 
-import { IdempotencyKeyStore } from "@data-pulse-2/shared";
+import { IdempotencyKeyStore, type Logger } from "@data-pulse-2/shared";
 import type { StoredResult } from "@data-pulse-2/shared";
 
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../audit/audit-job.enqueuer";
+import type { AuditJobPayload } from "../audit/audit-job.types";
+import { ROOT_LOGGER } from "../common/logging.interceptor";
 import type { ResolvedContext } from "../context/types";
 import {
   IDEMPOTENT_OPTIONS_KEY,
@@ -59,6 +66,7 @@ import {
   recordIdempotencyConflict,
   recordIdempotencyInProgress,
   recordIdempotencyReplay,
+  recordIdempotencyTokenMismatch,
 } from "../observability/metrics/api.metrics";
 
 export const IDEMPOTENCY_KEY_STORE = Symbol.for("api.idempotency.store");
@@ -123,6 +131,24 @@ export class IdempotencyInterceptor implements NestInterceptor {
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(IDEMPOTENCY_KEY_STORE) private readonly store: IdempotencyKeyStore,
     private readonly marker: InProgressMarker,
+    // Catalog-domain telemetry on the collision branch — FR-021c (counter)
+    // and FR-082 (audit subject) for the 005 unknown-items capture route.
+    // Inlined here because NestJS interceptor execution order means a
+    // downstream route-level interceptor's tap.error never observes a
+    // ConflictException thrown by this APP_INTERCEPTOR BEFORE invoking
+    // next.handle() — the inner chain is never subscribed.
+    // Both deps are @Optional so this interceptor remains usable in
+    // legacy/non-catalog test fixtures that don't wire AuditModule.
+    // Architectural pivot context: specs/005-pos-catalog-sync-reconciliation/wave-status.md
+    // §"Investigation update — 2026-05-28 (PR #386 CI evidence)" +
+    // PR #389 CI evidence that the route-level interceptor pattern never
+    // fired the side effect (mismatchCounter stayed 0).
+    @Optional()
+    @Inject(AUDIT_JOB_ENQUEUER)
+    private readonly auditEnqueuer: AuditJobEnqueuer | null = null,
+    @Optional()
+    @Inject(ROOT_LOGGER)
+    private readonly logger?: Logger,
   ) {}
 
   intercept(execCtx: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -251,7 +277,42 @@ export class IdempotencyInterceptor implements NestInterceptor {
       if (stored.hit === "collision") {
         // Same key, different body — conflict.
         await this.marker.del(tuple);
+        // Platform-axis observability (001): operator-dashboard counter.
         recordIdempotencyConflict({ route });
+        // Catalog-axis observability (005 FR-021c): per-tenant capture-flow
+        // counter. Co-increments with the platform counter on every
+        // collision — intentional, see signals.md §1.1.
+        recordIdempotencyTokenMismatch();
+        // Catalog-domain audit subject (005 FR-082): fire-and-forget.
+        // The enqueue promise is NOT awaited — if the audit pipeline
+        // rejects (BullMQ outage, Redis disconnect), the 409 contract
+        // must NOT be replaced by an audit failure. The .catch() logs
+        // and swallows. Mirrors AuditEmitterInterceptor's pattern.
+        // Skipped when AUDIT_JOB_ENQUEUER is not wired (legacy test
+        // fixtures that don't import AuditModule).
+        if (this.auditEnqueuer !== null) {
+          const principal = req.principal;
+          const ctx = req.context;
+          const requestId = (req as unknown as { requestId?: string })
+            .requestId;
+          const payload: AuditJobPayload = {
+            actor_user_id: principal?.userId ?? null,
+            actor_label: null,
+            tenant_id: ctx?.tenantId ?? null,
+            store_id: ctx?.storeId ?? null,
+            action: "unknown_item.idempotency_mismatch_rejected",
+            target_type: null,
+            target_id: null,
+            request_id: requestId ?? null,
+            metadata: null,
+          };
+          this.auditEnqueuer.enqueue(payload).catch((err: unknown) => {
+            this.logger?.error(
+              { err, action: payload.action },
+              "IdempotencyInterceptor: catalog audit enqueue failed on collision",
+            );
+          });
+        }
         throw new ConflictException({
           code: "idempotency_key_conflict",
           message:

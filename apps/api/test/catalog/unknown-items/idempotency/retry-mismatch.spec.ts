@@ -10,17 +10,17 @@
  *       IdempotencyInterceptor's outcome — unchanged by this slice)
  *     - NO new `unknown_items` row created (request never reaches the
  *       service)
- *     - the `IdempotencyMismatchInterceptor` fires:
+ *     - `IdempotencyInterceptor` fires the catalog-domain telemetry
+ *       INLINE on the collision branch (same code-site that fires the
+ *       platform `recordIdempotencyConflict` counter):
  *         · `recordIdempotencyTokenMismatch()` counter incremented
  *         · `AUDIT_JOB_ENQUEUER.enqueue(...)` called with
  *           `action: "unknown_item.idempotency_mismatch_rejected"`
  *           and the same tenant/store/principal context the request
  *           carried
- *     - the platform-level `recordIdempotencyConflict` counter (in
- *       the 001 interceptor) also fired (not directly asserted here
- *       — it fires inside the interceptor at the collision branch,
- *       before the catalog-domain interceptor observes the error;
- *       we trust the platform interceptor's existing coverage).
+ *     - the platform-level `recordIdempotencyConflict` counter also
+ *       fired (not directly asserted here — we trust the platform
+ *       interceptor's existing coverage in apps/api/test/idempotency/).
  *
  * Spec anchors:
  *   - FR-021c: token/payload mismatch fails closed with a
@@ -35,13 +35,11 @@
  * Full Nest app via `Test.createTestingModule` (mirrors PR #336 /
  * retry-identical.spec.ts). The key additional pieces vs. retry-identical:
  *
- *   - `IdempotencyMismatchInterceptor` is registered as a provider AND
- *     applied as a method-level interceptor on `posCaptureItem` via
- *     `@UseInterceptors(...)` — both pieces are needed for the
- *     interceptor to observe the 409 via `tap({ error: ... })`.
- *   - `AUDIT_JOB_ENQUEUER` is overridden with a spy that records
- *     every enqueue call. We assert exactly one call with the
- *     catalog-domain subject.
+ *   - `IdempotencyInterceptor` is constructed with the `auditSpy` passed
+ *     as its 4th constructor argument (the @Optional() AUDIT_JOB_ENQUEUER
+ *     inject), so the catalog audit emit on the collision branch lands
+ *     on the spy rather than a real BullMQ producer.
+ *   - We assert exactly one call with the catalog-domain subject.
  *   - `recordIdempotencyTokenMismatch` is spied via `jest.spyOn`
  *     (same approach retry-identical uses for
  *     `recordUnknownItemCaptured`).
@@ -75,7 +73,6 @@ import {
   type AuditJobEnqueuer,
 } from "../../../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
-import { IdempotencyMismatchInterceptor } from "../../../../src/catalog/unknown-items/interceptors/idempotency-mismatch.interceptor";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -247,10 +244,15 @@ beforeAll(async () => {
   });
 
   const reflector = new Reflector();
+  // Construct the platform IdempotencyInterceptor with the auditSpy +
+  // logger=undefined so the catalog-domain telemetry inlined in
+  // `idempotency.interceptor.ts`'s collision branch fires the audit
+  // enqueue against the spy under test.
   const idempInterceptor = new IdempotencyInterceptor(
     reflector,
     idempStore,
     fakeMarker as unknown as InProgressMarker,
+    auditSpy,
   );
 
   const moduleRef = await Test.createTestingModule({
@@ -267,13 +269,8 @@ beforeAll(async () => {
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-      // The filter is registered as a provider so NestJS can resolve
-      // its `AUDIT_JOB_ENQUEUER` injection. The `@UseFilters` decorator
-      // on `posCaptureItem` is what actually opts the route in — same
-      // wiring as production.
-      IdempotencyMismatchInterceptor,
       // Override the AUDIT_JOB_ENQUEUER token with the spy so we can
-      // assert exactly what the filter enqueued without needing
+      // assert exactly what the interceptor enqueued without needing
       // BullMQ / Redis. Canonical pattern per
       // `audit-emitter.interceptor.ts:15`.
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
@@ -337,15 +334,18 @@ function http() {
 //
 // History: this spec was authored in PR #339 and merged with db-integration
 // RED. Three prior fix attempts (PR #349 30ca9e0, PR #349 951ee84, and the
-// b8a9dd4 revert) all failed because they targeted symptoms in the test
-// harness rather than the underlying architectural issue: the
-// IdempotencyMismatchFilter was the only async exception filter in the
-// codebase, and its async `Promise<void>` re-throw from `catch()` did not
-// propagate to GlobalExceptionFilter. PR #386's diagnostic instrumentation
-// proved the failure was post-filter-catch, pre-supertest-response, leading
-// to the architectural pivot in PR 2 of the FOLLOWUP slice: the filter is
-// replaced by IdempotencyMismatchInterceptor (using RxJS tap({ error })),
-// mirroring AuditEmitterInterceptor's working pattern.
+// b8a9dd4 revert) all failed because they targeted symptoms rather than
+// the underlying architectural issue. PR #386's diagnostic instrumentation
+// proved the failure was post-filter-catch, pre-supertest-response. PR 2
+// of the FOLLOWUP slice then tried a route-level RxJS interceptor
+// (IdempotencyMismatchInterceptor with tap({ error })), but PR #389 CI
+// proved that approach ALSO fails: NestJS never subscribes the inner
+// chain when an APP_INTERCEPTOR throws BEFORE calling next.handle(), so
+// the route-level interceptor's tap.error never observes the rejection.
+// Final approach (this commit): inline the catalog-domain telemetry
+// inside `IdempotencyInterceptor.handle()`'s collision branch — same
+// code-site where the platform `recordIdempotencyConflict` already
+// fires. This is the only approach that empirically works.
 //
 // Reference: specs/005-pos-catalog-sync-reconciliation/wave-status.md
 // §"Investigation update — 2026-05-28 (PR #386 CI evidence)"
@@ -380,10 +380,9 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
     mismatchCounter = 0;
 
     // Second call — same key, DIFFERENT identifier_value. The
-    // IdempotencyInterceptor detects payload mismatch and throws
-    // ConflictException. The route-scoped IdempotencyMismatchInterceptor's
-    // tap({ error }) fires catalog telemetry. GlobalExceptionFilter
-    // formats the 409 envelope.
+    // IdempotencyInterceptor detects payload mismatch, fires catalog
+    // telemetry inline (counter + audit), then throws ConflictException.
+    // GlobalExceptionFilter formats the 409 envelope.
     const second = await http()
       .post("/api/pos/v1/catalog/unknown-items")
       .set("Idempotency-Key", IDEMP_KEY)

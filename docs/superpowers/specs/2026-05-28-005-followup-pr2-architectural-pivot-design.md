@@ -34,7 +34,7 @@ Restore single-filter pipeline parity with 001's `apps/api/test/idempotency/conf
 
 ### Before (broken)
 
-```
+```text
 Request → APP_INTERCEPTOR (IdempotencyInterceptor)
        → @UseFilters(IdempotencyMismatchFilter)   ← async catch + re-throw never propagates
        → GlobalExceptionFilter (never reached)
@@ -45,7 +45,7 @@ The async filter's `Promise<void>` rejection from `throw exception` does not rel
 
 ### After (mirrors `AuditEmitterInterceptor`)
 
-```
+```text
 Request → APP_INTERCEPTOR (IdempotencyInterceptor)            ← throws ConflictException
        → @UseInterceptors(IdempotencyMismatchInterceptor)     ← tap({ error: ... }) fires telemetry,
                                                                 error continues unchanged
@@ -293,7 +293,7 @@ CI (db-integration) is the authoritative validator. Docker unavailable locally p
 
 Validation command from `execution-map.yaml` line 890 (unchanged):
 
-```
+```bash
 pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/audit/metrics" \
   "test/catalog/unknown-items/audit/idempotency-mismatch-audit" \
   "test/catalog/unknown-items/idempotency/retry-mismatch"
