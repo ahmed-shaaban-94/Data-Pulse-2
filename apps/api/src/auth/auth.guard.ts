@@ -69,6 +69,16 @@ export type Principal =
       tokenId: string;
       tenantId: string | null;
       userId: string | null;
+      /**
+       * Store binding from `auth_tokens.store_id`. Per 002 FR-POS-AUTH-4 a
+       * `pos_operator` token is "bound to the operator user, the device, and
+       * the resolved (tenant_id, store_id)" — so the column is populated at
+       * sign-in and propagated here. `dashboard_api` / `pos` scopes carry no
+       * store binding and pass through as null. Downstream consumers (e.g.
+       * TenantContextGuard.resolveToken) read this to populate
+       * ResolvedContext.storeId without a second DB lookup.
+       */
+      storeId: string | null;
       /** Always a bearer-safe scope — single-use workflow scopes are rejected before principal creation. */
       scope: BearerAuthScope;
     };
@@ -174,6 +184,7 @@ function principalFromToken(token: AuthTokenRow): Principal {
     tokenId: token.id,
     tenantId: token.tenantId,
     userId: token.userId,
+    storeId: token.storeId,
     scope: token.scope as BearerAuthScope,
   };
 }

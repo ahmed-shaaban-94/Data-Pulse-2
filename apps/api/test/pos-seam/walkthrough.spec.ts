@@ -144,6 +144,7 @@ describe("[SC-8] Seam 1+2 — token principal resolves tenant context without a 
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "pos",
     };
 
@@ -172,6 +173,7 @@ describe("[SC-8] Seam 1+2 — token principal resolves tenant context without a 
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "pos",
     };
 
@@ -539,6 +541,7 @@ describe("[SC-8] End-to-end walkthrough — hypothetical POS receipt submission"
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "pos",
     };
 

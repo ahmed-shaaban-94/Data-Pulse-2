@@ -176,6 +176,7 @@ describe("AuthGuard — bearer path", () => {
       tokenId: TOKEN_ID,
       tenantId: TENANT_ID,
       userId: USER_ID,
+      storeId: null,
       scope: "dashboard_api",
     });
   });
@@ -200,6 +201,7 @@ describe("AuthGuard — bearer path", () => {
       tokenId: TOKEN_ID,
       tenantId: null,
       userId: null,
+      storeId: null,
       scope: "dashboard_api",
     });
   });

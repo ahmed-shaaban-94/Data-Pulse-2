@@ -89,6 +89,7 @@ const tokenPrincipalTenant: Principal = {
   tokenId: TOKEN_ID_TENANT,
   tenantId: TENANT_ID,
   userId: USER_ID,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -97,6 +98,7 @@ const tokenPlatformAdmin: Principal = {
   tokenId: TOKEN_ID_PLATFORM,
   tenantId: null,
   userId: null,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -105,6 +107,7 @@ const tokenPrincipalNullUserId: Principal = {
   tokenId: TOKEN_ID_NULL_USER,
   tenantId: TENANT_ID,
   userId: null,
+  storeId: null,
   scope: "dashboard_api",
 };
 

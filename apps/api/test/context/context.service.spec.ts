@@ -179,6 +179,7 @@ const TOKEN_PRINCIPAL: Principal = {
   tokenId: TOKEN_ID,
   tenantId: TENANT_ID,
   userId: USER_ID,
+  storeId: null,
   scope: "dashboard_api",
 };
 
@@ -187,6 +188,7 @@ const PLATFORM_TOKEN: Principal = {
   tokenId: TOKEN_ID,
   tenantId: null,
   userId: null,
+  storeId: null,
   scope: "dashboard_api",
 };
 
