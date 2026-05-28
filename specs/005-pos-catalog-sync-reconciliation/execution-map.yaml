@@ -949,6 +949,79 @@ slices:
     parallel_safety: safe   # author-time tasks; performance test runs independently
     branch_template: "chore/005-wave1-polish"
 
+  # ===== Follow-up: T560 perf-budget flake stabilization =====================
+  # PREFLIGHT slice (authored 2026-05-28). The owning slice 005-WAVE1-POLISH is
+  # already merged (PR #351); the perf test `capture-latency.spec.ts` shipped
+  # GREEN there, but is intermittently RED on db-integration CI from runner
+  # variance — NOT a code regression. This slice exists so the stabilization
+  # work is dispatchable with a bounded contract instead of acting on a prose
+  # "follow-up" note. It is NOT yet executed (status: proposed).
+  #
+  # Observed flake (wave-status.md §Deferred T560): same-SHA back-to-back CI
+  # runs produced p95 = 760 ms (FAIL) then 446 ms (PASS) — a 1.7x spread on
+  # identical code against the 50k-product / 100k-alias full-scale fixture.
+  # Passing-run headroom only 10.8% (446 vs 500). Expected recurrence ~5-15%.
+  #
+  # CANNOT be reproduced or validated locally: docker_required perf assertions
+  # soft-skip without Docker (capture-latency.spec.ts:439), and the flake only
+  # manifests under the full-scale fixture on CI runners. CI is the only gate.
+  #
+  # EXECUTION DISCIPLINE — diagnostic-first (do NOT pick a mechanism blind):
+  #   1. Pull the PER-CALL latency distribution from a RED CI run (the spec
+  #      already console.logs p50/p95/p99/max; add per-call dump if needed
+  #      within allowed_files). The distribution SHAPE discriminates the fix:
+  #        - slowness concentrated in the first few (cold-start) calls
+  #          → warmup-discard is the right mechanism.
+  #        - whole-run slow (runner under load) → warmup-discard won't help;
+  #          quarantine / report-only is the honest answer.
+  #   2. Choose ONE candidate mechanism (listed below) based on that evidence.
+  #
+  # CANDIDATE MECHANISMS (enumerated, NOT pre-chosen — pick at execution time):
+  #   (a) Warmup-discard: run N (~5) un-measured warmup captures before the
+  #       sampled loop, or drop the first N from the percentile array. PRESERVES
+  #       the SC-008 assertions (p95<=500 / p99<=1000) — only measurement
+  #       methodology changes. Lowest-risk if cold-start is the culprit.
+  #   (b) Report-only / non-blocking perf gate: keep emitting p50/p95/p99 for
+  #       CI trend tracking but stop failing the build on them; track SC-008 in
+  #       a dedicated perf environment instead. Standard answer for an
+  #       inherently runner-noisy CI perf gate. Tradeoff: loses the in-CI SLA
+  #       enforcement signal — document the compensating perf-env tracking.
+  #   (c) Widen the asserted threshold (e.g. p95<=750). >>> GATED BY A STOP <<<
+  #       The 500 ms value is the encoded SC-008 SLA from spec.md §8, not a
+  #       test-tuning knob. Changing it silently redefines the verified SLA
+  #       (constitution §IV contract-first). See the stop condition.
+  - id: 005-WAVE1-T560-PERF-FLAKE
+    task_ids: [T560-flake]
+    type: chore
+    status: proposed
+    approval_required: false   # touches only the perf spec + closeout doc; no GATED path
+    depends_on: []   # 005-WAVE1-POLISH (PR #351) already merged; this stabilizes its perf test
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/perf/capture-latency.spec.ts   # the flaky perf test — measurement methodology only
+      - specs/005-pos-catalog-sync-reconciliation/wave-status.md            # closeout: record the chosen mechanism + evidence
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/perf/capture-latency"
+        expected: GREEN — SC-008 p95 ≤ 500 ms, p99 ≤ 1s on CI full-scale fixture, stable across re-runs (no flake)
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "test/idempotency"
+        expected: GREEN — 001 idempotency suite unchanged (no collateral regression)
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "STOP + escalate if the fix requires changing the asserted SC-008 threshold VALUES (p95 500ms / p99 1000ms) rather than measurement methodology — that is a spec.md §8 SLA change (constitution §IV contract-first), NOT a flake fix, and must not ride in on a test-file edit"
+      - "STOP if the RED-run per-call distribution shows whole-run slowness (not cold-start-concentrated) — warmup-discard will not fix it; report mechanism (b) quarantine/report-only as the recommendation and escalate before editing the gate"
+      - "STOP if stabilizing requires touching production code (the perf path itself) — that is an optimization slice, not a flake-stabilization slice; re-scope"
+    report_fields:
+      - changed_files
+      - validation_results
+      - forbidden_path_check
+      - chosen_mechanism_with_evidence   # which candidate (a/b/c) + the RED-run distribution that justified it
+      - confirmation_no_unauthorized_git_ops
+    parallel_safety: safe   # single test file; perf test runs independently of all other suites
+    branch_template: "chore/005-t560-perf-flake"
+
 # ----------------------------------------------------------------------------
 # Wave 2 slices — Reconciliation path (US2 link + create-new, US3 alias-conflict)
 # ----------------------------------------------------------------------------
