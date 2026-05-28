@@ -166,10 +166,12 @@ beforeAll(async () => {
     ],
   })
     // Real DashboardAuthGuard + TenantContextGuard + RolesGuard are wired
-    // class-level / per-method on the controller as of the auth-guard wiring
-    // slice. Tests inject context via the global ConfigurableContextGuard
-    // (registered below); override the production guards with no-op
-    // pass-throughs so the global guard's context survives to the handler.
+    // method-level on LIST + dismiss as of the auth-guard wiring slice
+    // (UnknownItemsController has no class-level guards because the POS
+    // capture route uses a different auth model). Tests inject context via
+    // the global ConfigurableContextGuard (registered below); override the
+    // production guards with no-op pass-throughs so the global guard's
+    // context survives to the handler.
     .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
     .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
     .overrideGuard(RolesGuard).useValue({ canActivate: () => true })
