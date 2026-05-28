@@ -78,7 +78,6 @@ import {
   INFLIGHT_REDIS,
   InProgressMarker,
 } from "../../../../src/idempotency/in-progress-marker";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
 import { UnknownItemsController } from "../../../../src/catalog/unknown-items/unknown-items.controller";
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
@@ -257,10 +256,14 @@ beforeAll(async () => {
   });
 
   const reflector = new Reflector();
+  // Pass auditSpy as the 4th constructor arg so the inlined catalog-domain
+  // audit emit on IdempotencyInterceptor's collision branch lands on the spy.
+  // Required for the T551/T552-mismatch cases that exercise the mismatch path.
   const idempInterceptor = new IdempotencyInterceptor(
     reflector,
     idempStore,
     fakeMarker as unknown as InProgressMarker,
+    auditSpy,
   );
 
   const moduleRef = await Test.createTestingModule({
@@ -277,10 +280,6 @@ beforeAll(async () => {
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-      // IdempotencyMismatchFilter registered as a provider so NestJS resolves
-      // its AUDIT_JOB_ENQUEUER injection. The @UseFilters on posCaptureItem
-      // opts the route in. Mirrors retry-mismatch.spec.ts wiring.
-      IdempotencyMismatchFilter,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
       { provide: APP_INTERCEPTOR, useClass: AuditEmitterInterceptor },
     ],

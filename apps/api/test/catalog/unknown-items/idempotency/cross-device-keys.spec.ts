@@ -32,10 +32,10 @@
  * `IdempotencyInterceptor` registered as `APP_INTERCEPTOR`, FakeRedis
  * + FakeMarker in-memory replacements. The ConfigurableContextGuard
  * is reconfigured between requests to flip the device principal
- * (`userId`) while keeping tenant/store stable. The IdempotencyMismatchFilter
- * is registered as a provider so the controller's `@UseFilters(...)`
- * binding can resolve it even though we expect no mismatch firing on
- * the happy path of this spec.
+ * (`userId`) while keeping tenant/store stable. The IdempotencyInterceptor
+ * is constructed with a SpyAuditEnqueuer so that any unexpected mismatch
+ * audit fire (from the inlined catalog-domain emit on the collision
+ * branch) lands on the spy and can be defensively asserted as zero.
  *
  * Docker:
  *   Testcontainers Postgres 16 required. Honors
@@ -60,7 +60,6 @@ import {
   type AuditJobEnqueuer,
 } from "../../../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -185,9 +184,10 @@ class ConfigurableContextGuard implements CanActivate {
 }
 
 // ---------------------------------------------------------------------------
-// Audit enqueuer stub — IdempotencyMismatchFilter injects AUDIT_JOB_ENQUEUER
-// even though no mismatch should fire in this spec; record calls so we can
-// defensively assert zero mismatch audits.
+// Audit enqueuer stub — IdempotencyInterceptor's collision-branch
+// catalog-domain audit emit would land here if it fires unexpectedly.
+// No mismatch should fire in this happy-path spec; record calls so we
+// can defensively assert zero mismatch audits.
 // ---------------------------------------------------------------------------
 
 class SpyAuditEnqueuer implements AuditJobEnqueuer {
@@ -250,10 +250,15 @@ beforeAll(async () => {
   });
 
   const reflector = new Reflector();
+  // Pass auditSpy as the 4th constructor arg so we can DEFENSIVELY assert
+  // zero mismatch audits on the happy-path. The catalog-domain audit emit
+  // is inlined in IdempotencyInterceptor's collision branch (post-PR-#389
+  // architectural pivot); the spy receives any unintended fire.
   const idempInterceptor = new IdempotencyInterceptor(
     reflector,
     idempStore,
     fakeMarker as unknown as InProgressMarker,
+    auditSpy,
   );
 
   const moduleRef = await Test.createTestingModule({
@@ -274,7 +279,6 @@ beforeAll(async () => {
       // so Nest can resolve its `AUDIT_JOB_ENQUEUER` injection. Mirrors
       // retry-mismatch.spec.ts. The filter never fires on this spec's
       // happy path; we assert zero mismatch audits as a defensive check.
-      IdempotencyMismatchFilter,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
     ],
   })
@@ -425,9 +429,9 @@ describe("T534 / 005-WAVE1-IDEMP-EDGES — FR-021a cross-device Idempotency-Key 
     // raise 409 (counter=1 + a 409 envelope).
     expect(captureCounter).toBe(2);
 
-    // Defensive: the IdempotencyMismatchFilter never fired — no 409 path
-    // was taken. (The 001 interceptor's conflict counter is not asserted
-    // directly here; it's owned by the platform spec.)
+    // Defensive: the IdempotencyInterceptor's collision branch never fired —
+    // no 409 path was taken. (The 001 interceptor's conflict counter is not
+    // asserted directly here; it's owned by the platform spec.)
     expect(
       auditSpy.calls.filter(
         (c) => c.action === "unknown_item.idempotency_mismatch_rejected",

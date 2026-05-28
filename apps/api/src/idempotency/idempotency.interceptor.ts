@@ -45,6 +45,11 @@ import { switchMap, tap } from "rxjs/operators";
 import { IdempotencyKeyStore, type Logger } from "@data-pulse-2/shared";
 import type { StoredResult } from "@data-pulse-2/shared";
 
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../audit/audit-job.enqueuer";
+import type { AuditJobPayload } from "../audit/audit-job.types";
 import { ROOT_LOGGER } from "../common/logging.interceptor";
 import type { ResolvedContext } from "../context/types";
 import {
@@ -61,6 +66,7 @@ import {
   recordIdempotencyConflict,
   recordIdempotencyInProgress,
   recordIdempotencyReplay,
+  recordIdempotencyTokenMismatch,
 } from "../observability/metrics/api.metrics";
 
 export const IDEMPOTENCY_KEY_STORE = Symbol.for("api.idempotency.store");
@@ -125,7 +131,24 @@ export class IdempotencyInterceptor implements NestInterceptor {
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(IDEMPOTENCY_KEY_STORE) private readonly store: IdempotencyKeyStore,
     private readonly marker: InProgressMarker,
-    @Optional() @Inject(ROOT_LOGGER) private readonly logger?: Logger,
+    // Catalog-domain telemetry on the collision branch — FR-021c (counter)
+    // and FR-082 (audit subject) for the 005 unknown-items capture route.
+    // Inlined here because NestJS interceptor execution order means a
+    // downstream route-level interceptor's tap.error never observes a
+    // ConflictException thrown by this APP_INTERCEPTOR BEFORE invoking
+    // next.handle() — the inner chain is never subscribed.
+    // Both deps are @Optional so this interceptor remains usable in
+    // legacy/non-catalog test fixtures that don't wire AuditModule.
+    // Architectural pivot context: specs/005-pos-catalog-sync-reconciliation/wave-status.md
+    // §"Investigation update — 2026-05-28 (PR #386 CI evidence)" +
+    // PR #389 CI evidence that the route-level interceptor pattern never
+    // fired the side effect (mismatchCounter stayed 0).
+    @Optional()
+    @Inject(AUDIT_JOB_ENQUEUER)
+    private readonly auditEnqueuer: AuditJobEnqueuer | null = null,
+    @Optional()
+    @Inject(ROOT_LOGGER)
+    private readonly logger?: Logger,
   ) {}
 
   intercept(execCtx: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -254,20 +277,62 @@ export class IdempotencyInterceptor implements NestInterceptor {
       if (stored.hit === "collision") {
         // Same key, different body — conflict.
         await this.marker.del(tuple);
+        // Platform-axis observability (001): operator-dashboard counter.
+        // Fires for EVERY idempotent route's collision — this is the
+        // cross-cutting platform signal and is intentionally unscoped.
         recordIdempotencyConflict({ route });
-        // [T532-DIAG] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
-        // Remove in PR 2 once the harness failure boundary is identified.
-        if (process.env["T532_DIAG"] === "1") {
-          this.logger?.debug(
-            {
-              event: "T532-DIAG-B1",
-              boundary: "interceptor-pre-throw",
-              route,
-              tuple_fingerprint: keyFingerprint(tuple),
-              ts: Date.now(),
-            },
-            "T532 diagnostic: interceptor about to throw ConflictException",
-          );
+        // The catalog-axis side effects below (FR-021c counter + FR-082
+        // audit subject) are domain-specific to the 005 unknown-items
+        // capture route and MUST NOT fire for unrelated idempotent routes
+        // (e.g. POST /api/v1/memberships/invite). This global APP_INTERCEPTOR
+        // sees every @Idempotent route, so we gate on the route template.
+        // `routePath` is `req.route?.path` (or `req.url`); we match by
+        // suffix so the check is agnostic to Express's leading-slash
+        // normalization and to any future mount-prefix changes. The
+        // `:id`-suffixed sibling routes (dismiss/link/create-product) do
+        // not match `/catalog/unknown-items` exactly, so this is precise.
+        // No HTTP-verb guard is needed: the only OTHER route whose path
+        // ends in `/catalog/unknown-items` is the GET LIST endpoint, which
+        // carries no @Idempotent decorator and so never reaches this
+        // collision branch. A `method === "POST"` arm here would be a
+        // permanently-uncovered branch (collision is POST-only by routing).
+        const isUnknownItemsCaptureRoute =
+          routePath.endsWith("/catalog/unknown-items");
+        // Catalog-axis observability (005 FR-021c): per-tenant capture-flow
+        // counter. Co-increments with the platform counter on a capture-route
+        // collision — intentional, see signals.md §1.1.
+        if (isUnknownItemsCaptureRoute) {
+          recordIdempotencyTokenMismatch();
+        }
+        // Catalog-domain audit subject (005 FR-082): fire-and-forget.
+        // The enqueue promise is NOT awaited — if the audit pipeline
+        // rejects (BullMQ outage, Redis disconnect), the 409 contract
+        // must NOT be replaced by an audit failure. The .catch() logs
+        // and swallows. Mirrors AuditEmitterInterceptor's pattern.
+        // Skipped when not on the capture route, or when AUDIT_JOB_ENQUEUER
+        // is not wired (legacy test fixtures that don't import AuditModule).
+        if (isUnknownItemsCaptureRoute && this.auditEnqueuer !== null) {
+          const principal = req.principal;
+          const ctx = req.context;
+          const requestId = (req as unknown as { requestId?: string })
+            .requestId;
+          const payload: AuditJobPayload = {
+            actor_user_id: principal?.userId ?? null,
+            actor_label: null,
+            tenant_id: ctx?.tenantId ?? null,
+            store_id: ctx?.storeId ?? null,
+            action: "unknown_item.idempotency_mismatch_rejected",
+            target_type: null,
+            target_id: null,
+            request_id: requestId ?? null,
+            metadata: null,
+          };
+          this.auditEnqueuer.enqueue(payload).catch((err: unknown) => {
+            this.logger?.error(
+              { err, action: payload.action },
+              "IdempotencyInterceptor: catalog audit enqueue failed on collision",
+            );
+          });
         }
         throw new ConflictException({
           code: "idempotency_key_conflict",
@@ -312,21 +377,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
         }),
       );
     } catch (err) {
-      // [T532-DIAG B2] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
-      // Logs whether ConflictException reaches the outer try/catch on its way out.
-      // Expected: this fires AFTER B1, BEFORE B3. Remove in PR 2.
-      if (process.env["T532_DIAG"] === "1") {
-        this.logger?.debug(
-          {
-            event: "T532-DIAG-B2",
-            boundary: "interceptor-catch",
-            err_name: (err as Error)?.name ?? "unknown",
-            err_message: ((err as Error)?.message ?? "").slice(0, 80),
-            ts: Date.now(),
-          },
-          "T532 diagnostic: exception reached interceptor outer catch",
-        );
-      }
       // If we set the marker but then hit a store error, clean up.
       await this.marker.del(tuple).catch(() => undefined);
       throw err;

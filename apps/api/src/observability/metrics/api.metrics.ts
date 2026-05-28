@@ -357,8 +357,12 @@ export function recordUnknownItemResolved(attrs: UnknownItemResolvedAttrs): void
 
 /**
  * Increment idempotency_token_mismatch_total (005 FR-021c, FR-082).
- * Emission site: IdempotencyMismatchFilter on the catalog capture route
- * (lands in 005-WAVE1-IDEMP-MISMATCH / T533). Co-increments with the
+ * Emission site: IdempotencyInterceptor's collision branch
+ * (`idempotency.interceptor.ts`), inline at the same site that fires
+ * the platform-axis `recordIdempotencyConflict`. This is the final
+ * shape after two prior approaches failed: an async exception filter
+ * (PR #386 evidence) and a route-level RxJS interceptor (PR #389
+ * evidence). Co-increments with the
  * platform-level recordIdempotencyConflict — both are intentional;
  * see signals.md §1.1 Notes.
  */

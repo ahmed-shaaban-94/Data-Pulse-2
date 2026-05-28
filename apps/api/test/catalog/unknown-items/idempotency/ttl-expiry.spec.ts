@@ -104,7 +104,6 @@ import {
   type AuditJobEnqueuer,
 } from "../../../../src/audit/audit-job.enqueuer";
 import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
-import { IdempotencyMismatchFilter } from "../../../../src/catalog/unknown-items/filters/idempotency-mismatch.filter";
 import {
   IDEMPOTENCY_KEY_STORE,
   IdempotencyInterceptor,
@@ -290,7 +289,6 @@ beforeAll(async () => {
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-      IdempotencyMismatchFilter,
       { provide: AUDIT_JOB_ENQUEUER, useValue: auditSpy },
     ],
   })
