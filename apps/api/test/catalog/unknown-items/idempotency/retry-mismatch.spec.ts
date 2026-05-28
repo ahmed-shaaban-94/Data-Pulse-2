@@ -57,6 +57,8 @@
  */
 import "reflect-metadata";
 
+import { createHash } from "node:crypto";
+
 import {
   type CanActivate,
   type ExecutionContext,
@@ -86,7 +88,7 @@ import { UnknownItemsController } from "../../../../src/catalog/unknown-items/un
 import { UnknownItemsService } from "../../../../src/catalog/unknown-items/unknown-items.service";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import type { ResolvedContext } from "../../../../src/context/types";
-import { IdempotencyKeyStore } from "@data-pulse-2/shared";
+import { createLogger, IdempotencyKeyStore } from "@data-pulse-2/shared";
 
 import {
   applyAllUpAndCreateAppRole,
@@ -112,6 +114,20 @@ import { TenantContextGuard } from "../../../../src/context/tenant-context.guard
 
 const DEVICE_USER_ID = "0d000000-0000-7000-8000-0000000005f1";
 const IDEMP_KEY = "abcdef1234567890abcdef1234567890";
+
+// [T532-DIAG] Module-local pino logger for B5 boundary diagnostics. Mirrors
+// the createLogger pattern in apps/api/src/main.ts. Removed in PR 2.
+const diagLogger = createLogger({ service: "test.t532.retry-mismatch" });
+
+/**
+ * [T532-DIAG] Returns a SHA-256 hex fingerprint (first 8 chars) of the
+ * Idempotency-Key for safe-to-log identification. Mirrors the
+ * `keyFingerprint` helper in apps/api/src/idempotency/idempotency.interceptor.ts.
+ * No raw key material is logged.
+ */
+function diagKeyFingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 8);
+}
 const FIRST_VALUE = "T532-MISMATCH-A";
 const SECOND_VALUE = "T532-MISMATCH-B"; // distinct payload triggers the mismatch
 
@@ -208,11 +224,15 @@ let mismatchCounter = 0;
 let mismatchSpy: jest.SpyInstance;
 let dockerSkipped = false;
 
-// [T532-DIAG] Enable boundary logging at B1/B2 (interceptor) and B3 (filter)
-// for this suite only. Removed in PR 2 once the failure boundary is identified.
-process.env["T532_DIAG"] = "1";
+// [T532-DIAG] Save+restore T532_DIAG around the suite so the flag does not
+// leak into other Jest workers that may share this process. Removed in PR 2
+// once the failure boundary is identified.
+let prevT532Diag: string | undefined;
 
 beforeAll(async () => {
+  prevT532Diag = process.env["T532_DIAG"];
+  process.env["T532_DIAG"] = "1";
+
   try {
     env = await startPgEnv();
   } catch (err: unknown) {
@@ -302,6 +322,12 @@ beforeAll(async () => {
 afterAll(async () => {
   if (app) await app.close();
   if (env) await stopPgEnv(env);
+  // [T532-DIAG] Restore prior T532_DIAG value so the flag does not leak.
+  if (prevT532Diag === undefined) {
+    delete process.env["T532_DIAG"];
+  } else {
+    process.env["T532_DIAG"] = prevT532Diag;
+  }
 }, 60_000);
 
 beforeEach(() => {
@@ -418,13 +444,20 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
     // ConflictException. The filter catches it, fires catalog
     // telemetry, re-throws. GlobalExceptionFilter formats the envelope.
     //
-    // [T532-DIAG B5] Pre/post-call logs around supertest. If the call
-    // times out without ever returning, only the pre-call log fires —
-    // that combined with which of B1/B2/B3 also fired tells us where in
-    // the pipeline the exception was swallowed.
-    // eslint-disable-next-line no-console
-    console.log(
-      `[T532-DIAG B5 supertest pre-call] key=${IDEMP_KEY.slice(0, 8)}... value=${SECOND_VALUE} ts=${Date.now()}`,
+    // [T532-DIAG B5] Pre/post-call structured pino logs around supertest. If
+    // the call times out without ever returning, only the pre-call log fires —
+    // that combined with which of B1/B2/B3 also fired tells us where in the
+    // pipeline the exception was swallowed. Key is logged as a SHA-256
+    // fingerprint only — no raw key material.
+    diagLogger.debug(
+      {
+        event: "T532-DIAG-B5",
+        boundary: "supertest-pre-call",
+        key_fingerprint: diagKeyFingerprint(IDEMP_KEY),
+        value: SECOND_VALUE,
+        ts: Date.now(),
+      },
+      "T532 diagnostic: about to issue mismatch-triggering POST",
     );
     const second = await http()
       .post("/api/pos/v1/catalog/unknown-items")
@@ -433,9 +466,16 @@ describe("T532 / 005-WAVE1-IDEMP-MISMATCH — FR-021c payload-mismatch", () => {
         identifier_type: "barcode",
         identifier_value: SECOND_VALUE,
       });
-    // eslint-disable-next-line no-console
-    console.log(
-      `[T532-DIAG B5 supertest post-call] status=${second.status} body_keys=${Object.keys(second.body ?? {}).join(",")} ts=${Date.now()}`,
+    diagLogger.debug(
+      {
+        event: "T532-DIAG-B5",
+        boundary: "supertest-post-call",
+        key_fingerprint: diagKeyFingerprint(IDEMP_KEY),
+        status: second.status,
+        body_keys: Object.keys(second.body ?? {}),
+        ts: Date.now(),
+      },
+      "T532 diagnostic: mismatch POST returned",
     );
 
     // FR-021c — the 409 outcome itself. Envelope shape comes from

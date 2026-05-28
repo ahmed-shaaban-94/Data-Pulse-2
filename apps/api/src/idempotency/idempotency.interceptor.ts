@@ -32,6 +32,7 @@ import {
   HttpException,
   Inject,
   Injectable,
+  Optional,
   type CallHandler,
   type ExecutionContext,
   type NestInterceptor,
@@ -41,9 +42,10 @@ import { createHash } from "node:crypto";
 import { EMPTY, Observable, from, of } from "rxjs";
 import { switchMap, tap } from "rxjs/operators";
 
-import { IdempotencyKeyStore } from "@data-pulse-2/shared";
+import { IdempotencyKeyStore, type Logger } from "@data-pulse-2/shared";
 import type { StoredResult } from "@data-pulse-2/shared";
 
+import { ROOT_LOGGER } from "../common/logging.interceptor";
 import type { ResolvedContext } from "../context/types";
 import {
   IDEMPOTENT_OPTIONS_KEY,
@@ -123,6 +125,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
     @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(IDEMPOTENCY_KEY_STORE) private readonly store: IdempotencyKeyStore,
     private readonly marker: InProgressMarker,
+    @Optional() @Inject(ROOT_LOGGER) private readonly logger?: Logger,
   ) {}
 
   intercept(execCtx: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -255,9 +258,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
         // [T532-DIAG] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
         // Remove in PR 2 once the harness failure boundary is identified.
         if (process.env["T532_DIAG"] === "1") {
-          // eslint-disable-next-line no-console
-          console.log(
-            `[T532-DIAG B1 interceptor pre-throw] route=${route} tuple_hash=${keyFingerprint(tuple)} ts=${Date.now()}`,
+          this.logger?.debug(
+            {
+              event: "T532-DIAG-B1",
+              boundary: "interceptor-pre-throw",
+              route,
+              tuple_fingerprint: keyFingerprint(tuple),
+              ts: Date.now(),
+            },
+            "T532 diagnostic: interceptor about to throw ConflictException",
           );
         }
         throw new ConflictException({
@@ -307,11 +316,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
       // Logs whether ConflictException reaches the outer try/catch on its way out.
       // Expected: this fires AFTER B1, BEFORE B3. Remove in PR 2.
       if (process.env["T532_DIAG"] === "1") {
-        const errName = (err as Error)?.name ?? "unknown";
-        const errMsg = (err as Error)?.message ?? "";
-        // eslint-disable-next-line no-console
-        console.log(
-          `[T532-DIAG B2 interceptor catch] err=${errName} msg="${errMsg.slice(0, 80)}" ts=${Date.now()}`,
+        this.logger?.debug(
+          {
+            event: "T532-DIAG-B2",
+            boundary: "interceptor-catch",
+            err_name: (err as Error)?.name ?? "unknown",
+            err_message: ((err as Error)?.message ?? "").slice(0, 80),
+            ts: Date.now(),
+          },
+          "T532 diagnostic: exception reached interceptor outer catch",
         );
       }
       // If we set the marker but then hit a store error, clean up.
