@@ -252,6 +252,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
         // Same key, different body — conflict.
         await this.marker.del(tuple);
         recordIdempotencyConflict({ route });
+        // [T532-DIAG] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
+        // Remove in PR 2 once the harness failure boundary is identified.
+        if (process.env["T532_DIAG"] === "1") {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[T532-DIAG B1 interceptor pre-throw] route=${route} tuple_hash=${keyFingerprint(tuple)} ts=${Date.now()}`,
+          );
+        }
         throw new ConflictException({
           code: "idempotency_key_conflict",
           message:
@@ -295,6 +303,17 @@ export class IdempotencyInterceptor implements NestInterceptor {
         }),
       );
     } catch (err) {
+      // [T532-DIAG B2] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
+      // Logs whether ConflictException reaches the outer try/catch on its way out.
+      // Expected: this fires AFTER B1, BEFORE B3. Remove in PR 2.
+      if (process.env["T532_DIAG"] === "1") {
+        const errName = (err as Error)?.name ?? "unknown";
+        const errMsg = (err as Error)?.message ?? "";
+        // eslint-disable-next-line no-console
+        console.log(
+          `[T532-DIAG B2 interceptor catch] err=${errName} msg="${errMsg.slice(0, 80)}" ts=${Date.now()}`,
+        );
+      }
       // If we set the marker but then hit a store error, clean up.
       await this.marker.del(tuple).catch(() => undefined);
       throw err;

@@ -118,6 +118,16 @@ export class IdempotencyMismatchFilter implements ExceptionFilter {
   ) {}
 
   async catch(exception: ConflictException, host: ArgumentsHost): Promise<void> {
+    // [T532-DIAG B3] PR 1 of 005-WAVE1-METRICS-MISMATCH-FOLLOWUP. Diagnostic-only.
+    // Logs whether the filter ever receives the ConflictException. If B1 fires
+    // but B3 does NOT, the exception is escaping the filter pipeline upstream
+    // of @UseFilters resolution. Remove in PR 2.
+    if (process.env["T532_DIAG"] === "1") {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[T532-DIAG B3 filter catch entry] exception=${exception?.name} status=${exception?.getStatus?.()} ts=${Date.now()}`,
+      );
+    }
     // Narrow check — only run catalog-domain telemetry for the
     // specific 409 the IdempotencyInterceptor throws on payload
     // mismatch. Other 409s on this route (none today; Wave 2 may add
