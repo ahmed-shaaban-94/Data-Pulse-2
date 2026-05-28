@@ -278,19 +278,40 @@ export class IdempotencyInterceptor implements NestInterceptor {
         // Same key, different body — conflict.
         await this.marker.del(tuple);
         // Platform-axis observability (001): operator-dashboard counter.
+        // Fires for EVERY idempotent route's collision — this is the
+        // cross-cutting platform signal and is intentionally unscoped.
         recordIdempotencyConflict({ route });
+        // The catalog-axis side effects below (FR-021c counter + FR-082
+        // audit subject) are domain-specific to the 005 unknown-items
+        // capture route and MUST NOT fire for unrelated idempotent routes
+        // (e.g. POST /api/v1/memberships/invite). This global APP_INTERCEPTOR
+        // sees every @Idempotent route, so we gate on the route template.
+        // `routePath` is `req.route?.path` (or `req.url`); we match by
+        // suffix so the check is agnostic to Express's leading-slash
+        // normalization and to any future mount-prefix changes. The
+        // `:id`-suffixed sibling routes (dismiss/link/create-product) do
+        // not match `/catalog/unknown-items` exactly, so this is precise.
+        // No HTTP-verb guard is needed: the only OTHER route whose path
+        // ends in `/catalog/unknown-items` is the GET LIST endpoint, which
+        // carries no @Idempotent decorator and so never reaches this
+        // collision branch. A `method === "POST"` arm here would be a
+        // permanently-uncovered branch (collision is POST-only by routing).
+        const isUnknownItemsCaptureRoute =
+          routePath.endsWith("/catalog/unknown-items");
         // Catalog-axis observability (005 FR-021c): per-tenant capture-flow
-        // counter. Co-increments with the platform counter on every
+        // counter. Co-increments with the platform counter on a capture-route
         // collision — intentional, see signals.md §1.1.
-        recordIdempotencyTokenMismatch();
+        if (isUnknownItemsCaptureRoute) {
+          recordIdempotencyTokenMismatch();
+        }
         // Catalog-domain audit subject (005 FR-082): fire-and-forget.
         // The enqueue promise is NOT awaited — if the audit pipeline
         // rejects (BullMQ outage, Redis disconnect), the 409 contract
         // must NOT be replaced by an audit failure. The .catch() logs
         // and swallows. Mirrors AuditEmitterInterceptor's pattern.
-        // Skipped when AUDIT_JOB_ENQUEUER is not wired (legacy test
-        // fixtures that don't import AuditModule).
-        if (this.auditEnqueuer !== null) {
+        // Skipped when not on the capture route, or when AUDIT_JOB_ENQUEUER
+        // is not wired (legacy test fixtures that don't import AuditModule).
+        if (isUnknownItemsCaptureRoute && this.auditEnqueuer !== null) {
           const principal = req.principal;
           const ctx = req.context;
           const requestId = (req as unknown as { requestId?: string })
