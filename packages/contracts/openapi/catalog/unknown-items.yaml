@@ -34,8 +34,20 @@ info:
          creates a new tenant product directly from a pending unknown item,
          producing product + alias + lifecycle transition atomically per
          FR-060, FR-061, FR-062, FR-063.
+      6. `tenantAdminInspectUnknownItem` (007) — tenant admin inspects a
+         single item as a `ReviewQueueItem` (no `sale_context`); cross-tenant
+         / out-of-scope ids are non-disclosing 404s per FR-009 / SI-004.
+      7. `tenantAdminReopenUnknownItem` (007) — tenant-wide principals only;
+         reopens a `dismissed` item by creating a fresh `pending` row (005
+         FR-005), preserving the original; in-scope store-scoped actors get
+         `403 forbidden` per FR-042. Idempotent (FR-063).
+      8. `tenantAdminBulkDismissUnknownItems` (007) — dismiss a bounded
+         selection (≤200) by decomposing into the shipped per-item dismiss
+         (006 FR-070a); over-ceiling batches are rejected whole per FR-044.
+         Idempotent (FR-063).
 
-    Wave 2 operationIds added by 005-WAVE2-CONTRACT (T600/T601).
+    Wave 2 operationIds added by 005-WAVE2-CONTRACT (T600/T601); the three
+    007 review-queue operationIds (6-8) by slice 007-CONTRACT (T010/T011).
 
     Schemas align with `specs/005-pos-catalog-sync-reconciliation/data-model.md`
     §2.1 (lifecycle) and §2.2 (tenant + store scoping). Failure-response
@@ -290,8 +302,15 @@ paths:
             type: string
             enum: [store, source_system]
           description: >
-            007 (US2 / FR-004). Optional grouping dimension. Buckets are
-            scope-safe — no out-of-scope bucket is ever emitted (FR-032).
+            007 (US2 / FR-004, MAY-grouping). Optional grouping dimension.
+            Grouping does NOT change the response shape: the response stays
+            the flat `ListUnknownItemsResponse.items` array. `group_by`
+            orders items so members of the same group are contiguous (the
+            grouping is a presentation/ordering concern, not a distinct
+            grouped envelope). Buckets are scope-safe — items belonging only
+            to out-of-scope groups never appear, and no out-of-scope group
+            is revealed via ordering, count, or any field (FR-032 / SC-007).
+            A richer grouped response variant is out of v1 scope.
       responses:
         "200":
           description: OK — page of unknown items (possibly empty).
@@ -602,6 +621,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReviewQueueItem"
+        "400":
+          description: >
+            Bad request — malformed path UUID. `error.code = "validation"`.
+            Parity with the other `{id}` operations in this contract.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "401":
           description: Caller is not authenticated.
           content:
@@ -725,6 +752,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is
+            still being processed (the IdempotencyInterceptor in-progress
+            marker is set). Retry after `Retry-After` seconds with the same
+            key and body. Body shape mirrors `posCaptureItem`'s 425.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /api/v1/catalog/unknown-items/bulk-dismiss:
     post:
@@ -790,6 +832,30 @@ paths:
           description: >
             Caller lacks the role to dismiss in this scope.
             `error.code = "forbidden"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Conflict. `error.code = "idempotency_key_conflict"` — the same
+            Idempotency-Key was replayed with a different body. (Per-item
+            terminal states like `already_reconciled` surface in the 200
+            outcome list, NOT here.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is
+            still being processed. Retry after `Retry-After` seconds with
+            the same key and body. Body shape mirrors `posCaptureItem`'s 425.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
           content:
             application/json:
               schema:

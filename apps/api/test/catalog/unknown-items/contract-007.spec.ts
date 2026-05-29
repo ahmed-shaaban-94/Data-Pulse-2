@@ -370,6 +370,15 @@ describe("catalog/unknown-items.yaml — forbidden error category", () => {
       (inspect?.responses as Record<string, unknown> | undefined)?.[403],
     ).toBeDefined();
   });
+
+  it("tenantAdminInspectUnknownItem declares a 400 response (malformed path UUID — parity with other {id} ops)", () => {
+    // Every other {id} operation in this contract documents a 400 for an
+    // invalid path UUID; inspect must too (CodeRabbit PR #404).
+    const inspect = catalogDoc.paths?.[TENANT_ADMIN_INSPECT_PATH]?.["get"];
+    expect(
+      (inspect?.responses as Record<string, unknown> | undefined)?.[400],
+    ).toBeDefined();
+  });
 });
 
 // ===========================================================================
@@ -457,6 +466,37 @@ describe("catalog/unknown-items.yaml — reopen authority responses", () => {
     const reopen = catalogDoc.paths?.[TENANT_ADMIN_REOPEN_PATH]?.["post"];
     expect(
       (reopen?.responses as Record<string, unknown> | undefined)?.[409],
+    ).toBeDefined();
+  });
+});
+
+// ===========================================================================
+// 7b. Idempotent ops publish the full interceptor retry/conflict surface
+// ===========================================================================
+// Both new ops declare `x-idempotency: required`, so at runtime the
+// IdempotencyInterceptor can emit 425 (in-progress replay) and 409 (key
+// conflict). posCapture documents both in this same contract; the new ops
+// must too, or contract-generated clients miss real responses (CodeRabbit
+// PR #404, verified against idempotency.interceptor.ts:241/283).
+describe("catalog/unknown-items.yaml — idempotent ops publish 425 / 409", () => {
+  it.each(KEY_BEARING_PATHS)(
+    "%s declares a 425 response (Idempotency-Key in-progress replay)",
+    (path) => {
+      const op = catalogDoc.paths?.[path]?.["post"];
+      expect(
+        (op?.responses as Record<string, unknown> | undefined)?.[425],
+      ).toBeDefined();
+    },
+  );
+
+  it("tenantAdminBulkDismissUnknownItems declares a 409 response (idempotency_key_conflict)", () => {
+    // Reopen already declares 409 (already_reconciled OR key_conflict);
+    // bulk-dismiss had none — its only top-level 409 is key_conflict
+    // (per-item terminal states surface in the 200 outcome list, not a
+    // top-level 409).
+    const bulk = catalogDoc.paths?.[TENANT_ADMIN_BULK_DISMISS_PATH]?.["post"];
+    expect(
+      (bulk?.responses as Record<string, unknown> | undefined)?.[409],
     ).toBeDefined();
   });
 });
