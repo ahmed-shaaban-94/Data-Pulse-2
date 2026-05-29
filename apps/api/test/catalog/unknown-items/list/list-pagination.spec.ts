@@ -144,6 +144,9 @@ describe("T036 — list pagination / limit (FR-005, reject-not-clamp)", () => {
       items: ReadonlyArray<unknown>;
       next_cursor: string | null;
     };
+    // Non-empty guard — the tenant-A fixture seeds multiple pending rows, so an
+    // empty page would be a real regression, not a valid "default" result. Without
+    // this, `<= 50` passes vacuously on an empty list. (CodeRabbit #405)
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.items.length).toBeLessThanOrEqual(50);
     expect(body.next_cursor).toBeNull();

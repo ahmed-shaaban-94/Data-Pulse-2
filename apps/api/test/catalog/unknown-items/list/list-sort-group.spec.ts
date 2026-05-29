@@ -145,6 +145,9 @@ describe("T035 — list sort (FR-003)", () => {
       .expect(200);
     const items = (res.body as { items: ReadonlyArray<Record<string, unknown>> })
       .items;
+    // Need ≥2 rows or the ordering loop never executes (the tenant-A fixture
+    // seeds several pending rows). (CodeRabbit #405)
+    expect(items.length).toBeGreaterThan(1);
     for (let i = 1; i < items.length; i++) {
       expect(ts(items[i]!)).toBeGreaterThanOrEqual(ts(items[i - 1]!));
     }
@@ -157,6 +160,7 @@ describe("T035 — list sort (FR-003)", () => {
       .expect(200);
     const items = (res.body as { items: ReadonlyArray<Record<string, unknown>> })
       .items;
+    expect(items.length).toBeGreaterThan(1);
     for (let i = 1; i < items.length; i++) {
       expect(ts(items[i]!)).toBeLessThanOrEqual(ts(items[i - 1]!));
     }
@@ -194,6 +198,10 @@ describe("T035 — list group_by (FR-004 / FR-032) — contiguous ordering, flat
         prev = store;
       }
     }
+    // The tenant-A fixture spans stores A.X and A.Y, so grouping must actually
+    // have ≥2 distinct stores to group — otherwise contiguity is trivially true
+    // and the test proves nothing. (CodeRabbit #405)
+    expect(seen.size).toBeGreaterThanOrEqual(2);
   });
 
   it("invalid group_by value → 400 validation", async () => {

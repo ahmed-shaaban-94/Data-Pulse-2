@@ -187,17 +187,16 @@ The shipped `tenantAdminListUnknownItems` response (and the shipped `UnknownItem
 
 ---
 
-## SESSION UPDATE — 2026-05-29 — Phase 2–5 (P1 MVP) implemented → **PR #405 OPEN to `main`**
+## SESSION UPDATE — 2026-05-29 — Phase 2–5 (P1 MVP) **MERGED to `main` via PR #405**
 
-> **State reconciliation:** the `[GATED]` contract slice (T010/T011) **merged to
-> `origin/main` via PR #404** (squash `f2622ee`) before this session — the
-> `ReviewQueueItem` schema, the 3 new operationIds, `forbidden`, and the list
-> params are all on `main`, and `contract-007.spec.ts` (49 conformance cases)
-> rides along. The "Merged on main: None yet" section below is therefore
-> **stale** as of this session (the execution-map `status: proposed` fields are
-> stale for the same reason — #404's allowed_files did not include the map).
-> Trust `git log origin/main`, not the `status:` fields, until CLOSEOUT (T073)
-> reconciles them.
+> **State reconciliation:** both the `[GATED]` contract slice (T010/T011, PR #404
+> `f2622ee`) and the Wave 1 P1-MVP runtime (the 7 slices below, PR #405) are now
+> on `main`. The `ReviewQueueItem` schema, the 3 new operationIds, `forbidden`,
+> the list params + filter/sort/group, and the inspect `GET /{id}` route all
+> ship. A CodeRabbit follow-up (test cardinality guards + this doc fix) lands via
+> a separate PR off post-merge `main`. The execution-map's slice `status` fields
+> are reconciled to `merged` at CLOSEOUT (T073); trust `git log origin/main`
+> until then.
 
 **Worktree:** `C:\Users\user\Documents\GitHub\dp2-007-wave1`, branch
 `feat/007-wave1-p1-mvp` off `9026340` (latest `origin/main`). Single
@@ -223,7 +222,7 @@ reconciles them to `merged` once #405 lands.
 **Decisions recorded this session:**
 - **`canSeeProduct = (ctx.storeId === null)`** for browse surfaces (list/inspect) — tenant-wide actors see the product reference, store-scoped omit it (FR-001a; SC-007). User-decided. **Note for CLOSEOUT:** the rule keys on *store context*, NOT *role* — a tenant-wide admin operating with a store context set is treated as store-scoped (the create-product test runs a `tenant_admin` with `storeId=STORE_A_X`). Action responses (link/create/dismiss) never suppress.
 
-**Verification:** full `catalog` suite — **56 suites / 429 passed / 5 skipped (US7/US8 tripwires) / 4 todo (pre-existing)**. New DTO files 100% coverage. No forbidden surface touched; `isolation-harness.ts` untouched; `git diff --check` clean. No commit/push/PR.
+**Verification:** full `catalog` suite — **56 suites / 429 passed / 5 skipped (US7/US8 tripwires) / 4 todo (pre-existing)**. New DTO files 100% coverage. No forbidden surface touched; `isolation-harness.ts` untouched; `git diff --check` clean. Committed as 4 grouped commits + 1 docs commit and opened as **PR #405** (not merged).
 
 **Deferred (out of this wave, not regressions):** US7-REOPEN (Phase 6), US8-BULK-DISMISS (Phase 7), US4/5/6 regression guards (Phase 8), polish T070–T076, CLOSEOUT T073. The 3 `it.skip` tripwires in `review-queue-sweep.spec.ts` mark the reopen/bulk-dismiss isolation cases those slices must add.
 
@@ -231,7 +230,9 @@ reconciles them to `merged` once #405 lands.
 
 ## Merged on `main`
 
-_None yet._ The 007 planning chain is committed on `spec/007-unknown-items-review-queue-api` (3 commits, see TL;DR) but not merged. No application code, schema, or OpenAPI YAML has been changed — the OpenAPI extension is the `[GATED]` T010 slice, not yet executed.
+- **007-CONTRACT (T010/T011)** — the `[GATED]` OpenAPI extension — **merged via PR #404** (squash `f2622ee`): `ReviewQueueItem` schema, the 3 new operationIds (`tenantAdminInspectUnknownItem` / `ReopenUnknownItem` / `BulkDismissUnknownItems`), the `forbidden` 8th error code, and the list query params are all on `main`, with the `contract-007.spec.ts` conformance suite.
+
+**In review (not yet on `main`):** Wave 1 Phase 2–5 runtime — the 7 P1-MVP slices listed in the SESSION UPDATE above — is open as **PR #405**. The 007 planning chain (spec/plan/tasks + analyze + SIGN-OFFs) remains on `spec/007-unknown-items-review-queue-api` (`aab701d` / `45ae621` / `8a97e97`).
 
 ---
 
