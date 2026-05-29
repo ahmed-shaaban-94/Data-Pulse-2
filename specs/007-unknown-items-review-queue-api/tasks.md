@@ -61,7 +61,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 | US6 dismiss | **reuse** shipped | T062 regression-guard only |
 | US7 reopen | **new** | T050–T054 |
 | US8 bulk-dismiss | **new** | T055–T058 |
-| US9 failure envelope | **extend** taxonomy (`forbidden`) | T020–T021 (foundational) + asserted in every story's tests |
+| US9 failure envelope | **extend** taxonomy (`forbidden`) | T020–T021 (foundational `forbidden`) + T074 (FR-053 determinism) + T075 (FR-054 system-failure retry) + T076 (FR-023/045/SC-003 absence-guard) + asserted in every story's tests |
 | US10 idempotency + audit | **extend** (key on new ops) | T052/T056 (reopen/bulk key) + audit asserted per story |
 
 ---
@@ -96,7 +96,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 ### 5.4 Isolation-harness extension for the new operations
 
 - [ ] T024 [P] [TC] Extend `apps/api/test/catalog/__support__/seed-unknown-items.ts` (005-owned helper) with fixtures for a `dismissed` row and a `resolved` row across tenants A/B and stores X/Y (for reopen + terminal-detail tests). MUST NOT modify the 003-owned `isolation-harness.ts`. Predecessors: T001. Acceptance: helper exports the new fixtures; existing isolation tests untouched and GREEN.
-- [ ] T025 [TC] RED test — `apps/api/test/catalog/unknown-items/isolation/review-queue-sweep.spec.ts` extending the existing cross-tenant/cross-store sweep with cases for inspect/reopen/bulk-dismiss per [SI-001, SI-002, SI-004](./spec.md): cross-tenant id → 404; out-of-scope store id → 404; RLS bypass probe (wrong `app.current_tenant` → zero rows); malicious-override (body `tenant_id`/`store_id` ignored). Predecessors: T024. Acceptance: test runs, cases fail on missing operations (not on RLS).
+- [ ] T025 [TC] RED test — `apps/api/test/catalog/unknown-items/isolation/review-queue-sweep.spec.ts` extending the existing cross-tenant/cross-store sweep with cases for inspect/reopen/bulk-dismiss per [SI-001, SI-002, SI-004; FR-060 (authn required), FR-061 (cross-tenant impossible), FR-062 (fail-closed → non-disclosing not-found)](./spec.md): unauthenticated request → 401; cross-tenant id → 404; out-of-scope store id → 404; RLS bypass probe (wrong `app.current_tenant` → zero rows); malicious-override (body `tenant_id`/`store_id` ignored). Predecessors: T024. Acceptance: test runs, cases fail on missing operations (not on RLS).
 
 **Checkpoint**: contract extended + approved, `forbidden` mapped, projection ready, isolation sweep scaffolded. User stories can now proceed.
 
@@ -108,7 +108,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 **Independent test**: list as tenant-wide vs store-scoped vs cross-tenant; assert scope + no `sale_context` + FR-001a fields ([quickstart.md](./quickstart.md) Journey 1).
 
 - [ ] T030 [P] [US1] [TC] RED — `apps/api/test/catalog/unknown-items/list/list-projection.spec.ts`: list returns `ReviewQueueItem` with **no `sale_context`** key; default is `pending`-only (FR-001, FR-007). Predecessors: T023, T025. Acceptance: test runs, fails (list still returns `sale_context`).
-- [ ] T031 [P] [US1] [TC] RED — `apps/api/test/catalog/unknown-items/list/list-terminal-detail.spec.ts`: `?status=dismissed` and `?status=resolved` return the FR-001a field set, with `resolved_product_id` suppressed when the caller can't see the product. Predecessors: T023, T025. Acceptance: test runs, fails.
+- [ ] T031 [P] [US1] [TC] RED — `apps/api/test/catalog/unknown-items/list/list-terminal-detail.spec.ts`: `?status=dismissed` and `?status=resolved` return the FR-001a / [FR-008] terminal-detail field set, with `resolved_product_id` suppressed when the caller can't see the product. Predecessors: T023, T025. Acceptance: test runs, fails.
 - [ ] T032 [US1] [SIGN-OFF-dependent] GREEN — switch `tenantAdminListUnknownItems` response mapping in `unknown-items.controller.ts` to `toReviewQueueItem` (T023) so the list stops returning `sale_context` (FR-007). **Timing governed by T002**: `(a) tighten now` → switch in this slice; `(b) deprecation note` → switch with the recorded version-bump window. Leaving `sale_context` is only permitted under a recorded FR-007 waiver (not the default). Predecessors: T030, T031, T002. Acceptance: T030 + T031 GREEN; shipped list contract conformance still passes against the version-bumped response shape.
 - [ ] T033 [US1] [TC] GREEN-verify — extend the cross-tenant sweep (T025) to exercise the list projection: cross-tenant list → empty page; store-scoped list → only in-scope items, no out-of-scope count/facet leak (SC-001, SC-007). Predecessors: T032. Acceptance: sweep cases GREEN.
 
@@ -124,7 +124,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 - [ ] T034 [P] [US2] [TC] RED — `list-filters.spec.ts`: filter by `source_system` and age bucket within scope; facets list only in-scope dimensions (FR-002, FR-006, FR-030, FR-033). Predecessors: T032. Acceptance: runs, fails.
 - [ ] T035 [P] [US2] [TC] RED — `list-sort-group.spec.ts`: sort by age asc/desc and store; optional `group_by` with no out-of-scope buckets (FR-003, FR-004, FR-032). Predecessors: T032. Acceptance: runs, fails.
 - [ ] T036 [P] [US2] [TC] RED — `list-pagination.spec.ts`: `limit` default 50, max 200, out-of-range → `400 validation` (NOT clamp); opaque cursor; total counts only in-scope (FR-005). Predecessors: T032. Acceptance: runs, fails.
-- [ ] T037 [US2] GREEN — extend `unknown-items.service.ts` + `unknown-items.controller.ts` list path with the new query params (Zod `.strict()` DTO in `dto/`), scope-safe facet computation, sort, and optional grouping; reuse the shipped cursor/`limit` validation. Predecessors: T034, T035, T036. Acceptance: T034–T036 GREEN; shipped list conformance still passes.
+- [ ] T037 [US2] GREEN — extend `unknown-items.service.ts` + `unknown-items.controller.ts` list path with the new query params (Zod `.strict()` DTO in `dto/`), scope-safe facet computation, sort, and optional grouping; reuse the shipped cursor/`limit` validation. The list response (and every action op's success response) MUST convey lifecycle state sufficient for a client refresh without a forbidden re-read ([FR-050]). Predecessors: T034, T035, T036. Acceptance: T034–T036 GREEN; shipped list conformance still passes.
 
 **Checkpoint**: queue is navigable at production volume, scope-safe.
 
@@ -178,7 +178,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 **Goal**: prove the shipped link/create/dismiss still behave per spec under 007's extended suite + projection; NO reimplementation.
 
 - [ ] T060 [P] [US4] [TC] Regression — `apps/api/test/catalog/reconciliation/link-regression-007.spec.ts`: shipped link still resolves `linked` + audits; `alias_conflict` non-disclosing; race → one winner (FR-020, FR-021, FR-022). If T003 = `(a) retrofit`, add `Idempotency-Key` replay assertions. Predecessors: T021, T037. Acceptance: GREEN against the unmodified shipped link op.
-- [ ] T061 [P] [US5] [TC] Regression — `create-product-regression-007.spec.ts`: shipped create-from still atomic (product+alias+transition), `alias_conflict` fails closed, missing fields → `validation` (FR-030, FR-031). If T003 = `(a)`, add key-replay assertions. Predecessors: T021, T037. Acceptance: GREEN against the unmodified shipped op.
+- [ ] T061 [P] [US5] [TC] Regression — `create-product-regression-007.spec.ts`: shipped create-from still atomic (product+alias+transition), `alias_conflict` fails closed, missing fields → `validation` (FR-030, FR-031); product creation is always caller-initiated — no silent create path ([FR-065]). If T003 = `(a)`, add key-replay assertions. Predecessors: T021, T037. Acceptance: GREEN against the unmodified shipped op.
 - [ ] T062 [P] [US6] [TC] Regression — `dismiss-regression-007.spec.ts`: shipped dismiss still `pending→dismissed` + audit; re-dismiss → `already-reconciled`+`details.prior_state`; out-of-scope → `404` (FR-040). If T003 = `(a)`, add key-replay assertions. Predecessors: T021, T037. Acceptance: GREEN; these are the per-item building block bulk-dismiss decomposes into (T057).
 
 **Checkpoint**: the reused surface is provably intact under 007.
@@ -190,6 +190,9 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 - [ ] T070 [P] [TC] Full audit-linkage sweep — `audit/review-queue-audit.spec.ts`: every state change (reopen, bulk-dismiss item-success) + every audited failure has an event with tenant/store/actor/action/target/correlation-id via 005 FR-083's surface; no parallel channel (SC-004, FR-064, [quickstart.md](./quickstart.md) Journey 6). Predecessors: T054, T058. Acceptance: GREEN.
 - [ ] T071 [P] [TC] Run the full quickstart.md journeys 1–6 end-to-end as an integration smoke. Predecessors: all GREEN tasks. Acceptance: all journeys pass.
 - [ ] T072 [P] Coverage check — confirm ≥80% line coverage for the new/extended catalog code (Constitution §VI). Predecessors: all GREEN. Acceptance: coverage gate met.
+- [ ] T074 [P] [TC] Determinism assertion — `apps/api/test/catalog/unknown-items/errors/determinism.spec.ts` covering [FR-053]: the same logical action against the same authoritative state under the same actor scope MUST yield the identical failure category AND the same non-disclosing wording across repeated calls (e.g., two identical out-of-scope reopen attempts → byte-identical `404` envelope; two identical alias-conflict links → identical `409 alias_conflict` body). Predecessors: T054, T058, T021. Acceptance: GREEN — repeated calls produce identical category + message; no nondeterministic detail (timestamps/ids) leaks into the compared envelope.
+- [ ] T075 [P] [TC] System-failure retry-safety — `apps/api/test/catalog/unknown-items/errors/system-failure-retry.spec.ts` covering [FR-054, SC-006]: inject a backend fault mid-action (e.g., a transient DB error on a reopen or bulk-dismiss item) → response is `system-failure`; a retry of the same request either succeeds idempotently (no second lifecycle transition / alias / audit event) or returns the same `system-failure` — never a hidden partial commit. Use the existing fault-injection / transaction-rollback harness if present; verify during execution. Predecessors: T053, T057. Acceptance: GREEN — no partial-commit observable after the faulted+retried action.
+- [ ] T076 [P] [TC] Absence-guard — `apps/api/test/catalog/unknown-items/contract/forbidden-operations.spec.ts` covering [FR-023, FR-045, SC-003]: assert the API exposes **no** force-link / override-conflict path and **no** bulk-link / bulk-create / bulk-reopen operation — neither in the extended OpenAPI contract (no such operationId after T010) nor as a routable endpoint (a request to a plausible such route → `404`/`405`, never a success). Predecessors: T010, T037, T054, T058. Acceptance: GREEN — the forbidden surfaces provably do not exist; the contract conformance set contains only the allowed operationIds.
 - [ ] T073 Update `wave-status.md` with the final slice status, the two `[SIGN-OFF]` verdicts (T002/T003), and any deferred follow-up. Predecessors: all above. Acceptance: wave-status reflects shipped reality.
 
 ---
@@ -211,6 +214,7 @@ T001 → T002/T003 (decisions) → **T010 [GATED] approval** → T020/T022/T024 
 - Within Phase 2: T020/T022/T024 RED tests in parallel (different files).
 - US3 (T040/T041), US7 (T050/T051/T052), US8 (T055/T056) RED tests all parallel.
 - US4/US5/US6 regression guards (T060/T061/T062) fully parallel.
+- Polish tests T070/T071/T074/T075/T076 are all `[P]` (different files); T074/T075/T076 depend only on the relevant GREEN ops landing.
 
 ---
 
