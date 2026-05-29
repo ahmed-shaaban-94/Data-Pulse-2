@@ -92,3 +92,43 @@ All decisions below resolve the planning unknowns. There were **no `NEEDS CLARIF
 **Rationale**: monotonic-guard already gives the safety floor (no double-apply) the constitution requires (§XI). Adding token-replay only where it's net-new (reopen/bulk-dismiss) keeps 007 additive and avoids silently changing a shipped op's response contract.
 
 **Alternatives considered**: force a token onto all ops now (rejected — changes shipped behavior without sign-off, the thing §4.3/§4.6 exist to prevent); leave reopen/bulk-dismiss without tokens (rejected — they're net-new mutating ops; FR-063 + Constitution §XI want retry-safety with replay for new mutating endpoints).
+
+---
+
+## R7 — Shipped-code reality deltas (recorded 2026-05-29 after reading `apps/api/src/catalog/**`)
+
+Reading the actual shipped controllers/services (`unknown-items.controller.ts`, `reconciliation.controller.ts`, and their services) — not just the OpenAPI YAML — surfaced four facts that diverge from what the plan/contract assumed. All four are recorded here so implementation executes against reality, not the YAML's stale comments.
+
+### R7.1 — Auth guards are ALREADY wired (the contract's "documented gap" comment is stale)
+
+The shipped contract YAML and the controller header comments describe an "intentional auth gap" (no guards, deferred to a future slice). **That is stale.** The shipped code wires, on every dashboard route:
+- Class/route-level `@UseGuards(DashboardAuthGuard, TenantContextGuard)` + method-level `@UseGuards(RolesGuard)` + `@Roles(...)`.
+- list/dismiss/link → `@Roles("owner","tenant_admin","store_manager")`; create-product → `@Roles("owner","tenant_admin")`; all with the default `denyAs: 404`.
+
+(Matches CLAUDE.md: "auth-guard wiring complete on all five reconciliation routes, PRs #377+#378".) **007 impact**: the new inspect/reopen/bulk-dismiss routes follow this *same* wired pattern (not the "no guard" pattern the YAML comment implies). FR-060 (authn required) is therefore already satisfied by the inherited guard stack; 007 adds guards to the new routes consistently.
+
+### R7.2 — FR-007 `sale_context` tightening spans FIVE dashboard wire shapes, not one
+
+The T002 verdict (tighten) named list + inspect + terminal-detail. But `sale_context` is echoed in **every dashboard response projection**:
+1. `unknown-items.controller.ts` `rowToUnknownItemWireShape` → backs **list** AND **dismiss**.
+2. `reconciliation.controller.ts` `rowToWireShape` → backs **link** AND **create-product**.
+3. (`toUnknownWireShape` in `unknown-items.controller.ts` backs **POS capture** — **EXCLUDED**, see R7.3.)
+
+**007 decision**: the `ReviewQueueItem` projection (no `sale_context`) replaces the dashboard projection in **both** controllers, covering list + dismiss + link + create-product + inspect + reopen + bulk-dismiss responses. The T002 scope is hereby widened to "**no dashboard response echoes `sale_context`**" — dismiss/link/create were residual leaks the list-focused T002 wording missed.
+
+### R7.3 — POS capture response MUST KEEP `sale_context` (it is provenance, not review surface)
+
+`posCaptureItem`'s `PosCaptureUnknownResponse` (`toUnknownWireShape`) echoes `sale_context` **back to the submitting POS device**. This is a provenance round-trip (Constitution §IX source-of-truth / §XIII provenance), NOT the review surface FR-007/006 FR-021a governs (those bound the *reviewer* surface). **The tightening MUST NOT touch the POS capture response.** Scope boundary: tighten dashboard (`cookieAuth`) responses; leave POS (`clerkJwt`) responses unchanged.
+
+### R7.4 — Reopen's FR-062a 403-vs-404 split CANNOT live at the guard; it is a service-layer decision
+
+`RolesGuard` runs **before** the RLS row lookup and only knows "has role / lacks role" with a fixed `denyAs` (403 or 404) — it has no notion of *this row is in/out of the actor's store scope*. FR-062a requires a **scope-dependent** split: store_manager + in-scope item → `403 forbidden`; store_manager + out-of-scope item → `404 not-found`. Therefore:
+- The reopen route's guard admits `@Roles("owner","tenant_admin","store_manager", { denyAs: 404 })` so RLS can scope the read (a store_manager must reach the service to get the row-scoped decision).
+- The **reopen service** enforces: zero rows under RLS → `404`; row found in-scope AND actor is store-scoped (not tenant-wide) → `403 forbidden`; actor is tenant-wide → proceed.
+- This requires the reopen service to receive the actor's **role / `isTenantWide` flag** — a signature difference from the shipped link/dismiss services (which delegate authority entirely to `@Roles` + RLS). New plumbing, not a copy of an existing service.
+
+### R7.5 — Reopen's dual audit event needs programmatic emission (the static-`@Auditable` route pattern emits one)
+
+Audit fires from a route-level interceptor reading a **static** `@Auditable("subject")` string per route. Spec US7 #1 / FR-110 require **two** audit events for a reopen: the reopen action AND the fresh-`pending` capture. A single static subject on the reopen route yields only one. Calling 005's capture *service* method does NOT trigger capture's audit (that's emitted from capture's *route* interceptor, not its service). **007 decision**: reopen emits programmatically — inject the audit job enqueuer into the reconciliation service (or a reopen-specific path) and emit both `unknown_item.reopened` (or equivalent) and the fresh-capture subject within the reopen transaction. The reopen integration test MUST wire the audit module's providers (the capture test deliberately omitted them — see `unknown-items.controller.ts` header). This is the one place 007 cannot ride the existing passive-decorator pattern.
+
+**Net**: R7.2/R7.3/R7.4/R7.5 are reality-based refinements, not scope changes — they make the spec's intent (no reviewer leak; FR-062a split; dual audit) executable against the code that actually shipped. They are reflected in plan §4 and the affected tasks.

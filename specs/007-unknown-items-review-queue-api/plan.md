@@ -161,9 +161,19 @@ Same shape as §4.3. 007 FR-063 (pre-reconciliation) said "**every** state-chang
 
 **Wire-mapping trap (T564):** the abstract FR-100 category `idempotency-token-mismatch` maps to the **shipped wire code `idempotency_key_conflict`** (`409`), and the header is `Idempotency-Key` (NOT `Idempotency-Token` — 005 recorded the spec/quickstart `Idempotency-Token` drift as known issue **T564**). The 007 contract slice MUST use `Idempotency-Key` + `idempotency_key_conflict` to stay consistent with the shipped surface; do not reintroduce the T564 drift.
 
-### 4.7 TL;DR implementability gate
+### 4.8 Shipped-code reality deltas (recorded 2026-05-29 — see research §R7)
 
-**007 is fully implementable now.** 005 Waves 1+2 shipped (contract + runtime). The only blocking dependency for the *implementing* slices is the **GATED OpenAPI extension slice**, which must be approved and land first.
+Reading the actual shipped controllers/services (not just the YAML) surfaced four deltas from this plan's assumptions. Full detail in [research §R7](./research.md); summary:
+
+- **R7.1 Auth already wired.** The "documented auth gap" in the YAML/controller comments is stale — `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` + `@Roles` are live on all dashboard routes (PRs #377/#378). New 007 routes follow the wired pattern; FR-060 is already satisfied by the inherited stack.
+- **R7.2 `sale_context` tightening spans 5 dashboard wire shapes**, not 1: list + dismiss (`rowToUnknownItemWireShape`) AND link + create-product (`rowToWireShape`), plus the new inspect/reopen/bulk-dismiss. T002 scope widened to "no dashboard response echoes `sale_context`." dismiss/link/create were residual leaks the list-focused T002 wording missed.
+- **R7.3 POS capture response KEEPS `sale_context`** — it's a provenance round-trip to the POS device (§IX/§XIII), not the reviewer surface FR-007 governs. Tightening touches `cookieAuth` (dashboard) responses only, never `clerkJwt` (POS).
+- **R7.4 Reopen's FR-062a 403/404 split is service-layer, not guard-layer.** `RolesGuard` runs before the RLS lookup and can't tell in-scope from out-of-scope; the split (in-scope store_manager → 403, out-of-scope → 404) is enforced in the reopen service, which needs the actor's `isTenantWide` flag — a signature difference from shipped link/dismiss.
+- **R7.5 Reopen's dual audit needs programmatic emission.** The static-`@Auditable` route pattern emits one event; US7 #1/FR-110 need two (reopen + fresh capture). Reopen injects the audit enqueuer and emits both; its integration test wires the audit providers the capture test omitted.
+
+### 4.9 TL;DR implementability gate
+
+**007 is fully implementable now.** 005 Waves 1+2 shipped (contract + runtime). The only blocking dependency for the *implementing* slices is the **GATED OpenAPI extension slice**, which must be approved and land first. The R7 deltas refine *how* (service-layer 403/404, programmatic dual-audit, 5-shape projection swap, POS-response exclusion) but do not change *what* the spec requires.
 
 ---
 
