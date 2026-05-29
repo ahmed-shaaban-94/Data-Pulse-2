@@ -4,13 +4,29 @@
 
 **The command tower for modern retail. Control every branch from one secure core.**
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-0f766e.svg?style=flat-square)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%E2%89%A520-2563eb.svg?style=flat-square)](.nvmrc)
-[![pnpm](https://img.shields.io/badge/pnpm-9.15.0-f59e0b.svg?style=flat-square)](package.json)
-[![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6.svg?style=flat-square)](tsconfig.base.json)
-[![NestJS](https://img.shields.io/badge/NestJS-11-e0234e.svg?style=flat-square)](apps/api)
-[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-85ea2d.svg?style=flat-square)](packages/contracts)
-[![LOC](docs/assets/badges/loc.svg)](docs/assets/badges/loc.svg)
+<p align="center">
+  <a href="docs/brand/retail-tower-os.md"><img alt="Product: Retail Tower OS" src="https://img.shields.io/badge/product-Retail%20Tower%20OS-0f766e?style=flat-square"></a>
+  <a href="README.md"><img alt="Repo: Data-Pulse-2" src="https://img.shields.io/badge/repo-Data--Pulse--2-181717?style=flat-square&logo=github&logoColor=white"></a>
+  <a href="apps/api"><img alt="Platform: backend-first" src="https://img.shields.io/badge/platform-backend--first-334155?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-059669?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href=".nvmrc"><img alt="Node.js >=20" src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=nodedotjs&logoColor=white"></a>
+  <a href="package.json"><img alt="pnpm 9.15.0" src="https://img.shields.io/badge/pnpm-9.15.0-f69220?style=flat-square&logo=pnpm&logoColor=white"></a>
+  <a href="tsconfig.base.json"><img alt="TypeScript strict" src="https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white"></a>
+  <a href="apps/api"><img alt="NestJS 11" src="https://img.shields.io/badge/NestJS-11-e0234e?style=flat-square&logo=nestjs&logoColor=white"></a>
+  <a href="packages/contracts/openapi"><img alt="OpenAPI 3.1" src="https://img.shields.io/badge/OpenAPI-3.1-6ba539?style=flat-square&logo=openapiinitiative&logoColor=white"></a>
+  <a href="docs/assets/badges/loc.svg"><img alt="LOC" src="docs/assets/badges/loc.svg"></a>
+</p>
+
+<p align="center">
+  <a href=".specify/memory/constitution.md"><img alt="Tenant isolation: RLS enforced" src="https://img.shields.io/badge/tenant%20isolation-RLS%20enforced-0f766e?style=flat-square"></a>
+  <a href="packages/contracts"><img alt="API: contract-first" src="https://img.shields.io/badge/API-contract--first-2563eb?style=flat-square"></a>
+  <a href=".specify/memory/constitution.md"><img alt="Audit: provenance first" src="https://img.shields.io/badge/audit-provenance%20first-7c3aed?style=flat-square"></a>
+  <a href="SECURITY.md"><img alt="Security: default deny" src="https://img.shields.io/badge/security-default%20deny-dc2626?style=flat-square"></a>
+  <a href="docs/agent-os/standing-rules.md"><img alt="Agent OS: slice governed" src="https://img.shields.io/badge/Agent%20OS-slice%20governed-111827?style=flat-square"></a>
+</p>
 
 ![Retail Tower OS — The command tower for modern retail](docs/assets/brand/exterior/retail-tower-os-exterior-hero.png)
 
@@ -21,6 +37,80 @@
 > The image above represents **product vision**. It does not imply that a dashboard frontend, POS application, or production operations UI is implemented in this repository. The POS application is a separate repository that integrates through the OpenAPI contracts in `packages/contracts/openapi/`.
 
 See [`docs/brand/retail-tower-os.md`](docs/brand/retail-tower-os.md) for the full brand identity record, approved imagery, scope notes, and usage guidelines.
+
+---
+
+## Live architecture control map
+
+[![Retail Tower OS live architecture control map preview](docs/assets/architecture/retail-tower-live-map-preview.svg)](docs/architecture/retail-tower-live-map.html)
+
+Open the [interactive Three.js architecture map](docs/architecture/retail-tower-live-map.html) for a full-screen, repo-backed view of the platform topology. The live map reads [topology JSON](docs/architecture/retail-tower-live-map.json), links every node back to source paths, and keeps the README safe by using a static SVG preview here.
+
+---
+
+## Current implementation status
+
+No single feature is currently active in this repository. The backend platform has shipped several foundation slices; dashboard UI and POS app implementation remain separate/deferred surfaces.
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Auth, tenant/store foundation, memberships, audit | Shipped | [`specs/001-foundation-auth-tenant-store`](specs/001-foundation-auth-tenant-store) |
+| POS operator identity | Spec and contracts | [`specs/002-pos-operator-identity`](specs/002-pos-operator-identity) |
+| Catalog foundation | Shipped | [`specs/003-catalog-foundation`](specs/003-catalog-foundation) |
+| Production readiness | PASS for exercised paths; documented partials remain | [`docs/production-readiness/004-closeout-status.md`](docs/production-readiness/004-closeout-status.md) |
+| POS catalog sync and reconciliation | Closed on `main` | [`specs/005-pos-catalog-sync-reconciliation`](specs/005-pos-catalog-sync-reconciliation) |
+| Unknown items review queue | Docs-only product brief complete | [`specs/006-unknown-items-review-queue`](specs/006-unknown-items-review-queue) |
+| Unknown items review queue API | Execution map in place | [`specs/007-unknown-items-review-queue-api`](specs/007-unknown-items-review-queue-api) |
+
+---
+
+## What you can verify today
+
+| Claim | Repo-backed evidence |
+| --- | --- |
+| Tenant isolation is a platform invariant | [Constitution](.specify/memory/constitution.md) · [database package](packages/db) |
+| API behavior is contract-first | [OpenAPI contracts](packages/contracts/openapi) · [contracts package](packages/contracts/README.md) |
+| Audit provenance is first-class | [audit API module](apps/api/src/audit) · [outbox lifecycle](docs/outbox/lifecycle.md) |
+| Async work belongs in workers | [worker app](apps/worker) · [queue config](packages/shared/src/queues) |
+| Security posture is default-deny | [Security policy](SECURITY.md) · [request pipeline](#request-pipeline) |
+| Agent work is slice-governed | [Agent OS standing rules](docs/agent-os/standing-rules.md) · [Maestro playbook](docs/agent-os/maestro-playbook.md) |
+
+---
+
+## Getting started
+
+**Prerequisites.** Node.js 20+ · pnpm 9.15.0+ · Docker Desktop (or another Docker-compatible runtime) for local PostgreSQL and Redis.
+
+```bash
+pnpm install            # install dependencies
+pnpm db:up              # bring local Postgres + Redis up
+pnpm build              # build all packages
+pnpm test               # run the test suite
+pnpm lint               # eslint + prettier --check
+```
+
+The development compose stack exposes:
+
+- PostgreSQL: `postgres://dp2:dp2_dev_password@localhost:5432/data_pulse_2`
+- Redis: `redis://localhost:6379`
+
+For local API and worker runs, set:
+
+```bash
+DATABASE_URL=postgres://dp2:dp2_dev_password@localhost:5432/data_pulse_2
+REDIS_URL=redis://localhost:6379
+```
+
+Then start the services:
+
+```bash
+pnpm --filter @data-pulse-2/api start
+pnpm --filter @data-pulse-2/worker start
+```
+
+During development, package-level `start:dev` scripts compile in watch mode where available.
+
+**Verify startup.** After starting the API, check the terminal output for a pino log line confirming the server is listening (default port `3000`). No unauthenticated health endpoint is exposed — a clean startup log is the expected signal. For a full behavior walkthrough, see the [foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md).
 
 ---
 
@@ -166,8 +256,11 @@ flowchart LR
 | `specs/001-foundation-auth-tenant-store` | Foundation feature artifacts (shipped) |
 | `specs/002-pos-operator-identity` | POS operator identity specification and contracts (POS app lives in a separate repo) |
 | `specs/003-catalog-foundation` | Catalog foundation feature (shipped) |
-| `specs/004-platform-production-readiness` | Active feature — observability, idempotency, outbox, k6 load testing, SDK strategy |
-| `docs` | Architecture · documentation index · brand · agent-os · presentation assets |
+| `specs/004-platform-production-readiness` | Production readiness artifacts; exercised API/worker/outbox paths passed with documented partials |
+| `specs/005-pos-catalog-sync-reconciliation` | POS catalog sync and reconciliation feature (closed on `main`) |
+| `specs/006-unknown-items-review-queue` | Unknown items review queue product brief (docs-only scope complete) |
+| `specs/007-unknown-items-review-queue-api` | Unknown items review queue API execution map and coordination artifacts |
+| `docs` | Architecture · live control map · documentation index · brand · agent-os · presentation assets |
 
 ### What this repo owns
 Multi-tenant SaaS backend foundation · admin/dashboard backend APIs and shared contracts · worker runtime and queue integration patterns · PostgreSQL schema, migrations, and tenant helpers · shared platform primitives for auth, observability, validation, and errors.
@@ -189,45 +282,6 @@ POS application code · dashboard frontend implementation · production infrastr
 | Auth | argon2id · opaque revocable bearer tokens · httpOnly cookie sessions |
 | Testing | Jest · ts-jest · Supertest · Testcontainers PostgreSQL |
 | IDs | UUIDv7 with UUIDv4 fallback |
-
----
-
-## Getting started
-
-**Prerequisites.** Node.js 20+ · pnpm 9.15.0+ · Docker Desktop (or another Docker-compatible runtime) for local PostgreSQL and Redis.
-
-```bash
-pnpm install            # install dependencies
-pnpm db:up              # bring local Postgres + Redis up
-pnpm build              # build all packages
-pnpm test               # run the test suite
-pnpm lint               # eslint + prettier --check
-```
-
-The development compose stack exposes:
-
-- PostgreSQL: `postgres://dp2:dp2_dev_password@localhost:5432/data_pulse_2`
-- Redis: `redis://localhost:6379`
-
-For local API and worker runs, set:
-
-```bash
-DATABASE_URL=postgres://dp2:dp2_dev_password@localhost:5432/data_pulse_2
-REDIS_URL=redis://localhost:6379
-```
-
-Then start the services:
-
-```bash
-pnpm --filter @data-pulse-2/api start
-pnpm --filter @data-pulse-2/worker start
-```
-
-During development, package-level `start:dev` scripts compile in watch mode where available.
-
-**Verify startup.** After starting the API, check the terminal output for a pino log line confirming the server is listening (default port `3000`). No unauthenticated health endpoint is exposed — a clean startup log is the expected signal. For a full behavior walkthrough, see the [foundation quickstart](specs/001-foundation-auth-tenant-store/quickstart.md).
-
----
 
 ## Documentation
 

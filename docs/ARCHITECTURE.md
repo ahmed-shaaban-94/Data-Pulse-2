@@ -26,6 +26,11 @@ contract of record.
 
 ![Retail Tower OS System Map](assets/architecture/retail-tower-os-system-map.svg)
 
+For the full-screen interactive view, open the
+[Retail Tower OS live architecture map](architecture/retail-tower-live-map.html).
+It renders the same backend-first platform as a Three.js control surface backed
+by [topology JSON](architecture/retail-tower-live-map.json).
+
 > **Reviewable Mermaid source** — technical diagram kept for diffability and
 > tooling compatibility.
 
