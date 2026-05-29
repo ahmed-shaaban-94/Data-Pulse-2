@@ -144,6 +144,7 @@ describe("T036 — list pagination / limit (FR-005, reject-not-clamp)", () => {
       items: ReadonlyArray<unknown>;
       next_cursor: string | null;
     };
+    expect(body.items.length).toBeGreaterThan(0);
     expect(body.items.length).toBeLessThanOrEqual(50);
     expect(body.next_cursor).toBeNull();
   });
