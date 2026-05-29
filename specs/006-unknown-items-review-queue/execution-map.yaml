@@ -266,7 +266,9 @@ slices:
   - id: T010
     task_ids: [T010]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — human reviewer sign-off recorded (Ahmed Shaaban / Tenant Owner) in requirements.md Sign-off log; validation grep `^### T010 sign-off` now matches. Batch low-risk delegation.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]   # CR feedback must clear before sign-offs land
     agent: reviewer
@@ -283,7 +285,9 @@ slices:
   - id: T011
     task_ids: [T011]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -297,7 +301,9 @@ slices:
   - id: T012
     task_ids: [T012]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -311,7 +317,9 @@ slices:
   - id: T013
     task_ids: [T013]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -325,7 +333,9 @@ slices:
   - id: T014
     task_ids: [T014]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation (005 link semantics, FR-050/051).
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -339,7 +349,9 @@ slices:
   - id: T015
     task_ids: [T015]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. HIGH-SCRUTINY item reviewed individually: US6 create-product atomicity delegates to 005 FR-060/062/063, no 006-specific field set.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -353,7 +365,9 @@ slices:
   - id: T016
     task_ids: [T016]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation (005 FR-003/004/005 dismiss).
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -367,7 +381,9 @@ slices:
   - id: T017
     task_ids: [T017]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. HIGHEST-SCRUTINY item reviewed individually: US8 reopen forbidden-vs-not-found authority split confirmed sound; scope-before-authority evaluation order flagged forward as a 007 API design obligation.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -381,7 +397,9 @@ slices:
   - id: T018
     task_ids: [T018]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation (FR-100 8-category closed set consistent with 005 FR-091 + forbidden).
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -395,7 +413,9 @@ slices:
   - id: T019
     task_ids: [T019]
     type: docs
-    status: proposed
+    status: complete-by-execution   # 2026-05-29 — sign-off recorded (Ahmed Shaaban / Tenant Owner); validation grep matches. Batch low-risk delegation (005 §6.9 / FR-083 audit; no parallel channel).
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T001]
     agent: reviewer
@@ -447,7 +467,9 @@ slices:
   - id: T022
     task_ids: [T022]
     type: docs
-    status: blocked   # depends on Phase 3-12 sign-offs (T010..T019)
+    status: complete-by-execution   # 2026-05-29 — blocker cleared: all 10 sign-offs (T010–T019) recorded at commit 5482302. Rollup-audit validation (`for n in 010..019; grep ^### T$n sign-off`) returns no MISSING — every Phase 3-12 sign-off is present.
+    closed_at_commit: "5482302"
+    closed_at_date: 2026-05-29
     approval_required: false
     depends_on: [T010, T011, T012, T013, T014, T015, T016, T017, T018, T019]
     agent: reviewer
