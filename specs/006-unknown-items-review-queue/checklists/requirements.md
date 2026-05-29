@@ -98,5 +98,78 @@ Example shape (intentionally written WITHOUT the literal `### T0NN sign-off` hea
 does not satisfy any slice's validation grep): a signed T010 entry would be a level-3
 heading reading "T010 sign-off — US1 ...", followed by the four fields above.
 
-_No sign-offs recorded yet. Awaiting human reviewer (T010–T019). Each slice's validation
-grep (`^### T0NN sign-off`) intentionally still returns no match — these are unsigned._
+### T010 sign-off — US1 (tenant admin reviews across permitted stores)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` Acceptance scenarios + Independent Test (a–d) cover cross-store visibility, per-item metadata, no cross-tenant leak, and unguessable ids; isolation correctly delegates to 005 SI-004 + RLS (reviewer-packet T010 row). Scenario 2 (capture-while-reviewing → next-refresh) defers live-push to FR-090 — "next refresh" accepted as the v1 UX commitment.
+
+### T011 sign-off — US2 (store operator scoped visibility)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 4 scenarios + Independent Test (a–d) confirm only in-scope (S1) items surface; S2 is absent from listings/filters/search/counters/empty-states; act-by-id → non-disclosing not-found; mid-session access loss ties to FR-090 (reviewer-packet T011 row). The "absent from counters AND empty states" clause closes the usual leak vectors. FR-090 stale-state refresh accepted as specified concretely enough for a future API/UI to implement.
+
+### T012 sign-off — US3 (filter / sort / group safely)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` Filters only offer in-scope stores/sources; sort + group respect scope; empty results never leak out-of-scope existence (reviewer-packet T012 row). Grouping-by-store for a multi-store tenant admin carries no implied count disclosure across scope — confirmed acceptable.
+
+### T013 sign-off — US4 (inspect item with safe, sufficient context)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 4 scenarios + Independent Test (a–c) cover identifier/store/source/age/state display; cross-store operator → non-disclosing not-found; "previously dismissed once" advisory; `sale_context jsonb` MUST NOT surface (FR-021a, aligns with 005 FR-006). The advisory "previously dismissed" marker is confirmed non-disclosing across scope (reviewer-packet T013 row).
+
+### T014 sign-off — US5 (link to existing product)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 4 scenarios + Independent Test confirm link success → resolved/linked + audit; non-active target → target-unavailable; alias-uniqueness conflict → non-disclosing, no mutation; concurrent race → exactly one wins. Fully delegates to shipped 005 link semantics (FR-050/051, §6.5, US3/SC-007); 005's link path is the one wired and 006 adds no new link mechanic (reviewer-packet T014 row).
+
+### T015 sign-off — US6 (create new product)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 5 scenarios + Independent Test (a–e) reviewed individually (high-scrutiny item). Happy path commits product + alias + lifecycle transition **atomically** per 005 FR-063; alias conflict fails closed per 005 §6.5 / FR-062 (no product, no alias, no transition; U stays `pending`); missing/malformed fields → validation-category per 005 FR-070/FR-091; concurrent race → exactly one wins (005 US3 #3); successful create resolves subsequent POS scans per 005 US1 #3 / FR-022. **Reviewer-packet concern resolved:** "minimal required fields" delegates to the existing 005 FR-060 tenant-product contract by name — 006 introduces NO 006-specific field set, so there is no competing definition of product validity. Delegation is correct; the future API implementer must honor 005 FR-060's field set rather than inventing one (noted, not a spec defect).
+
+### T016 sign-off — US7 (dismiss)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 3 scenarios + Independent Test (a–c) confirm dismiss → dismissed, no side-effects, audit; POS resubmit → fresh pending (005 FR-005); double-dismiss → already-reconciled with a `details` discriminator per FR-100. Consumes 005 FR-003/004/005. The advisory "previously dismissed once" hint is MAY (not MUST) — no v1 obligation is implied (reviewer-packet T016 row).
+
+### T017 sign-off — US8 (reopen, tenant-wide only)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 6 scenarios + Independent Test (a–f) reviewed individually (highest-scrutiny item). Two design subtleties confirmed sound: (1) **reopen is NOT a lifecycle reversal** — 005's lifecycle is monotonic (`dismissed` terminal, 005 FR-004), so reopen creates a fresh `pending` U' for the same `(tenant, store, identifier_type, value, source_system)` tuple via 005 FR-005, preserving the original `dismissed` row as audit history; 005's monotonic invariant stays intact. (2) The **`forbidden`-vs-`not-found` authority split** is correct and security-load-bearing: scenario 4 (store operator, in-scope item at S1, lacks tenant-wide authority) → `forbidden` per FR-062a; scenario 5 (store operator scoped to S1, item at S2, no read authority) → `not-found` per 005 SI-004 — returning `forbidden` for the out-of-scope case would leak existence at S2. Grounded in the 2026-05-24 clarification + Constitution §II/§XII. Scenario 2 (already-pending guard → "already pending", no duplicate), scenario 3 (`resolved` → `already-reconciled` + `details.prior_state`), scenario 6 (both events auditable + correlation-id) all correct. **Reviewer note carried forward to 007 (downstream API):** the scope-before-authority **evaluation order** (check read-scope first → `not-found`; then reopen-authority → `forbidden`) is correct per-scenario but stated implicitly across scenarios 4/5 rather than as an explicit ordering rule. The downstream API spec MUST encode that ordering explicitly so an implementer cannot check authority before scope and leak. Not a 006 defect (006 pins user-visible outcomes, not evaluation order) — flagged as a 007 design obligation.
+
+### T018 sign-off — US9 (non-disclosing failure outcomes)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 3 scenarios + Independent Test cover every FR-100 category (8: validation, target-unavailable, alias-conflict, idempotency-token-mismatch, already-reconciled [+`details.prior_state`], not-found, forbidden, system-failure); no out-of-scope existence leak. The 8-category closed set is internally consistent with 005 FR-091's 7 categories plus `forbidden`; no orphan category (reviewer-packet T018 row). `already-terminal` confirmed collapsed into `already-reconciled` (2026-05-24 revision) — appears only in historical revision-note context.
+
+### T019 sign-off — US10 (all decisions auditable)
+
+- `Date:` 2026-05-29
+- `Reviewer:` Ahmed Shaaban / Tenant Owner
+- `Verdict:` SIGNED-OFF
+- `Notes:` 3 scenarios + Independent Test confirm every action (link/create/dismiss/reopen + each failed attempt) → audit event with tenant/store/actor/action/target/correlation-id, via 005 FR-083's existing surface. Failed attempts are audited where 005 FR-082 mandates. 006 adds no parallel audit channel — all events flow through 005 FR-083 (reviewer-packet T019 row).
+
+---
+
+> **T015 (US6) and T017 (US8) sign-offs are pending individual review** — these are the
+> reviewer-packet's two highest-scrutiny items (US6 minimal-fields contract; US8 reopen
+> `forbidden`-vs-`not-found` authority split). They are signed separately, not in the batch above.
