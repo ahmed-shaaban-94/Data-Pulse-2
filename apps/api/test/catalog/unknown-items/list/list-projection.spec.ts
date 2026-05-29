@@ -171,6 +171,8 @@ describe("T030 — list returns ReviewQueueItem (no sale_context) (FR-007)", () 
     if (maybeSkip()) return;
     const res = await http().get("/api/v1/catalog/unknown-items").expect(200);
     const body = res.body as { items: ReadonlyArray<Record<string, unknown>> };
+    // Non-empty guard so the per-item loop can't pass vacuously. (CodeRabbit #405)
+    expect(body.items.length).toBeGreaterThan(0);
     for (const item of body.items) {
       expect(item["resolution_status"]).toBe("pending");
     }
@@ -181,6 +183,9 @@ describe("T030 — list returns ReviewQueueItem (no sale_context) (FR-007)", () 
     if (contextGuard) contextGuard.storeId = UNKNOWN_ITEMS_FIXTURE_IDS.storeAX;
     const res = await http().get("/api/v1/catalog/unknown-items").expect(200);
     const body = res.body as { items: ReadonlyArray<Record<string, unknown>> };
+    // Store A.X has pending fixtures (barcode + external_pos_id), so an empty
+    // page would be a regression — guard the loop against a vacuous pass. (CodeRabbit #405)
+    expect(body.items.length).toBeGreaterThan(0);
     for (const item of body.items) {
       expect(Object.prototype.hasOwnProperty.call(item, "sale_context")).toBe(
         false,
