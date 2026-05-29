@@ -18,6 +18,7 @@ security review, and integration planning.
 | Document | Purpose |
 | --- | --- |
 | [Architecture](ARCHITECTURE.md) | Runtime shape, package boundaries, request flow, worker flow, deployment view, and current intentional gaps. |
+| [Live architecture map](architecture/retail-tower-live-map.html) | Interactive Three.js control surface backed by local topology JSON. |
 | [Asset guide](assets/README.md) | Visual asset naming, usage, and style guidance for README and docs diagrams. |
 | [Contributing](../CONTRIBUTING.md) | Working agreement, local workflow, and contribution expectations. |
 | [Security](../SECURITY.md) | Security reporting and project security posture. |
@@ -41,6 +42,8 @@ decision records, not product runtime code.
 The README and architecture docs use GitHub-renderable SVG and Mermaid:
 
 - SVG assets provide a polished product-grade first impression.
+- The live architecture map uses a standalone HTML page so GitHub README
+  rendering remains static and safe.
 - Mermaid diagrams keep technical flows maintainable in Markdown.
 - Icons live under `assets/icons/` and share a restrained enterprise SaaS
   style.

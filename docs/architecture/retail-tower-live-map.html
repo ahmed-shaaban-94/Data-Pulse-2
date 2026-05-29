@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Retail Tower OS - Live Architecture Map</title>
+    <link rel="icon" href="data:,">
+    <meta
+      name="description"
+      content="Interactive Three.js architecture map for the backend-first Retail Tower OS repository."
+    >
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b1020;
+        --panel: rgba(13, 18, 31, 0.82);
+        --panel-strong: rgba(15, 23, 42, 0.94);
+        --line: rgba(148, 163, 184, 0.24);
+        --text: #f8fafc;
+        --muted: #aab4c5;
+        --gold: #d4ad55;
+        --cyan: #22d6f6;
+        --teal: #14b8a6;
+        --violet: #8b5cf6;
+        --green: #22c55e;
+        --red: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(34, 214, 246, 0.16), transparent 28%),
+          radial-gradient(circle at 78% 20%, rgba(212, 173, 85, 0.16), transparent 24%),
+          radial-gradient(circle at 72% 78%, rgba(139, 92, 246, 0.18), transparent 32%),
+          linear-gradient(135deg, #0f172a 0%, #070b14 54%, #17111e 100%);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      #scene {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        display: block;
+      }
+
+      .hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .topbar {
+        position: absolute;
+        top: 20px;
+        left: 24px;
+        right: 24px;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .headline {
+        max-width: min(760px, calc(100vw - 48px));
+        padding: 16px 18px;
+        border: 1px solid var(--line);
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(12, 18, 31, 0.68));
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.34);
+        backdrop-filter: blur(18px);
+      }
+
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--cyan);
+        font-size: 11px;
+        font-weight: 850;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        color: var(--text);
+        font-size: clamp(24px, 4vw, 48px);
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 680px;
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: clamp(13px, 1.45vw, 16px);
+        line-height: 1.55;
+      }
+
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        backdrop-filter: blur(18px);
+        pointer-events: auto;
+      }
+
+      button,
+      .source-link {
+        min-height: 34px;
+        border: 1px solid rgba(148, 163, 184, 0.26);
+        background: rgba(15, 23, 42, 0.72);
+        color: var(--text);
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+        font-weight: 750;
+        letter-spacing: 0;
+        text-decoration: none;
+        padding: 8px 10px;
+      }
+
+      button:hover,
+      .source-link:hover {
+        border-color: rgba(34, 214, 246, 0.72);
+        color: #ffffff;
+      }
+
+      .details {
+        position: absolute;
+        right: 24px;
+        bottom: 24px;
+        width: min(420px, calc(100vw - 48px));
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+        backdrop-filter: blur(18px);
+        pointer-events: auto;
+      }
+
+      .details h2 {
+        margin: 0;
+        font-size: 19px;
+        line-height: 1.22;
+        letter-spacing: 0;
+      }
+
+      .details p {
+        margin: 9px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        padding: 4px 7px;
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(255, 255, 255, 0.05);
+        color: #dbeafe;
+        font-size: 11px;
+        font-weight: 760;
+      }
+
+      .details-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .fallback {
+        position: fixed;
+        inset: 0;
+        display: none;
+        place-items: center;
+        padding: 24px;
+        background: linear-gradient(135deg, #0f172a, #111827);
+        text-align: center;
+      }
+
+      .fallback-inner {
+        max-width: 720px;
+        border: 1px solid var(--line);
+        background: rgba(15, 23, 42, 0.92);
+        padding: 24px;
+      }
+
+      .fallback h2 {
+        margin: 0;
+        font-size: 26px;
+      }
+
+      .fallback p {
+        color: var(--muted);
+        line-height: 1.6;
+      }
+
+      .loading {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--muted);
+        font-size: 13px;
+        pointer-events: none;
+      }
+
+      .is-ready .loading {
+        display: none;
+      }
+
+      @media (max-width: 900px) {
+        .topbar {
+          flex-direction: column;
+        }
+
+        .controls {
+          align-self: flex-start;
+        }
+
+        .details {
+          right: 14px;
+          bottom: 14px;
+          left: 14px;
+          width: auto;
+        }
+
+        .headline {
+          padding: 13px 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene" aria-label="Interactive 3D architecture map"></canvas>
+
+    <div class="hud">
+      <div class="topbar">
+        <header class="headline">
+          <p class="eyebrow">Retail Tower OS control surface</p>
+          <h1>Live architecture map</h1>
+          <p class="lead">
+            Click a node to inspect the source path. Drag to orbit, scroll to zoom,
+            and watch data pulses move through the backend-first platform.
+          </p>
+        </header>
+
+        <nav class="controls" aria-label="Scene controls">
+          <button type="button" id="toggleMotion">Pause</button>
+          <button type="button" id="resetCamera">Reset</button>
+          <a class="source-link" href="retail-tower-live-map.json">Topology JSON</a>
+        </nav>
+      </div>
+
+      <section class="details" aria-live="polite">
+        <h2 id="detailTitle">Select a node</h2>
+        <p id="detailBody">
+          The map is loaded from <code>retail-tower-live-map.json</code>. Each node
+          links back to a repo path so the visual stays reviewable.
+        </p>
+        <div class="meta" id="detailMeta">
+          <span class="pill">Three.js</span>
+          <span class="pill">repo-backed JSON</span>
+          <span class="pill">no README script</span>
+        </div>
+        <div class="details-actions">
+          <a class="source-link" id="detailLink" href="../../README.md">Open README</a>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="loading">Loading Three.js control surface...</div>
+
+    <div class="fallback" id="fallback">
+      <div class="fallback-inner">
+        <h2>Interactive map unavailable</h2>
+        <p>
+          The live scene needs network access to load the pinned Three.js module.
+          The README preview SVG and topology JSON remain available without scripts.
+        </p>
+        <p><a href="retail-tower-live-map.json">Open topology JSON</a></p>
+      </div>
+    </div>
+
+    <script type="module">
+      const THREE_URL = "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js";
+      const rootLink = (path) => `../../${path}`;
+      const state = {
+        motion: true,
+        selected: null,
+        yaw: -0.48,
+        pitch: 0.56,
+        distance: 16,
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+      };
+
+      const embeddedMap = {
+        title: "Retail Tower OS Live Architecture Map",
+        version: "fallback",
+        nodes: [],
+        edges: [],
+        status: [],
+      };
+
+      const positions = {
+        dashboard: [-5.65, 0.45, -2.25],
+        pos: [-5.65, 0.45, 2.05],
+        api: [-2.25, 1.1, 0],
+        contracts: [2.1, 0.65, -3.3],
+        auth: [2.1, 0.65, -1.15],
+        dbpkg: [2.1, 0.65, 1.15],
+        shared: [2.1, 0.65, 3.3],
+        postgres: [5.95, 0.7, -1.4],
+        redis: [5.95, 0.7, 1.5],
+        worker: [5.95, 0.85, 3.55],
+        agentos: [-2.35, 0.55, -3.75],
+        constitution: [-2.35, 0.55, 3.75],
+      };
+
+      const palette = {
+        consumer: { base: 0x22d6f6, dark: 0x0e7490 },
+        runtime: { base: 0xd4ad55, dark: 0x7a5a14 },
+        contract: { base: 0x8b5cf6, dark: 0x4c1d95 },
+        package: { base: 0x14b8a6, dark: 0x115e59 },
+        data: { base: 0x22c55e, dark: 0x166534 },
+        governance: { base: 0xf97316, dark: 0x9a3412 },
+      };
+
+      async function loadMap() {
+        try {
+          const response = await fetch("retail-tower-live-map.json", { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return await response.json();
+        } catch (error) {
+          console.warn("Topology JSON unavailable, using embedded fallback.", error);
+          return embeddedMap;
+        }
+      }
+
+      function showFallback(reason) {
+        console.error(reason);
+        document.getElementById("scene").style.display = "none";
+        document.getElementById("fallback").style.display = "grid";
+        document.body.classList.add("is-ready");
+      }
+
+      function makeLabel(THREE, text, accent) {
+        const canvas = document.createElement("canvas");
+        const scale = 2;
+        canvas.width = 360 * scale;
+        canvas.height = 90 * scale;
+        const context = canvas.getContext("2d");
+        context.scale(scale, scale);
+        context.clearRect(0, 0, 360, 90);
+        context.fillStyle = "rgba(8, 13, 24, 0.78)";
+        context.strokeStyle = accent;
+        context.lineWidth = 1.4;
+        roundRect(context, 18, 18, 324, 48, 7);
+        context.fill();
+        context.stroke();
+        context.fillStyle = "#f8fafc";
+        context.font = "700 20px system-ui, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(text, 180, 43, 292);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        const material = new THREE.SpriteMaterial({
+          map: texture,
+          transparent: true,
+          depthWrite: false,
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.scale.set(2.4, 0.6, 1);
+        return sprite;
+      }
+
+      function roundRect(context, x, y, width, height, radius) {
+        context.beginPath();
+        context.moveTo(x + radius, y);
+        context.arcTo(x + width, y, x + width, y + height, radius);
+        context.arcTo(x + width, y + height, x, y + height, radius);
+        context.arcTo(x, y + height, x, y, radius);
+        context.arcTo(x, y, x + width, y, radius);
+        context.closePath();
+      }
+
+      function createNode(THREE, node) {
+        const colors = palette[node.kind] ?? palette.package;
+        const group = new THREE.Group();
+        const [x, y, z] = positions[node.id] ?? [0, 0.5, 0];
+        group.position.set(x, y, z);
+        group.userData.node = node;
+
+        let geometry;
+        if (node.kind === "runtime") {
+          geometry = new THREE.CylinderGeometry(0.62, 0.78, 1.65, 6);
+        } else if (node.kind === "data") {
+          geometry = new THREE.CylinderGeometry(0.78, 0.78, 0.74, 32);
+        } else if (node.kind === "governance") {
+          geometry = new THREE.OctahedronGeometry(0.72, 0);
+        } else {
+          geometry = new THREE.BoxGeometry(1.56, 0.72, 1.12);
+        }
+
+        const material = new THREE.MeshStandardMaterial({
+          color: colors.base,
+          roughness: 0.45,
+          metalness: 0.28,
+          emissive: colors.dark,
+          emissiveIntensity: 0.18,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.userData.node = node;
+        group.add(mesh);
+
+        const cap = new THREE.Mesh(
+          new THREE.CircleGeometry(0.22, 32),
+          new THREE.MeshBasicMaterial({ color: colors.base, transparent: true, opacity: 0.68 })
+        );
+        cap.rotation.x = -Math.PI / 2;
+        cap.position.y = node.kind === "runtime" ? 0.92 : 0.46;
+        group.add(cap);
+
+        const label = makeLabel(THREE, node.label, `#${colors.base.toString(16).padStart(6, "0")}`);
+        label.position.set(0, node.kind === "runtime" ? 1.45 : 1.05, 0);
+        group.add(label);
+
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.9, 0.93, 48),
+          new THREE.MeshBasicMaterial({
+            color: colors.base,
+            transparent: true,
+            opacity: 0.32,
+            side: THREE.DoubleSide,
+          })
+        );
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = -0.42;
+        group.add(ring);
+
+        return group;
+      }
+
+      function createEdge(THREE, from, to, index) {
+        const a = new THREE.Vector3(...positions[from]).add(new THREE.Vector3(0, 0.15, 0));
+        const b = new THREE.Vector3(...positions[to]).add(new THREE.Vector3(0, 0.15, 0));
+        const mid = a.clone().lerp(b, 0.5);
+        mid.y += 0.55 + (index % 3) * 0.12;
+        const curve = new THREE.CatmullRomCurve3([a, mid, b]);
+        const color = index % 3 === 0 ? 0x22d6f6 : index % 3 === 1 ? 0xd4ad55 : 0x8b5cf6;
+        const mesh = new THREE.Mesh(
+          new THREE.TubeGeometry(curve, 40, 0.026, 8, false),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.48 })
+        );
+        return { curve, mesh, color, offset: index / 7 };
+      }
+
+      function updateCamera(THREE, camera) {
+        const pitch = Math.max(0.18, Math.min(1.18, state.pitch));
+        const distance = Math.max(8, Math.min(21, state.distance));
+        const x = Math.sin(state.yaw) * Math.cos(pitch) * distance;
+        const y = Math.sin(pitch) * distance;
+        const z = Math.cos(state.yaw) * Math.cos(pitch) * distance;
+        camera.position.set(x, y, z);
+        camera.lookAt(new THREE.Vector3(0.2, 0.15, 0));
+      }
+
+      function setDetails(node) {
+        const title = document.getElementById("detailTitle");
+        const body = document.getElementById("detailBody");
+        const meta = document.getElementById("detailMeta");
+        const link = document.getElementById("detailLink");
+
+        if (!node) return;
+        title.textContent = node.label;
+        body.textContent = node.description;
+        meta.replaceChildren();
+        [node.layer, node.kind, node.status].forEach((value) => {
+          const chip = document.createElement("span");
+          chip.className = "pill";
+          chip.textContent = value;
+          meta.appendChild(chip);
+        });
+        link.href = rootLink(node.path);
+        link.textContent = "Open source path";
+      }
+
+      async function boot() {
+        let THREE;
+        try {
+          THREE = await import(THREE_URL);
+        } catch (error) {
+          showFallback(error);
+          return;
+        }
+
+        const map = await loadMap();
+
+        const canvas = document.getElementById("scene");
+        const renderer = new THREE.WebGLRenderer({
+          canvas,
+          antialias: true,
+          alpha: true,
+          preserveDrawingBuffer: true,
+        });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x08111f, 14, 32);
+
+        const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 100);
+        updateCamera(THREE, camera);
+
+        const root = new THREE.Group();
+        scene.add(root);
+
+        const ambient = new THREE.HemisphereLight(0xb7f5ff, 0x201018, 1.1);
+        scene.add(ambient);
+
+        const key = new THREE.DirectionalLight(0xffffff, 2.7);
+        key.position.set(-4, 9, 7);
+        key.castShadow = true;
+        key.shadow.mapSize.set(2048, 2048);
+        scene.add(key);
+
+        const cyanLight = new THREE.PointLight(0x22d6f6, 6, 15);
+        cyanLight.position.set(-4.5, 3.2, -4.5);
+        scene.add(cyanLight);
+
+        const goldLight = new THREE.PointLight(0xd4ad55, 5, 15);
+        goldLight.position.set(4.8, 3.1, 3.5);
+        scene.add(goldLight);
+
+        const floor = new THREE.Mesh(
+          new THREE.PlaneGeometry(18, 11),
+          new THREE.MeshStandardMaterial({
+            color: 0x0b1320,
+            roughness: 0.72,
+            metalness: 0.18,
+            transparent: true,
+            opacity: 0.88,
+          })
+        );
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -0.55;
+        floor.receiveShadow = true;
+        root.add(floor);
+
+        const grid = new THREE.GridHelper(18, 22, 0x22d6f6, 0x263449);
+        grid.position.y = -0.52;
+        grid.material.opacity = 0.26;
+        grid.material.transparent = true;
+        root.add(grid);
+
+        const nodeGroups = [];
+        const selectable = [];
+        map.nodes.forEach((node) => {
+          const group = createNode(THREE, node);
+          nodeGroups.push(group);
+          root.add(group);
+          group.traverse((child) => {
+            if (child.isMesh && child.userData.node) selectable.push(child);
+          });
+        });
+
+        const pulses = [];
+        map.edges.forEach((edge, index) => {
+          const item = createEdge(THREE, edge.from, edge.to, index);
+          root.add(item.mesh);
+          const pulse = new THREE.Mesh(
+            new THREE.SphereGeometry(0.105, 18, 18),
+            new THREE.MeshBasicMaterial({ color: item.color })
+          );
+          root.add(pulse);
+          pulses.push({ ...item, pulse });
+        });
+
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+
+        function resize() {
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+          renderer.setSize(width, height, false);
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+        }
+
+        function pick(event) {
+          const rect = canvas.getBoundingClientRect();
+          pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+          pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+          raycaster.setFromCamera(pointer, camera);
+          const hits = raycaster.intersectObjects(selectable, false);
+          if (hits[0]?.object?.userData?.node) {
+            state.selected = hits[0].object.userData.node;
+            setDetails(state.selected);
+          }
+        }
+
+        canvas.addEventListener("pointerdown", (event) => {
+          state.dragging = true;
+          state.lastX = event.clientX;
+          state.lastY = event.clientY;
+          canvas.setPointerCapture(event.pointerId);
+        });
+
+        canvas.addEventListener("pointermove", (event) => {
+          if (!state.dragging) return;
+          const dx = event.clientX - state.lastX;
+          const dy = event.clientY - state.lastY;
+          state.lastX = event.clientX;
+          state.lastY = event.clientY;
+          state.yaw -= dx * 0.006;
+          state.pitch -= dy * 0.004;
+          updateCamera(THREE, camera);
+        });
+
+        canvas.addEventListener("pointerup", (event) => {
+          state.dragging = false;
+          canvas.releasePointerCapture(event.pointerId);
+          if (Math.abs(event.clientX - state.lastX) < 4 && Math.abs(event.clientY - state.lastY) < 4) {
+            pick(event);
+          }
+        });
+
+        canvas.addEventListener("click", pick);
+        canvas.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          state.distance += event.deltaY * 0.01;
+          updateCamera(THREE, camera);
+        }, { passive: false });
+
+        document.getElementById("toggleMotion").addEventListener("click", (event) => {
+          state.motion = !state.motion;
+          event.currentTarget.textContent = state.motion ? "Pause" : "Play";
+        });
+
+        document.getElementById("resetCamera").addEventListener("click", () => {
+          state.yaw = -0.48;
+          state.pitch = 0.56;
+          state.distance = window.innerWidth < 800 ? 18.4 : 16;
+          updateCamera(THREE, camera);
+        });
+
+        window.addEventListener("resize", resize);
+        resize();
+        if (window.innerWidth < 800) {
+          state.distance = 18.4;
+          updateCamera(THREE, camera);
+        }
+
+        if (map.nodes[2]) setDetails(map.nodes[2]);
+
+        const clock = new THREE.Clock();
+        function animate() {
+          requestAnimationFrame(animate);
+          const elapsed = clock.getElapsedTime();
+
+          if (state.motion) {
+            root.rotation.y += 0.0009;
+            nodeGroups.forEach((group, index) => {
+              group.position.y += Math.sin(elapsed * 1.4 + index) * 0.0009;
+              const ring = group.children.find((child) => child.geometry?.type === "RingGeometry");
+              if (ring) ring.rotation.z += 0.006 + index * 0.0002;
+            });
+          }
+
+          pulses.forEach((item, index) => {
+            const t = (elapsed * (0.12 + index * 0.008) + item.offset) % 1;
+            const point = item.curve.getPointAt(t);
+            item.pulse.position.copy(point);
+            item.pulse.scale.setScalar(1 + Math.sin(elapsed * 4 + index) * 0.24);
+          });
+
+          renderer.render(scene, camera);
+        }
+
+        document.body.classList.add("is-ready");
+        animate();
+      }
+
+      boot();
+    </script>
+  </body>
+</html>

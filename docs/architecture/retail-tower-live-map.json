@@ -1,0 +1,219 @@
+{
+  "title": "Retail Tower OS Live Architecture Map",
+  "version": "2026-05-29",
+  "summary": "Repo-backed topology for the backend-first Retail Tower OS platform.",
+  "nodes": [
+    {
+      "id": "dashboard",
+      "label": "Dashboard clients",
+      "kind": "consumer",
+      "status": "deferred",
+      "layer": "Consumers",
+      "path": "README.md#what-retail-tower-os-controls",
+      "description": "Future dashboard and API consumers. UI implementation is outside the current backend slice."
+    },
+    {
+      "id": "pos",
+      "label": "POS clients",
+      "kind": "consumer",
+      "status": "external",
+      "layer": "Consumers",
+      "path": "specs/002-pos-operator-identity/spec.md",
+      "description": "External POS applications integrate through authenticated, versioned OpenAPI contracts."
+    },
+    {
+      "id": "api",
+      "label": "NestJS API",
+      "kind": "runtime",
+      "status": "shipped",
+      "layer": "Runtime",
+      "path": "apps/api",
+      "description": "Synchronous HTTP boundary for auth, tenant/store context, validation, OpenAPI loading, and service orchestration."
+    },
+    {
+      "id": "worker",
+      "label": "NestJS worker",
+      "kind": "runtime",
+      "status": "shipped",
+      "layer": "Runtime",
+      "path": "apps/worker",
+      "description": "Standalone NestJS worker runtime for BullMQ-backed background processing."
+    },
+    {
+      "id": "contracts",
+      "label": "OpenAPI contracts",
+      "kind": "contract",
+      "status": "source of truth",
+      "layer": "Contracts",
+      "path": "packages/contracts/openapi",
+      "description": "OpenAPI 3.1 YAML contracts are the integration source of truth for API behavior."
+    },
+    {
+      "id": "auth",
+      "label": "Auth package",
+      "kind": "package",
+      "status": "shipped",
+      "layer": "Packages",
+      "path": "packages/auth",
+      "description": "Password hashing, token hashing, session types, and reusable auth primitives."
+    },
+    {
+      "id": "dbpkg",
+      "label": "DB package",
+      "kind": "package",
+      "status": "shipped",
+      "layer": "Packages",
+      "path": "packages/db",
+      "description": "Drizzle schema, explicit SQL migrations, tenant helpers, and migration CLI."
+    },
+    {
+      "id": "shared",
+      "label": "Shared primitives",
+      "kind": "package",
+      "status": "shipped",
+      "layer": "Packages",
+      "path": "packages/shared",
+      "description": "Shared Zod helpers, error envelopes, logging, observability, UUIDs, and queue config."
+    },
+    {
+      "id": "postgres",
+      "label": "PostgreSQL",
+      "kind": "data",
+      "status": "system of record",
+      "layer": "Data",
+      "path": "packages/db/src",
+      "description": "Durable source of truth with tenant isolation enforced through schema and RLS policy discipline."
+    },
+    {
+      "id": "redis",
+      "label": "Redis + BullMQ",
+      "kind": "data",
+      "status": "coordination",
+      "layer": "Data",
+      "path": "docker-compose.dev.yml",
+      "description": "Runtime queue coordination for async jobs. Redis is not domain truth."
+    },
+    {
+      "id": "agentos",
+      "label": "Agent OS",
+      "kind": "governance",
+      "status": "slice governed",
+      "layer": "Governance",
+      "path": "docs/agent-os/standing-rules.md",
+      "description": "Slice-governed execution model for branch hygiene, gates, validation, and stop-before-commit discipline."
+    },
+    {
+      "id": "constitution",
+      "label": "Constitution",
+      "kind": "governance",
+      "status": "binding",
+      "layer": "Governance",
+      "path": ".specify/memory/constitution.md",
+      "description": "Binding engineering constraints for tenant isolation, contract-first APIs, auditability, and PII discipline."
+    }
+  ],
+  "edges": [
+    {
+      "from": "dashboard",
+      "to": "api",
+      "label": "future authenticated API"
+    },
+    {
+      "from": "pos",
+      "to": "api",
+      "label": "authenticated contracts"
+    },
+    {
+      "from": "api",
+      "to": "contracts",
+      "label": "loads OpenAPI"
+    },
+    {
+      "from": "api",
+      "to": "auth",
+      "label": "auth primitives"
+    },
+    {
+      "from": "api",
+      "to": "dbpkg",
+      "label": "tenant-scoped queries"
+    },
+    {
+      "from": "api",
+      "to": "shared",
+      "label": "errors, logs, ids"
+    },
+    {
+      "from": "api",
+      "to": "postgres",
+      "label": "durable writes"
+    },
+    {
+      "from": "api",
+      "to": "redis",
+      "label": "enqueue jobs"
+    },
+    {
+      "from": "redis",
+      "to": "worker",
+      "label": "consume jobs"
+    },
+    {
+      "from": "worker",
+      "to": "shared",
+      "label": "shared runtime"
+    },
+    {
+      "from": "agentos",
+      "to": "api",
+      "label": "slice gates"
+    },
+    {
+      "from": "constitution",
+      "to": "postgres",
+      "label": "RLS discipline"
+    },
+    {
+      "from": "constitution",
+      "to": "contracts",
+      "label": "contract-first rule"
+    }
+  ],
+  "status": [
+    {
+      "name": "Foundation auth, tenant, store, memberships, audit",
+      "state": "shipped",
+      "path": "specs/001-foundation-auth-tenant-store"
+    },
+    {
+      "name": "POS operator identity",
+      "state": "spec and contracts",
+      "path": "specs/002-pos-operator-identity"
+    },
+    {
+      "name": "Catalog foundation",
+      "state": "shipped",
+      "path": "specs/003-catalog-foundation"
+    },
+    {
+      "name": "Production readiness",
+      "state": "pass with documented partials",
+      "path": "docs/production-readiness/004-closeout-status.md"
+    },
+    {
+      "name": "POS catalog sync and reconciliation",
+      "state": "closed on main",
+      "path": "specs/005-pos-catalog-sync-reconciliation"
+    },
+    {
+      "name": "Unknown items review queue",
+      "state": "docs-only brief complete",
+      "path": "specs/006-unknown-items-review-queue"
+    },
+    {
+      "name": "Unknown items review queue API",
+      "state": "execution map in place",
+      "path": "specs/007-unknown-items-review-queue-api"
+    }
+  ]
+}

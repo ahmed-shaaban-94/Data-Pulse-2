@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc" fill="none" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+  <title id="title">Retail Tower OS - Live Control Map Preview</title>
+  <desc id="desc">A GitHub-safe preview of the Retail Tower OS interactive architecture map, showing consumers, API runtime, contracts, packages, data stores, and governance controls.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#101826"/>
+      <stop offset="0.5" stop-color="#0b1320"/>
+      <stop offset="1" stop-color="#17121f"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#ffe8a3"/>
+      <stop offset="0.42" stop-color="#d4ad55"/>
+      <stop offset="1" stop-color="#7a5a14"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#a8f4fb"/>
+      <stop offset="1" stop-color="#22d6f6"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#d8b4fe"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#20293a"/>
+      <stop offset="1" stop-color="#101826"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-40%" width="160%" height="190%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.52"/>
+    </filter>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <style>
+      .kicker { fill: #22d6f6; font-size: 12px; font-weight: 800; letter-spacing: 2.2px; }
+      .title { fill: #f8fafc; font-size: 34px; font-weight: 850; }
+      .copy { fill: #a7b0c0; font-size: 15px; }
+      .node-label { fill: #f8fafc; font-size: 13px; font-weight: 800; }
+      .node-sub { fill: #a7b0c0; font-size: 10.5px; font-weight: 600; }
+      .status { fill: #0b1320; font-size: 10px; font-weight: 850; letter-spacing: .6px; }
+      .rail { stroke: #22d6f6; stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 6 14; opacity: .68; }
+      .gold-rail { stroke: #d4ad55; }
+      .pulse { filter: url(#glow); }
+      .axis { stroke: #263449; stroke-width: 1; opacity: .58; }
+      .floor { fill: #0c1422; stroke: #314159; stroke-width: 1; }
+      @keyframes drift {
+        0% { transform: translateX(-80px); opacity: 0; }
+        12% { opacity: 1; }
+        88% { opacity: 1; }
+        100% { transform: translateX(80px); opacity: 0; }
+      }
+      @keyframes breathe {
+        0%, 100% { opacity: .38; }
+        50% { opacity: .85; }
+      }
+      .moving { animation: drift 4.8s ease-in-out infinite; }
+      .moving2 { animation: drift 6.2s ease-in-out infinite reverse; }
+      .breathing { animation: breathe 3.2s ease-in-out infinite; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <g opacity=".45">
+    <path class="axis" d="M80 510 H1200"/>
+    <path class="axis" d="M150 455 L1070 455"/>
+    <path class="axis" d="M220 400 L1000 400"/>
+    <path class="axis" d="M290 345 L930 345"/>
+    <path class="axis" d="M360 290 L860 290"/>
+    <path class="axis" d="M210 545 L575 250"/>
+    <path class="axis" d="M450 545 L690 250"/>
+    <path class="axis" d="M700 545 L810 250"/>
+    <path class="axis" d="M950 545 L930 250"/>
+  </g>
+
+  <text x="62" y="68" class="kicker">REPO-BACKED 3D CONTROL MAP</text>
+  <text x="62" y="108" class="title">Retail Tower OS architecture, rendered as a control surface.</text>
+  <text x="62" y="138" class="copy">Static preview for GitHub. Open the live map for motion, node inspection, and topology data loaded from JSON.</text>
+
+  <g transform="translate(88 190)">
+    <path class="floor" d="M0 260 L430 70 L940 210 L486 430 Z"/>
+    <path d="M432 72 L486 430" stroke="#334155" stroke-width="1.2" opacity=".6"/>
+    <path d="M940 210 L0 260" stroke="#334155" stroke-width="1.2" opacity=".6"/>
+
+    <path class="rail" d="M116 246 C220 150 326 117 456 156 C555 184 604 238 720 224"/>
+    <path class="rail gold-rail" d="M258 316 C364 246 448 229 560 270 C640 300 724 300 822 256"/>
+    <path class="rail" d="M430 142 C480 97 564 90 654 124 C734 153 801 157 890 126"/>
+
+    <g class="moving">
+      <circle class="pulse" cx="430" cy="142" r="14" fill="#22d6f6" opacity=".45"/>
+      <circle cx="430" cy="142" r="5.5" fill="#a8f4fb"/>
+    </g>
+    <g class="moving2">
+      <circle class="pulse" cx="560" cy="270" r="13" fill="#d4ad55" opacity=".48"/>
+      <circle cx="560" cy="270" r="5" fill="#ffe8a3"/>
+    </g>
+
+    <g filter="url(#shadow)" transform="translate(400 86)">
+      <path d="M80 0 L170 35 L170 196 L80 236 L0 196 L0 35 Z" fill="#172033" stroke="#d4ad55" stroke-width="2"/>
+      <path d="M0 35 L80 70 L170 35 L80 0 Z" fill="url(#gold)" opacity=".95"/>
+      <path d="M80 70 L80 236" stroke="#d4ad55" stroke-width="1.5" opacity=".8"/>
+      <path d="M22 71 L22 180 M48 82 L48 194 M112 82 L112 194 M146 70 L146 180" stroke="#22d6f6" stroke-width="2" opacity=".55"/>
+      <rect x="42" y="110" width="78" height="34" rx="5" fill="#0b1320" stroke="#22d6f6"/>
+      <text x="81" y="131" text-anchor="middle" class="node-label">API</text>
+      <circle class="breathing" cx="83" cy="178" r="28" fill="#22d6f6" opacity=".26"/>
+      <circle cx="83" cy="178" r="8" fill="#a8f4fb"/>
+    </g>
+
+    <g filter="url(#shadow)" transform="translate(40 198)">
+      <path d="M0 34 L92 0 L184 34 L184 106 L92 144 L0 106 Z" fill="url(#panel)" stroke="#22d6f6"/>
+      <path d="M0 34 L92 68 L184 34" stroke="#22d6f6" opacity=".7"/>
+      <text x="92" y="87" text-anchor="middle" class="node-label">Clients</text>
+      <text x="92" y="105" text-anchor="middle" class="node-sub">dashboard + POS</text>
+    </g>
+
+    <g filter="url(#shadow)" transform="translate(696 104)">
+      <path d="M0 34 L96 0 L192 34 L192 118 L96 158 L0 118 Z" fill="url(#panel)" stroke="#7c3aed"/>
+      <path d="M0 34 L96 68 L192 34" stroke="#7c3aed" opacity=".7"/>
+      <text x="96" y="90" text-anchor="middle" class="node-label">Contracts</text>
+      <text x="96" y="108" text-anchor="middle" class="node-sub">OpenAPI 3.1</text>
+    </g>
+
+    <g filter="url(#shadow)" transform="translate(778 270)">
+      <path d="M0 34 L98 0 L196 34 L196 110 L98 150 L0 110 Z" fill="url(#panel)" stroke="#d4ad55"/>
+      <path d="M0 34 L98 68 L196 34" stroke="#d4ad55" opacity=".7"/>
+      <text x="98" y="84" text-anchor="middle" class="node-label">Data stores</text>
+      <text x="98" y="102" text-anchor="middle" class="node-sub">Postgres + Redis</text>
+    </g>
+
+    <g filter="url(#shadow)" transform="translate(254 318)">
+      <path d="M0 30 L86 0 L172 30 L172 96 L86 128 L0 96 Z" fill="url(#panel)" stroke="#22c55e"/>
+      <path d="M0 30 L86 60 L172 30" stroke="#22c55e" opacity=".7"/>
+      <text x="86" y="76" text-anchor="middle" class="node-label">Governance</text>
+      <text x="86" y="94" text-anchor="middle" class="node-sub">Agent OS + constitution</text>
+    </g>
+  </g>
+
+  <g transform="translate(820 62)" filter="url(#shadow)">
+    <rect x="0" y="0" width="372" height="96" rx="8" fill="#111827" stroke="#314159"/>
+    <rect x="18" y="20" width="82" height="22" rx="4" fill="url(#cyan)"/>
+    <text x="59" y="35" text-anchor="middle" class="status">LIVE MAP</text>
+    <text x="118" y="35" class="node-label">Interactive HTML view</text>
+    <text x="18" y="66" class="copy">Three.js scene, clickable nodes, animated data pulses, JSON topology.</text>
+  </g>
+</svg>
