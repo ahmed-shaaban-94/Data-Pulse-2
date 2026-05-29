@@ -993,7 +993,22 @@ slices:
   - id: 005-WAVE1-T560-PERF-FLAKE
     task_ids: [T560-flake]
     type: chore
-    status: proposed
+    status: proposed   # in-flight 2026-05-28: diagnostic-first done, mechanism (b) report-only gate applied in the PR (see `chosen_mechanism_with_evidence`). Flip to complete-by-execution on merge.
+    chosen_mechanism_with_evidence: |
+      Mechanism (b) — report-only perf gate. RED-run diagnostic (CI run
+      26608290112, the only perf-assertion failure available) showed WHOLE-RUN
+      slowness, NOT cold-start outliers: p50=185.1 / p95=1372.5 / p99=2351.3 /
+      max=3188.2 ms, vs two PASS runs (26598377992: p50=109.8/p95=195.3/p99=284.3;
+      26595213890: p50=91.6/p95=129.4/p99=139.0). The median itself is ~1.8x
+      elevated on the failing run, so the entire distribution shifts up under
+      runner contention. This trips the slice's stop condition #2 (whole-run-slow
+      → warmup-discard cannot fix it) → mechanism (b) is the honest fix. The two
+      build-failing `expect(p95).toBeLessThanOrEqual(500)` / `expect(p99)...1000`
+      assertions were converted to a logged WITHIN/OVER soft-check. SC-008
+      threshold VALUES (500/1000) UNCHANGED — only build-blocking removed, so the
+      §IV / stop-condition-#1 guard is respected. Per-call 2xx success remains
+      build-gating. Authoritative SC-008 enforcement deferred to a dedicated
+      contention-free perf environment (recorded in wave-status).
     approval_required: false   # touches only the perf spec + closeout doc; no GATED path
     depends_on: []   # 005-WAVE1-POLISH (PR #351) already merged; this stabilizes its perf test
     blocks: []
@@ -1003,7 +1018,16 @@ slices:
       - specs/005-pos-catalog-sync-reconciliation/wave-status.md            # closeout: record the chosen mechanism + evidence
     validation:
       - command: pnpm --filter @data-pulse-2/api test "test/catalog/unknown-items/perf/capture-latency"
-        expected: GREEN — SC-008 p95 ≤ 500 ms, p99 ≤ 1s on CI full-scale fixture, stable across re-runs (no flake)
+        expected: |
+          GREEN and STABLE across re-runs (mechanism (b) report-only, applied 2026-05-28).
+          The spec no longer fails the build on the SC-008 latency budget — it emits the
+          p50/p95/p99/max distribution and a WITHIN/OVER soft-check to the CI logs for trend
+          tracking, so runner-variance can no longer flip the suite RED. Build-gating is now
+          limited to per-call 2xx success (correctness). The SC-008 threshold VALUES
+          (p95 500ms / p99 1000ms) are UNCHANGED (stop-condition #1 respected — they remain
+          the SLA, now monitored/logged rather than CI-gate-enforced). Authoritative SC-008
+          enforcement is deferred to a dedicated contention-free perf environment (see
+          wave-status §"Next recommended action" / T560).
         docker_required: true
       - command: pnpm --filter @data-pulse-2/api test "test/idempotency"
         expected: GREEN — 001 idempotency suite unchanged (no collateral regression)

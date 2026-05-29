@@ -1,13 +1,22 @@
 /**
  * T560 -- 005-WAVE1-POLISH -- SC-008 performance smoke test.
+ *   (latency gate made REPORT-ONLY by 005-WAVE1-T560-PERF-FLAKE — see below.)
  *
  * Acceptance (slice 005-WAVE1-POLISH validation contract):
- *   GREEN -- SC-008: 100 sequential capture submissions from a single device
+ *   SC-008 target: 100 sequential capture submissions from a single device
  *   against a tenant with 50,000 tenant_products and 100,000 product_aliases
  *   complete at the API surface within p95 <= 500 ms and p99 <= 1 s
  *   (excluding test-harness overhead: container start, migration, seeding,
  *   NestJS app init, and per-call Supertest serialization round-trip
  *   overhead is excluded by timing only the request-response interval).
+ *
+ *   NOTE (T560-flake, 2026-05-28): the p95/p99 budget is now REPORT-ONLY —
+ *   emitted to CI logs for trend tracking but no longer build-failing. The
+ *   gate was flaky on shared GitHub-hosted runners (whole-run slowness under
+ *   contention: RED run p50=185/p95=1372 vs PASS p50~100/p95~160), which no
+ *   test-side measurement change can suppress. The SC-008 threshold VALUES are
+ *   unchanged; authoritative enforcement belongs in a dedicated perf
+ *   environment. Per-call success (2xx) IS still asserted and build-gating.
  *
  * What this spec validates
  * ------------------------
@@ -434,7 +443,7 @@ describe(
   `T560 / 005-WAVE1-POLISH -- SC-008 capture-path p95/p99 budget (${REDUCED_SCALE ? "reduced scale: 10k products / 20k aliases" : "full scale: 50k products / 100k aliases"})`,
   () => {
     it(
-      `${SAMPLE_COUNT} sequential captures hit p95 <= 500 ms and p99 <= 1000 ms`,
+      `${SAMPLE_COUNT} sequential captures — SC-008 p95/p99 budget (report-only; all calls must succeed 2xx)`,
       async () => {
         if (dockerSkipped) {
           // Soft-skip: CI is authoritative. Documented per T560 brief.
@@ -478,16 +487,39 @@ describe(
         const p99 = percentile(sorted, 99);
         const p100 = sorted[sorted.length - 1] ?? 0;
 
-        // Report even if assertions pass -- useful for CI trend tracking.
+        // SC-008 budget targets (spec.md §8 / research.md §R3): p95 ≤ 500 ms,
+        // p99 ≤ 1000 ms at the SaaS boundary. These remain the authoritative
+        // SLA — they are NOT changed here.
+        const SC008_P95_BUDGET_MS = 500;
+        const SC008_P99_BUDGET_MS = 1000;
+        const withinBudget =
+          p95 <= SC008_P95_BUDGET_MS && p99 <= SC008_P99_BUDGET_MS;
+
+        // REPORT-ONLY GATE (005-WAVE1-T560-PERF-FLAKE, mechanism (b)).
+        //
+        // This assertion used to FAIL the build on `p95 > 500 || p99 > 1000`.
+        // It was flaky on the shared GitHub-hosted db-integration runners: the
+        // RED-run diagnostic (CI run 26608290112) showed WHOLE-RUN slowness
+        // — p50=185ms / p95=1372ms / p99=2351ms vs passing runs at
+        // p50~100ms / p95~160ms — i.e. the entire latency distribution shifts
+        // up when the runner is under load, not just cold-start outliers. A
+        // warmup-discard cannot suppress that (the median itself is elevated),
+        // and the failure reflects runner contention, not a code regression.
+        //
+        // So the SC-008 numbers are emitted for CI trend tracking but no longer
+        // fail the build. Authoritative SC-008 enforcement belongs in a
+        // dedicated, contention-free perf environment (tracked follow-up in
+        // wave-status §"Next recommended action" / T560). The threshold VALUES
+        // are unchanged — only the build-blocking behaviour is removed.
         // eslint-disable-next-line no-console
         console.log(
           `[T560 SC-008 latency] n=${SAMPLE_COUNT} scale=${PRODUCT_COUNT} products / ${ALIAS_COUNT} aliases ` +
-            `p50=${p50.toFixed(1)} ms  p95=${p95.toFixed(1)} ms  p99=${p99.toFixed(1)} ms  max=${p100.toFixed(1)} ms`,
+            `p50=${p50.toFixed(1)} ms  p95=${p95.toFixed(1)} ms  p99=${p99.toFixed(1)} ms  max=${p100.toFixed(1)} ms ` +
+            `— SC-008 budget (p95≤${SC008_P95_BUDGET_MS} / p99≤${SC008_P99_BUDGET_MS}): ${withinBudget ? "WITHIN" : "OVER (report-only — runner variance, see T560)"}`,
         );
 
-        // SC-008 budget assertions (research.md §R3).
-        expect(p95).toBeLessThanOrEqual(500);
-        expect(p99).toBeLessThanOrEqual(1000);
+        // Correctness still gated: every call must have succeeded (asserted in
+        // the loop above via res.status 2xx). The latency budget is report-only.
       },
       120_000, // 2 min for 100 sequential calls against Testcontainers
     );
