@@ -208,6 +208,8 @@ docs edits.
 - Maestro does not skip the validation block to save time. The whole point of the contract is empirical verification before declaring done.
 - Maestro does not dispatch the same slice twice without user awareness — re-running implies the first run was incomplete, which needs explanation.
 
+> **Terminology note.** The `## Workflow — …` headings in this playbook name Maestro *procedures* (single slice, parallel wave, finding-driven pivot, post-merge closeout). They are distinct from **dynamic workflows** — the `Workflow` tool and the multi-agent orchestration it spawns. Dynamic workflows are governed by [standing-rules.md §11](./standing-rules.md): they act as **slice controllers only** (one ready slice per run unless a wave is approved), spawn **read-only subagents by default**, allow **exactly one editable path**, keep `allowed_files` / forbidden surfaces / stop-before-commit intact, and a reusable workflow script must be **inspected by Maestro before repeat use**. Maestro does not run a dynamic workflow over an entire spec, nor approve editable subagents, without explicit user instruction.
+
 ---
 
 ## Quick reference — short prompts
