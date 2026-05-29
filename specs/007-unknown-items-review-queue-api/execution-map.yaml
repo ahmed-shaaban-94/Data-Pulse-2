@@ -1,0 +1,706 @@
+# 007-unknown-items-review-queue-api — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 007 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety semantics, and the GATED-first
+# serialization edge.
+#
+# 007 is a CODE feature (NestJS api app). Unlike 006 (docs-only), most slices
+# carry `type: feat` / `test` and touch application code under
+# `apps/api/src/catalog/**` and `apps/api/test/catalog/**`. ONE slice is
+# `[GATED]` — 007-CONTRACT touches the forbidden surface
+# `packages/contracts/openapi/catalog/unknown-items.yaml` (Constitution
+# §IV/§VIII, Standing Rules §3) and carries `approval_required: true`.
+#
+# 007 is an EXTENSION of the shipped 005 unknown-items surface, NOT a
+# greenfield build (tasks.md §0). The genuine delta: inspect (GET /{id}),
+# reopen, bulk-dismiss, list-param extensions, the `forbidden` 8th error
+# category, and the `ReviewQueueItem` projection (omits `sale_context`).
+# US4/US5/US6 are regression guards over shipped ops, not reimplementation.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/007-unknown-items-review-queue-api/wave-status.md
+# Brief source:     specs/007-unknown-items-review-queue-api/tasks.md
+#                   (each slice's full RED/GREEN brief, Predecessors, and
+#                   Acceptance live in tasks.md; this file provides the
+#                   dispatch-time schema fields only.)
+#
+# Slicing convention (005-style, NOT 006-style 1:1): each capability slice
+# folds its RED test task(s) + GREEN implementation task(s) into one
+# dispatchable unit, because a worker writes the failing test and makes it
+# pass within one worktree. `task_ids` is therefore list-valued. Every
+# tasks.md ID T001..T076 (43 distinct) is assigned to exactly one slice's
+# `task_ids` — verified at authoring time.
+#
+# Updated: 2026-05-29 — INITIAL AUTHORING. Nothing in 007 is on `main`. The
+# planning chain (spec/plan/tasks + analyze remediation + SIGN-OFF decisions)
+# is committed on `spec/007-unknown-items-review-queue-api` only (wave-status
+# TL;DR: aab701d / 45ae621 / 8a97e97 + the SIGN-OFF commit). All implementation
+# slices are therefore `status: proposed` (or `blocked` where a depends_on is
+# not yet terminal). No application code, schema, or OpenAPI YAML has changed.
+
+spec: 007-unknown-items-review-queue-api
+version: 1
+base: origin/main  # da032d2 (PR #398, 005 fully-closed marker, 2026-05-29) — per wave-status "Base"
+
+# ----------------------------------------------------------------------------
+# findings
+# ----------------------------------------------------------------------------
+# 007 has no implementation findings at authoring time (no slice has been
+# dispatched). The shipped-code reality deltas (R7.1–R7.5) recorded in
+# tasks.md §0 and the two SIGN-OFF verdicts (T002 tighten / T003 isolate)
+# in wave-status.md § SIGN-OFF Decisions are PLANNING inputs, not findings —
+# they are already absorbed into the relevant slices' briefs and depends_on
+# edges below. New findings (e.g. a slice that cannot succeed within its
+# allowed_files) get appended here at dispatch time, 005-style.
+
+findings: []
+
+# ----------------------------------------------------------------------------
+# slices
+# ----------------------------------------------------------------------------
+# Slice IDs are descriptive (005-style), each mapping to a tasks.md capability.
+# Standard `report_fields` across EVERY slice below (declared once here to
+# avoid per-slice repetition, 006-style — Maestro infers this list for any
+# slice that omits it):
+#   - changed_files
+#   - validation_results
+#   - forbidden_path_check
+#   - confirmation_no_unauthorized_git_ops
+#
+# `docker_required: true` is set on every Testcontainers-backed integration /
+# RLS / cross-tenant validation ([TC] tasks, Constitution §VI). Pure
+# build / lint / contract-conformance checks stay `false`.
+
+slices:
+
+  # ===== Phase 1: Setup ======================================================
+
+  - id: 007-SETUP
+    task_ids: [T001]
+    type: chore
+    status: proposed
+    approval_required: false
+    depends_on: []
+    blocks:
+      - 007-CONTRACT
+      - 007-FORBIDDEN-CATEGORY
+      - 007-REVIEW-QUEUE-PROJECTION
+      - 007-ISOLATION-HARNESS
+    agent: sonnet-api
+    allowed_files: []   # T001 is a read-only branch + compile-clean confirmation; no edits expected
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — both existing catalog modules (apps/api/src/catalog/unknown-items/, apps/api/src/catalog/reconciliation/) compile clean off latest origin/main.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 007 working branch is not off latest origin/main — rebase before proceeding"
+      - "stop if either catalog module is missing or does not compile — that is a 005-regression, not a 007 task"
+    parallel_safety: safe   # read-only build check, no file overlap
+
+  - id: 007-SIGNOFF-SALE-CONTEXT
+    task_ids: [T002]
+    type: docs
+    # T002 is a [SIGN-OFF] decision gate, DECIDED 2026-05-29 = TIGHTEN (option a, tighten now).
+    # slice-schema.yaml has no "decided" status; the verdict is recorded authoritatively in
+    # wave-status.md § SIGN-OFF Decisions (and the [x]-marked T002 task line). Status stays
+    # `proposed` because nothing is on main; this slice exists to carry the gate edge to the
+    # dependent GREEN slices below. No code/doc edit is required from this slice itself.
+    status: proposed
+    approval_required: false   # decision gate, not a code gate; the verdict is already recorded on-branch
+    depends_on: []
+    blocks:
+      - 007-CONTRACT                       # the version-bump + 005 conformance reconciliation is the tightening mechanism
+      - 007-US1-LIST-PROJECTION            # T032 GREEN timing governed by T002
+      - 007-US1-RECONCILIATION-PROJECTION  # T038 GREEN timing governed by T002
+      - 007-US3-INSPECT                    # T042 inspect projection governed by T002
+    agent: opus-maestro
+    allowed_files:
+      - specs/007-unknown-items-review-queue-api/wave-status.md   # verdict already recorded; re-edit only if the decision changes
+    validation:
+      - command: 'grep -n "T002 — .sale_context. tightening\|Verdict: TIGHTEN" specs/007-unknown-items-review-queue-api/wave-status.md'
+        expected: One match — the TIGHTEN verdict is recorded under the SIGN-OFF Decisions section.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if anyone proposes 'leave sale_context on the shipped list' — that is an FR-007 MUST-NOT violation, only permissible under an explicit (un-granted) FR-007 waiver"
+    parallel_safety: safe   # different file from the idempotency SIGN-OFF
+
+  - id: 007-SIGNOFF-IDEMPOTENCY
+    task_ids: [T003]
+    type: docs
+    # T003 is a [SIGN-OFF] decision gate, DECIDED 2026-05-29 = ISOLATE (option b, do not retrofit
+    # shipped ops in v1). Only the new reopen + bulk-dismiss carry Idempotency-Key. Consequence:
+    # the key-replay clauses in T060–T062 DO NOT apply (regression guards assert monotonic-guard
+    # no-duplicate-effect only). Verdict recorded in wave-status.md § SIGN-OFF Decisions.
+    status: proposed
+    approval_required: false
+    depends_on: []
+    blocks:
+      - 007-US4-LINK-REGRESSION       # T060: no key-replay assertion (isolate)
+      - 007-US5-CREATE-REGRESSION     # T061: no key-replay assertion (isolate)
+      - 007-US6-DISMISS-REGRESSION    # T062: no key-replay assertion (isolate)
+    agent: opus-maestro
+    allowed_files:
+      - specs/007-unknown-items-review-queue-api/wave-status.md
+    validation:
+      - command: 'grep -n "T003 — Idempotency-key retrofit\|Verdict: ISOLATE" specs/007-unknown-items-review-queue-api/wave-status.md'
+        expected: One match — the ISOLATE verdict is recorded under the SIGN-OFF Decisions section.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if anyone tries to retrofit Idempotency-Key onto shipped link/create/dismiss in v1 — that is an out-of-scope behavior change (recorded as optional future enhancement)"
+    parallel_safety: safe
+
+  # ===== Phase 2: Foundational (blocking prerequisites for all user stories) =
+  # No user-story slice begins until Phase 2 is complete. The GATED contract
+  # (007-CONTRACT) MUST land approved+merged first; every new operation's
+  # conformance test asserts against the version-bumped OpenAPI YAML.
+
+  # ----- 2.1 GATED contract extension (the hard serialization point) ---------
+
+  - id: 007-CONTRACT
+    task_ids: [T010, T011]
+    type: feat
+    status: proposed   # NOT yet approved; approval_required gates dispatch regardless
+    approval_required: true   # [GATED] — packages/contracts/openapi/** is a forbidden surface (Constitution §IV/§VIII, Standing Rules §3)
+    depends_on:
+      - 007-SETUP
+      - 007-SIGNOFF-SALE-CONTEXT     # T010 also reconciles 005's sale_context conformance per the TIGHTEN verdict
+      - 007-SIGNOFF-IDEMPOTENCY      # T010 declares Idempotency-Key on reopen + bulk-dismiss only per the ISOLATE verdict
+    blocks:
+      - 007-US1-LIST-PROJECTION
+      - 007-US1-RECONCILIATION-PROJECTION
+      - 007-US3-INSPECT
+      - 007-US7-REOPEN
+      - 007-US8-BULK-DISMISS
+      - 007-POLISH-AUDIT-SWEEP       # T076 absence-guard checks the post-T010 operationId set
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/catalog/unknown-items.yaml   # [GATED] — version bump (additive MINOR), 3 new ops, ReviewQueueItem schema, `forbidden` code, list params
+      - apps/api/test/catalog/unknown-items/contract.spec.ts    # conformance test extension (existing 005 conformance entrypoint; T011 verifies in-place registration)
+    forbidden_files:
+      - packages/contracts/openapi/catalog/*.yaml   # do not touch other catalog contracts
+      - packages/contracts/openapi/*.openapi.yaml   # do not touch any other OpenAPI contract
+      - apps/api/src/catalog/**                     # NO runtime code in the contract slice — operations are implemented by the US slices
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/contract"
+        expected: GREEN — extended YAML lints clean against the existing OpenAPI validator; the 5 shipped operationIds are unchanged (no rename — renames are breaking); the 3 new operationIds + ReviewQueueItem schema + `forbidden` code are present.
+        docker_required: false
+      - command: grep -nE "Idempotency-Token|idempotency_token" packages/contracts/openapi/catalog/unknown-items.yaml
+        expected: NO output — T564 trap; header is `Idempotency-Key`, wire code `idempotency_key_conflict`, never `Idempotency-Token`.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and request explicit [GATED] approval BEFORE editing the YAML — this slice must not dispatch until the user approves it in-session"
+      - "stop if any of the 5 shipped operationIds would be renamed (breaking change) — additive MINOR only"
+      - "stop if the version bump is MAJOR — the contract change is additive (new ops) + a narrowing of the list response (sale_context removal), documented in the version note, not a breaking rename"
+    parallel_safety: unsafe   # gated OpenAPI change; serialize before every slice that conformance-checks against it
+    branch_template: "feat/007-contract"
+
+  # ----- 2.2 `forbidden` error category (foundational — serves US9) ----------
+
+  - id: 007-FORBIDDEN-CATEGORY
+    task_ids: [T020, T021]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-SETUP
+    blocks:
+      - 007-US7-REOPEN              # reopen's 403 forbidden / 404 split needs the mapped category
+      - 007-US4-LINK-REGRESSION     # regression guards assert the taxonomy is unchanged + the new code added
+      - 007-US5-CREATE-REGRESSION
+      - 007-US6-DISMISS-REGRESSION
+      - 007-POLISH-AUDIT-SWEEP      # T074 determinism asserts the category's wording
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/errors/forbidden-category.spec.ts   # T020 RED
+      - apps/api/src/catalog/**/error/**                                        # T021 GREEN — verify exact mapper file at dispatch (shared catalog mapper or global exception filter)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/errors/forbidden-category"
+        expected: GREEN — the error mapper produces error.code = "forbidden" at HTTP 403 for an in-scope insufficient-role case, distinct from 404 not-found (FR-051, FR-052).
+        docker_required: true   # [TC] — exercises the API error pipeline against a live request
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/errors"
+        expected: GREEN — the existing 7-code 005 error-taxonomy tests still pass (no regression); `forbidden` is the 8th code.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if mapping `forbidden` alters any of the existing 7 error codes — the change is purely additive (8th category)"
+      - "stop if the exact mapper file cannot be located — report and confirm before editing the global exception filter"
+    parallel_safety: safe   # distinct error spec + mapper; no overlap with the projection / isolation slices
+    branch_template: "feat/007-forbidden-category"
+
+  # ----- 2.3 `ReviewQueueItem` projection (foundational — US1/US2/US3) -------
+
+  - id: 007-REVIEW-QUEUE-PROJECTION
+    task_ids: [T022, T023]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-SETUP
+    blocks:
+      - 007-US1-LIST-PROJECTION
+      - 007-US1-RECONCILIATION-PROJECTION
+      - 007-US3-INSPECT
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/projection/review-queue-item.spec.ts   # T022 RED
+      - apps/api/src/catalog/unknown-items/dto/review-queue-item.dto.ts            # T023 GREEN — shared toReviewQueueItem(row, canSeeProduct) helper
+    forbidden_files:
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts   # the wire-shape SWAP happens in US1 slices, not here (this slice only adds the helper)
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts # ditto
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/projection/review-queue-item"
+        expected: GREEN — toReviewQueueItem returns the data-model §2.1 field set, OMITS sale_context (FR-007 / 006 FR-021a), and applies the FR-001a conditional resolved_product_id (present only when the caller may see the product).
+        docker_required: true   # [TC]
+    stop:
+      - standing-rules universal stops
+      - "stop if the helper is duplicated rather than shared — R7.2: a single home both catalog controllers import"
+      - "stop if the helper is wired into the POS `toUnknownWireShape` capture path — R7.3: POS capture KEEPS sale_context (provenance round-trip)"
+    parallel_safety: safe   # new DTO file + new spec; no overlap with forbidden-category or isolation
+    branch_template: "feat/007-review-queue-projection"
+
+  # ----- 2.4 Isolation-harness extension for the new operations --------------
+
+  - id: 007-ISOLATION-HARNESS
+    task_ids: [T024, T025]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-SETUP
+    blocks:
+      - 007-US1-LIST-PROJECTION
+      - 007-US3-INSPECT
+      - 007-US7-REOPEN
+      - 007-US8-BULK-DISMISS
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/__support__/seed-unknown-items.ts                         # T024 — 005-owned helper; ADD dismissed + resolved fixtures across tenants A/B, stores X/Y
+      - apps/api/test/catalog/unknown-items/isolation/review-queue-sweep.spec.ts        # T025 RED — extend the cross-tenant/cross-store sweep for inspect/reopen/bulk-dismiss
+    forbidden_files:
+      - apps/api/test/catalog/__support__/isolation-harness.ts   # 003-owned — MUST NOT modify (T024 acceptance)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/isolation/review-queue-sweep"
+        expected: RED — sweep cases (401 unauth, 404 cross-tenant id, 404 out-of-scope store, RLS-bypass zero rows, malicious body-override ignored) fail on the MISSING operations, not on RLS (SI-001/002/004, FR-060/061/062).
+        docker_required: true   # [TC] — RLS / cross-tenant sweep requires Postgres
+      - command: pnpm --filter @data-pulse-2/api test "catalog" --testPathIgnorePatterns "review-queue-sweep"
+        expected: GREEN — the existing 003/005 isolation tests are untouched (isolation-harness.ts not modified).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if 003-owned apps/api/test/catalog/__support__/isolation-harness.ts is modified — extend the 005-owned seed helper only"
+    parallel_safety: unsafe   # seed-unknown-items.ts is a shared fixture imported by every downstream catalog test; serialize its extension before the US slices consume it
+    branch_template: "test/007-isolation-harness"
+
+  # ===== Phase 3: US1 — review-safe list (P1, MVP) (extend shipped list) =====
+  # T032 swaps unknown-items.controller responses; T038 swaps reconciliation.
+  # controller responses. Split into TWO slices because they touch different
+  # controllers AND T038 collides with US7-REOPEN on reconciliation.controller.ts.
+
+  - id: 007-US1-LIST-PROJECTION
+    task_ids: [T030, T031, T032, T033]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-REVIEW-QUEUE-PROJECTION
+      - 007-ISOLATION-HARNESS
+      - 007-CONTRACT
+      - 007-SIGNOFF-SALE-CONTEXT
+    blocks:
+      - 007-US2-LIST-EXTENSIONS       # US2 extends the same list path/file — must serialize after US1
+      - 007-US4-LINK-REGRESSION
+      - 007-US5-CREATE-REGRESSION
+      - 007-US6-DISMISS-REGRESSION
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/list/list-projection.spec.ts        # T030 RED
+      - apps/api/test/catalog/unknown-items/list/list-terminal-detail.spec.ts   # T031 RED
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts          # T032 GREEN — switch list + dismiss responses (rowToUnknownItemWireShape) to toReviewQueueItem
+    forbidden_files:
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts        # that swap is 007-US1-RECONCILIATION-PROJECTION (T038)
+      - apps/api/src/catalog/unknown-items/dto/review-queue-item.dto.ts         # the helper is owned by 007-REVIEW-QUEUE-PROJECTION
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/list/list-projection"
+        expected: GREEN — list returns ReviewQueueItem with NO sale_context key; default pending-only (FR-001, FR-007). toUnknownWireShape (POS capture) untouched (R7.3).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/list/list-terminal-detail"
+        expected: GREEN — ?status=dismissed / ?status=resolved return the FR-001a / FR-008 terminal-detail set; resolved_product_id suppressed when the caller cannot see the product.
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/isolation/review-queue-sweep"
+        expected: GREEN — cross-tenant list → empty page; store-scoped list → only in-scope items, no out-of-scope count/facet leak (SC-001, SC-007).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if toUnknownWireShape (POS capture) is touched — R7.3: POS capture KEEPS sale_context"
+      - "stop if leaving sale_context on the list response — only permitted under an (un-granted) FR-007 waiver; T002 decided TIGHTEN"
+    parallel_safety: unsafe   # owns unknown-items.controller.ts (also touched by US2, US8) — serialize
+    branch_template: "feat/007-us1-list-projection"
+
+  - id: 007-US1-RECONCILIATION-PROJECTION
+    task_ids: [T038]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-REVIEW-QUEUE-PROJECTION
+      - 007-CONTRACT
+      - 007-SIGNOFF-SALE-CONTEXT
+    blocks:
+      - 007-US4-LINK-REGRESSION      # T060 asserts no sale_context on the link response (after this swap)
+      - 007-US5-CREATE-REGRESSION    # T061 asserts no sale_context on the create-product response (after this swap)
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts   # T038 GREEN — switch link + create-product responses (rowToWireShape) to toReviewQueueItem
+    forbidden_files:
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts      # reopen impl is 007-US7-REOPEN (T053) — service is not touched here
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts     # that swap is 007-US1-LIST-PROJECTION (T032)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/reconciliation"
+        expected: GREEN — link + create-product conformance pass against the version-bumped (sale_context-free) shape (FR-007, R7.2); existing 005 reconciliation behavior unchanged except the response shape.
+        docker_required: true   # [TC]
+    stop:
+      - standing-rules universal stops
+      - "stop if the reopen route/service is added here — that is 007-US7-REOPEN; this slice is the projection swap only (T038)"
+    parallel_safety: unsafe   # owns reconciliation.controller.ts; US7-REOPEN adds a route to the same controller — serialize the two
+    branch_template: "feat/007-us1-reconciliation-projection"
+
+  # ===== Phase 4: US2 — filter / sort / group / paginate (P1) ================
+
+  - id: 007-US2-LIST-EXTENSIONS
+    task_ids: [T034, T035, T036, T037]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-US1-LIST-PROJECTION   # US2 extends the same list path/file — sequential after US1 (tasks.md §13)
+    blocks:
+      - 007-US4-LINK-REGRESSION    # regression guards depend on T037 (list extended)
+      - 007-US5-CREATE-REGRESSION
+      - 007-US6-DISMISS-REGRESSION
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/list/list-filters.spec.ts      # T034 RED
+      - apps/api/test/catalog/unknown-items/list/list-sort-group.spec.ts   # T035 RED
+      - apps/api/test/catalog/unknown-items/list/list-pagination.spec.ts   # T036 RED
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts        # T037 GREEN — list path: new query params, scope-safe facets, sort, optional grouping
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts     # T037 GREEN — Zod .strict() DTO wiring for the new params
+      - apps/api/src/catalog/unknown-items/dto/list-unknown-items.dto.ts   # T037 — new/extended list query DTO (verify exact filename at dispatch)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/list/list-filters"
+        expected: GREEN — filter by source_system + age bucket within scope; facets list only in-scope dimensions (FR-002, FR-006, FR-030, FR-033).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/list/list-sort-group"
+        expected: GREEN — sort by age asc/desc + store; optional group_by with no out-of-scope buckets (FR-003, FR-004, FR-032).
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/list/list-pagination"
+        expected: GREEN — limit default 50 / max 200 / out-of-range → 400 validation (NOT clamp); opaque cursor; total counts only in-scope (FR-005).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if out-of-range limit clamps instead of returning 400 validation — FR-005 requires reject, not clamp"
+      - "stop if a facet/count leaks an out-of-scope dimension — scope-safe facet computation is mandatory (SC-007)"
+    parallel_safety: unsafe   # owns unknown-items.service.ts + controller.ts (shared with US1, US8)
+    branch_template: "feat/007-us2-list-extensions"
+
+  # ===== Phase 5: US3 — inspect a single item (P1) (NEW operation) ===========
+
+  - id: 007-US3-INSPECT
+    task_ids: [T040, T041, T042, T043]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-REVIEW-QUEUE-PROJECTION
+      - 007-ISOLATION-HARNESS
+      - 007-CONTRACT
+      - 007-SIGNOFF-SALE-CONTEXT   # T042 returns toReviewQueueItem; projection timing governed by T002
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/inspect/inspect-happy.spec.ts       # T040 RED
+      - apps/api/test/catalog/unknown-items/inspect/inspect-isolation.spec.ts   # T041 RED
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts             # T042 GREEN — inspectUnknownItem(id): RLS-scoped single-row read → 404 on zero rows
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts          # T042 GREEN — GET /{id} route mapped to tenantAdminInspectUnknownItem
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/inspect/inspect-happy"
+        expected: GREEN — in-scope GET /{id} → ReviewQueueItem, no sale_context, no candidate-match hint (FR-009, FR-007, FR-070).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/inspect/inspect-isolation"
+        expected: GREEN — out-of-scope store id → 404; cross-tenant id → 404; both non-disclosing (FR-009, SI-004); RLS bypass probe (wrong app.current_tenant → zero rows → 404).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if inspect returns a candidate-match hint — out of scope in v1 (FR-070)"
+      - "stop if out-of-scope / cross-tenant returns anything other than a non-disclosing 404"
+    parallel_safety: unsafe   # T042 edits unknown-items.service.ts + controller.ts (shared with US1, US2, US8) — serialize against them; independent of US7/US8 only by file, not by shared file
+    branch_template: "feat/007-us3-inspect"
+
+  # ===== Phase 6: US7 — reopen a dismissed item, tenant-wide only (P2) =======
+
+  - id: 007-US7-REOPEN
+    task_ids: [T050, T051, T052, T053, T054]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-ISOLATION-HARNESS
+      - 007-CONTRACT
+      - 007-FORBIDDEN-CATEGORY    # the 403 forbidden / 404 not-found split needs the mapped category (T021)
+    blocks:
+      - 007-POLISH-AUDIT-SWEEP    # T070/T074/T075 exercise reopen
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/reopen/reopen-happy.spec.ts                  # T050 RED
+      - apps/api/test/catalog/unknown-items/reopen/reopen-authority.spec.ts              # T051 RED
+      - apps/api/test/catalog/unknown-items/reopen/reopen-state-and-idempotency.spec.ts  # T052 RED
+      - apps/api/src/catalog/reconciliation/reconciliation.service.ts                    # T053 GREEN — reopenUnknownItem(...) with isTenantWide split (R7.4) + programmatic dual-audit (R7.5)
+      - apps/api/src/catalog/reconciliation/reconciliation.controller.ts                 # T054 GREEN — POST /{id}/reopen, wired guards (R7.1), Idempotency-Key, Zod .strict()
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/reopen/reopen-happy"
+        expected: GREEN — tenant-wide actor reopens a dismissed item → fresh pending row for the same tuple (005 FR-005); original dismissed preserved; BOTH reopen + fresh-capture audited (FR-041, FR-110).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/reopen/reopen-authority"
+        expected: GREEN — store-operator + in-scope → 403 forbidden ("tenant-wide authority required"); store-operator + out-of-scope → 404 not-found; rejection audited (FR-042, FR-111). Service-layer split (R7.4), not guard-layer.
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/reopen/reopen-state-and-idempotency"
+        expected: GREEN — reopen on resolved → 409 already-reconciled + details.prior_state; pending-sibling → already-pending no-duplicate; same Idempotency-Key+body → one fresh row same response; changed body → idempotency_key_conflict (FR-043, FR-063, SC-005).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if @Roles excludes store_manager (e.g. @Roles('owner','tenant_admin')) — that wrongly 404s in-scope store_managers; the 403 is decided in the service, not the guard (R7.4). Use denyAs:404 and let the service split."
+      - "stop if reopen emits only one audit event — R7.5 requires BOTH the reopen action AND the fresh capture, programmatically within the transaction"
+      - "stop if header is `Idempotency-Token` — T564 trap; it is `Idempotency-Key` / `idempotency_key_conflict`"
+    parallel_safety: unsafe   # T053/T054 own reconciliation.service.ts + controller.ts — collides with 007-US1-RECONCILIATION-PROJECTION (T038) on the controller; serialize the two
+    branch_template: "feat/007-us7-reopen"
+
+  # ===== Phase 7: US8 — bulk-dismiss a bounded selection (P2) (NEW) ==========
+
+  - id: 007-US8-BULK-DISMISS
+    task_ids: [T055, T056, T057, T058]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-ISOLATION-HARNESS
+      - 007-CONTRACT
+    blocks:
+      - 007-POLISH-AUDIT-SWEEP    # T070/T074 exercise bulk-dismiss
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/bulk-dismiss/bulk-ceiling.spec.ts         # T055 RED
+      - apps/api/test/catalog/unknown-items/bulk-dismiss/bulk-mixed-success.spec.ts   # T056 RED
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts                   # T057 GREEN — bulkDismissUnknownItems(ids[]): ≤200 ceiling, decompose into shipped per-item dismiss
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts                # T058 GREEN — POST /bulk-dismiss, Idempotency-Key, Zod .strict() { ids } maxItems 200
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/bulk-dismiss/bulk-ceiling"
+        expected: GREEN — 201 ids → 400 validation, NOTHING dismissed (FR-044, FR-070, SC-008).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/bulk-dismiss/bulk-mixed-success"
+        expected: GREEN — ≤200 mixed selection → per-item outcomes (dismissed / already-reconciled+prior_state / not-found); each success audited; one failure does not affect siblings (FR-044, FR-070a, SC-008); same key+body replay consistent (SC-005).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if bulk-dismiss writes a NEW lifecycle path instead of decomposing into the shipped per-item dismiss — 006 FR-070a requires reuse of the shipped dismiss (the building block T062 guards)"
+      - "stop if the ≤200 ceiling clamps/truncates instead of whole-batch reject → 400 validation (FR-044)"
+    parallel_safety: unsafe   # T057/T058 own unknown-items.service.ts + controller.ts (shared with US1, US2, US3) — serialize
+    branch_template: "feat/007-us8-bulk-dismiss"
+
+  # ===== Phase 8: US4/US5/US6 — shipped reconciliation REGRESSION GUARD ONLY =
+  # No reimplementation. T003 = ISOLATE → NO key-replay assertions; assert
+  # monotonic-guard no-duplicate-effect only.
+
+  - id: 007-US4-LINK-REGRESSION
+    task_ids: [T060]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-FORBIDDEN-CATEGORY                # T021
+      - 007-US2-LIST-EXTENSIONS               # T037 (list extended)
+      - 007-US1-RECONCILIATION-PROJECTION     # T038 (link response sale_context-free)
+      - 007-SIGNOFF-IDEMPOTENCY               # T003 ISOLATE → no key-replay clause
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/link-regression-007.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/reconciliation/link-regression-007"
+        expected: GREEN — shipped link still resolves linked + audits; alias_conflict non-disclosing; race → one winner (FR-020/021/022); link response carries NO sale_context (FR-007, post-T038); monotonic-guard no-duplicate-effect only (T003 isolate — NO key-replay assertion).
+        docker_required: true   # [TC]
+    stop:
+      - standing-rules universal stops
+      - "stop if this slice modifies any reconciliation runtime code — it is a regression GUARD (test-only), not a reimplementation"
+      - "stop if a key-replay/identical-replay-response assertion is added — T003 = ISOLATE; shipped link keeps monotonic-guard only"
+    parallel_safety: safe   # own test file; reconciliation runtime is frozen by the time this runs
+    branch_template: "test/007-us4-link-regression"
+
+  - id: 007-US5-CREATE-REGRESSION
+    task_ids: [T061]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-FORBIDDEN-CATEGORY
+      - 007-US2-LIST-EXTENSIONS
+      - 007-US1-RECONCILIATION-PROJECTION
+      - 007-SIGNOFF-IDEMPOTENCY
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/create-product-regression-007.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/reconciliation/create-product-regression-007"
+        expected: GREEN — shipped create-from still atomic (product+alias+transition); alias_conflict fails closed; missing fields → validation; no silent-create path (FR-065); create-product response carries NO sale_context (FR-007, post-T038); monotonic-guard no-duplicate-effect only (T003 isolate).
+        docker_required: true   # [TC]
+    stop:
+      - standing-rules universal stops
+      - "stop if this slice modifies any reconciliation runtime code — regression GUARD only"
+      - "stop if a key-replay assertion is added — T003 = ISOLATE"
+    parallel_safety: safe
+    branch_template: "test/007-us5-create-regression"
+
+  - id: 007-US6-DISMISS-REGRESSION
+    task_ids: [T062]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-FORBIDDEN-CATEGORY
+      - 007-US2-LIST-EXTENSIONS           # T037
+      - 007-SIGNOFF-IDEMPOTENCY
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/reconciliation/dismiss-regression-007.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/reconciliation/dismiss-regression-007"
+        expected: GREEN — shipped dismiss still pending→dismissed + audit; re-dismiss → already-reconciled+details.prior_state; out-of-scope → 404 (FR-040). These are the per-item building block bulk-dismiss decomposes into (T057). Monotonic-guard only (T003 isolate).
+        docker_required: true   # [TC]
+    stop:
+      - standing-rules universal stops
+      - "stop if this slice modifies any dismiss runtime code — regression GUARD only"
+      - "stop if a key-replay assertion is added — T003 = ISOLATE"
+    parallel_safety: safe
+    branch_template: "test/007-us6-dismiss-regression"
+
+  # ===== Phase 9: Polish & cross-cutting =====================================
+
+  - id: 007-POLISH-AUDIT-SWEEP
+    task_ids: [T070, T074, T075, T076]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-US7-REOPEN          # T054
+      - 007-US8-BULK-DISMISS    # T058
+      - 007-FORBIDDEN-CATEGORY  # T021 (determinism asserts category wording)
+      - 007-CONTRACT            # T076 absence-guard checks the post-T010 operationId set
+    blocks:
+      - 007-POLISH-SMOKE-COVERAGE
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/audit/review-queue-audit.spec.ts             # T070
+      - apps/api/test/catalog/unknown-items/errors/determinism.spec.ts                   # T074
+      - apps/api/test/catalog/unknown-items/errors/system-failure-retry.spec.ts          # T075
+      - apps/api/test/catalog/unknown-items/contract/forbidden-operations.spec.ts        # T076
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/audit/review-queue-audit"
+        expected: GREEN — every state change (reopen, bulk-dismiss item-success) + every audited failure has an event with tenant/store/actor/action/target/correlation-id via 005 FR-083; no parallel channel (SC-004, FR-064).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/errors/determinism"
+        expected: GREEN — same logical action / state / actor scope yields byte-identical failure category + non-disclosing wording across repeated calls (FR-053); no nondeterministic detail leaks.
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/errors/system-failure-retry"
+        expected: GREEN — injected mid-action fault → system-failure; retry succeeds idempotently or returns the same system-failure; never a hidden partial commit (FR-054, SC-006).
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/contract/forbidden-operations"
+        expected: GREEN — no force-link / override-conflict / bulk-link / bulk-create / bulk-reopen operationId in the contract NOR a routable endpoint (→ 404/405); conformance set contains only allowed operationIds (FR-023, FR-045, SC-003).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a partial-commit is observable after a faulted+retried action (T075) — that is a §XI atomicity violation"
+      - "stop if any forbidden operation (force-link / bulk-link / bulk-create / bulk-reopen) is reachable — T076 must prove they do not exist"
+    parallel_safety: safe   # four distinct polish spec files; runtime frozen by this phase
+    branch_template: "test/007-polish-audit-sweep"
+
+  - id: 007-POLISH-SMOKE-COVERAGE
+    task_ids: [T071, T072]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-POLISH-AUDIT-SWEEP   # T071 runs after all GREEN tasks land
+    blocks:
+      - 007-CLOSEOUT
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/unknown-items/smoke/quickstart-journeys.spec.ts   # T071 — quickstart journeys 1–6 integration smoke (verify exact path at dispatch)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/smoke/quickstart-journeys"
+        expected: GREEN — all quickstart.md journeys 1–6 pass end-to-end as an integration smoke (T071).
+        docker_required: true   # [TC]
+      - command: pnpm --filter @data-pulse-2/api test "catalog" --coverage --collectCoverageFrom "apps/api/src/catalog/**"
+        expected: ≥80% line coverage for the new/extended catalog code (Constitution §VI, T072).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if coverage for new/extended catalog code is <80% — add tests, do not lower the gate (Constitution §VI)"
+    parallel_safety: safe   # read-only smoke + coverage over frozen runtime
+    branch_template: "test/007-polish-smoke-coverage"
+
+  - id: 007-CLOSEOUT
+    task_ids: [T073]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on:
+      - 007-POLISH-SMOKE-COVERAGE   # T073 records final state after all above
+    blocks: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/007-unknown-items-review-queue-api/wave-status.md
+      - specs/007-unknown-items-review-queue-api/execution-map.yaml   # self-amending: transition slice statuses to merged at closeout
+    validation:
+      - command: grep -nE "shipped|merged|deferred" specs/007-unknown-items-review-queue-api/wave-status.md
+        expected: wave-status reflects shipped reality — final slice status, the two [SIGN-OFF] verdicts (T002/T003), and any deferred follow-up.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if any slice above is not in a terminal state — closeout records reality, it does not force-close incomplete work"
+    parallel_safety: safe
+    branch_template: "docs/007-closeout"
+
+# ----------------------------------------------------------------------------
+# groups — optional parallel groupings (proposed; awaiting endorsement)
+# ----------------------------------------------------------------------------
+# Two safe parallel groups are proposed. The Phase-2 foundational RED tests
+# touch distinct files (forbidden-category, projection, isolation seed/sweep)
+# and can run together once 007-SETUP + 007-CONTRACT land. The three Phase-8
+# regression guards are test-only over a frozen runtime and never collide.
+#
+# NOTE: the foundational group is `safe` ONLY for the RED-test authoring; the
+# isolation slice's GREEN extends a SHARED fixture (seed-unknown-items.ts), so
+# Maestro should land 007-ISOLATION-HARNESS before any US slice consumes it.
+
+groups:
+
+  - id: PHASE2-FOUNDATIONAL
+    members:
+      - 007-FORBIDDEN-CATEGORY
+      - 007-REVIEW-QUEUE-PROJECTION
+      - 007-ISOLATION-HARNESS
+    parallel_safety: safe   # distinct files; all depend only on 007-SETUP (007-CONTRACT is the separate gated serialization point)
+    proposed: true
+
+  - id: PHASE8-REGRESSION-GUARDS
+    members:
+      - 007-US4-LINK-REGRESSION
+      - 007-US5-CREATE-REGRESSION
+      - 007-US6-DISMISS-REGRESSION
+    parallel_safety: safe   # three distinct test-only files over frozen reconciliation runtime
+    proposed: true

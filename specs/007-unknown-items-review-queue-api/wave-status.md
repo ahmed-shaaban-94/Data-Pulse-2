@@ -29,6 +29,131 @@
 
 ---
 
+## Dependency & parallel-safety graph
+
+Derived from [`execution-map.yaml`](./execution-map.yaml) `depends_on` edges + `parallel_safety` fields (19 slices, all 43 tasks T001–T076). Edges flow **depends_on → dependent** (arrow points to the slice that waits). `[GATED]` = `007-CONTRACT` only; it is the serialization keystone that fans out to every Level-2 user-story slice.
+
+```mermaid
+flowchart TD
+    %% ---- Level 0: no dependencies ----
+    SETUP["007-SETUP<br/>T001 · chore · safe"]
+    SOS["007-SIGNOFF-SALE-CONTEXT<br/>T002 · docs · safe"]
+    SOI["007-SIGNOFF-IDEMPOTENCY<br/>T003 · docs · safe"]
+
+    %% ---- Level 1: Phase 2 Foundational ----
+    CONTRACT["007-CONTRACT 🔒GATED<br/>T010/T011 · feat · unsafe"]
+    FORBID["007-FORBIDDEN-CATEGORY<br/>T020/T021 · feat · safe"]
+    PROJ["007-REVIEW-QUEUE-PROJECTION<br/>T022/T023 · feat · safe"]
+    ISO["007-ISOLATION-HARNESS<br/>T024/T025 · test · unsafe (shared fixture)"]
+
+    %% ---- Level 2: user stories ----
+    US1L["007-US1-LIST-PROJECTION<br/>T030-33 · feat · unsafe"]
+    US1R["007-US1-RECONCILIATION-PROJECTION<br/>T038 · feat · unsafe"]
+    US3["007-US3-INSPECT<br/>T040-43 · feat · unsafe"]
+    US7["007-US7-REOPEN<br/>T050-54 · feat · unsafe"]
+    US8["007-US8-BULK-DISMISS<br/>T055-58 · feat · unsafe"]
+
+    %% ---- Level 2b: US2 (after US1 list path) ----
+    US2["007-US2-LIST-EXTENSIONS<br/>T034-37 · feat · unsafe"]
+
+    %% ---- Level 3: regression guards (Phase 8) ----
+    US4["007-US4-LINK-REGRESSION<br/>T060 · test · safe"]
+    US5["007-US5-CREATE-REGRESSION<br/>T061 · test · safe"]
+    US6["007-US6-DISMISS-REGRESSION<br/>T062 · test · safe"]
+
+    %% ---- Level 4-5: polish + closeout ----
+    PAUDIT["007-POLISH-AUDIT-SWEEP<br/>T070/74/75/76 · test · safe"]
+    PSMOKE["007-POLISH-SMOKE-COVERAGE<br/>T071/72 · test · safe"]
+    CLOSE["007-CLOSEOUT<br/>T073 · docs · safe"]
+
+    %% ---- edges: Level 0 -> Level 1 ----
+    SETUP --> CONTRACT
+    SOS --> CONTRACT
+    SOI --> CONTRACT
+    SETUP --> FORBID
+    SETUP --> PROJ
+    SETUP --> ISO
+
+    %% ---- edges: Level 1 -> Level 2 ----
+    PROJ --> US1L
+    ISO --> US1L
+    CONTRACT --> US1L
+    SOS --> US1L
+
+    PROJ --> US1R
+    CONTRACT --> US1R
+    SOS --> US1R
+
+    PROJ --> US3
+    ISO --> US3
+    CONTRACT --> US3
+    SOS --> US3
+
+    ISO --> US7
+    CONTRACT --> US7
+    FORBID --> US7
+
+    ISO --> US8
+    CONTRACT --> US8
+
+    %% ---- edges: US1 -> US2 ----
+    US1L --> US2
+
+    %% ---- edges: -> Level 3 regression guards ----
+    FORBID --> US4
+    US2 --> US4
+    US1R --> US4
+    SOI --> US4
+
+    FORBID --> US5
+    US2 --> US5
+    US1R --> US5
+    SOI --> US5
+
+    FORBID --> US6
+    US2 --> US6
+    SOI --> US6
+
+    %% ---- edges: -> Level 4-5 polish/closeout ----
+    US7 --> PAUDIT
+    US8 --> PAUDIT
+    FORBID --> PAUDIT
+    CONTRACT --> PAUDIT
+    PAUDIT --> PSMOKE
+    PSMOKE --> CLOSE
+
+    %% ---- styling: gated + unsafe ----
+    classDef gated fill:#ffe0b2,stroke:#e65100,stroke-width:3px,color:#000;
+    classDef unsafe fill:#ffcdd2,stroke:#c62828,color:#000;
+    classDef safe fill:#c8e6c9,stroke:#2e7d32,color:#000;
+
+    class CONTRACT gated;
+    class ISO,US1L,US1R,US3,US7,US8,US2 unsafe;
+    class SETUP,SOS,SOI,FORBID,PROJ,US4,US5,US6,PAUDIT,PSMOKE,CLOSE safe;
+```
+
+**Parallel-safety legend** — `safe` (green) = no file/fixture overlap with any other ready slice; `unsafe` (red) = shared mutable file, must serialize against its peers; `🔒GATED` (orange) = `approval_required: true`, dispatch only after explicit in-session approval.
+
+**Why the `unsafe` slices collide** (the file each pair/family mutates):
+
+| Shared mutable file | Contending slices | Serialization rule |
+|---|---|---|
+| `apps/api/src/catalog/unknown-items/unknown-items.controller.ts` | US1-LIST · US2 · US3 · US8 | serialize the whole family |
+| `apps/api/src/catalog/unknown-items/unknown-items.service.ts` | US2 · US3 · US8 | (subset of above) |
+| `apps/api/src/catalog/reconciliation/reconciliation.controller.ts` | US1-RECONCILIATION (T038) · US7-REOPEN | serialize the pair |
+| `apps/api/test/catalog/__support__/seed-unknown-items.ts` (shared fixture) | ISOLATION-HARNESS | land before any consumer |
+| `packages/contracts/openapi/catalog/unknown-items.yaml` (GATED) | CONTRACT | gated keystone — alone |
+
+**Endorsed-candidate parallel groups** (both `proposed: true` in the map, awaiting endorsement):
+
+- `PHASE2-FOUNDATIONAL` = `007-FORBIDDEN-CATEGORY` ∥ `007-REVIEW-QUEUE-PROJECTION` ∥ `007-ISOLATION-HARNESS` (distinct files; all gated only on `007-SETUP`).
+- `PHASE8-REGRESSION-GUARDS` = `007-US4` ∥ `007-US5` ∥ `007-US6` (test-only over a frozen reconciliation runtime).
+
+**Critical path** (longest chain, includes the gated stall):
+`007-SETUP → 007-CONTRACT 🔒 → 007-US1-LIST-PROJECTION → 007-US2-LIST-EXTENSIONS → 007-US4/5/6 → 007-POLISH-AUDIT-SWEEP → 007-POLISH-SMOKE-COVERAGE → 007-CLOSEOUT`. The `[GATED]` approval on `007-CONTRACT` is the one unavoidable human-in-the-loop bottleneck on this path.
+
+---
+
 ## SIGN-OFF Decisions
 
 Two product decisions were deferred from `/speckit-plan` (research §R1 / §R6) into `tasks.md` as `[SIGN-OFF]` gates (T002, T003). Both are recorded here as the authoritative verdict. **These gate the dependent GREEN tasks; recording them unblocks implementation.**
