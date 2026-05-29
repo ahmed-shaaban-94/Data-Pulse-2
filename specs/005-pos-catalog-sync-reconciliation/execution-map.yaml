@@ -993,7 +993,9 @@ slices:
   - id: 005-WAVE1-T560-PERF-FLAKE
     task_ids: [T560-flake]
     type: chore
-    status: proposed   # in-flight 2026-05-28: diagnostic-first done, mechanism (b) report-only gate applied in the PR (see `chosen_mechanism_with_evidence`). Flip to complete-by-execution on merge.
+    status: complete-by-execution   # 2026-05-29 — diagnostic-first executed, mechanism (b) report-only gate applied + merged via PR #394 (commit fd2544b). See `chosen_mechanism_with_evidence`. Follow-up (open, non-blocking): authoritative SC-008 enforcement in a dedicated contention-free perf environment.
+    closed_by_pr: 394
+    closed_at_date: 2026-05-29
     chosen_mechanism_with_evidence: |
       Mechanism (b) — report-only perf gate. RED-run diagnostic (CI run
       26608290112, the only perf-assertion failure available) showed WHOLE-RUN
