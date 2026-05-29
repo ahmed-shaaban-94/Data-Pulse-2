@@ -1304,17 +1304,22 @@ components:
               type: string
               description: >
                 Stable machine-readable error code (FR-091 / 007 FR-100
-                taxonomy). The closed 8-category review-queue vocabulary is:
-                `validation`, `target_unavailable`, `alias_conflict`,
-                `idempotency_key_conflict`, `already_reconciled`,
-                `not_found`, `forbidden` (007's 8th category — in-scope
-                insufficient authority, distinct from `not_found`), and
-                `system_failure`. NOTE: some shipped-005 operation prose
-                uses the legacy spelling `validation_failure`; the canonical
-                007 wire code is `validation` (research §R4). Shipped ops are
-                not retrofitted (ISOLATE, T003); the runtime already emits
-                `validation` (the prose is documented drift, not a live
-                second code).
+                taxonomy). The closed 8-category review-queue BUSINESS-FAILURE
+                vocabulary is: `validation`, `target_unavailable`,
+                `alias_conflict`, `idempotency_key_conflict`,
+                `already_reconciled`, `not_found`, `forbidden` (007's 8th
+                category — in-scope insufficient authority, distinct from
+                `not_found`), and `system_failure`. NOTE: the `425 Too Early`
+                idempotency in-progress signal is a TRANSPORT-level retry
+                indicator, NOT a business-failure category — it is outside
+                this closed set (the runtime interceptor emits a diagnostic
+                `idempotency_in_progress` marker on 425; see the per-op 425
+                response and the recorded contract/runtime body-shape finding).
+                Some shipped-005 operation prose uses the legacy spelling
+                `validation_failure`; the canonical 007 wire code is
+                `validation` (research §R4). Shipped ops are not retrofitted
+                (ISOLATE, T003); the runtime already emits `validation` (the
+                prose is documented drift, not a live second code).
             message:
               type: string
               description: Human-readable summary; no sensitive data.

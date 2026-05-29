@@ -382,6 +382,77 @@ describe("catalog/unknown-items.yaml — forbidden error category", () => {
 });
 
 // ===========================================================================
+// 5c. Response bodies reference the correct schema (not just status presence)
+// ===========================================================================
+// CodeRabbit PR #404: presence-only assertions are shallow. Assert each
+// documented response actually refs the right schema — 200→ReviewQueueItem,
+// error codes (400/401/403/404/409/425)→Error envelope. The 425 refs Error to
+// MIRROR the shipped posCaptureItem 425 (a contract-wide convention); the
+// interceptor's raw in-progress body-shape mismatch is a recorded finding,
+// not changed here.
+describe("catalog/unknown-items.yaml — 007 response body schema refs", () => {
+  /** Extract the application/json schema $ref for a given op + status. */
+  function responseRef(
+    path: string,
+    method: string,
+    status: number,
+  ): string | undefined {
+    const op = catalogDoc.paths?.[path]?.[method];
+    const responses = op?.responses as
+      | Record<
+          string,
+          { content?: Record<string, { schema?: { $ref?: string } }> }
+        >
+      | undefined;
+    return responses?.[status]?.content?.["application/json"]?.schema?.["$ref"];
+  }
+
+  it("inspect: 200→ReviewQueueItem, 400/401/403/404→Error", () => {
+    const p = TENANT_ADMIN_INSPECT_PATH;
+    expect(responseRef(p, "get", 200)).toBe(
+      "#/components/schemas/ReviewQueueItem",
+    );
+    for (const status of [400, 401, 403, 404]) {
+      expect(responseRef(p, "get", status)).toBe("#/components/schemas/Error");
+    }
+  });
+
+  it("reopen: 201→ReviewQueueItem, 400/401/403/404/409/425→Error", () => {
+    const p = TENANT_ADMIN_REOPEN_PATH;
+    expect(responseRef(p, "post", 201)).toBe(
+      "#/components/schemas/ReviewQueueItem",
+    );
+    for (const status of [400, 401, 403, 404, 409, 425]) {
+      expect(responseRef(p, "post", status)).toBe("#/components/schemas/Error");
+    }
+  });
+
+  it("bulk-dismiss: 200→BulkDismissUnknownItemsResponse, 400/401/403/409/425→Error", () => {
+    const p = TENANT_ADMIN_BULK_DISMISS_PATH;
+    expect(responseRef(p, "post", 200)).toBe(
+      "#/components/schemas/BulkDismissUnknownItemsResponse",
+    );
+    for (const status of [400, 401, 403, 409, 425]) {
+      expect(responseRef(p, "post", status)).toBe("#/components/schemas/Error");
+    }
+  });
+
+  it("reopen + bulk-dismiss 425 declare a Retry-After header (transport retry signal)", () => {
+    for (const p of KEY_BEARING_PATHS) {
+      const op = catalogDoc.paths?.[p]?.["post"] as
+        | {
+            responses?: Record<
+              string,
+              { headers?: Record<string, unknown> }
+            >;
+          }
+        | undefined;
+      expect(op?.responses?.[425]?.headers?.["Retry-After"]).toBeDefined();
+    }
+  });
+});
+
+// ===========================================================================
 // 6. Idempotency-Key on new state-changing ops (NOT Idempotency-Token)
 // ===========================================================================
 describe("catalog/unknown-items.yaml — Idempotency-Key on reopen + bulk-dismiss", () => {
