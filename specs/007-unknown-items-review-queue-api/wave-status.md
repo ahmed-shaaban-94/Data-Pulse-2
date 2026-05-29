@@ -1,7 +1,7 @@
 # Wave Status — `007-unknown-items-review-queue-api`
 
 **Last updated:** 2026-05-29 (SIGN-OFF decisions recorded; planning chain complete)
-**Spec:** [`specs/007-unknown-items-review-queue-api/`](.)
+**Spec:** [`specs/007-unknown-items-review-queue-api/`](./)
 **Base:** `origin/main` at `da032d2` (PR #398, 005 fully-closed marker, 2026-05-29)
 **Branch:** `spec/007-unknown-items-review-queue-api`
 **Active findings:** 0

@@ -208,6 +208,7 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 ## 13. Dependencies & execution order
 
 ### Phase order
+
 - **Phase 1 Setup** (T001–T003) → no deps; T002/T003 are decision gates.
 - **Phase 2 Foundational** (T010–T025) → depends on Setup; **GATED contract (T010) MUST land approved first**, then `forbidden` (T020/T021), projection (T022/T023), isolation scaffold (T024/T025).
 - **Phases 3–7** (US1, US2, US3, US7, US8) → depend on Phase 2. US1→US2 are sequential (both touch the list path/file). US3, US7, US8 are independent of each other and of US1/US2 except via the shared foundational helpers.
@@ -215,9 +216,11 @@ All paths are repo-relative. The api app is `apps/api/`; the existing catalog mo
 - **Phase 9 Polish** → depends on all GREEN.
 
 ### Critical path
+
 T001 → T002/T003 (decisions) → **T010 [GATED] approval** → T020/T022/T024 (RED) → T021/T023/T025 → US-story RED/GREEN pairs → T070–T073.
 
 ### Parallel opportunities
+
 - T002, T003 (decisions) in parallel.
 - Within Phase 2: T020/T022/T024 RED tests in parallel (different files).
 - US3 (T040/T041), US7 (T050/T051/T052), US8 (T055/T056) RED tests all parallel.
@@ -229,12 +232,14 @@ T001 → T002/T003 (decisions) → **T010 [GATED] approval** → T020/T022/T024 
 ## 14. Implementation strategy
 
 ### MVP (US1 + US3)
+
 1. Phase 1 Setup (record both sign-off decisions).
 2. Phase 2 Foundational (GATED contract approved + landed; forbidden; projection; isolation scaffold).
 3. Phase 3 US1 (review-safe list) + Phase 5 US3 (inspect) — the minimum that makes the queue *readable* without the `sale_context` leak.
 4. **STOP & VALIDATE**: list + inspect scope-correct, no descriptive-metadata leak.
 
 ### Incremental delivery
+
 - + US2 (filter/sort/group) → queue navigable.
 - + US7 (reopen) → dismissal-correction.
 - + US8 (bulk-dismiss) → queue-clearing speed.
@@ -244,7 +249,7 @@ T001 → T002/T003 (decisions) → **T010 [GATED] approval** → T020/T022/T024 
 
 ## 15. Notes
 
-- **Two human decisions block GREEN**: T002 (`sale_context`) and T003 (idempotency-key retrofit). Default to the conservative `isolate` branch if unrecorded.
+- **Both `[SIGN-OFF]` decisions are RECORDED (2026-05-29) in [`wave-status.md`](./wave-status.md) — GREEN is unblocked**: T002 (`sale_context`) = TIGHTEN, T003 (idempotency-key retrofit) = ISOLATE. (See §2 and the `[x]`-decided T002/T003 task lines.)
 - **GATED-first**: the OpenAPI extension (T010) is the source of truth; every new operation's conformance test checks against it, so it must land before the implementing GREEN tasks.
 - **Reuse ≠ reimplement**: US4/US5/US6 are regression guards over shipped ops, not new code.
 - **T564 trap**: header is `Idempotency-Key`, wire code `idempotency_key_conflict` — never `Idempotency-Token`.

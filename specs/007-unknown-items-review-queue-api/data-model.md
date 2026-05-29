@@ -45,7 +45,7 @@ A bulk-dismiss response carries one outcome per submitted id: `{ id, outcome }` 
 
 ## 3. State transitions (consumed unchanged; reopen clarified)
 
-```
+```text
             posCaptureItem (005, POS)
                    │
                    ▼
