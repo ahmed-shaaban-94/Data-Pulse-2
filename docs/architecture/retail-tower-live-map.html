@@ -661,7 +661,7 @@
           }
         });
 
-        canvas.addEventListener("click", pick);
+        canvas.addEventListener("wheel", (event) => {
         canvas.addEventListener("wheel", (event) => {
           event.preventDefault();
           state.distance += event.deltaY * 0.01;
