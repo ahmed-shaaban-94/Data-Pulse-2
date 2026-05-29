@@ -59,7 +59,9 @@ import {
   STORE_B_X,
   STORE_B_Y,
   PRODUCT_A_ACTIVE,
+  PRODUCT_B_ACTIVE,
   ACTOR_A,
+  ACTOR_B,
   type SeedableEnv,
 } from "./isolation-harness";
 
@@ -106,6 +108,62 @@ export const UNK_005_B_Y_BARCODE_CORR = "0b000000-0000-7000-8000-00000005c0b2";
 export const UNK_005_A_X_POS_CORR = "0a000000-0000-7000-8000-00000005c0a3";
 export const UNK_005_B_X_POS_CORR = "0b000000-0000-7000-8000-00000005c0b3";
 
+// ----------------------------------------------------------------------------
+// T024 (007) — terminal-state rows for the review-queue surface
+// ----------------------------------------------------------------------------
+//
+// The 005 Wave-1 fixture above seeds only PENDING rows. 007 needs DISMISSED
+// rows (for reopen + ?status=dismissed terminal-detail) and RESOLVED rows (for
+// ?status=resolved terminal-detail and the reopen-on-resolved 409 path) across
+// the full 4-cell tenant×store matrix, so the cross-tenant/cross-store sweep
+// can probe a terminal row in every cell.
+//
+// Schema constraints honored (0007_catalog.sql §8):
+//   - unknown_items_resolved_fields_consistent — a non-pending row MUST have
+//     resolved_at, resolved_by, resolution_action all NOT NULL.
+//   - resolved_product_id consistency CHK —
+//       dismissed → resolution_action='dismissed' AND resolved_product_id NULL
+//       resolved  → resolution_action IN ('linked','created') AND
+//                   resolved_product_id NOT NULL
+//   - the (tenant_id, store_id) and (tenant_id, identifier_type, value) partial
+//     unique indexes are WHERE resolution_status='pending', so terminal rows do
+//     NOT collide with the pending fixture even on a shared store/value.
+//
+// Distinct `value`s and a disjoint UUID space (`d6d*` dismissed, `d6e*`
+// resolved) keep these clear of both the 005 pending block and the 003 fixture.
+
+/** Dismissed barcode rows — one per cell (resolution_action='dismissed'). */
+export const UNK_007_A_X_DISMISSED = "0a000000-0000-7000-8000-00000005d6d1";
+export const UNK_007_A_Y_DISMISSED = "0a000000-0000-7000-8000-00000005d6d2";
+export const UNK_007_B_X_DISMISSED = "0b000000-0000-7000-8000-00000005d6d3";
+export const UNK_007_B_Y_DISMISSED = "0b000000-0000-7000-8000-00000005d6d4";
+
+/** Resolved barcode rows — one per cell (resolution_action='linked'). */
+export const UNK_007_A_X_RESOLVED = "0a000000-0000-7000-8000-00000005d6e1";
+export const UNK_007_A_Y_RESOLVED = "0a000000-0000-7000-8000-00000005d6e2";
+export const UNK_007_B_X_RESOLVED = "0b000000-0000-7000-8000-00000005d6e3";
+export const UNK_007_B_Y_RESOLVED = "0b000000-0000-7000-8000-00000005d6e4";
+
+/** Correlation IDs for the 8 terminal rows (NOT NULL per schema). */
+export const UNK_007_A_X_DISMISSED_CORR = "0a000000-0000-7000-8000-00000005c6d1";
+export const UNK_007_A_Y_DISMISSED_CORR = "0a000000-0000-7000-8000-00000005c6d2";
+export const UNK_007_B_X_DISMISSED_CORR = "0b000000-0000-7000-8000-00000005c6d3";
+export const UNK_007_B_Y_DISMISSED_CORR = "0b000000-0000-7000-8000-00000005c6d4";
+export const UNK_007_A_X_RESOLVED_CORR = "0a000000-0000-7000-8000-00000005c6e1";
+export const UNK_007_A_Y_RESOLVED_CORR = "0a000000-0000-7000-8000-00000005c6e2";
+export const UNK_007_B_X_RESOLVED_CORR = "0b000000-0000-7000-8000-00000005c6e3";
+export const UNK_007_B_Y_RESOLVED_CORR = "0b000000-0000-7000-8000-00000005c6e4";
+
+/** Distinct identifier values for the terminal rows. */
+export const UNK_007_VAL_A_X_DISMISSED = "T024-A-X-DIS-001";
+export const UNK_007_VAL_A_Y_DISMISSED = "T024-A-Y-DIS-001";
+export const UNK_007_VAL_B_X_DISMISSED = "T024-B-X-DIS-001";
+export const UNK_007_VAL_B_Y_DISMISSED = "T024-B-Y-DIS-001";
+export const UNK_007_VAL_A_X_RESOLVED = "T024-A-X-RES-001";
+export const UNK_007_VAL_A_Y_RESOLVED = "T024-A-Y-RES-001";
+export const UNK_007_VAL_B_X_RESOLVED = "T024-B-X-RES-001";
+export const UNK_007_VAL_B_Y_RESOLVED = "T024-B-Y-RES-001";
+
 /**
  * Distinct identifier values per row. Kept short and ASCII to satisfy
  * `unknown_items_value_length` (1..200) with margin.
@@ -144,6 +202,18 @@ export interface UnknownItemsFixtureIds {
   readonly valueAXPos: string;
   readonly valueBXPos: string;
   readonly sourceSystem: string;
+  // T024 (007) — terminal-state rows, one dismissed + one resolved per cell.
+  readonly dismissedAX: string;
+  readonly dismissedAY: string;
+  readonly dismissedBX: string;
+  readonly dismissedBY: string;
+  readonly resolvedAX: string;
+  readonly resolvedAY: string;
+  readonly resolvedBX: string;
+  readonly resolvedBY: string;
+  /** The product each resolved row links to (FR-001a product-reference subject). */
+  readonly resolvedProductA: string;
+  readonly resolvedProductB: string;
 }
 
 /** Frozen ID record — what `seedUnknownItemsFixture` returns. */
@@ -167,6 +237,16 @@ export const UNKNOWN_ITEMS_FIXTURE_IDS: UnknownItemsFixtureIds = Object.freeze({
   valueAXPos: UNK_005_VAL_A_X_POS,
   valueBXPos: UNK_005_VAL_B_X_POS,
   sourceSystem: UNK_005_SOURCE_SYSTEM,
+  dismissedAX: UNK_007_A_X_DISMISSED,
+  dismissedAY: UNK_007_A_Y_DISMISSED,
+  dismissedBX: UNK_007_B_X_DISMISSED,
+  dismissedBY: UNK_007_B_Y_DISMISSED,
+  resolvedAX: UNK_007_A_X_RESOLVED,
+  resolvedAY: UNK_007_A_Y_RESOLVED,
+  resolvedBX: UNK_007_B_X_RESOLVED,
+  resolvedBY: UNK_007_B_Y_RESOLVED,
+  resolvedProductA: PRODUCT_A_ACTIVE,
+  resolvedProductB: PRODUCT_B_ACTIVE,
 });
 
 /**
@@ -184,7 +264,10 @@ export const UNKNOWN_ITEMS_FIXTURE_IDS: UnknownItemsFixtureIds = Object.freeze({
 export const UNKNOWN_ITEMS_FIXTURE_COUNT = Object.freeze({
   barcodePending: 4,
   externalPosIdPending: 2,
-  total: 6,
+  // T024 (007): terminal rows added to the same disjoint UUID space.
+  barcodeDismissed: 4,
+  barcodeResolved: 4,
+  total: 14,
 } as const);
 
 // ----------------------------------------------------------------------------
@@ -253,6 +336,65 @@ export async function seedUnknownItemsFixture(
     [
       UNK_005_A_X_POS, TENANT_A, STORE_A_X, UNK_005_VAL_A_X_POS, UNK_005_SOURCE_SYSTEM, UNK_005_A_X_POS_CORR,
       UNK_005_B_X_POS, TENANT_B, STORE_B_X, UNK_005_VAL_B_X_POS, UNK_005_B_X_POS_CORR,
+    ],
+  );
+
+  // ---- T024 (007): dismissed barcode rows (one per cell) ------------------
+  // Terminal row: resolution_status='dismissed' → resolution_action='dismissed',
+  // resolved_at/resolved_by NOT NULL, resolved_product_id MUST be NULL
+  // (unknown_items resolved_product_id consistency CHK). resolved_by carries
+  // the tenant's actor.
+  await admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value, source_system,
+        resolution_status, resolution_action, resolved_at, resolved_by,
+        resolved_product_id, correlation_id)
+     VALUES
+       ($1,  $2,  $3,  'barcode', $4,  NULL, 'dismissed', 'dismissed', now(), $5,  NULL, $6),
+       ($7,  $2,  $8,  'barcode', $9,  NULL, 'dismissed', 'dismissed', now(), $5,  NULL, $10),
+       ($11, $12, $13, 'barcode', $14, NULL, 'dismissed', 'dismissed', now(), $15, NULL, $16),
+       ($17, $12, $18, 'barcode', $19, NULL, 'dismissed', 'dismissed', now(), $15, NULL, $20)
+     ON CONFLICT DO NOTHING`,
+    [
+      UNK_007_A_X_DISMISSED, TENANT_A, STORE_A_X, UNK_007_VAL_A_X_DISMISSED, ACTOR_A, UNK_007_A_X_DISMISSED_CORR,
+      UNK_007_A_Y_DISMISSED, STORE_A_Y, UNK_007_VAL_A_Y_DISMISSED, UNK_007_A_Y_DISMISSED_CORR,
+      UNK_007_B_X_DISMISSED, TENANT_B, STORE_B_X, UNK_007_VAL_B_X_DISMISSED, ACTOR_B, UNK_007_B_X_DISMISSED_CORR,
+      UNK_007_B_Y_DISMISSED, STORE_B_Y, UNK_007_VAL_B_Y_DISMISSED, UNK_007_B_Y_DISMISSED_CORR,
+    ],
+  );
+
+  // ---- T024 (007): resolved barcode rows (one per cell) -------------------
+  // Terminal row: resolution_status='resolved' → resolution_action='linked',
+  // resolved_at/resolved_by NOT NULL, resolved_product_id MUST be NOT NULL and
+  // reference a product owned by the SAME tenant. Tenant A rows link
+  // PRODUCT_A_ACTIVE / ACTOR_A; tenant B rows link PRODUCT_B_ACTIVE / ACTOR_B.
+  //
+  // ⚠ SAME-TENANT INVARIANT (maintenance trap): the unknown_items →
+  // tenant_products FK validates EXISTENCE only, not tenant ownership — Postgres
+  // will happily accept (tenant_id=A, resolved_product_id=<B's product>). The
+  // product↔tenant pairing below is therefore enforced HERE, by construction:
+  //   TENANT_A ↔ PRODUCT_A_ACTIVE / ACTOR_A    (both 0a… ids, isolation-harness)
+  //   TENANT_B ↔ PRODUCT_B_ACTIVE / ACTOR_B    (both 0b… ids)
+  // If you change the product/actor fixtures, keep each cell's product+actor in
+  // the SAME tenant as its tenant_id, or you seed a cross-tenant reference the
+  // schema will NOT catch (it would only surface as a confusing RLS/test
+  // failure downstream).
+  await admin.query(
+    `INSERT INTO unknown_items
+       (id, tenant_id, store_id, identifier_type, value, source_system,
+        resolution_status, resolution_action, resolved_at, resolved_by,
+        resolved_product_id, correlation_id)
+     VALUES
+       ($1,  $2,  $3,  'barcode', $4,  NULL, 'resolved', 'linked', now(), $5,  $6,  $7),
+       ($8,  $2,  $9,  'barcode', $10, NULL, 'resolved', 'linked', now(), $5,  $6,  $11),
+       ($12, $13, $14, 'barcode', $15, NULL, 'resolved', 'linked', now(), $16, $17, $18),
+       ($19, $13, $20, 'barcode', $21, NULL, 'resolved', 'linked', now(), $16, $17, $22)
+     ON CONFLICT DO NOTHING`,
+    [
+      UNK_007_A_X_RESOLVED, TENANT_A, STORE_A_X, UNK_007_VAL_A_X_RESOLVED, ACTOR_A, PRODUCT_A_ACTIVE, UNK_007_A_X_RESOLVED_CORR,
+      UNK_007_A_Y_RESOLVED, STORE_A_Y, UNK_007_VAL_A_Y_RESOLVED, UNK_007_A_Y_RESOLVED_CORR,
+      UNK_007_B_X_RESOLVED, TENANT_B, STORE_B_X, UNK_007_VAL_B_X_RESOLVED, ACTOR_B, PRODUCT_B_ACTIVE, UNK_007_B_X_RESOLVED_CORR,
+      UNK_007_B_Y_RESOLVED, STORE_B_Y, UNK_007_VAL_B_Y_RESOLVED, UNK_007_B_Y_RESOLVED_CORR,
     ],
   );
 
