@@ -60,12 +60,17 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import type { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 
 import { runWithTenantContext } from "@data-pulse-2/db";
 
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../../audit/audit-job.enqueuer";
 import { PG_POOL } from "../../auth/auth.module";
 import {
   recordUnknownItemCaptured,
@@ -140,6 +145,18 @@ export interface UnknownItemRow {
 }
 
 /**
+ * 007 US8 (T057) — per-item outcome of a bulk-dismiss. Mirrors the contract's
+ * `BulkDismissOutcome` (data-model §2.3): `{ id, outcome, details? }` where
+ * `outcome ∈ {dismissed, already_reconciled, not_found}`. `details` carries
+ * `prior_state` on the `already_reconciled` branch; null otherwise.
+ */
+export interface BulkDismissOutcome {
+  readonly id: string;
+  readonly outcome: "dismissed" | "already_reconciled" | "not_found";
+  readonly details: Record<string, unknown> | null;
+}
+
+/**
  * Resolved-outcome variant — alias lookup hit. Mirrors the contract's
  * `PosCaptureResolvedResponse` (kind, product_id, alias_id?). The
  * controller adapts these fields to snake_case wire shape.
@@ -163,7 +180,20 @@ export type CaptureItemResult =
 
 @Injectable()
 export class UnknownItemsService {
-  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+  constructor(
+    @Inject(PG_POOL) private readonly pool: Pool,
+    // 007 US8 (T057): OPTIONAL audit enqueuer. The shipped single-dismiss
+    // audit is emitted route-level by @Auditable + AuditEmitterInterceptor, so
+    // the ~15 existing specs construct this service with PG_POOL ONLY. Making
+    // the enqueuer @Optional() keeps those specs compiling (enqueuer ===
+    // undefined → bulk audit is a no-op) while the bulk-dismiss path — which
+    // calls dismissUnknownItem in a loop, BYPASSING the route decorator — emits
+    // one unknown_item.dismissed PROGRAMMATICALLY per transitioned item. Mirrors
+    // ReconciliationService's @Optional() ROOT_LOGGER pattern.
+    @Optional()
+    @Inject(AUDIT_JOB_ENQUEUER)
+    private readonly auditEnqueuer?: AuditJobEnqueuer,
+  ) {}
 
   /**
    * Capture a POS-submitted item reference.
@@ -954,5 +984,123 @@ export class UnknownItemsService {
     // identifier, no tenant id, nothing that could be used as an
     // existence oracle.
     throw new NotFoundException("Not Found");
+  }
+
+  /**
+   * Bulk-dismiss a bounded selection of unknown items (007 US8 / T057).
+   *
+   * FR-070a: this is a UX batching of the SHIPPED per-item dismiss — NOT a new
+   * lifecycle write. Each id is dismissed by calling {@link dismissUnknownItem}
+   * (the exact shipped path the regression guard T062 protects); the per-item
+   * outcome is derived from that call's success/throw. One item's failure
+   * (already-reconciled / not-found) does NOT abort the batch or affect
+   * siblings — each id is independent.
+   *
+   * The ≤200 ceiling (FR-044) is enforced UPSTREAM at the controller's Zod
+   * `.strict()` `{ ids: maxItems 200 }` boundary, so this method never sees an
+   * over-ceiling batch — a 201-id batch is rejected whole as 400 validation
+   * before reaching here (reject, NOT clamp/truncate — SC-008).
+   *
+   * Per-item outcome mapping (data-model §2.3 — BulkDismissOutcome):
+   *   - shipped dismiss succeeds            → { outcome: "dismissed" }
+   *   - shipped dismiss throws Conflict     → { outcome: "already_reconciled",
+   *       (already resolved/dismissed)          details: { prior_state } }
+   *   - shipped dismiss throws NotFound     → { outcome: "not_found" }
+   *       (RLS-filtered / absent — non-disclosing, SI-004)
+   *
+   * `prior_state` on the already_reconciled branch comes from an RLS-scoped
+   * `findByIdForTenant` read — the row IS visible to the caller (the conflict
+   * proves it is in-scope, just terminal), so disclosing its lifecycle state to
+   * the actor who can already see it is not a leak.
+   *
+   * Idempotency: the route carries `@Idempotent("required")`; replay
+   * short-circuit + body-mismatch 409 are handled by the shared
+   * `IdempotencyInterceptor` so the WHOLE batch response is replayed verbatim
+   * (SC-005).
+   *
+   * Spec anchors: FR-044, FR-070, FR-070a, SC-005, SC-008, Constitution §III.
+   */
+  async bulkDismissUnknownItems(input: {
+    readonly tenantId: string;
+    readonly storeId: string | null;
+    readonly actorUserId: string;
+    readonly ids: readonly string[];
+  }): Promise<{ outcomes: BulkDismissOutcome[] }> {
+    const outcomes: BulkDismissOutcome[] = [];
+
+    // Decompose into the shipped per-item dismiss. Sequential (not parallel) so
+    // each item's transaction is independent and the per-item outcome ordering
+    // matches the input — no cross-item coupling (FR-070a). A handful of
+    // dismisses per request is well within latency budget; a parallel fan-out
+    // would add connection-pool pressure for no UX gain.
+    for (const id of input.ids) {
+      try {
+        await this.dismissUnknownItem({
+          id,
+          tenantId: input.tenantId,
+          storeId: input.storeId,
+          actorUserId: input.actorUserId,
+        });
+        outcomes.push({ id, outcome: "dismissed", details: null });
+        // FR-070a / FR-064 / SC-004: the shipped single-dismiss audit
+        // (`unknown_item.dismissed`) is emitted ROUTE-level by @Auditable +
+        // AuditEmitterInterceptor — but the bulk path calls the service method
+        // directly, bypassing that decorator. So emit the per-item dismiss audit
+        // PROGRAMMATICALLY (one event per transitioned item), best-effort:
+        // a failed enqueue must not change the per-item outcome. Skipped when
+        // the optional enqueuer is absent (existing single-route specs).
+        await this.auditEnqueuer
+          ?.enqueue({
+            actor_user_id: input.actorUserId,
+            actor_label: null,
+            tenant_id: input.tenantId,
+            store_id: input.storeId,
+            action: "unknown_item.dismissed",
+            target_type: "unknown_item",
+            target_id: id,
+            request_id: null,
+            metadata: { via: "bulk_dismiss" },
+          })
+          .catch(() => {
+            // Best-effort — a dropped bulk-dismiss audit must not fail the item.
+          });
+      } catch (err: unknown) {
+        if (err instanceof ConflictException) {
+          // already_reconciled — the row is in-scope but terminal. Read its
+          // current lifecycle state (RLS-scoped) to surface prior_state; the
+          // row is visible to this caller, so this is not a disclosure.
+          let priorState: string | null = null;
+          try {
+            const row = await this.findByIdForTenant({
+              id,
+              tenantId: input.tenantId,
+              storeId: input.storeId,
+            });
+            priorState = row.resolutionStatus;
+          } catch {
+            // If the follow-up read 404s (race: row dismissed+filtered between
+            // the conflict and the read), omit prior_state rather than fail the
+            // whole item — the outcome is still already_reconciled.
+            priorState = null;
+          }
+          outcomes.push({
+            id,
+            outcome: "already_reconciled",
+            details: priorState !== null ? { prior_state: priorState } : null,
+          });
+        } else if (err instanceof NotFoundException) {
+          // Non-disclosing not_found — RLS-filtered (cross-tenant/out-of-scope)
+          // or absent. Does NOT abort the batch (FR-070a).
+          outcomes.push({ id, outcome: "not_found", details: null });
+        } else {
+          // Genuine system failure (e.g. DB error) — propagate so the whole
+          // request surfaces a system_failure rather than masking it as a
+          // per-item outcome (FR-054 / §XI: never a hidden partial state).
+          throw err;
+        }
+      }
+    }
+
+    return { outcomes };
   }
 }

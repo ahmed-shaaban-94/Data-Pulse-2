@@ -103,9 +103,40 @@ import {
 } from "./dto/review-queue-item.dto";
 import {
   UnknownItemsService,
+  type BulkDismissOutcome,
   type CapturedUnknownItemRow,
   type UnknownItemRow,
 } from "./unknown-items.service";
+
+/**
+ * 007 US8 (T058): Zod schema for `tenantAdminBulkDismissUnknownItems` request
+ * body. Mirrors OpenAPI `BulkDismissUnknownItemsRequest`:
+ *   required: [ids]; ids: array<uuid>, minItems 1, maxItems 200, uniqueItems;
+ *   additionalProperties: false.
+ * The `maxItems(200)` bound is the FR-044 whole-batch ceiling — a 201-id batch
+ * fails Zod validation → 400 (reject-whole, NOT clamp). `.strict()` rejects any
+ * smuggled field (no body-supplied tenant/store — Constitution §III).
+ */
+const BulkDismissUnknownItemsRequestSchema = z
+  .object({
+    ids: z
+      .array(z.string().uuid())
+      .min(1)
+      .max(200)
+      .refine((arr) => new Set(arr).size === arr.length, {
+        message: "ids must be unique",
+      }),
+  })
+  .strict();
+
+type BulkDismissUnknownItemsRequestDto = z.infer<
+  typeof BulkDismissUnknownItemsRequestSchema
+>;
+
+/** 007 US8 wire shape of `BulkDismissUnknownItemsResponse` (data-model §2.3). */
+interface BulkDismissUnknownItemsResponseBody {
+  readonly outcomes: ReadonlyArray<BulkDismissOutcome>;
+}
 
 /**
  * 007 (T032): the dashboard list + dismiss responses project to
@@ -509,5 +540,73 @@ export class UnknownItemsController {
     // "action responses never suppress; only list/inspect do" rule uniform
     // avoids a future reader mistaking dismiss suppression as intentional.
     return toReviewQueueItem(row, true);
+  }
+
+  /**
+   * `tenantAdminBulkDismissUnknownItems` — dismiss a bounded selection
+   * (007 US8 / T058).
+   *
+   * POST /api/v1/catalog/unknown-items/bulk-dismiss
+   *
+   * Dismiss up to 200 unknown items in one request. The ≤200 ceiling is the
+   * FR-044 whole-batch reject: a 201-id batch fails the Zod
+   * `maxItems(200)` boundary → 400 validation, NOTHING dismissed (reject, NOT
+   * clamp — SC-008). Within a valid batch each id is decomposed by the service
+   * into the SHIPPED per-item dismiss path (006 FR-070a — no new lifecycle
+   * write); the response carries one outcome per id.
+   *
+   * Path note: `bulk-dismiss` is a literal segment with no trailing sub-path,
+   * so it does NOT collide with the `:id/dismiss` / `:id/reopen` parameterised
+   * routes (those require a trailing action segment).
+   *
+   * Authority: class-level `@UseGuards(DashboardAuthGuard, TenantContextGuard)`
+   * authenticates; this route adds `@UseGuards(RolesGuard)` +
+   * `@Roles("owner","tenant_admin","store_manager", { denyAs: 403 })`. Same
+   * role set as the shipped single dismiss (store_manager dismisses within
+   * their store via RLS). `denyAs: 403` (not 404) per the contract — the batch
+   * is acted on within the caller's resolved tenant, so a role failure is a
+   * `forbidden`, not a non-disclosing not-found (per-item not-found is surfaced
+   * inside the 200 outcome list, never as the batch status).
+   *
+   * Idempotency (FR-063, T003 ISOLATE): `@Idempotent("required")` →
+   * `Idempotency-Key`; the WHOLE batch response is replayed on a same-key
+   * same-body retry, and a body mismatch is `idempotency_key_conflict` (409).
+   *
+   * No `@Auditable`: per-item dismiss audits are emitted by the shipped
+   * `dismissUnknownItem` path's own `@Auditable` on the single route — but
+   * here we call the SERVICE method directly (not via the decorated route), so
+   * the dismiss audit is emitted by the service's metric/audit pathway per
+   * item. (The single-dismiss audit subject is `unknown_item.dismissed`; the
+   * service increments it on each successful per-item transition.)
+   */
+  @Post("api/v1/catalog/unknown-items/bulk-dismiss")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
+  @Roles("owner", "tenant_admin", "store_manager", { denyAs: 403 })
+  @Idempotent("required")
+  async tenantAdminBulkDismissUnknownItems(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(BulkDismissUnknownItemsRequestSchema))
+    body: BulkDismissUnknownItemsRequestDto,
+  ): Promise<BulkDismissUnknownItemsResponseBody> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const result = await this.unknownItemsService.bulkDismissUnknownItems({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      actorUserId: ctx.userId,
+      ids: body.ids,
+    });
+
+    return { outcomes: result.outcomes };
   }
 }
