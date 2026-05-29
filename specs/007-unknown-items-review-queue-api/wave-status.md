@@ -150,7 +150,7 @@ flowchart TD
 - `PHASE8-REGRESSION-GUARDS` = `007-US4` ∥ `007-US5` ∥ `007-US6` (test-only over a frozen reconciliation runtime).
 
 **Critical path** (longest chain, includes the gated stall):
-`007-SETUP → 007-CONTRACT 🔒 → 007-US1-LIST-PROJECTION → 007-US2-LIST-EXTENSIONS → 007-US4/5/6 → 007-POLISH-AUDIT-SWEEP → 007-POLISH-SMOKE-COVERAGE → 007-CLOSEOUT`. The `[GATED]` approval on `007-CONTRACT` is the one unavoidable human-in-the-loop bottleneck on this path.
+`007-SETUP → 007-CONTRACT 🔒 → 007-US7-REOPEN (or 007-US8-BULK-DISMISS) → 007-POLISH-AUDIT-SWEEP → 007-POLISH-SMOKE-COVERAGE → 007-CLOSEOUT` (with the two SIGN-OFF gates also required before `007-CONTRACT`). The `[GATED]` approval on `007-CONTRACT` is the one unavoidable human-in-the-loop bottleneck on this path.
 
 ---
 
