@@ -94,79 +94,30 @@ import {
   type PosCaptureItemRequestDto,
 } from "./dto/capture-request.dto";
 import {
+  ListUnknownItemsQuerySchema,
+  type ListUnknownItemsQueryDto,
+} from "./dto/list-unknown-items.dto";
+import {
+  toReviewQueueItem,
+  type ReviewQueueItem,
+} from "./dto/review-queue-item.dto";
+import {
   UnknownItemsService,
   type CapturedUnknownItemRow,
   type UnknownItemRow,
 } from "./unknown-items.service";
 
 /**
- * Zod schema for `tenantAdminListUnknownItems` query params. Mirrors
- * the OpenAPI contract `packages/contracts/openapi/catalog/unknown-items.yaml`:
- *   - status: enum, default 'pending'
- *   - store_id: UUID, optional (tenant-wide actors may narrow)
- *   - cursor: string, optional (Wave 1 accepts but ignores — see
- *     `listForTenant` comment)
- *   - limit: 1-200, default 50
- *
- * `.strict()` rejects unknown params so a typo doesn't silently pass.
- * Express query params arrive as strings; `z.coerce.number()` casts
- * `?limit=100` to a number before range validation.
+ * 007 (T032): the dashboard list + dismiss responses project to
+ * `ReviewQueueItem` (the shipped `UnknownItem` MINUS `sale_context`) via the
+ * shared `toReviewQueueItem` helper (R7.2), per FR-007 / T002 (TIGHTEN). The
+ * former local `UnknownItemWireShape` + `rowToUnknownItemWireShape` (which
+ * echoed `sale_context`) are removed — the POS capture response keeps its own
+ * `toUnknownWireShape` (R7.3), which is unaffected.
  */
-const ListUnknownItemsQuerySchema = z
-  .object({
-    status: z
-      .enum(["pending", "resolved", "dismissed"])
-      .optional()
-      .default("pending"),
-    store_id: z.string().uuid().optional(),
-    cursor: z.string().min(1).optional(),
-    limit: z.coerce.number().int().min(1).max(200).optional().default(50),
-  })
-  .strict();
-
-type ListUnknownItemsQueryDto = z.infer<typeof ListUnknownItemsQuerySchema>;
-
-/**
- * Wire shape of the contract's `UnknownItem` schema. Adapts the
- * service's `UnknownItemRow` (camelCase) to snake_case.
- */
-interface UnknownItemWireShape {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly store_id: string;
-  readonly identifier_type: string;
-  readonly identifier_value: string;
-  readonly source_system: string | null;
-  readonly resolution_status: "pending" | "resolved" | "dismissed";
-  readonly resolution_action: "linked" | "created" | "dismissed" | null;
-  readonly resolved_at: string | null;
-  readonly resolved_by: string | null;
-  readonly resolved_product_id: string | null;
-  readonly encountered_at: string;
-  readonly sale_context: Record<string, unknown> | null;
-}
-
 interface ListUnknownItemsResponseBody {
-  readonly items: ReadonlyArray<UnknownItemWireShape>;
+  readonly items: ReadonlyArray<ReviewQueueItem>;
   readonly next_cursor: string | null;
-}
-
-function rowToUnknownItemWireShape(row: UnknownItemRow): UnknownItemWireShape {
-  return {
-    id: row.id,
-    tenant_id: row.tenantId,
-    store_id: row.storeId,
-    identifier_type: row.identifierType,
-    identifier_value: row.identifierValue,
-    source_system: row.sourceSystem,
-    resolution_status: row.resolutionStatus,
-    resolution_action: row.resolutionAction,
-    resolved_at: row.resolvedAt ? row.resolvedAt.toISOString() : null,
-    resolved_by: row.resolvedBy,
-    resolved_product_id: row.resolvedProductId,
-    encountered_at: row.encounteredAt.toISOString(),
-    sale_context: row.saleContext,
-  };
 }
 
 /**
@@ -410,12 +361,69 @@ export class UnknownItemsController {
       status: query.status,
       limit: query.limit,
       storeIdFilter: query.store_id ?? null,
+      // 007 US2 (FR-002/003/004): scope-safe filter / sort / grouping.
+      sourceSystem: query.source_system ?? null,
+      sort: query.sort,
+      groupBy: query.group_by ?? null,
     });
 
+    // FR-001a (007 canSeeProduct policy): a tenant-wide actor
+    // (ctx.storeId === null) may see the linked/created product reference; a
+    // store-scoped actor gets `resolved_product_id` omitted (SC-007 — no
+    // cross-store product leak), while the item row is still returned.
+    const canSeeProduct = ctx.storeId === null;
     return {
-      items: result.items.map(rowToUnknownItemWireShape),
+      items: result.items.map((row) => toReviewQueueItem(row, canSeeProduct)),
       next_cursor: result.nextCursor,
     };
+  }
+
+  /**
+   * `tenantAdminInspectUnknownItem` — inspect a single item (007 US3 / T042).
+   *
+   * GET /api/v1/catalog/unknown-items/:id
+   *
+   * Returns the addressed row as a `ReviewQueueItem` (no `sale_context`,
+   * FR-007; no candidate-match hint, FR-070). RLS-scoped via the existing
+   * `findByIdForTenant` single-row read: a cross-tenant or out-of-scope id
+   * yields zero rows → non-disclosing 404 (SI-004 / FR-062). This is a
+   * BROWSE surface, so FR-001a product-reference suppression applies — a
+   * tenant-wide actor (ctx.storeId === null) sees `resolved_product_id`; a
+   * store-scoped actor has it omitted (the item row is still returned).
+   *
+   * Auth posture mirrors the list route (FR-009 "inherits the document-level
+   * cookieAuth"): `DashboardAuthGuard + TenantContextGuard`, no `RolesGuard` —
+   * inspect is a read, and scope is enforced by RLS (a wrong-scope id is
+   * non-disclosing 404, never a role-based 403). The contract's documented 403
+   * exists for the shared `forbidden` category (used by reopen), not inspect.
+   *
+   * No `@Auditable` (a read is not a state transition; matches list/FR-080
+   * scope) and no `@Idempotent` (no Idempotency-Key on a GET).
+   */
+  @Get("api/v1/catalog/unknown-items/:id")
+  @UseGuards(DashboardAuthGuard, TenantContextGuard)
+  async tenantAdminInspectUnknownItem(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid()))
+    id: string,
+  ): Promise<ReviewQueueItem> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const row = await this.unknownItemsService.findByIdForTenant({
+      id,
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+    });
+
+    // Browse surface → FR-001a suppression applies (unlike the action responses
+    // for link/create/dismiss which always show the product they acted on).
+    return toReviewQueueItem(row, ctx.storeId === null);
   }
 
   /**
@@ -476,7 +484,7 @@ export class UnknownItemsController {
     @Req() request: TenantContextRequest,
     @Param("id", new ZodValidationPipe(z.string().uuid()))
     id: string,
-  ): Promise<UnknownItemWireShape> {
+  ): Promise<ReviewQueueItem> {
     const ctx = request.context;
     if (!ctx) {
       throw new UnauthorizedException("Unauthorized");
@@ -495,6 +503,11 @@ export class UnknownItemsController {
       actorUserId: ctx.userId,
     });
 
-    return rowToUnknownItemWireShape(row);
+    // ACTION response (the caller just dismissed this item) → canSeeProduct =
+    // true, uniform with link/create-product. Functionally moot — a dismissed
+    // row has resolved_product_id = NULL by the schema CHK — but keeping the
+    // "action responses never suppress; only list/inspect do" rule uniform
+    // avoids a future reader mistaking dismiss suppression as intentional.
+    return toReviewQueueItem(row, true);
   }
 }

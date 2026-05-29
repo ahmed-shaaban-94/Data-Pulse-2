@@ -74,10 +74,14 @@ import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
 import {
+  toReviewQueueItem,
+  type ReviewQueueItem,
+} from "../unknown-items/dto/review-queue-item.dto";
+import {
   CreateProductFromUnknownItemRequestSchema,
   type CreateProductFromUnknownItemRequestDto,
 } from "./dto/create-product-request.dto";
-import { ReconciliationService, type UnknownItemRow } from "./reconciliation.service";
+import { ReconciliationService } from "./reconciliation.service";
 
 // ---------------------------------------------------------------------------
 // Request DTO + Zod schema
@@ -102,42 +106,17 @@ type LinkUnknownItemRequestDto = z.infer<typeof LinkUnknownItemRequestSchema>;
 // single named home. Imported above.
 
 // ---------------------------------------------------------------------------
-// Wire shape (snake_case, matches OpenAPI UnknownItem schema)
+// Wire shape
 // ---------------------------------------------------------------------------
-
-interface UnknownItemWireShape {
-  readonly id: string;
-  readonly tenant_id: string;
-  readonly store_id: string;
-  readonly identifier_type: string;
-  readonly identifier_value: string;
-  readonly source_system: string | null;
-  readonly resolution_status: "pending" | "resolved" | "dismissed";
-  readonly resolution_action: "linked" | "created" | "dismissed" | null;
-  readonly resolved_at: string | null;
-  readonly resolved_by: string | null;
-  readonly resolved_product_id: string | null;
-  readonly encountered_at: string;
-  readonly sale_context: Record<string, unknown> | null;
-}
-
-function rowToWireShape(row: UnknownItemRow): UnknownItemWireShape {
-  return {
-    id: row.id,
-    tenant_id: row.tenantId,
-    store_id: row.storeId,
-    identifier_type: row.identifierType,
-    identifier_value: row.identifierValue,
-    source_system: row.sourceSystem,
-    resolution_status: row.resolutionStatus,
-    resolution_action: row.resolutionAction,
-    resolved_at: row.resolvedAt ? row.resolvedAt.toISOString() : null,
-    resolved_by: row.resolvedBy,
-    resolved_product_id: row.resolvedProductId,
-    encountered_at: row.encounteredAt.toISOString(),
-    sale_context: row.saleContext,
-  };
-}
+//
+// 007 (T038): link + create-product responses project to `ReviewQueueItem`
+// (shipped `UnknownItem` MINUS `sale_context`) via the shared
+// `toReviewQueueItem` helper (R7.2) — the same home unknown-items.controller
+// imports — per FR-007 / T002 (TIGHTEN). The former local
+// `UnknownItemWireShape` + `rowToWireShape` (which echoed `sale_context`) are
+// removed. FR-001a product-reference suppression uses the 007 canSeeProduct
+// rule: a tenant-wide actor (ctx.storeId === null) sees `resolved_product_id`;
+// a store-scoped actor has it omitted.
 
 // ---------------------------------------------------------------------------
 // Controller
@@ -175,7 +154,7 @@ export class ReconciliationController {
     @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
     @Body(new ZodValidationPipe(LinkUnknownItemRequestSchema))
     body: LinkUnknownItemRequestDto,
-  ): Promise<UnknownItemWireShape> {
+  ): Promise<ReviewQueueItem> {
     const ctx = request.context;
     if (!ctx) {
       throw new UnauthorizedException("Unauthorized");
@@ -196,7 +175,12 @@ export class ReconciliationController {
     });
 
     if (result.kind === "ok") {
-      return rowToWireShape(result.row);
+      // FR-001a suppression is a browse-surface rule (list/inspect — items may
+      // reference products the caller can't see). This is an ACTION response:
+      // the caller named `product_id` in the request and just linked it, so
+      // they can always see it → canSeeProduct = true. (storeId is NOT a
+      // role proxy: a tenant-wide admin may act with a store context set.)
+      return toReviewQueueItem(result.row, true);
     }
 
     if (result.kind === "alias_conflict") {
@@ -264,7 +248,7 @@ export class ReconciliationController {
     @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
     @Body(new ZodValidationPipe(CreateProductFromUnknownItemRequestSchema))
     body: CreateProductFromUnknownItemRequestDto,
-  ): Promise<UnknownItemWireShape> {
+  ): Promise<ReviewQueueItem> {
     const ctx = request.context;
     if (!ctx) {
       throw new UnauthorizedException("Unauthorized");
@@ -289,7 +273,11 @@ export class ReconciliationController {
     });
 
     if (result.kind === "ok") {
-      return rowToWireShape(result.row);
+      // ACTION response: the caller just CREATED this product, so it is always
+      // visible to them → canSeeProduct = true. FR-001a suppression applies to
+      // the browse surface (list/inspect), not to the response of an operation
+      // the caller just performed.
+      return toReviewQueueItem(result.row, true);
     }
 
     if (result.kind === "alias_conflict") {

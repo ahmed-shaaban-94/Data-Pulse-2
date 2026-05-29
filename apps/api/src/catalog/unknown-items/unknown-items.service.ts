@@ -671,7 +671,49 @@ export class UnknownItemsService {
     readonly status: "pending" | "resolved" | "dismissed";
     readonly limit: number;
     readonly storeIdFilter?: string | null;
+    // 007 US2 (T037): optional source_system filter + sort + grouping.
+    readonly sourceSystem?: string | null;
+    readonly sort?: "age_asc" | "age_desc" | "store";
+    readonly groupBy?: "store" | "source_system" | null;
   }): Promise<{ items: ReadonlyArray<UnknownItemRow>; nextCursor: null }> {
+    // Build the WHERE clause from parameterized fragments. `resolution_status`
+    // is always present; `store_id` (residual narrow) and `source_system`
+    // (007 US2 filter) are appended only when supplied. Every dynamic value is
+    // a bound `$N` parameter — SQL injection cannot reach the planner.
+    const where: string[] = ["resolution_status = $1"];
+    const params: unknown[] = [input.status];
+    if (input.storeIdFilter) {
+      params.push(input.storeIdFilter);
+      where.push(`store_id = $${params.length}`);
+    }
+    if (input.sourceSystem) {
+      params.push(input.sourceSystem);
+      where.push(`source_system = $${params.length}`);
+    }
+
+    // ORDER BY is built from a WHITELIST: `sort`/`group_by` are Zod enums, so
+    // their values only SELECT a pre-written fragment — they are never
+    // interpolated as SQL text. `group_by` adds a leading grouping key so
+    // same-group rows are contiguous (FR-004 ordering, not a grouped envelope);
+    // `sort` orders within. A stable `id DESC` tie-break is always last.
+    const sort = input.sort ?? "age_desc";
+    const sortFragment =
+      sort === "age_asc"
+        ? "encountered_at ASC"
+        : sort === "store"
+          ? "store_id ASC"
+          : "encountered_at DESC";
+    const groupFragment =
+      input.groupBy === "store"
+        ? "store_id ASC, "
+        : input.groupBy === "source_system"
+          ? "source_system ASC NULLS LAST, "
+          : "";
+    const orderBy = `${groupFragment}${sortFragment}, id DESC`;
+
+    params.push(input.limit);
+    const limitPlaceholder = `$${params.length}`;
+
     const rows = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
@@ -686,62 +728,31 @@ export class UnknownItemsService {
           [input.storeId ?? "*"],
         );
 
-        // Optional residual `store_id` predicate for tenant-wide
-        // actors who want to narrow. RLS still controls visibility;
-        // this is a convenience filter, not a security boundary.
-        // Parameterized so SQL injection cannot reach the planner.
-        const result = input.storeIdFilter
-          ? await client.query<{
-              id: string;
-              tenant_id: string;
-              store_id: string;
-              identifier_type: string;
-              value: string;
-              source_system: string | null;
-              resolution_status: "pending" | "resolved" | "dismissed";
-              resolution_action: "linked" | "created" | "dismissed" | null;
-              resolved_at: Date | null;
-              resolved_by: string | null;
-              resolved_product_id: string | null;
-              encountered_at: Date;
-              sale_context: Record<string, unknown> | null;
-            }>(
-              `SELECT id, tenant_id, store_id, identifier_type, value,
-                      source_system, resolution_status, resolution_action,
-                      resolved_at, resolved_by, resolved_product_id,
-                      encountered_at, sale_context
-                 FROM unknown_items
-                WHERE resolution_status = $1
-                  AND store_id = $2
-                ORDER BY encountered_at DESC, id DESC
-                LIMIT $3`,
-              [input.status, input.storeIdFilter, input.limit],
-            )
-          : await client.query<{
-              id: string;
-              tenant_id: string;
-              store_id: string;
-              identifier_type: string;
-              value: string;
-              source_system: string | null;
-              resolution_status: "pending" | "resolved" | "dismissed";
-              resolution_action: "linked" | "created" | "dismissed" | null;
-              resolved_at: Date | null;
-              resolved_by: string | null;
-              resolved_product_id: string | null;
-              encountered_at: Date;
-              sale_context: Record<string, unknown> | null;
-            }>(
-              `SELECT id, tenant_id, store_id, identifier_type, value,
-                      source_system, resolution_status, resolution_action,
-                      resolved_at, resolved_by, resolved_product_id,
-                      encountered_at, sale_context
-                 FROM unknown_items
-                WHERE resolution_status = $1
-                ORDER BY encountered_at DESC, id DESC
-                LIMIT $2`,
-              [input.status, input.limit],
-            );
+        const result = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending" | "resolved" | "dismissed";
+          resolution_action: "linked" | "created" | "dismissed" | null;
+          resolved_at: Date | null;
+          resolved_by: string | null;
+          resolved_product_id: string | null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `SELECT id, tenant_id, store_id, identifier_type, value,
+                  source_system, resolution_status, resolution_action,
+                  resolved_at, resolved_by, resolved_product_id,
+                  encountered_at, sale_context
+             FROM unknown_items
+            WHERE ${where.join(" AND ")}
+            ORDER BY ${orderBy}
+            LIMIT ${limitPlaceholder}`,
+          params,
+        );
 
         return result.rows;
       },
