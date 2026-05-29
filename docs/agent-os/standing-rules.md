@@ -103,3 +103,18 @@ Long-running multi-slice work goes through a **Maestro** (Opus, orchestrator) wh
 4. Updates the execution map and `wave-status.md` when the slice lands.
 
 This makes prompts short: **"Use Agent OS. Execute slice X. Stop before commit."** is enough because the slice ID resolves to the full brief in the execution map.
+
+## 11. Dynamic workflows — slice controllers only
+
+Dynamic workflows (the `Workflow` tool and any multi-agent orchestration it spawns) are a powerful fan-out mechanism. Under Agent OS they are constrained to act as **slice controllers** — they orchestrate the execution of a slice, they do not become a parallel authority that bypasses the rest of these rules. By default:
+
+- **One ready slice per workflow.** A workflow may execute exactly **one ready slice** unless the user explicitly approves a wave. A "ready" slice is one whose dependencies are satisfied in the spec's `execution-map.yaml`.
+- **No whole-spec runs by default.** A workflow MUST NOT execute an entire spec (or an entire wave) in a single run unless the user explicitly approves that scope. Approving one slice does not authorize the next (consistent with §5's "asking once does not authorize twice").
+- **Subagents are read-only by default.** Any subagent a workflow spawns is **read-only** (search/read/analyze) unless the user explicitly approves editable subagents for that run. Read-only fan-out (review, isolation audit, adversarial verification) is the default-safe use.
+- **Exactly one implementation path may edit files.** When edits are approved, **only one** path through the workflow may write to disk. Parallel editable agents are forbidden — they race on shared files and shared state. (This is why the default is read-only fan-out plus a single sequential edit path.)
+- **`allowed_files` still binds.** Every edit a workflow makes MUST stay inside the target slice's `allowed_files` (§2). A workflow does not widen the slice's file scope.
+- **Forbidden surfaces stay forbidden.** §3 gated surfaces (`packages/contracts/openapi/**`, SQL migrations, `package.json`, `pnpm-lock.yaml`, `.github/**`, structural schema) and §4 out-of-scope surfaces remain off-limits inside a workflow exactly as outside one. A workflow cannot self-grant a gate.
+- **Stop-before-commit holds.** §5 governs: a workflow never commits, pushes, opens a PR, or merges without explicit instruction. The default stop boundary is **stop before commit**, same as a single-agent slice.
+- **Maestro inspects the raw script before repeat use.** Before a workflow script is approved for **repeat** execution, the Maestro (§10) MUST inspect the raw workflow script — to confirm it honors the boundaries above (slice scope, read-only default, single edit path, forbidden surfaces, stop boundary). A one-off run the user directly authorizes is exercised under their supervision; a script promoted to reusable is not, so it gets the script-level review.
+
+In short: a workflow is a way to *run a slice with fan-out*, not a way to escape slice discipline. Everything that is true of a single-agent slice — allowed_files, gates, git discipline, stop conditions — is equally true inside a workflow.
