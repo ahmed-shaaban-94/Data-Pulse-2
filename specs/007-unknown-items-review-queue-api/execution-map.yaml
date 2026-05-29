@@ -680,7 +680,7 @@ slices:
 # ----------------------------------------------------------------------------
 # Two safe parallel groups are proposed. The Phase-2 foundational RED tests
 # touch distinct files (forbidden-category, projection, isolation seed/sweep)
-# and can run together once 007-SETUP + 007-CONTRACT land. The three Phase-8
+# and can run together once 007-SETUP lands. The three Phase-8
 # regression guards are test-only over a frozen runtime and never collide.
 #
 # NOTE: the foundational group is `safe` ONLY for the RED-test authoring; the
