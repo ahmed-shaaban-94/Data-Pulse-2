@@ -32,12 +32,20 @@
 # tasks.md ID T001..T076 (43 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Updated: 2026-05-29 — INITIAL AUTHORING. Nothing in 007 is on `main`. The
-# planning chain (spec/plan/tasks + analyze remediation + SIGN-OFF decisions)
-# is committed on `spec/007-unknown-items-review-queue-api` only (wave-status
-# TL;DR: aab701d / 45ae621 / 8a97e97 + the SIGN-OFF commit). All implementation
-# slices are therefore `status: proposed` (or `blocked` where a depends_on is
-# not yet terminal). No application code, schema, or OpenAPI YAML has changed.
+# Updated: 2026-05-29 — WAVE 1 IN FLIGHT.
+#   - 007-CONTRACT (the [GATED] OpenAPI extension) MERGED to `main` via PR #404
+#     (squash f2622ee): ReviewQueueItem schema, 3 new operationIds, `forbidden`
+#     code, and list params are all on `main`.
+#   - Wave 1 (Phase 2–5, P1 MVP) runtime is IN REVIEW via PR #405 (branch
+#     feat/007-wave1-p1-mvp off main @ 9026340): 007-FORBIDDEN-CATEGORY,
+#     007-REVIEW-QUEUE-PROJECTION, 007-ISOLATION-HARNESS, 007-US1-LIST-PROJECTION,
+#     007-US1-RECONCILIATION-PROJECTION, 007-US2-LIST-EXTENSIONS, 007-US3-INSPECT.
+#     These carry `status: in_review` below; the rest stay `proposed` (US7/US8 =
+#     Phase 6/7; US4/5/6 = Phase 8 guards; polish + closeout follow).
+#   - The planning chain (spec/plan/tasks + analyze + SIGN-OFFs) is on
+#     `spec/007-unknown-items-review-queue-api` (aab701d / 45ae621 / 8a97e97).
+#   CLOSEOUT (T073) reconciles every slice to its terminal `merged` status with
+#   `merged_in_pr` / `merged_at_commit` provenance once the PRs land.
 
 spec: 007-unknown-items-review-queue-api
 version: 1
@@ -163,7 +171,9 @@ slices:
   - id: 007-CONTRACT
     task_ids: [T010, T011]
     type: feat
-    status: proposed   # NOT yet approved; approval_required gates dispatch regardless
+    status: merged   # [GATED] approved + landed on `main` via PR #404 (squash f2622ee)
+    merged_in_pr: 404
+    merged_at_commit: f2622ee
     approval_required: true   # [GATED] — packages/contracts/openapi/** is a forbidden surface (Constitution §IV/§VIII, Standing Rules §3)
     depends_on:
       - 007-SETUP
@@ -204,7 +214,7 @@ slices:
   - id: 007-FORBIDDEN-CATEGORY
     task_ids: [T020, T021]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-SETUP
@@ -237,7 +247,7 @@ slices:
   - id: 007-REVIEW-QUEUE-PROJECTION
     task_ids: [T022, T023]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-SETUP
@@ -268,7 +278,7 @@ slices:
   - id: 007-ISOLATION-HARNESS
     task_ids: [T024, T025]
     type: test
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged. NOTE: T025 sweep is GREEN now (findByIdForTenant already enforces isolation; reopen/bulk-dismiss cases are it.skip tripwires for US7/US8) — the original `expected: RED` predated that realization.
     approval_required: false
     depends_on:
       - 007-SETUP
@@ -304,7 +314,7 @@ slices:
   - id: 007-US1-LIST-PROJECTION
     task_ids: [T030, T031, T032, T033]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-REVIEW-QUEUE-PROJECTION
@@ -344,7 +354,7 @@ slices:
   - id: 007-US1-RECONCILIATION-PROJECTION
     task_ids: [T038]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-REVIEW-QUEUE-PROJECTION
@@ -374,7 +384,7 @@ slices:
   - id: 007-US2-LIST-EXTENSIONS
     task_ids: [T034, T035, T036, T037]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-US1-LIST-PROJECTION   # US2 extends the same list path/file — sequential after US1 (tasks.md §13)
@@ -412,7 +422,7 @@ slices:
   - id: 007-US3-INSPECT
     task_ids: [T040, T041, T042, T043]
     type: feat
-    status: proposed
+    status: in_review   # PR #405 (feat/007-wave1-p1-mvp); not yet merged
     approval_required: false
     depends_on:
       - 007-REVIEW-QUEUE-PROJECTION

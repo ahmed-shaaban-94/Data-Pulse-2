@@ -187,7 +187,7 @@ The shipped `tenantAdminListUnknownItems` response (and the shipped `UnknownItem
 
 ---
 
-## SESSION UPDATE — 2026-05-29 — Phase 2–5 (P1 MVP) implemented, uncommitted
+## SESSION UPDATE — 2026-05-29 — Phase 2–5 (P1 MVP) implemented → **PR #405 OPEN to `main`**
 
 > **State reconciliation:** the `[GATED]` contract slice (T010/T011) **merged to
 > `origin/main` via PR #404** (squash `f2622ee`) before this session — the
@@ -202,8 +202,11 @@ The shipped `tenantAdminListUnknownItems` response (and the shipped `UnknownItem
 **Worktree:** `C:\Users\user\Documents\GitHub\dp2-007-wave1`, branch
 `feat/007-wave1-p1-mvp` off `9026340` (latest `origin/main`). Single
 integration worktree for the whole P1 wave (the slices form a dependent chain —
-US1 needs the projection helper, US2 needs the US1 swap). **Uncommitted** per the
-user's stop-before-commit instruction.
+US1 needs the projection helper, US2 needs the US1 swap). **Committed as 4
+grouped commits and opened as PR #405 to `main`** (awaiting CodeRabbit/CI +
+human review; NOT merged). The execution-map carries `status: in_review` for the
+7 wave-1 slices (and `merged` for 007-CONTRACT via #404); CLOSEOUT (T073)
+reconciles them to `merged` once #405 lands.
 
 **Slices completed this session (all GREEN against WSL Testcontainers Postgres):**
 
