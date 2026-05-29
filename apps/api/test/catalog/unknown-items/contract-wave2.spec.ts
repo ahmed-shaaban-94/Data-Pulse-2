@@ -208,8 +208,13 @@ describe("catalog/unknown-items.yaml — Wave 2 operationIds do not collide with
       .filter((id): id is string => typeof id === "string");
     const expected = [...WAVE_1_OPERATION_IDS, ...WAVE_2_OPERATION_IDS];
     expect(declared).toEqual(expect.arrayContaining(expected));
-    // Five total: three Wave 1 + two Wave 2.
-    expect(declared).toHaveLength(5);
+    // Wave 1 (3) + Wave 2 (2) are always present. The strict length-5
+    // tripwire was loosened by slice 007-CONTRACT (T010), which added three
+    // tenant-admin operations to this YAML; the 007 conformance test
+    // (`contract-007.spec.ts`, same directory) owns the exact 007
+    // operationId assertions and the precise total count. This Wave 2 test
+    // now only guarantees the five 005 ops remain present (no regression).
+    expect(declared.length).toBeGreaterThanOrEqual(5);
   });
 });
 
@@ -348,23 +353,29 @@ describe("catalog/unknown-items.yaml — Wave 2 security inheritance", () => {
 // 7. Wave 2 response bodies ref UnknownItem (resolved lifecycle fields)
 // ===========================================================================
 describe("catalog/unknown-items.yaml — Wave 2 response body schemas", () => {
-  it("tenantAdminLinkUnknownItem 200 response body refs UnknownItem", () => {
+  it("tenantAdminLinkUnknownItem 200 response body refs ReviewQueueItem (007 R7.2 narrowing)", () => {
+    // Slice 007-CONTRACT (T010) narrowed every dashboard response to the
+    // sale_context-free ReviewQueueItem projection (research §R7.2 / FR-007);
+    // dismiss/link/create were residual leaks the list-focused T002 wording
+    // missed. This guard was previously locked to `UnknownItem` and would
+    // have cemented the leak — updated to match the recorded product
+    // decision (the runtime swap follows in T038).
     const link = catalogDoc.paths?.[TENANT_ADMIN_LINK_PATH]?.["post"];
     const responses = link?.responses as
       | Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>
       | undefined;
     const ref = responses?.[200]?.content?.["application/json"]?.schema?.["$ref"];
-    expect(ref).toBe("#/components/schemas/UnknownItem");
+    expect(ref).toBe("#/components/schemas/ReviewQueueItem");
   });
 
-  it("tenantAdminCreateProductFromUnknownItem 201 response body refs UnknownItem", () => {
+  it("tenantAdminCreateProductFromUnknownItem 201 response body refs ReviewQueueItem (007 R7.2 narrowing)", () => {
     const create =
       catalogDoc.paths?.[TENANT_ADMIN_CREATE_PRODUCT_PATH]?.["post"];
     const responses = create?.responses as
       | Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>
       | undefined;
     const ref = responses?.[201]?.content?.["application/json"]?.schema?.["$ref"];
-    expect(ref).toBe("#/components/schemas/UnknownItem");
+    expect(ref).toBe("#/components/schemas/ReviewQueueItem");
   });
 
   it("UnknownItem schema exists in components/schemas (Wave 1 regression guard)", () => {

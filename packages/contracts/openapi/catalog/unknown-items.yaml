@@ -1,11 +1,22 @@
 openapi: 3.1.0
 info:
   title: Data-Pulse-2 Catalog — Unknown Items API
-  version: "1.1.0-draft"
+  version: "1.2.0-draft"
   description: >
-    Spec 005 Wave 1 + Wave 2 contract surface. Defines five
-    operations for the POS-Pulse catalog-sync / unknown-item-reconciliation
-    workflow:
+    Spec 005 Wave 1 + Wave 2 + Spec 007 review-queue contract surface.
+    Version 1.2.0-draft (additive MINOR per Constitution §IV) extends the
+    005 surface with three new tenant-admin operations
+    (`tenantAdminInspectUnknownItem`, `tenantAdminReopenUnknownItem`,
+    `tenantAdminBulkDismissUnknownItems`), the `ReviewQueueItem` projection
+    (= `UnknownItem` minus `sale_context`, FR-007 / 006 FR-021a), the
+    `forbidden` 8th error category, and list query-param extensions
+    (`source_system`, `sort`, `group_by`). The five 005 operationIds are
+    unchanged. NOTE: the review-read responses narrow to `ReviewQueueItem`
+    (no `sale_context`); the shipped `UnknownItem` schema is retained
+    unchanged for the POS capture round-trip (R7.3).
+
+    Defines eight operations for the POS-Pulse catalog-sync /
+    unknown-item-reconciliation + review-queue workflow:
 
       1. `posCaptureItem`            — POS submits an item reference; when
          it cannot be resolved against the tenant's active alias set, a
@@ -23,8 +34,20 @@ info:
          creates a new tenant product directly from a pending unknown item,
          producing product + alias + lifecycle transition atomically per
          FR-060, FR-061, FR-062, FR-063.
+      6. `tenantAdminInspectUnknownItem` (007) — tenant admin inspects a
+         single item as a `ReviewQueueItem` (no `sale_context`); cross-tenant
+         / out-of-scope ids are non-disclosing 404s per FR-009 / SI-004.
+      7. `tenantAdminReopenUnknownItem` (007) — tenant-wide principals only;
+         reopens a `dismissed` item by creating a fresh `pending` row (005
+         FR-005), preserving the original; in-scope store-scoped actors get
+         `403 forbidden` per FR-042. Idempotent (FR-063).
+      8. `tenantAdminBulkDismissUnknownItems` (007) — dismiss a bounded
+         selection (≤200) by decomposing into the shipped per-item dismiss
+         (006 FR-070a); over-ceiling batches are rejected whole per FR-044.
+         Idempotent (FR-063).
 
-    Wave 2 operationIds added by 005-WAVE2-CONTRACT (T600/T601).
+    Wave 2 operationIds added by 005-WAVE2-CONTRACT (T600/T601); the three
+    007 review-queue operationIds (6-8) by slice 007-CONTRACT (T010/T011).
 
     Schemas align with `specs/005-pos-catalog-sync-reconciliation/data-model.md`
     §2.1 (lifecycle) and §2.2 (tenant + store scoping). Failure-response
@@ -250,6 +273,44 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
+        - in: query
+          name: source_system
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+          description: >
+            007 (US2 / FR-002). Optional filter by the originating POS
+            source system. Scope-safe: facets/counts reflect only in-scope
+            rows (SC-007). RLS still applies.
+        - in: query
+          name: sort
+          required: false
+          schema:
+            type: string
+            enum: [age_asc, age_desc, store]
+            default: age_desc
+          description: >
+            007 (US2 / FR-003). Sort order. `age_*` sorts by
+            `encountered_at`; `store` groups by store binding. Default
+            preserves the shipped `encountered_at DESC` ordering.
+        - in: query
+          name: group_by
+          required: false
+          schema:
+            type: string
+            enum: [store, source_system]
+          description: >
+            007 (US2 / FR-004, MAY-grouping). Optional grouping dimension.
+            Grouping does NOT change the response shape: the response stays
+            the flat `ListUnknownItemsResponse.items` array. `group_by`
+            orders items so members of the same group are contiguous (the
+            grouping is a presentation/ordering concern, not a distinct
+            grouped envelope). Buckets are scope-safe — items belonging only
+            to out-of-scope groups never appear, and no out-of-scope group
+            is revealed via ordering, count, or any field (FR-032 / SC-007).
+            A richer grouped response variant is out of v1 scope.
       responses:
         "200":
           description: OK — page of unknown items (possibly empty).
@@ -312,7 +373,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UnknownItem"
+                # 007 (R7.2 / FR-007): dashboard response narrows to the
+                # sale_context-free ReviewQueueItem projection. Runtime
+                # swap follows in T032 (US1-LIST-PROJECTION).
+                $ref: "#/components/schemas/ReviewQueueItem"
         "400":
           description: Bad request (invalid path UUID).
           content:
@@ -397,7 +461,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UnknownItem"
+                # 007 (R7.2 / FR-007): dashboard response narrows to the
+                # sale_context-free ReviewQueueItem projection. Runtime
+                # swap follows in T038 (US1-RECONCILIATION-PROJECTION).
+                $ref: "#/components/schemas/ReviewQueueItem"
         "400":
           description: >
             Bad request. `error.code = "validation_failure"` (malformed
@@ -478,14 +545,16 @@ paths:
         "201":
           description: >
             New product created and unknown item resolved. Returns the
-            updated `UnknownItem` row (now `resolved` with
-            `resolution_action = created`) so the client can refresh its
-            view. The `resolved_product_id` field references the newly
-            created product.
+            updated row (now `resolved` with `resolution_action = created`)
+            so the client can refresh its view. The `resolved_product_id`
+            field references the newly created product.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UnknownItem"
+                # 007 (R7.2 / FR-007): dashboard response narrows to the
+                # sale_context-free ReviewQueueItem projection. Runtime
+                # swap follows in T038 (US1-RECONCILIATION-PROJECTION).
+                $ref: "#/components/schemas/ReviewQueueItem"
         "400":
           description: >
             Bad request. `error.code = "validation_failure"` (malformed
@@ -521,6 +590,272 @@ paths:
             conflicting product is NOT disclosed per FR-042),
             `already_reconciled` (US3 #3 race — item was concurrently
             resolved before this request committed).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items/{id}:
+    get:
+      summary: Inspect a single unknown item (review surface).
+      operationId: tenantAdminInspectUnknownItem
+      tags: [catalog-unknown-items]
+      description: >
+        007 US3 / FR-009. Returns the addressed `unknown_items` row as a
+        `ReviewQueueItem` (no `sale_context`, FR-007; no candidate-match
+        hint in v1, FR-070). RLS-scoped: cross-tenant or out-of-scope ids
+        receive a non-disclosing 404 (SI-004 / FR-062). Inherits the
+        document-level `cookieAuth`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUIDv7 primary key of the unknown-item row.
+      responses:
+        "200":
+          description: OK — the item as a ReviewQueueItem projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewQueueItem"
+        "400":
+          description: >
+            Bad request — malformed path UUID. `error.code = "validation"`.
+            Parity with the other `{id}` operations in this contract.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: >
+            Caller lacks the role to read the review queue in this scope.
+            `error.code = "forbidden"` (007 FR-051 / FR-052).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            Not found OR not in scope — one non-disclosing response per
+            SI-004 / FR-062.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items/{id}/reopen:
+    post:
+      summary: Reopen a dismissed unknown item (tenant-wide only).
+      operationId: tenantAdminReopenUnknownItem
+      tags: [catalog-unknown-items]
+      description: >
+        007 US7. Reopen a `dismissed` item by creating a fresh `pending`
+        row for the same logical identifier (005 FR-005); the original
+        `dismissed` row is preserved unchanged. Tenant-wide actors only:
+        an in-scope store-scoped actor receives `403 forbidden`
+        ("tenant-wide authority required", FR-042); an out-of-scope actor
+        receives a non-disclosing `404` (FR-062). The authority split is
+        decided in the service layer, not the route guard (R7.4).
+
+        Reopening a `resolved` item returns `409 already_reconciled` with
+        `details.prior_state` (FR-043). Both the reopen action and the
+        fresh capture are audited (FR-041 / FR-110, R7.5). Carries the
+        `Idempotency-Key` header (identical-replay-response): replaying the
+        same key + body yields the same fresh row + response; a changed
+        body returns `409 idempotency_key_conflict`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUIDv7 primary key of the dismissed unknown-item row.
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+            pattern: "^[\\x21-\\x7E]{16,128}$"
+          description: >
+            Idempotency key for identical-replay-response (007 FR-063,
+            ISOLATE verdict T003). Bounds match the runtime
+            `IdempotencyInterceptor` (apps/api/src/idempotency/
+            idempotency.interceptor.ts: 16–128 printable ASCII, no
+            whitespace) and the `posCaptureItem` declaration above — NOT
+            `Idempotency-Token` (T564).
+      x-idempotency: required
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReopenUnknownItemRequest"
+      responses:
+        "201":
+          description: >
+            Reopened — a fresh `pending` row was created for the same
+            logical identifier (005 FR-005). Body is the new row as a
+            ReviewQueueItem.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewQueueItem"
+        "400":
+          description: Bad request (invalid path UUID or body shape).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: >
+            In-scope but insufficient authority. `error.code = "forbidden"`
+            — reopen requires tenant-wide authority (FR-042). Distinct from
+            404: the item exists in the caller's scope, but the caller may
+            not reopen it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            Not found OR not in scope — one non-disclosing response per
+            SI-004 / FR-062.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Conflict. `error.code` is `already_reconciled` (the item is
+            already `resolved`; `details.prior_state` is set, FR-043) or
+            `idempotency_key_conflict` (same key replayed with a different
+            body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is
+            still being processed (the IdempotencyInterceptor in-progress
+            marker is set). Retry after `Retry-After` seconds with the same
+            key and body. Body shape mirrors `posCaptureItem`'s 425.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/unknown-items/bulk-dismiss:
+    post:
+      summary: Dismiss a bounded selection of unknown items.
+      operationId: tenantAdminBulkDismissUnknownItems
+      tags: [catalog-unknown-items]
+      description: >
+        007 US8. Dismiss up to 200 unknown items in one request. The batch
+        is rejected whole with `400 validation` when more than 200 ids are
+        supplied (FR-044) — nothing is dismissed. Within a valid batch each
+        id is decomposed into the shipped per-item dismiss path (006
+        FR-070a, no new lifecycle write); the response carries one outcome
+        per id (FR-070a). Each successful dismiss is audited. Carries the
+        `Idempotency-Key` header (identical-replay-response, FR-063).
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema:
+            type: string
+            minLength: 16
+            maxLength: 128
+            pattern: "^[\\x21-\\x7E]{16,128}$"
+          description: >
+            Idempotency key for identical-replay-response (007 FR-063,
+            ISOLATE verdict T003). Bounds match the runtime
+            `IdempotencyInterceptor` (apps/api/src/idempotency/
+            idempotency.interceptor.ts: 16–128 printable ASCII, no
+            whitespace) and the `posCaptureItem` declaration — NOT
+            `Idempotency-Token` (T564).
+      x-idempotency: required
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkDismissUnknownItemsRequest"
+      responses:
+        "200":
+          description: >
+            Batch processed. Body is the per-item outcome list (a mixed
+            batch can contain successes and per-item failures; the request
+            itself succeeds).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkDismissUnknownItemsResponse"
+        "400":
+          description: >
+            Whole-batch reject — more than 200 ids, or an invalid body.
+            `error.code = "validation"`. Nothing is dismissed (FR-044).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: >
+            Caller lacks the role to dismiss in this scope.
+            `error.code = "forbidden"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Conflict. `error.code = "idempotency_key_conflict"` — the same
+            Idempotency-Key was replayed with a different body. (Per-item
+            terminal states like `already_reconciled` surface in the 200
+            outcome list, NOT here.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "425":
+          description: >
+            Too Early. The original request with this Idempotency-Key is
+            still being processed. Retry after `Retry-After` seconds with
+            the same key and body. Body shape mirrors `posCaptureItem`'s 425.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying.
           content:
             application/json:
               schema:
@@ -721,7 +1056,11 @@ components:
           type: array
           maxItems: 200
           items:
-            $ref: "#/components/schemas/UnknownItem"
+            # 007 (T002 TIGHTEN / FR-007): the list IS the review queue, so
+            # its items are the `ReviewQueueItem` projection — `UnknownItem`
+            # minus `sale_context`. The shipped `UnknownItem` schema is
+            # retained unchanged for the POS capture round-trip (R7.3).
+            $ref: "#/components/schemas/ReviewQueueItem"
         next_cursor:
           type: string
           nullable: true
@@ -788,6 +1127,162 @@ components:
             is uncategorized. Mirrors `tenant_products.category_id`
             in 003 §5.
 
+    ReviewQueueItem:
+      type: object
+      additionalProperties: false
+      description: >
+        007 (data-model §2.1, FR-007 / 006 FR-021a). The review-surface
+        projection of an `unknown_items` row: the shipped `UnknownItem`
+        field set MINUS `sale_context`. Used by every 007 dashboard-review
+        response (list, inspect, FR-001a terminal detail). `sale_context`
+        is descriptive metadata that MUST NOT appear on the review surface;
+        the shipped `UnknownItem` schema retains it for the POS capture
+        round-trip (R7.3).
+      required:
+        - id
+        - tenant_id
+        - store_id
+        - identifier_type
+        - identifier_value
+        - source_system
+        - resolution_status
+        - resolution_action
+        - resolved_at
+        - resolved_by
+        - encountered_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: UUIDv7 primary key.
+        tenant_id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+          description: Non-null per 005 FR-010.
+        identifier_type:
+          type: string
+          enum: [barcode, sku, plu, supplier_code, external_pos_id]
+        identifier_value:
+          type: string
+          minLength: 1
+          maxLength: 200
+        source_system:
+          type: string
+          minLength: 1
+          maxLength: 64
+          nullable: true
+          description: Non-null when `identifier_type = external_pos_id`; null otherwise.
+        resolution_status:
+          type: string
+          enum: [pending, resolved, dismissed]
+          description: Lifecycle state per FR-001 / FR-004.
+        resolution_action:
+          type: string
+          enum: [linked, created, dismissed]
+          nullable: true
+          description: Populated only when `resolution_status != 'pending'`.
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+          format: uuid
+          nullable: true
+          description: Acting principal's id when not pending.
+        resolved_product_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            FR-001a conditional: present only when the caller has authority
+            to see the linked/created product; OMITTED otherwise while the
+            item row remains visible. Hence not in `required`.
+        encountered_at:
+          type: string
+          format: date-time
+          description: Capture timestamp; age basis for sort/filter.
+
+    ReopenUnknownItemRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        007 US7. Request body for `tenantAdminReopenUnknownItem`. Empty by
+        design — tenant / store scope and authority are resolved from the
+        authenticated principal (Constitution §III). No body-supplied
+        tenant_id / store_id is honoured. The `{}` (or absent) body is the
+        normal case; the schema exists to enforce `additionalProperties:
+        false` (no smuggled fields).
+      properties: {}
+
+    BulkDismissUnknownItemsRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        007 US8. Request body for `tenantAdminBulkDismissUnknownItems`. A
+        bounded selection of unknown-item ids to dismiss. More than
+        `maxItems` ids → whole-batch `400 validation` (FR-044).
+      required:
+        - ids
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+          description: >
+            The unknown-item ids to dismiss (≤200, FR-044). Each is
+            decomposed into the shipped per-item dismiss path (006 FR-070a).
+
+    BulkDismissUnknownItemsResponse:
+      type: object
+      additionalProperties: false
+      description: >
+        007 US8 (data-model §2.3). One outcome per submitted id; no
+        cross-item coupling — one item's failure does not affect siblings.
+      required:
+        - outcomes
+      properties:
+        outcomes:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/BulkDismissOutcome"
+
+    BulkDismissOutcome:
+      type: object
+      additionalProperties: false
+      description: >
+        007 US8. The outcome of dismissing a single id within a bulk batch.
+      required:
+        - id
+        - outcome
+      properties:
+        id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [dismissed, already_reconciled, not_found]
+          description: >
+            Per-item result. `dismissed` on success; `already_reconciled`
+            when the item was already terminal (`details.prior_state` may
+            accompany it); `not_found` when out-of-scope / absent
+            (non-disclosing, SI-004).
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Optional per-item detail (e.g. `prior_state` for
+            `already_reconciled`). Null for plain `dismissed`.
+
     Error:
       type: object
       additionalProperties: false
@@ -807,7 +1302,24 @@ components:
           properties:
             code:
               type: string
-              description: Stable machine-readable error code.
+              description: >
+                Stable machine-readable error code (FR-091 / 007 FR-100
+                taxonomy). The closed 8-category review-queue BUSINESS-FAILURE
+                vocabulary is: `validation`, `target_unavailable`,
+                `alias_conflict`, `idempotency_key_conflict`,
+                `already_reconciled`, `not_found`, `forbidden` (007's 8th
+                category — in-scope insufficient authority, distinct from
+                `not_found`), and `system_failure`. NOTE: the `425 Too Early`
+                idempotency in-progress signal is a TRANSPORT-level retry
+                indicator, NOT a business-failure category — it is outside
+                this closed set (the runtime interceptor emits a diagnostic
+                `idempotency_in_progress` marker on 425; see the per-op 425
+                response and the recorded contract/runtime body-shape finding).
+                Some shipped-005 operation prose uses the legacy spelling
+                `validation_failure`; the canonical 007 wire code is
+                `validation` (research §R4). Shipped ops are not retrofitted
+                (ISOLATE, T003); the runtime already emits `validation` (the
+                prose is documented drift, not a live second code).
             message:
               type: string
               description: Human-readable summary; no sensitive data.
