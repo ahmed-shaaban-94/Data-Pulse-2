@@ -1,9 +1,9 @@
 # Wave Status — `007-unknown-items-review-queue-api`
 
-**Last updated:** 2026-05-29 (SIGN-OFF decisions recorded; planning chain complete)
+**Last updated:** 2026-05-30 (Wave 1 P1-MVP merged via #405/#406; state reconciled to `main`)
 **Spec:** [`specs/007-unknown-items-review-queue-api/`](./)
-**Base:** `origin/main` at `da032d2` (PR #398, 005 fully-closed marker, 2026-05-29)
-**Branch:** `spec/007-unknown-items-review-queue-api`
+**Base:** `origin/main` at `62d0906` (PR #406, CodeRabbit follow-up, 2026-05-29)
+**Branch:** Wave 1 merged to `main` (planning on `spec/007-unknown-items-review-queue-api`)
 **Active findings:** 0
 **Resolved findings:** 0
 
@@ -13,19 +13,21 @@
 
 **007 is the dashboard-facing API feature that 006 deferred** (006 plan §9.1), now implementable since 005 Waves 1+2 shipped (contract + runtime on `main`). It **extends** the already-shipped 005 unknown-items surface rather than greenfielding: the genuine delta is **inspect (GET /{id})**, **reopen**, **bulk-dismiss**, **list-param extensions**, the **`forbidden`** 8th error category, and the **`ReviewQueueItem`** projection (omits `sale_context`).
 
-**Planning chain complete on branch (not yet on `main`):**
+**Planning chain on `main`** (content squash-merged via docs PRs #400 / #402; original branch SHAs):
 
 - `aab701d` — spec + clarify + plan + Phase 0/1 artefacts
 - `45ae621` — tasks.md (Phase 2 — 39 dependency-ordered slice tasks)
 - `8a97e97` — analyze remediation (3 polish tasks T074–T076 + FR traceability refs → 42 tasks)
 
-`/speckit-analyze` (2026-05-29) found **0 CRITICAL**, spec/plan/tasks consistent. Two `[SIGN-OFF]` decision gates were the only items blocking GREEN — **both are now recorded below.**
+`/speckit-analyze` (2026-05-29) found **0 CRITICAL**, spec/plan/tasks consistent. Both `[SIGN-OFF]` decision gates are recorded below, and the `[GATED]` T010 contract slice plus the Wave 1 P1-MVP runtime have since shipped.
 
-**Next operational moves before `/speckit-implement`:**
+**Status (2026-05-29):**
 
 1. ✅ Both SIGN-OFF decisions recorded (this document, § SIGN-OFF Decisions).
-2. ⏳ Request `[GATED]` approval for the T010 OpenAPI extension (`packages/contracts/openapi/catalog/unknown-items.yaml` — forbidden surface).
-3. ⏳ Then dispatch the RED→GREEN pairs (GATED contract slice first).
+2. ✅ `[GATED]` T010 OpenAPI extension merged — PR #404 (`f2622ee`).
+3. ✅ Wave 1 Phase 2–5 P1-MVP runtime merged — PR #405 (`0c1bec7`) + CodeRabbit follow-up PR #406 (`62d0906`).
+
+**Next:** Phase 6 (US7-REOPEN) onward — see § Next recommended action.
 
 ---
 
@@ -190,22 +192,24 @@ The shipped `tenantAdminListUnknownItems` response (and the shipped `UnknownItem
 ## SESSION UPDATE — 2026-05-29 — Phase 2–5 (P1 MVP) **MERGED to `main` via PR #405**
 
 > **State reconciliation:** both the `[GATED]` contract slice (T010/T011, PR #404
-> `f2622ee`) and the Wave 1 P1-MVP runtime (the 7 slices below, PR #405) are now
-> on `main`. The `ReviewQueueItem` schema, the 3 new operationIds, `forbidden`,
-> the list params + filter/sort/group, and the inspect `GET /{id}` route all
-> ship. A CodeRabbit follow-up (test cardinality guards + this doc fix) lands via
-> a separate PR off post-merge `main`. The execution-map's slice `status` fields
-> are reconciled to `merged` at CLOSEOUT (T073); trust `git log origin/main`
-> until then.
+> `f2622ee`) and the Wave 1 P1-MVP runtime (the 7 slices below, PR #405 squash
+> `0c1bec7`) are now on `main`. The `ReviewQueueItem` schema, the 3 new
+> operationIds, `forbidden`, the list params + filter/sort/group, and the inspect
+> `GET /{id}` route all ship. The CodeRabbit follow-up (test cardinality guards +
+> a wave-status doc fix) **merged via PR #406** (squash `62d0906`, current
+> `origin/main` HEAD); it touched test files + this doc only, no slice surface.
+> The execution-map's 7 wave-1 slice `status` fields are now reconciled to
+> `merged` (PR #405 / `0c1bec7`) by this update — done early rather than waiting
+> for CLOSEOUT (T073), which will re-affirm at wave close.
 
 **Worktree:** `C:\Users\user\Documents\GitHub\dp2-007-wave1`, branch
 `feat/007-wave1-p1-mvp` off `9026340` (latest `origin/main`). Single
 integration worktree for the whole P1 wave (the slices form a dependent chain —
 US1 needs the projection helper, US2 needs the US1 swap). **Committed as 4
-grouped commits and opened as PR #405 to `main`** (awaiting CodeRabbit/CI +
-human review; NOT merged). The execution-map carries `status: in_review` for the
-7 wave-1 slices (and `merged` for 007-CONTRACT via #404); CLOSEOUT (T073)
-reconciles them to `merged` once #405 lands.
+grouped commits + 1 docs commit and MERGED to `main` via PR #405** (squash
+`0c1bec7`); the CodeRabbit follow-up landed via PR #406 (`62d0906`). The
+execution-map now carries `status: merged` (PR #405 / `0c1bec7`) for all 7
+wave-1 slices and `merged` for 007-CONTRACT via #404.
 
 **Slices completed this session (all GREEN against WSL Testcontainers Postgres):**
 
@@ -222,7 +226,7 @@ reconciles them to `merged` once #405 lands.
 **Decisions recorded this session:**
 - **`canSeeProduct = (ctx.storeId === null)`** for browse surfaces (list/inspect) — tenant-wide actors see the product reference, store-scoped omit it (FR-001a; SC-007). User-decided. **Note for CLOSEOUT:** the rule keys on *store context*, NOT *role* — a tenant-wide admin operating with a store context set is treated as store-scoped (the create-product test runs a `tenant_admin` with `storeId=STORE_A_X`). Action responses (link/create/dismiss) never suppress.
 
-**Verification:** full `catalog` suite — **56 suites / 429 passed / 5 skipped (US7/US8 tripwires) / 4 todo (pre-existing)**. New DTO files 100% coverage. No forbidden surface touched; `isolation-harness.ts` untouched; `git diff --check` clean. Committed as 4 grouped commits + 1 docs commit and opened as **PR #405** (not merged).
+**Verification:** full `catalog` suite — **56 suites / 429 passed / 5 skipped (US7/US8 tripwires) / 4 todo (pre-existing)**. New DTO files 100% coverage. No forbidden surface touched; `isolation-harness.ts` untouched; `git diff --check` clean. Committed as 4 grouped commits + 1 docs commit and **merged via PR #405** (squash `0c1bec7`); CodeRabbit cardinality-guard follow-up merged via **PR #406** (`62d0906`).
 
 **Deferred (out of this wave, not regressions):** US7-REOPEN (Phase 6), US8-BULK-DISMISS (Phase 7), US4/5/6 regression guards (Phase 8), polish T070–T076, CLOSEOUT T073. The 3 `it.skip` tripwires in `review-queue-sweep.spec.ts` mark the reopen/bulk-dismiss isolation cases those slices must add.
 
@@ -230,20 +234,25 @@ reconciles them to `merged` once #405 lands.
 
 ## Merged on `main`
 
-- **007-CONTRACT (T010/T011)** — the `[GATED]` OpenAPI extension — **merged via PR #404** (squash `f2622ee`): `ReviewQueueItem` schema, the 3 new operationIds (`tenantAdminInspectUnknownItem` / `ReopenUnknownItem` / `BulkDismissUnknownItems`), the `forbidden` 8th error code, and the list query params are all on `main`, with the `contract-007.spec.ts` conformance suite.
+- **007-CONTRACT (T010/T011)** — the `[GATED]` OpenAPI extension — **merged via PR #404** (squash `f2622ee`): `ReviewQueueItem` schema, the 3 new operationIds (`tenantAdminInspectUnknownItem` / `tenantAdminReopenUnknownItem` / `tenantAdminBulkDismissUnknownItems`), the `forbidden` 8th error code, and the list query params are all on `main`, with the `contract-007.spec.ts` conformance suite.
+- **Wave 1 Phase 2–5 runtime (P1 MVP)** — the 7 slices listed in the SESSION UPDATE above (FORBIDDEN-CATEGORY / REVIEW-QUEUE-PROJECTION / ISOLATION-HARNESS / US1-LIST-PROJECTION / US1-RECONCILIATION-PROJECTION / US2-LIST-EXTENSIONS / US3-INSPECT) — **merged via PR #405** (squash `0c1bec7`): review-safe `ReviewQueueItem` list projection, `source_system` filter + `sort` + `group_by`, the inspect `GET /{id}` route, and the `toReviewQueueItem` shared helper.
+- **CodeRabbit review follow-up** — test cardinality guards (non-empty / ≥2-row assertions in `list-projection` + `list-sort-group`) + a wave-status doc fix — **merged via PR #406** (squash `62d0906`, current `origin/main` HEAD).
+- **007 planning chain** (spec/plan/tasks + analyze + SIGN-OFFs) — content **on `main`** via the docs PRs #400 / #402 (squashed; original branch SHAs `aab701d` / `45ae621` / `8a97e97`).
 
-**In review (not yet on `main`):** Wave 1 Phase 2–5 runtime — the 7 P1-MVP slices listed in the SESSION UPDATE above — is open as **PR #405**. The 007 planning chain (spec/plan/tasks + analyze + SIGN-OFFs) remains on `spec/007-unknown-items-review-queue-api` (`aab701d` / `45ae621` / `8a97e97`).
+**In review / not yet on `main`:** _nothing._ Wave 1 (P1 MVP) is fully landed. The next waves — US7-REOPEN (Phase 6), US8-BULK-DISMISS (Phase 7), US4/5/6 regression guards (Phase 8), polish T070–T076, CLOSEOUT T073 — remain `proposed` in the execution-map and are not yet started.
 
 ---
 
-## Local only — committed/uncommitted, not on `main`
+## Planning-chain provenance (content on `main` via squash)
 
-| Stage | Subject | Reference |
+> These are the original feature-branch commit SHAs on `spec/007-unknown-items-review-queue-api`; their **content is on `main`**, squash-merged via docs PRs #400 / #402. Kept for traceability — the SHAs themselves are not in `main`'s history (squash flattens them).
+
+| Stage | Subject | Original SHA |
 |---|---|---|
 | Spec + clarify + plan + Phase 0/1 | spec.md (10 US, 35 own-FR, 11 SI, 9 SC; 3 clarifications), plan.md (Constitution PASS ×2, 005 dependency-readiness map), research.md (R1–R6), data-model.md, contracts/README.md, quickstart.md, checklists/requirements.md | `aab701d` |
 | tasks.md (Phase 2) | 39 dependency-ordered tasks; RED/GREEN + Predecessors/Acceptance house style; GATED-first | `45ae621` |
 | Analyze remediation | T074 (FR-053 determinism), T075 (FR-054 system-failure retry), T076 (FR-023/045/SC-003 absence-guard) + FR traceability refs; 42 tasks | `8a97e97` |
-| SIGN-OFF decisions | This document — T002 = tighten, T003 = isolate | (this commit) |
+| SIGN-OFF decisions | This document — T002 = tighten, T003 = isolate | (in #400/#402 docs chain) |
 
 ---
 
@@ -253,6 +262,10 @@ _None._
 
 ## Next recommended action
 
-1. **Request `[GATED]` approval** for T010 (extend `packages/contracts/openapi/catalog/unknown-items.yaml`). Per the T002 verdict, this slice also reconciles 005's `sale_context` conformance expectations.
-2. **Dispatch the RED→GREEN pairs** per `tasks.md` §13 critical path: T010 (GATED) → foundational RED/GREEN (T020–T025) → US story pairs → polish (T070–T076) → T073 (this wave-status final update).
-3. Per standing rules: no implementation, push, or PR without explicit instruction.
+Wave 1 (P1 MVP) is fully merged to `main` (#404 contract → #405 runtime → #406 review follow-up). The contract slice and the foundational + US1/US2/US3 RED→GREEN pairs are all done. Remaining 007 scope, in dependency order:
+
+1. **Phase 6 — `007-US7-REOPEN`** (T050–T053): the reopen action (`tenantAdminReopenUnknownItem`, Idempotency-Key per the T003 ISOLATE verdict). Unblocks the 3 `it.skip` isolation tripwires in `review-queue-sweep.spec.ts`.
+2. **Phase 7 — `007-US8-BULK-DISMISS`**: bulk-dismiss (`tenantAdminBulkDismissUnknownItems`, Idempotency-Key).
+3. **Phase 8 — `007-US4/US5/US6` regression guards** (link / create / dismiss respect the `ReviewQueueItem` projection + `forbidden` taxonomy).
+4. **Polish** — T070–T076 (audit-sweep determinism, smoke/coverage) → **`007-CLOSEOUT` (T073)** reconciles every slice to terminal status and re-affirms the provenance recorded above.
+5. Per standing rules: no implementation, push, or PR without explicit instruction; the `[GATED]` surfaces (`packages/contracts/openapi/**`) are already extended for these ops by #404, so US7/US8 should need no further contract change — verify against the merged contract before dispatch.
