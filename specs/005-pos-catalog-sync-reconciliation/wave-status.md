@@ -404,7 +404,7 @@ The filter fix unblocked latent contract violations across the API surface, not 
 
 **Outstanding follow-ups (deferred, tracked):**
 
-- `005-WAVE2-RLS-TEST-AUDIT` — still pending; 7 docs + 2 pool swaps across the 005 catalog test suite.
-- `retry-mismatch.spec.ts:392-394` second-assertion latent — `error.details.code` checks against a field the IdempotencyInterceptor doesn't supply on the wire. Flagged by PR #360's agent; left for `005-WAVE1-METRICS-MISMATCH-FOLLOWUP` harness refactor.
+- `005-WAVE2-RLS-TEST-AUDIT` — **DONE** (PR #363, 2026-05-26): the 2 data-path pool swaps landed (`capture-happy-path.spec.ts` now binds `localEnv.app` — RLS-active) plus justification comments on the orthogonal specs. (Previously read "still pending" — stale; reconciled 2026-05-29 against the merged code on main.)
+- `retry-mismatch.spec.ts` stale `error.details.code` second-assertion — **RESOLVED** by `005-WAVE1-METRICS-MISMATCH-FOLLOWUP`: the assertion was dropped in PR #389 (commit `b2585fc`, "drop stale error.details assertion in retry-mismatch.spec.ts"). No longer outstanding.
 
 **Next slice:** `005-WAVE2-CREATE-HAPPY` (T630–T632) per the Wave 2 dependency graph. CREATE-EDGES, AUDIT, METRICS, POLISH follow.
