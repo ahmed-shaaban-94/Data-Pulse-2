@@ -908,7 +908,8 @@ slices:
   # ===== Phase 6: Polish ====================================================
   # WAVE 1 TERMINAL SLICE — its merge on 2026-05-26 marks Wave 1 feature-complete.
   # All 21 implementation slices + 1 hotfix are now merged on main.
-  # Only deferred item: 005-WAVE1-METRICS-MISMATCH-FOLLOWUP (harness fix-up, proposed).
+  # Former deferred item 005-WAVE1-METRICS-MISMATCH-FOLLOWUP (harness fix-up) is
+  # now COMPLETE (PRs #386 → #389 → #390); see that slice's status below.
 
   - id: 005-WAVE1-POLISH
     task_ids: [T560, T561, T562, T563, T564]
@@ -957,7 +958,8 @@ slices:
   # GREEN there, but is intermittently RED on db-integration CI from runner
   # variance — NOT a code regression. This slice exists so the stabilization
   # work is dispatchable with a bounded contract instead of acting on a prose
-  # "follow-up" note. It is NOT yet executed (status: proposed).
+  # "follow-up" note. EXECUTED 2026-05-29 via PR #394 (mechanism (b) report-only
+  # gate) — status: complete-by-execution below.
   #
   # Observed flake (wave-status.md §Deferred T560): same-SHA back-to-back CI
   # runs produced p95 = 760 ms (FAIL) then 446 ms (PASS) — a 1.7x spread on
@@ -1124,6 +1126,7 @@ slices:
     type: test
     status: merged   # PR #354 @ 0724361 (T610/T611 alias-conflict safety floor). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 354
+    merged_at_commit: 0724361
     approval_required: false
     depends_on:
       - 005-WAVE2-CONTRACT
@@ -1211,6 +1214,7 @@ slices:
     type: fix
     status: merged   # PR #363 (CodeRabbit follow-up: admin->app pool swap (2 specs) + justification comments (8 specs)). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 363
+    merged_at_commit: 5fccf02
     approval_required: false
     depends_on:
       - 005-WAVE2-LINK-HAPPY
@@ -1301,6 +1305,7 @@ slices:
     type: feature
     status: merged   # PR #364 @ 22dee63 (create-new product happy path (FR-060-063)). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 364
+    merged_at_commit: 22dee63
     approval_required: false
     depends_on:
       - 005-WAVE2-LINK-HAPPY    # ReconciliationService exists; CREATE-HAPPY extends it
@@ -1332,6 +1337,7 @@ slices:
     type: feature
     status: merged   # PR #367 (create edge-case rejections (FR-062)). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 367
+    merged_at_commit: 8700d2c
     approval_required: false
     depends_on:
       - 005-WAVE2-CREATE-HAPPY
@@ -1361,6 +1367,7 @@ slices:
     type: test
     status: merged   # PR #368 @ 2e6959e (Wave 2 audit subjects (FR-080/082)). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 368
+    merged_at_commit: 2e6959e
     approval_required: false
     depends_on:
       - 005-WAVE2-LINK-EDGES
@@ -1388,6 +1395,7 @@ slices:
     type: test
     status: merged   # PR #372 (Wave 2 FR-081 counters). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 372
+    merged_at_commit: 2b25656
     approval_required: false
     depends_on:
       - 005-WAVE2-LINK-HAPPY
@@ -1417,6 +1425,7 @@ slices:
     type: docs
     status: merged   # PR #374 @ a96706d (T660-T662 regression + atomicity.spec.ts + closeout). Status reconciled from stale `proposed` 2026-05-29 — Wave 2 is COMPLETE on main per wave-status ledger.
     merged_in_pr: 374
+    merged_at_commit: a96706d
     approval_required: false
     # T670 merge-audit (self-amending). The eight Wave 2 predecessor slices
     # below are merged on origin/main (2026-05-26..27); POLISH (this slice) is
