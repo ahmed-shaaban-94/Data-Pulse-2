@@ -140,6 +140,33 @@ type RejectionReason = "alias_conflict" | "target_unavailable" | "already_reconc
 /** Subject for conflict-rejection audit events (FR-082). */
 const RECONCILIATION_CONFLICT_REJECTED = "unknown_item.reconciliation_conflict_rejected";
 
+/**
+ * 007 US7 (T053) — discriminated union returned by
+ * {@link ReconciliationService.reopenUnknownItem}.
+ *
+ *   {kind: "ok";              row: UnknownItemRow}  — fresh pending row created
+ *                                                    (005 FR-005), OR an existing
+ *                                                    pending sibling returned
+ *                                                    unchanged (already-pending,
+ *                                                    no duplicate per FR-043).
+ *   {kind: "forbidden"}       — in-scope row, store-scoped actor lacks tenant-wide
+ *                                authority (FR-042, R7.4 service-layer split → 403).
+ *   {kind: "already_reconciled"; priorState} — target is `resolved` (FR-043 →
+ *                                409 + details.prior_state).
+ *   {kind: "not_found"}       — RLS-filtered (cross-tenant / out-of-scope) or
+ *                                absent → non-disclosing 404 (FR-062 / SI-004).
+ */
+export type ReopenResult =
+  | { kind: "ok"; row: UnknownItemRow }
+  | { kind: "forbidden" }
+  | { kind: "already_reconciled"; priorState: "resolved" | "dismissed" }
+  | { kind: "not_found" };
+
+/** 007 US7 audit subjects (R7.5 — emitted programmatically, not via @Auditable). */
+const UNKNOWN_ITEM_REOPENED = "unknown_item.reopened";
+const UNKNOWN_ITEM_CAPTURED = "unknown_item.captured";
+const UNKNOWN_ITEM_REOPEN_REJECTED = "unknown_item.reopen_rejected";
+
 @Injectable()
 export class ReconciliationService {
   constructor(
@@ -672,4 +699,353 @@ export class ReconciliationService {
 
     return result;
   }
+
+  /**
+   * Reopen a dismissed unknown item (007 US7 / T053).
+   *
+   * Tenant-wide actors only. Reopening a `dismissed` item creates a FRESH
+   * `pending` row for the same logical identifier (005 FR-005); the original
+   * `dismissed` row is preserved unchanged as audit history.
+   *
+   * Authority split (R7.4 — SERVICE-layer, not the route guard): the route's
+   * RolesGuard admits store_manager (denyAs:404) so a store-scoped actor
+   * REACHES this method; the 403-vs-404 decision is made here from the
+   * actor's `isTenantWide` flag:
+   *   - 0 rows under RLS → `not_found` (non-disclosing 404; FR-062 / SI-004) —
+   *     an out-of-scope store / cross-tenant id is invisible, never disclosed.
+   *   - row in scope AND `!isTenantWide` → `forbidden` (403; FR-042) — the
+   *     caller can see the item but lacks tenant-wide authority to reopen it.
+   *   - row in scope AND `isTenantWide` → proceed.
+   *
+   * State machine (after authority passes):
+   *   - `resolved`  → `already_reconciled` { priorState: "resolved" } (FR-043 →
+   *     409 + details.prior_state).
+   *   - `pending`   → already pending; return the row unchanged, no duplicate.
+   *   - `dismissed` → if a `pending` sibling already exists for the tuple
+   *     (re-captured between dismiss and reopen), return it unchanged
+   *     (already-pending, NO duplicate — FR-043); else INSERT a fresh `pending`
+   *     row (005 FR-005 capture path, mirrored inline — `UnknownItemsService`
+   *     is a different module and out of this slice's allowed_files).
+   *
+   * Pending-sibling guard rationale: `idx_unknown_items_lookup_value` is a
+   * NON-UNIQUE partial index (WHERE resolution_status='pending'), so a second
+   * pending INSERT would NOT raise 23505 — it would SILENTLY create a duplicate.
+   * The at-most-one-pending-per-tuple invariant is an application contract
+   * (005 FR-032), enforced here by checking before INSERT.
+   *
+   * Audit (R7.5 — programmatic, AFTER the transaction resolves, mirroring
+   * `emitConflictRejection` so an audit row is never tied to a rolled-back
+   * commit): on a fresh capture, emit BOTH `unknown_item.reopened` (the action)
+   * AND `unknown_item.captured` (the fresh row, FR-110). On a `forbidden` /
+   * `already_reconciled` rejection, emit `unknown_item.reopen_rejected`
+   * (FR-111). A `not_found` emits NOTHING — a non-disclosing 404 must not
+   * confirm existence via an audit row.
+   *
+   * Idempotency: the route carries `@Idempotent("required")`; replay
+   * short-circuit + body-mismatch 409 are handled by the shared
+   * `IdempotencyInterceptor` (T003 ISOLATE — only the new ops carry the key).
+   *
+   * Spec anchors: FR-041, FR-042, FR-043, FR-062, FR-110, FR-111, 005 FR-005,
+   *               005 FR-032, Constitution §III / §XIII / SI-004.
+   */
+  async reopenUnknownItem(input: {
+    readonly tenantId: string;
+    readonly storeId: string | null;
+    readonly unknownItemId: string;
+    readonly actorUserId: string;
+    readonly isTenantWide: boolean;
+    readonly correlationId: string;
+  }): Promise<ReopenResult> {
+    const freshRowId = newId();
+
+    const result = await runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ReopenResult> => {
+        // Set app.current_store GUC — required by the unknown_items_store_read
+        // RLS policy branch (same pattern as link/dismiss). Tenant-wide actors
+        // pass storeId=null → "*" (003 0009 carve-out); store-scoped pass UUID.
+        await client.query(
+          "SELECT set_config('app.current_store', $1, true)",
+          [input.storeId ?? "*"],
+        );
+
+        // Lock the target row and discriminate lifecycle. RLS filters a
+        // cross-tenant / out-of-scope row to zero rows.
+        const lockResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending" | "resolved" | "dismissed";
+          resolution_action: "linked" | "created" | "dismissed" | null;
+          resolved_at: Date | null;
+          resolved_by: string | null;
+          resolved_product_id: string | null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `SELECT id, tenant_id, store_id, identifier_type, value,
+                  source_system, resolution_status, resolution_action,
+                  resolved_at, resolved_by, resolved_product_id,
+                  encountered_at, sale_context
+             FROM unknown_items
+            WHERE id = $1
+              FOR UPDATE`,
+          [input.unknownItemId],
+        );
+
+        const target = lockResult.rows[0];
+
+        // Non-disclosing 404 — RLS-filtered (cross-tenant / out-of-scope) or
+        // absent. Decided BEFORE the authority check so an out-of-scope actor
+        // cannot use a 403 as an existence oracle (FR-062 / SI-004).
+        if (!target) {
+          return { kind: "not_found" };
+        }
+
+        // R7.4: in-scope row, but a store-scoped actor lacks tenant-wide
+        // authority → 403 forbidden (FR-042). Service-layer, not the guard.
+        if (!input.isTenantWide) {
+          return { kind: "forbidden" };
+        }
+
+        // resolved → already reconciled; the prior_state detail is surfaced
+        // to the client (FR-043).
+        if (target.resolution_status === "resolved") {
+          return { kind: "already_reconciled", priorState: "resolved" };
+        }
+
+        // The target itself is already pending — reopen is a no-op; return it.
+        if (target.resolution_status === "pending") {
+          return { kind: "ok", row: toUnknownItemRow(target) };
+        }
+
+        // target is `dismissed` → reopen. First check for an existing pending
+        // sibling for the SAME tuple (re-captured between dismiss and reopen):
+        // returning it avoids creating a duplicate pending row (FR-043 /
+        // 005 FR-032). source_system uses IS NOT DISTINCT FROM to match the
+        // NULL (barcode/sku/plu/supplier_code) and NOT-NULL (external_pos_id)
+        // branches uniformly — same predicate as captureItem's dedup.
+        const siblingResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending" | "resolved" | "dismissed";
+          resolution_action: "linked" | "created" | "dismissed" | null;
+          resolved_at: Date | null;
+          resolved_by: string | null;
+          resolved_product_id: string | null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `SELECT id, tenant_id, store_id, identifier_type, value,
+                  source_system, resolution_status, resolution_action,
+                  resolved_at, resolved_by, resolved_product_id,
+                  encountered_at, sale_context
+             FROM unknown_items
+            WHERE tenant_id       = $1
+              AND store_id        = $2
+              AND identifier_type = $3
+              AND value           = $4
+              AND source_system IS NOT DISTINCT FROM $5
+              AND resolution_status = 'pending'
+            ORDER BY encountered_at ASC
+            LIMIT 1`,
+          [
+            target.tenant_id,
+            target.store_id,
+            target.identifier_type,
+            target.value,
+            target.source_system,
+          ],
+        );
+
+        const sibling = siblingResult.rows[0];
+        if (sibling) {
+          // Already pending — no duplicate (FR-043). Return the sibling row.
+          return { kind: "ok", row: toUnknownItemRow(sibling) };
+        }
+
+        // No sibling → INSERT a fresh pending row for the same logical
+        // identifier (005 FR-005). The original dismissed row is untouched.
+        // Mirrors UnknownItemsService.captureItem's INSERT. correlation_id is
+        // NOT NULL per 0007_catalog.sql; the controller derives it from the
+        // request id (no POS correlation exists on a reopen).
+        const insertResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          store_id: string;
+          identifier_type: string;
+          value: string;
+          source_system: string | null;
+          resolution_status: "pending";
+          resolution_action: null;
+          resolved_at: null;
+          resolved_by: null;
+          resolved_product_id: null;
+          encountered_at: Date;
+          sale_context: Record<string, unknown> | null;
+        }>(
+          `INSERT INTO unknown_items
+             (id, tenant_id, store_id, identifier_type, value,
+              source_system, resolution_status, sale_context, correlation_id)
+           VALUES
+             ($1, $2, $3, $4, $5, $6, 'pending', $7, $8)
+           RETURNING id, tenant_id, store_id, identifier_type, value,
+                     source_system, resolution_status, resolution_action,
+                     resolved_at, resolved_by, resolved_product_id,
+                     encountered_at, sale_context`,
+          [
+            freshRowId,
+            target.tenant_id,
+            target.store_id,
+            target.identifier_type,
+            target.value,
+            target.source_system,
+            // The dismissed row's sale_context is provenance; a fresh reopen
+            // carries no new sale context (the original is preserved on the
+            // dismissed row). NULL keeps the fresh row's review surface clean.
+            null,
+            input.correlationId,
+          ],
+        );
+
+        const inserted = insertResult.rows[0];
+        if (!inserted) {
+          // RLS returning zero rows on a self-insert means the principal's
+          // tenant/store context did not satisfy unknown_items_insert. A guard
+          // error, not a domain error — throw to abort rather than corrupt the
+          // response shape (mirrors captureItem).
+          throw new Error("unknown_items: reopen insert produced no row");
+        }
+
+        return { kind: "ok", row: toUnknownItemRow(inserted) };
+      },
+    );
+
+    // ---- post-transaction audit (R7.5 / FR-110 / FR-111) -------------------
+    // Emitted AFTER the txn resolves so an audit row is never tied to a
+    // rolled-back commit (mirrors emitConflictRejection). The success path
+    // emits BOTH the reopen action AND the fresh capture; rejections emit a
+    // single reopen_rejected; not_found emits nothing (non-disclosure).
+    if (result.kind === "ok") {
+      await this.emitReopenAudit(UNKNOWN_ITEM_REOPENED, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+        targetId: result.row.id,
+        requestId: input.correlationId,
+        metadata: { action: "reopen" },
+      });
+      await this.emitReopenAudit(UNKNOWN_ITEM_CAPTURED, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+        targetId: result.row.id,
+        requestId: input.correlationId,
+        metadata: { action: "reopen_fresh_capture" },
+      });
+    } else if (result.kind === "forbidden") {
+      await this.emitReopenAudit(UNKNOWN_ITEM_REOPEN_REJECTED, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+        targetId: input.unknownItemId,
+        requestId: input.correlationId,
+        metadata: { reason: "forbidden" },
+      });
+    } else if (result.kind === "already_reconciled") {
+      await this.emitReopenAudit(UNKNOWN_ITEM_REOPEN_REJECTED, {
+        tenantId: input.tenantId,
+        storeId: input.storeId,
+        actorUserId: input.actorUserId,
+        targetId: input.unknownItemId,
+        requestId: input.correlationId,
+        metadata: { reason: "already_reconciled", prior_state: result.priorState },
+      });
+    }
+    // result.kind === "not_found" → no audit (non-disclosing 404).
+
+    return result;
+  }
+
+  /**
+   * Emit a 007-US7 reopen-related audit event (R7.5). Best-effort: a failed
+   * enqueue must not change the caller's HTTP outcome, but it is logged so a
+   * dropped event is observable (no PII — only the action/reason metadata).
+   * Mirrors {@link emitConflictRejection}.
+   */
+  private async emitReopenAudit(
+    action: string,
+    ctx: {
+      readonly tenantId: string;
+      readonly storeId: string | null;
+      readonly actorUserId: string;
+      readonly targetId: string;
+      readonly requestId: string | null;
+      readonly metadata: Record<string, unknown> | null;
+    },
+  ): Promise<void> {
+    await this.auditEnqueuer
+      .enqueue({
+        actor_user_id: ctx.actorUserId,
+        actor_label: null,
+        tenant_id: ctx.tenantId,
+        store_id: ctx.storeId,
+        action,
+        target_type: "unknown_item",
+        target_id: ctx.targetId,
+        request_id: ctx.requestId,
+        metadata: ctx.metadata,
+      })
+      .catch((err: unknown) => {
+        this.logger?.error(
+          { err, action },
+          "ReconciliationService: reopen audit enqueue failed",
+        );
+      });
+  }
+}
+
+/**
+ * Adapter — raw snake_case row (FOR UPDATE / sibling / INSERT RETURNING) to the
+ * camelCase {@link UnknownItemRow} the controller projects. Shared by the
+ * reopen branches so the mapping lives in exactly one place.
+ */
+function toUnknownItemRow(row: {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  identifier_type: string;
+  value: string;
+  source_system: string | null;
+  resolution_status: "pending" | "resolved" | "dismissed";
+  resolution_action: "linked" | "created" | "dismissed" | null;
+  resolved_at: Date | null;
+  resolved_by: string | null;
+  resolved_product_id: string | null;
+  encountered_at: Date;
+  sale_context: Record<string, unknown> | null;
+}): UnknownItemRow {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    storeId: row.store_id,
+    identifierType: row.identifier_type,
+    identifierValue: row.value,
+    sourceSystem: row.source_system,
+    resolutionStatus: row.resolution_status,
+    resolutionAction: row.resolution_action,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
+    resolvedProductId: row.resolved_product_id,
+    encounteredAt: row.encountered_at,
+    saleContext: row.sale_context,
+  };
 }
