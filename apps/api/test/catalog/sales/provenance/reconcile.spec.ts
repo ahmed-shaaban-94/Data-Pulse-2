@@ -77,6 +77,7 @@ describe("T062 — provenance retained across sale / void / refund", () => {
       { table: "sale_voids", ext: "prov-void" },
       { table: "sale_refunds", ext: "prov-refund" },
     ];
+    const hashes: string[] = [];
     for (const { table, ext } of checks) {
       const row = await h.harness.env.admin.query<{
         source_system: string;
@@ -90,6 +91,10 @@ describe("T062 — provenance retained across sale / void / refund", () => {
       expect(row.rows[0]?.source_system).toBe("pos-1");
       expect(row.rows[0]?.external_id).toBe(ext);
       expect(row.rows[0]?.payload_hash).toMatch(SHA256_HEX);
+      hashes.push(row.rows[0]!.payload_hash);
     }
+    // Each hash is payload-DERIVED, not a shared constant: the three distinct
+    // payloads (sale / void / refund) must yield three distinct hashes.
+    expect(new Set(hashes).size).toBe(3);
   });
 });

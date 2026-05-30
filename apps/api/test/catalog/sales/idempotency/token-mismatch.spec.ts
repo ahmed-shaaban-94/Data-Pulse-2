@@ -57,10 +57,16 @@ describe("T061 — captureSale Idempotency-Key payload mismatch → 409, no side
       error: { code: "idempotency_key_conflict", message: expect.any(String) },
     });
 
-    // No second row was written (the mismatch fired before the handler).
+    // No second row was written (the mismatch fired before the handler). Scope
+    // to the two known external IDs so the assertion is independent of cleanup
+    // ordering: only the first (ext-mm-a) exists; ext-mm-b was never persisted.
     const count = await h.harness.env.admin.query<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM sales WHERE source_system = 'pos-1'`,
+      `SELECT COUNT(*)::text AS n FROM sales WHERE external_id IN ('ext-mm-a', 'ext-mm-b')`,
     );
     expect(count.rows[0]?.n).toBe("1");
+    const b = await h.harness.env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM sales WHERE external_id = 'ext-mm-b'`,
+    );
+    expect(b.rows[0]?.n).toBe("0");
   });
 });
