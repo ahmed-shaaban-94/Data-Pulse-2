@@ -229,19 +229,10 @@ describe("sales-sweep §A.4 — in-scope baseline (anchors the sweep, prevents v
 // service + RLS-active PG_POOL + IdempotencyInterceptor), brought up in §B.1's
 // own `beforeAll` so a Docker-less Group-A skip short-circuits cleanly.
 //
-// §B.2 (void/refund) are still RED placeholders that name their owning slice —
-// they FAIL on "operation not implemented", NOT on an RLS leak, and US3/US4
-// replace them when those operations land.
+// §B.2 (void/refund) are now REAL HTTP assertions too (US3/US4 landed); they are
+// folded into the §B describe below alongside capture/read (T074).
 
-/** Scaffold-RED: throws naming the owning slice. Replaced when the op lands. */
-function pendingOperation(slice: string, op: string): never {
-  throw new Error(
-    `pending ${slice}: ${op} not implemented — replace this sweep case with a ` +
-      `real object-level-authz / non-disclosing-404 assertion when the operation lands`,
-  );
-}
-
-// §B.1 — capture/read object-safety, HTTP-driven (T036). Imported lazily so the
+// §B — capture/read/void/refund object-safety, HTTP-driven. Imported lazily so the
 // SalesController/Service references do not affect the Group-A DB-only probes.
 import {
   startCaptureHarness,
@@ -364,19 +355,60 @@ describe("sales-sweep §B.1 — capture/read object-safety (HTTP) [T036]", () =>
       .send(captureBody({ externalId: "ext-sweep-anon" }));
     expect(res.status).toBe(401);
   });
-});
 
-describe("sales-sweep §B.2 — void/refund object-safety (RED until US3/US4 land)", () => {
-  // Skipped (not RED) until the owning slice lands: a throwing `it()` placeholder
-  // fails the CI lane on every branch that reaches it. Flip `it.skip` → `it` and
-  // replace `pendingOperation` with the real non-disclosing-404 assertion in US3/US4.
-  it.skip("recordVoid: cross-tenant sale ref → non-disclosing 404 (FR-014, SI-004) [008-US3-VOID]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US3-VOID", "recordVoid");
+  // §B.2 (T074) — void/refund object-safety, now real HTTP assertions.
+  it("recordVoid → cross-tenant void of A's sale is a non-disclosing 404 (FR-014, SI-004)", async () => {
+    if (!hb.harness) return;
+    const cap = await hb.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("swb2v"))
+      .send(captureBody({ externalId: "ext-sweep-void" }));
+    expect(cap.status).toBe(201);
+    const saleRef: string = cap.body.saleRef;
+
+    hb.harness.contextGuard.tenantId = TENANT_B;
+    hb.harness.contextGuard.storeId = STORE_B_X;
+    const res = await hb.harness
+      .http()
+      .post(`/api/pos/v1/sales/${saleRef}/void`)
+      .set("Idempotency-Key", idempKey("swb2v1"))
+      .send({ sourceSystem: "pos-1", externalId: "sweep-void-evt" });
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain(saleRef);
+    const n = await hb.harness.env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM sale_voids WHERE external_id = 'sweep-void-evt'`,
+    );
+    expect(n.rows[0]?.n).toBe("0");
   });
 
-  it.skip("recordRefund: cross-tenant sale ref → non-disclosing 404 (FR-014, SI-004) [008-US4-REFUND]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US4-REFUND", "recordRefund");
+  it("recordRefund → cross-tenant refund of A's sale is a non-disclosing 404 (FR-014, SI-004)", async () => {
+    if (!hb.harness) return;
+    const cap = await hb.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("swb2r"))
+      .send(captureBody({ externalId: "ext-sweep-refund" }));
+    expect(cap.status).toBe(201);
+    const saleRef: string = cap.body.saleRef;
+
+    hb.harness.contextGuard.tenantId = TENANT_B;
+    hb.harness.contextGuard.storeId = STORE_B_X;
+    const res = await hb.harness
+      .http()
+      .post(`/api/pos/v1/sales/${saleRef}/refund`)
+      .set("Idempotency-Key", idempKey("swb2r1"))
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "sweep-refund-evt",
+        posRefundAmount: "1.0000",
+        currencyCode: "USD",
+      });
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain(saleRef);
+    const n = await hb.harness.env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM sale_refunds WHERE external_id = 'sweep-refund-evt'`,
+    );
+    expect(n.rows[0]?.n).toBe("0");
   });
 });

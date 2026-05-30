@@ -17,8 +17,16 @@ import {
   type CanActivate,
   type ExecutionContext,
   type INestApplication,
+  type Provider,
 } from "@nestjs/common";
 import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
+
+import { RequestIdInterceptor } from "../../../../src/common/request-id.interceptor";
+import { AuditEmitterInterceptor } from "../../../../src/audit/audit-emitter.interceptor";
+import {
+  AUDIT_JOB_ENQUEUER,
+  type AuditJobEnqueuer,
+} from "../../../../src/audit/audit-job.enqueuer";
 import { Test } from "@nestjs/testing";
 import type { Pool } from "pg";
 import request from "supertest";
@@ -152,7 +160,9 @@ export interface HarnessHandle {
  * real SalesController/Service. Returns a handle whose `harness` is null when
  * Docker is unavailable AND MIGRATION_TEST_ALLOW_SKIP=1.
  */
-export async function startCaptureHarness(): Promise<HarnessHandle> {
+export async function startCaptureHarness(
+  opts: { auditEnqueuer?: AuditJobEnqueuer } = {},
+): Promise<HarnessHandle> {
   let env: PgTestEnv;
   try {
     env = await startPgEnv();
@@ -194,16 +204,29 @@ export async function startCaptureHarness(): Promise<HarnessHandle> {
       fakeMarker as unknown as InProgressMarker,
     );
 
+    const providers: Provider[] = [
+      { provide: PG_POOL, useFactory: (): Pool => env.app },
+      SalesService,
+      { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
+      { provide: INFLIGHT_REDIS, useValue: fakeRedis },
+      { provide: InProgressMarker, useValue: fakeMarker },
+      { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
+    ];
+    if (opts.auditEnqueuer) {
+      // Opt-in audit wiring (US6 / T072): RequestIdInterceptor stamps the
+      // correlation id, AuditEmitterInterceptor taps each @Auditable route and
+      // enqueues one canonical event via the spy. Off by default so existing
+      // capture specs are unaffected.
+      providers.push(
+        { provide: AUDIT_JOB_ENQUEUER, useValue: opts.auditEnqueuer },
+        { provide: APP_INTERCEPTOR, useClass: RequestIdInterceptor },
+        { provide: APP_INTERCEPTOR, useClass: AuditEmitterInterceptor },
+      );
+    }
+
     const moduleRef = await Test.createTestingModule({
       controllers: [SalesController],
-      providers: [
-        { provide: PG_POOL, useFactory: (): Pool => env.app },
-        SalesService,
-        { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
-        { provide: INFLIGHT_REDIS, useValue: fakeRedis },
-        { provide: InProgressMarker, useValue: fakeMarker },
-        { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-      ],
+      providers,
     })
       .overrideGuard(PosOperatorAuthGuard)
       .useValue({ canActivate: () => true })
