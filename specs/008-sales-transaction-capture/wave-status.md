@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-30 |
+| Updated | 2026-05-30 — Phase 1 merged (#420); Phase 2 [GATED] slices in review (#421 SCHEMA / #422 CONTRACT) |
 
 ---
 
@@ -15,9 +15,9 @@
 
 008 introduces the **first sale fact** the SaaS owns (`sales` + `sale_lines` + void/refund terminal events), built **alongside** the shipped 005 POS ingestion seam (reuses Idempotency-Key interceptor, `sourceSystem+externalId` dedup, tenant-context/RLS, audit, outbox — no re-invention).
 
-**Planning chain COMPLETE and MERGED to `main`** (via PR #414 then #418, post-#414-squash remainder): spec → clarify → **gate RESOLVED** (A.1–A.6/B/C/D.1–D.3) → plan → tasks → analyze (+ remediation). **No implementing slice approved or dispatched.** (This Agent-OS coordination layer lands via a small follow-up PR that #418's squash-merge raced past.)
+**Planning chain + Agent-OS coordination MERGED to `main`** (PRs #414/#418/#419). **Phase 1 SETUP MERGED** (#420, `6d01512` — empty `SalesModule`). **Both `[GATED]` Phase-2 slices USER-APPROVED + IN REVIEW**: `008-CONTRACT` (#422) and `008-SCHEMA` (#421), each rebased on `main` @ `6d01512`, all validation GREEN.
 
-**To start implementation, two `[GATED]` approvals are required** (the hard serialization points): `008-CONTRACT` (OpenAPI sale contract) and `008-SCHEMA` (`0012_sales` migration + Drizzle schema). Until both merge, no GREEN slice dispatches. The Money + Temporal gate is resolved, so there are **no open WHAT-level blockers** — only the two gated approvals.
+**Both gated PRs (#421 + #422) must merge before any implementing GREEN slice** dispatches (the hard serialization points). They are order-independent between themselves. The Money + Temporal gate is resolved, so there are **no open WHAT-level blockers** — only the two gated PRs awaiting merge.
 
 **MVP** = `008-US1-CAPTURE` + its foundational prerequisites. That alone delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
 
@@ -106,14 +106,17 @@ None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0
 
 ## Provenance
 
-- **Planning chain MERGED to `main` via #418** (`f4b4688`, branch `docs/008-roadmap-and-sales-spec`): gate resolution + plan/research/data-model/contracts/quickstart + tasks + analyze fixes + CodeRabbit accuracy fixes. (PR #414 squash-merged only the first commit — initial roadmap + spec + gate + checklist — onto `main` at `f4cb7c7`.) #418's squash raced past the final Agent-OS push, so `execution-map.yaml` + `wave-status.md` land via this follow-up PR.
-- All slices `proposed`; none on `main` as runtime yet.
+- **Planning chain MERGED to `main` via #418** (`f4b4688`) + Agent-OS coordination layer via **#419** (`cecdaac`): spec / plan / tasks / analyze + gate RESOLVED + `execution-map.yaml` + `wave-status.md`.
+- **Phase 1 SETUP MERGED via #420** (`6d01512`): empty `SalesModule` skeleton (T002). `008-SIGNOFF-MONEY-LIB` (T001) resolved.
+- **Phase 2 `[GATED]` slices USER-APPROVED + IN REVIEW** (both rebased on `main` @ `6d01512`; order-independent; both must merge before any GREEN):
+  - **`008-CONTRACT` → PR #422** — POS sales OpenAPI contract (`pos-sales/sales.yaml`). Validation: `sales.contract.spec` 16/16 + umbrella conformance 89/89 GREEN.
+  - **`008-SCHEMA` → PR #421** — `0012_sales` migration + Drizzle schema (4 tables: `sales` / `sale_lines` / `sale_voids` / `sale_refunds`). Validation: `0012-sales.spec` 12/12 round-trip (WSL Testcontainers) + `sales-schema-shape.spec` 12/12 GREEN. Notable: the migration's tenant RLS policies use the established empty-GUC `CASE` guard (the bare `::uuid` cast — fixed repo-wide in 0009/0010 — was caught by the round-trip probe).
+- Remaining slices `proposed`; no runtime GREEN on `main` yet.
 
 ---
 
 ## Next recommended action
 
-1. **Merge this follow-up PR** (Agent-OS coordination layer) so `main` carries the complete 008 slice. (The planning chain itself is already merged via #414 + #418.)
-2. **Approve `008-CONTRACT`** (the `[GATED]` OpenAPI sale contract) as its own slice — the first implementing step (Standing Rules §3).
-3. In parallel, **approve `008-SCHEMA`** (the `[GATED]` `0012` migration + schema). Both must merge before any GREEN.
-4. Then dispatch **`008-ISOLATION-HARNESS`** (RED) → **`008-US1-CAPTURE`** (the MVP), serializing the remaining US slices through the shared `sales` module while running `008-WORKER` / `008-LIFECYCLE` in parallel.
+1. **Review + merge `008-SCHEMA` (#421) and `008-CONTRACT` (#422)** — order-independent between themselves; **both must merge before any implementing GREEN**.
+2. Then dispatch **`008-ISOLATION-HARNESS`** (RED seed + sweep) → **`008-US1-CAPTURE`** 🎯 (the MVP first GREEN — creates `sales.controller.ts` + `sales.service.ts`).
+3. After US1: serialize the remaining US slices through the shared `sales` module, while running `008-WORKER` (distinct `apps/worker/**` tree) and `008-LIFECYCLE` (test-only + doc) in parallel.
