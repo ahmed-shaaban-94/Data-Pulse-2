@@ -7,6 +7,10 @@
  * NULL — no raw payload / secret is ever carried in the audit record (FR-042 /
  * §XIV PII discipline). The audit path is insert-only (the enqueuer only ever
  * appends).
+ *
+ * NOTE: this proves the decorator + AuditEmitterInterceptor emit correctly when
+ * wired (opt-in via the harness here); live production emission depends on
+ * T232/T233 mounting the interceptor into main.ts.
  */
 import {
   startCaptureHarness,
@@ -25,6 +29,8 @@ import type { AuditJobPayload } from "../../../../src/audit/audit-job.types";
 class SpyAuditEnqueuer implements AuditJobEnqueuer {
   public calls: AuditJobPayload[] = [];
   async enqueue(payload: AuditJobPayload): Promise<void> {
+    // Push MUST stay before any `await` — the interceptor's tap.next invokes
+    // emitAsync without awaiting, so the assertions read `calls` synchronously.
     this.calls.push(payload);
   }
   reset(): void {
@@ -100,17 +106,31 @@ describe("T072 — audit linkage across capture / void / refund", () => {
       "sale.refunded",
     ]);
 
+    // The correlation id on each event equals the X-Request-Id echoed on that
+    // transition's response — a real per-request correlation, not just non-empty.
+    const reqIds = [cap, voided, refunded].map(
+      (r) => r.headers["x-request-id"],
+    );
+    spy.calls.forEach((evt, i) => {
+      expect(evt.request_id).toEqual(expect.any(String));
+      expect(evt.request_id).toBe(reqIds[i]);
+    });
+
     for (const evt of spy.calls) {
       // Actor + scope are resolved from the principal/context, never the body.
       expect(evt.actor_user_id).toBe(DEVICE_USER_ID);
       expect(evt.tenant_id).toBe(TENANT_A);
       expect(evt.store_id).toBe(STORE_A_X);
-      // Correlation id present for traceability.
-      expect(typeof evt.request_id).toBe("string");
-      expect(evt.request_id).not.toBe("");
-      // No raw payload / secret ever travels in audit metadata (FR-042/090/092).
+      expect(evt.target_type).toBeNull();
+      expect(evt.target_id).toBeNull();
+      // No raw payload / secret travels in the audit record (FR-042/090/092,
+      // §XIV): metadata is null AND no body-derived value appears anywhere in
+      // the serialized event.
       expect(evt.metadata).toBeNull();
-      expect(JSON.stringify(evt)).not.toContain("payload_hash");
+      const json = JSON.stringify(evt);
+      expect(json).not.toContain("ext-audit"); // externalId
+      expect(json).not.toContain("12.5000"); // posTotal
+      expect(json).not.toContain("pos-1"); // sourceSystem
     }
   });
 });

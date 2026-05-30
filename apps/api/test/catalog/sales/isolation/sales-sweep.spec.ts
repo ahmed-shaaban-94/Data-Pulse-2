@@ -23,9 +23,9 @@
  *     PG_POOL): cross-tenant read → non-disclosing 404 (FR-102/SC-004),
  *     out-of-scope store read → 404 (FR-063/SI-004), body-supplied
  *     tenant_id/store_id/created_by ignored (FR-061), unauthenticated → 401.
- *     The void/refund cases (§B.2) remain RED placeholders that name their
- *     owning slice (US3/US4) — they FAIL on "operation not implemented", NOT on
- *     an RLS leak. The capture harness is imported lazily inside §B.1's own
+ *     The void/refund cases (§B.2, T074) are now REAL HTTP assertions too
+ *     (008-US3/US4 landed): cross-tenant void/refund → non-disclosing 404 with
+ *     no record. The capture harness is imported lazily inside §B's own
  *     `beforeAll`, so a Docker-less skip in Group A still short-circuits cleanly.
  *
  * MUST NOT modify `isolation-harness.ts` (003-owned) — extend via seed-sales.ts.
