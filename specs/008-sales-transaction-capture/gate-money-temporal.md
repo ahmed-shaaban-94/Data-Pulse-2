@@ -1,8 +1,8 @@
 # 008 Decision Gate — Transaction Money + Temporal Semantics + Provenance Hash
 
 **Feature**: 008-sales-transaction-capture
-**Status**: OPEN — MUST be resolved before `/speckit-plan` (and therefore before any implementation slice)
-**Owner decision required**: yes — every item below is an owner decision; this document frames trade-offs and does **not** pick.
+**Status**: RESOLVED 2026-05-30 — all items A.1–A.6, B, C, D.1–D.3 recorded by the owner (Ahmed Shaaban). See §Decisions Recorded. `/speckit-plan` is unblocked.
+**Owner decision required**: yes — every item below was an owner decision; this document frames trade-offs and does **not** pick. The owner's picks are captured in §Decisions Recorded; the trade-off framing below is retained for provenance.
 **Why this gate exists**: 008 is the first feature to model a sale. The Constitution (v3.0.1) explicitly defers a set of money/temporal/provenance/lifecycle parameters as **Follow-up TODOs** in its Sync Impact Report and as live clauses in §III (Money, Tax, Rounding), §X (Retail Temporal Semantics), §IX/§XIII (Provenance), the Per-Tenant Resource Isolation section, and §XIV (PII & Data Lifecycle). The Constitution *fixes the obligations*; it leaves *these parameters* for "the entity's spec" / "the pricing spec" / "before any sale or catalog-pricing slice ships." This gate resolves the ones this feature exercises: §A transaction money (TODO #1), §B per-entity timestamps (TODO #2), §C payload hash (TODO #3), §D.2 per-tenant quota (TODO #6), and §D.3 sale-fact classification + retention (TODO #7). (TODO #4, audit-storage growth, is deferred per its own "once retention pressure surfaces" clause.) This is that decision point.
 
 > **Already pinned — NOT open.** Catalog/store/price-history money is already fixed at `numeric(19,4)` + `char(3)` ISO-4217 currency with paired-currency CHECK constraints (003: `tenant_products`, `store_product_overrides`, `price_history`, `global_products`). 008 consumes that as-is. **Only TRANSACTION-level money is open below.**
@@ -129,18 +129,40 @@ The 008 spec (FR-040) fixes that a **payload hash** is retained per ingested eve
 
 ---
 
-## Resolution checklist (gate is CLOSED when all are recorded)
+## Decisions Recorded
 
-- [ ] **A.1** transaction-money precision/scale
-- [ ] **A.2** line-tax representation
-- [ ] **A.3** per-line vs invoice-level rounding (for the SaaS comparison total)
-- [ ] **A.4** rounding mode (banker's vs half-up)
-- [ ] **A.5** tender/change/multi-tax — include or defer (with §XIV posture if include)
-- [ ] **A.6** money library/representation (+ any `[GATED]` dependency approval)
-- [ ] **B** per-entity timestamp required/optional table filled
-- [ ] **C** payload-hash algorithm + canonicalization + scope
-- [ ] **D.1** concurrency posture ratified
-- [ ] **D.2** per-tenant bulk-sync bound defaults set
-- [ ] **D.3** sale-fact data class + retention window + erasure note recorded
+Recorded by the owner (Ahmed Shaaban) on **2026-05-30**. Each is the recommended default for a retail-POS backend per the trade-off framing above; rationale is noted where the pick is consequential. Mirrored into the 008 spec's `## Clarifications` (Session 2026-05-30) and resolved-OQ list.
 
-Once recorded here (and reflected back into the 008 spec's Clarifications + the resolved OQ list), `/speckit-plan` may proceed.
+| # | Decision | Rationale |
+|---|---|---|
+| **A.1** | **All transaction money is `numeric(19,4)`** — line price/amount, sale total, and tax amounts — identical to the 003 catalog money already pinned. | Consistency: one money model across catalog and sale; no precision-boundary where rounding silently happens between lines and totals. |
+| **A.2** | **Single per-line tax amount, snapshot only.** `sale_line` stores the tax amount the POS charged; the SaaS does **not** recompute tax. | Faithful to §III "preserve what the POS charged." Multi-tax breakdown is deferred to a later feature if a market needs it (not v1). |
+| **A.3** | **Per-line rounding** for the SaaS comparison total (round each line, then sum). | Matches typical retail POS receipts → fewest false mismatch flags. The POS-reported total is preserved verbatim regardless (FR-030); this governs only the SaaS *comparison* total feeding the advisory flag (FR-031). |
+| **A.4** | **Half-up** (arithmetic) rounding mode. | Matches most retail POS + human expectation; aligning with the dominant POS rule minimizes false-positive mismatch flags. |
+| **A.5** | **Defer tender / change / multi-tax to a dedicated payments feature (010).** 008 persists the sale fact + POS-reported total only; **no tender persistence in v1.** | Keeps 008 focused on the sale fact; avoids pulling payment-class PII (§XIV) into the first sale slice. Payments are contract-only / POS-Pulse-side today. |
+| **A.6** | **String-backed money value object** (`{ amount: string, currency }` validated at the boundary, round-tripped to DB `numeric(19,4)`). **No new dependency.** | No float ever appears; portable; explicit. Because A.2 chose snapshot tax, the SaaS does almost no money arithmetic (only the A.3 comparison total), so a big-decimal library is unwarranted — and **no `[GATED]` `package.json` dependency add is required.** |
+| **B** | **Required (NOT NULL): `occurredAt`, `receivedAt`, `businessDate` on `sales`; `voidedAt` / `refundedAt` on their terminal events. Optional (nullable): `processedAt` (null-until-processed, off-request per §V), `sourceClockAt` (POS may omit).** `sale_lines` inherit the parent sale's `occurredAt` / `businessDate` (no own copy). | Strong invariants on server-owned + business-critical times, while tolerating partial/offline POS payloads so legitimate delayed events are never rejected (§X). |
+| **C** | **SHA-256 over canonical JSON (sorted-key / JCS canonicalization), hashing the full payload.** | SHA-256 is the constitution's own suggestion and ubiquitous; canonical JSON makes the *same logical payload* hash identically across cosmetic re-serialization, so the provenance hash stays reconciliation-stable across re-deliveries. |
+| **D.1** | **Ratified:** captured sale = immutable fact; concurrency = idempotent dedup on `sourceSystem + externalId` (FR-050); **no** optimistic-concurrency `version` column on an append-only fact table; corrections are append-only void/refund terminal events. | This is the §III-required justification for not using LWW / optimistic locking: a version column on an append-only immutable fact is meaningless; dedup is the correct concurrency control. |
+| **D.2** | **Initial bulk-sync defaults:** offline-recovery batch ceiling **500 sale events per request**; per-tenant ingestion bound layered on the inherited 001/004 platform rate-limit posture (no unbounded batch path). Values are initial defaults, tunable post-launch; the **posture's existence** is what FR-080/SI-011 mandate. | A documented bound must ship with the first ingestion-heavy feature so one tenant's recovery burst cannot starve others; 500/request is a conservative starting ceiling for offline catch-up without unbounded memory/latency. |
+| **D.3** | **Sale-fact entities classified `business-class`** (catalog references + quantities + POS-reported totals; no customer identity). **Retention:** inherit the 001 long-horizon, insert-only audit-retention posture for the immutable fact. **Right-to-erasure:** audit-immutable; if any customer-reference field is ever admitted, tombstone the PII field rather than delete the fact. | The sale fact carries no PII/payment data in v1 (A.5 deferred tender), so business-class is correct; reclassification re-triggers if customer-reference or tender data is later admitted (SI-012). |
+
+> **Note on D.2 values:** the 500/request ceiling and "inherit platform rate-limit" are *initial defaults* the owner can revise during `/speckit-plan` without re-opening this gate — the constitutional requirement (a documented posture exists) is satisfied. They are not contractual SLAs.
+
+---
+
+## Resolution checklist (gate is CLOSED — all recorded 2026-05-30)
+
+- [x] **A.1** transaction-money precision/scale — `numeric(19,4)` (match catalog)
+- [x] **A.2** line-tax representation — single per-line snapshot amount
+- [x] **A.3** per-line vs invoice-level rounding — per-line
+- [x] **A.4** rounding mode — half-up
+- [x] **A.5** tender/change/multi-tax — **defer to 010**; no tender persistence in v1
+- [x] **A.6** money library/representation — string-backed value object → `numeric`; **no `[GATED]` dependency**
+- [x] **B** per-entity timestamp required/optional — occurredAt/receivedAt/businessDate NN; processedAt/sourceClockAt nullable; lines inherit
+- [x] **C** payload-hash algorithm + canonicalization + scope — SHA-256 over canonical (sorted-key) JSON, full payload
+- [x] **D.1** concurrency posture ratified — immutable fact + dedup; no version column
+- [x] **D.2** per-tenant bulk-sync bound defaults set — 500 events/request + inherited platform posture
+- [x] **D.3** sale-fact data class + retention window + erasure note recorded — business-class, inherit 001 retention, tombstone-on-erasure
+
+**Gate CLOSED.** Decisions mirrored into the 008 spec's `## Clarifications` (Session 2026-05-30) and resolved-OQ list. **`/speckit-plan` may now proceed.**
