@@ -77,6 +77,18 @@
 #   so these were user-authorized merges on locally-verified green).
 #   Remaining `proposed` (deps now satisfied, awaiting execution approval):
 #   007-POLISH-AUDIT-SWEEP, 007-POLISH-SMOKE-COVERAGE, 007-CLOSEOUT.
+#
+# Updated: 2026-05-30 — 007-POLISH-AUDIT-SWEEP MERGED (post-merge closeout).
+#   - 007-POLISH-AUDIT-SWEEP (T070/T074/T075/T076) MERGED via PR #412 (squash
+#     226677c): audit-linkage sweep, failure determinism, system-failure
+#     retry-safety (real-pool-wrapped fault → 500 internal_error → rollback →
+#     idempotent retry), and the forbidden-operations absence-guard. T070
+#     surfaced a bulk-dismiss audit correlation-id gap; the slice was WIDENED
+#     (user-approved) to thread the request correlation id into the bulk-dismiss
+#     per-item audit (2 runtime files added to its allowed_files). 4 suites
+#     GREEN via WSL Testcontainers; tsc clean; adversarial review clean.
+#   Remaining `proposed` (deps now satisfied, awaiting execution approval):
+#   007-POLISH-SMOKE-COVERAGE (T071/T072), 007-CLOSEOUT (T073).
 
 spec: 007-unknown-items-review-queue-api
 version: 1
@@ -665,14 +677,22 @@ slices:
   - id: 007-POLISH-AUDIT-SWEEP
     task_ids: [T070, T074, T075, T076]
     type: test
-    status: proposed
+    status: merged   # landed on `main` via PR #412 (squash 226677c). NOTE: T070 surfaced
+                     # a bulk-dismiss audit correlation-id gap; the slice was WIDENED with
+                     # user approval to thread the request correlation id into the
+                     # bulk-dismiss per-item audit (unknown-items controller + service —
+                     # 2 runtime files beyond the 4 test files in allowed_files below).
+    merged_in_pr: 412
+    merged_at_commit: 226677c
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (Wave 2 + Wave 1 merges) — retained for audit
       - 007-US7-REOPEN          # T054
       - 007-US8-BULK-DISMISS    # T058
       - 007-FORBIDDEN-CATEGORY  # T021 (determinism asserts category wording)
       - 007-CONTRACT            # T076 absence-guard checks the post-T010 operationId set
-    blocks:
+    blocks: []
+    previously_blocked:
       - 007-POLISH-SMOKE-COVERAGE
     agent: sonnet-test
     allowed_files:
@@ -680,6 +700,9 @@ slices:
       - apps/api/test/catalog/unknown-items/errors/determinism.spec.ts                   # T074
       - apps/api/test/catalog/unknown-items/errors/system-failure-retry.spec.ts          # T075
       - apps/api/test/catalog/unknown-items/contract/forbidden-operations.spec.ts        # T076
+      # Widened (user-approved 2026-05-30) — bulk-dismiss audit correlation-id fix:
+      - apps/api/src/catalog/unknown-items/unknown-items.controller.ts
+      - apps/api/src/catalog/unknown-items/unknown-items.service.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test "catalog/unknown-items/audit/review-queue-audit"
         expected: GREEN — every state change (reopen, bulk-dismiss item-success) + every audited failure has an event with tenant/store/actor/action/target/correlation-id via 005 FR-083; no parallel channel (SC-004, FR-064).
@@ -703,10 +726,13 @@ slices:
   - id: 007-POLISH-SMOKE-COVERAGE
     task_ids: [T071, T072]
     type: test
+    # depends_on satisfied: 007-POLISH-AUDIT-SWEEP merged via #412 (226677c). Stays
+    # `proposed` (not promoted to `ready`) — every 007 runtime/test dep is now on
+    # `main`, but promotion to execution is a separate scheduling decision
+    # (closeout flips blocked→ready only; this was never `blocked`, it is `proposed`).
     status: proposed
     approval_required: false
-    depends_on:
-      - 007-POLISH-AUDIT-SWEEP   # T071 runs after all GREEN tasks land
+    depends_on: []   # 007-POLISH-AUDIT-SWEEP cleared (merged via #412); the merged slice remains in the map as the audit record
     blocks:
       - 007-CLOSEOUT
     agent: sonnet-test

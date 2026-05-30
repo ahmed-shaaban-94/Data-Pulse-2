@@ -1,9 +1,9 @@
 # Wave Status — `007-unknown-items-review-queue-api`
 
-**Last updated:** 2026-05-30 (Wave 2 merged via #408/#409/#410; state reconciled to `main`)
+**Last updated:** 2026-05-30 (POLISH-AUDIT-SWEEP merged via #412; state reconciled to `main`)
 **Spec:** [`specs/007-unknown-items-review-queue-api/`](./)
-**Base:** `origin/main` at `4123664` (PR #410, Phase-8 regression guards, 2026-05-30)
-**Branch:** Wave 1 + Wave 2 merged to `main` (planning on `spec/007-unknown-items-review-queue-api`)
+**Base:** `origin/main` at `226677c` (PR #412, POLISH-AUDIT-SWEEP, 2026-05-30)
+**Branch:** Wave 1 + Wave 2 + Polish-audit-sweep merged to `main` (planning on `spec/007-unknown-items-review-queue-api`)
 **Active findings:** 0
 **Resolved findings:** 0
 
@@ -240,9 +240,10 @@ wave-1 slices and `merged` for 007-CONTRACT via #404.
 - **007 planning chain** (spec/plan/tasks + analyze + SIGN-OFFs) — content **on `main`** via the docs PRs #400 / #402 (squashed; original branch SHAs `aab701d` / `45ae621` / `8a97e97`).
 - **Wave 2 — US7 reopen (P2)** — `007-US7-REOPEN` (T050–T054) — **merged via PR #408** (squash `8f0c332`): `POST /{id}/reopen` (`tenantAdminReopenUnknownItem`), service-layer 403/404 authority split (R7.4), `createdFresh` 201/200 + dual programmatic audit on a fresh row / none on reuse, pending-sibling guard, `Idempotency-Key` (T003 ISOLATE), optional-body contract. CodeRabbit follow-up folded into the squash.
 - **Wave 2 — US8 bulk-dismiss (P2)** — `007-US8-BULK-DISMISS` (T055–T058) — **merged via PR #409** (squash `161058c`): `POST /bulk-dismiss` (`tenantAdminBulkDismissUnknownItems`), ≤200 whole-batch reject (FR-044), decompose into the shipped per-item dismiss (FR-070a), per-item outcomes `{id,outcome,details?}`, programmatic per-item audit via an `@Optional()` enqueuer. CodeRabbit follow-up (details-optional / UUID-casing / void audit / denial-path + no-enqueuer tests) folded into the squash.
-- **Wave 2 — US4/US5/US6 regression guards (Phase 8)** — `007-US4-LINK-REGRESSION` / `007-US5-CREATE-REGRESSION` / `007-US6-DISMISS-REGRESSION` (T060/T061/T062) — **merged via PR #410** (squash `4123664`, current `origin/main` HEAD): test-only guards proving the shipped link/create/dismiss still behave under 007 + the T038 `ReviewQueueItem` projection (no `sale_context` on responses), monotonic-guard no-duplicate, non-disclosing 404; NO key-replay (T003 ISOLATE); NO runtime change.
+- **Wave 2 — US4/US5/US6 regression guards (Phase 8)** — `007-US4-LINK-REGRESSION` / `007-US5-CREATE-REGRESSION` / `007-US6-DISMISS-REGRESSION` (T060/T061/T062) — **merged via PR #410** (squash `4123664`): test-only guards proving the shipped link/create/dismiss still behave under 007 + the T038 `ReviewQueueItem` projection (no `sale_context` on responses), monotonic-guard no-duplicate, non-disclosing 404; NO key-replay (T003 ISOLATE); NO runtime change.
+- **Phase 9 — POLISH-AUDIT-SWEEP** — `007-POLISH-AUDIT-SWEEP` (T070/T074/T075/T076) — **merged via PR #412** (squash `226677c`, current `origin/main` HEAD): audit-linkage sweep (every state change + audited failure carries the canonical fields incl. a correlation id), failure determinism (byte-identical envelopes minus `request_id`), system-failure retry-safety (real-pool-wrapped fault → 500 `internal_error` → rollback → idempotent retry, no partial commit), and the forbidden-operations absence-guard (only the 8 allowed operationIds; force/bulk-link/bulk-create/bulk-reopen routes 404/405). **Runtime fix folded in (user-approved widening):** the bulk-dismiss per-item audit now threads the request correlation id (symmetric with reopen) — closes the T070 correlation gap the sweep surfaced.
 
-**In review / not yet on `main`:** _nothing._ Wave 1 (P1 MVP) and Wave 2 (US7 reopen, US8 bulk-dismiss, US4/5/6 regression guards) are fully landed. Remaining 007 scope — polish T070–T076 (`007-POLISH-AUDIT-SWEEP`, `007-POLISH-SMOKE-COVERAGE`) and `007-CLOSEOUT` (T073) — stays `proposed` in the execution-map (dependencies now satisfied; awaiting execution approval) and is not yet started.
+**In review / not yet on `main`:** _nothing._ Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), and Phase-9 POLISH-AUDIT-SWEEP are all landed. Remaining 007 scope — `007-POLISH-SMOKE-COVERAGE` (T071/T072) and `007-CLOSEOUT` (T073) — stays `proposed` in the execution-map (dependencies now satisfied; awaiting execution approval) and is not yet started.
 
 ---
 
@@ -265,18 +266,17 @@ _None._
 
 ## Next recommended action
 
-Wave 1 (P1 MVP) **and** Wave 2 (US7 reopen + US8 bulk-dismiss + US4/5/6 regression guards) are fully merged to `main` (#404 → #405 → #406 → #407 → #408 → #409 → #410). Only the polish + closeout phase remains:
+Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), **and** Phase-9 POLISH-AUDIT-SWEEP are merged to `main` (#404 → … → #410 → #411 → #412). Two slices remain:
 
-1. **`007-POLISH-AUDIT-SWEEP`** (T070 audit-linkage, T074 determinism, T075 system-failure retry, T076 forbidden-operations absence-guard) — deps (US7 + US8 + FORBIDDEN-CATEGORY + CONTRACT) are now all on `main`.
-2. **`007-POLISH-SMOKE-COVERAGE`** (T071 quickstart journeys 1–6, T072 ≥80% coverage on new/extended catalog code) — depends on the audit-sweep landing.
-3. **`007-CLOSEOUT`** (T073) — re-affirms every slice to terminal status (this closeout already did the Wave-2 reconciliation early; T073 confirms at wave close).
-4. Per standing rules: no implementation, push, or PR without explicit instruction.
+1. **`007-POLISH-SMOKE-COVERAGE`** (T071 quickstart journeys 1–6 integration smoke, T072 ≥80% line coverage on new/extended catalog code) — all deps on `main`. **Note for T072:** the coverage check runs the FULL catalog suite with `--coverage`, which is the OOM-prone full-suite shape on the (offline) self-hosted runner; locally it may exceed the targeted-path memory budget — run it deliberately and report `NOT RUN` rather than weakening the gate if the local box can't complete it.
+2. **`007-CLOSEOUT`** (T073) — re-affirms every slice to terminal status + the two SIGN-OFF verdicts at wave close. The early closeouts (#411 Wave-2, #412-followup this doc) already reconciled most of the graph; T073 is the final confirmation.
+3. Per standing rules: no implementation, push, or PR without explicit instruction.
 
-### OPEN FINDING for the polish wave (not a new task — verify against signals.md)
-- **reopen fresh-capture metric:** `reopenUnknownItem` creates a fresh `pending` row but does NOT call `recordUnknownItemCaptured()` (a normal POS capture does). The audit correctly emits `unknown_item.captured` (FR-110), so this is **metric-only**, not a spec/correctness gap. During T070, confirm against `docs/observability/signals.md` whether `unknown_item_captured_total` is meant to count reopen-created rows; if yes, add the call at the reopen INSERT site; if no, record the deliberate exclusion. Do NOT treat as a blocking T070 sub-task without that signals.md check.
+### OPEN FINDING (still open — NOT addressed by T070; verify against signals.md)
+- **reopen fresh-capture metric:** `reopenUnknownItem` creates a fresh `pending` row but does NOT call `recordUnknownItemCaptured()` (a normal POS capture does). The audit correctly emits `unknown_item.captured` (FR-110), so this is **metric-only**, not a spec/correctness gap. T070 asserted audit linkage, NOT the metric — this remains open. Resolve during T072/closeout: confirm against `docs/observability/signals.md` whether `unknown_item_captured_total` should count reopen-created rows; if yes, add the call at the reopen INSERT site (a runtime change → its own slice); if no, record the deliberate exclusion.
 
 ### Next short Maestro prompt
 
 ```text
-Use Agent OS. Execute slice 007-POLISH-AUDIT-SWEEP. Stop before commit.
+Use Agent OS. Execute slice 007-POLISH-SMOKE-COVERAGE. Stop before commit.
 ```
