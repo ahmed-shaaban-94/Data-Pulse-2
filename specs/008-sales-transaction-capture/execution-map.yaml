@@ -1,0 +1,458 @@
+# 008-sales-transaction-capture — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 008 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety semantics, and the GATED-first
+# serialization edges.
+#
+# 008 is a CODE feature (NestJS api + worker). It introduces the FIRST sale
+# fact (`sales` + `sale_lines` + void/refund terminal events) and builds
+# ALONGSIDE the shipped 005 POS ingestion seam — reusing the Idempotency-Key
+# interceptor, sourceSystem+externalId dedup, tenant-context/RLS helpers, the
+# audit insert, and the outbox producer (tasks.md §0, plan §4). It does NOT
+# re-invent ingestion.
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3):
+#   - 008-CONTRACT  → new OpenAPI sale contract under packages/contracts/openapi/**
+#   - 008-SCHEMA    → new Drizzle schema + 0012_sales SQL migration under
+#                     packages/db/** (paired *.down.sql, lock-duration review)
+# Both carry `approval_required: true` and are the hard serialization points:
+# no implementing GREEN slice dispatches until both are merged.
+#
+# ONE slice is `[SIGN-OFF]` (008-SIGNOFF-MONEY-LIB / T001): confirm the
+# string-backed money value object adds NO package.json dependency (gate A.6).
+# If a big-decimal library becomes necessary, that is a SEPARATE [GATED]
+# package.json decision — stop and request approval.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/008-sales-transaction-capture/wave-status.md
+# Brief source:     specs/008-sales-transaction-capture/tasks.md
+#                   (each slice's full RED/GREEN brief, Predecessors, and
+#                   Acceptance live in tasks.md; this file provides the
+#                   dispatch-time schema fields only.)
+#
+# Slicing convention (005/007-style, NOT 006-style 1:1): each capability slice
+# folds its RED test task(s) + GREEN implementation task(s) into one
+# dispatchable unit, because a worker writes the failing test and makes it
+# pass within one worktree. `task_ids` is therefore list-valued. Every
+# tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
+# `task_ids` — verified at authoring time.
+#
+# Status: ALL slices `proposed` — 008 planning chain is complete and MERGED to
+#   `main` (spec / plan / tasks / analyze + gate RESOLVED, via PRs #414 + #418;
+#   this coordination layer lands via a small follow-up PR #418's squash raced
+#   past). No implementing slice has been approved or dispatched. The Money +
+#   Temporal Decision Gate is RESOLVED
+#   (gate-money-temporal.md §Decisions Recorded), so there are no open WHAT-level
+#   blockers — only the two [GATED] approvals gate the start of implementation.
+#
+# Updated: 2026-05-30 — initial Agent OS coordination layer for 008.
+
+version: 1
+spec: 008-sales-transaction-capture
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 008-SETUP
+    task_ids: [T002]
+    type: chore
+    status: proposed
+    approval_required: false
+    depends_on: [008-SIGNOFF-MONEY-LIB]
+    blocks:
+      - 008-CONTRACT
+      - 008-SCHEMA
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.module.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — the new empty sales module compiles and is registered, mirroring reconciliation.module.ts; no routes yet.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 008 branch is not off latest origin/main — rebase first"
+      - "stop if the catalog reconciliation/unknown-items modules do not compile — that is a 005-regression, not an 008 task"
+    parallel_safety: safe   # single new module file, no overlap
+
+  - id: 008-SIGNOFF-MONEY-LIB
+    task_ids: [T001]
+    type: docs
+    # T001 is a [SIGN-OFF] gate (gate A.6): money = string-backed value object,
+    # NO package.json dependency. The verdict is recorded in wave-status.md.
+    # Status stays `proposed` (nothing on main); this slice carries the gate edge.
+    status: proposed
+    approval_required: false   # decision gate, not a code gate
+    depends_on: []
+    blocks:
+      - 008-SETUP
+      - 008-SCHEMA           # money columns realize the no-dependency value-object decision
+    agent: opus-maestro
+    allowed_files:
+      - specs/008-sales-transaction-capture/wave-status.md
+    validation:
+      - command: 'grep -nE "T001|money value object|no .*dependency" specs/008-sales-transaction-capture/wave-status.md'
+        expected: One+ match — the no-package.json-dependency money decision is recorded under SIGN-OFF Decisions.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and request a SEPARATE [GATED] package.json approval if any slice proposes adding a big-decimal library (big.js / decimal.js) — gate A.6 chose a string-backed value object"
+    parallel_safety: safe
+
+  # ===== Phase 2: Foundational (blocking prerequisites) =======================
+
+  # ----- 2.1 GATED OpenAPI contract (hard serialization point) ---------------
+
+  - id: 008-CONTRACT
+    task_ids: [T010, T011]
+    type: feat
+    status: proposed
+    approval_required: true   # [GATED] — packages/contracts/openapi/** (Constitution §IV/§VIII)
+    depends_on: [008-SETUP]
+    blocks:
+      - 008-US1-CAPTURE
+      - 008-US3-VOID
+      - 008-US4-REFUND
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/pos-sales/sales.yaml   # exact path confirmed at approval time (pos-sales/ or catalog/sales)
+    validation:
+      - command: pnpm --filter @data-pulse-2/contracts lint   # or the repo's OpenAPI validator entrypoint
+        expected: GREEN — captureSale / recordVoid / recordRefund / readSale operationIds lint clean; canonical Error envelope + FR-101 categories; toBody projections; Idempotency-Key on writes; no tender fields.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — this is a [GATED] forbidden-path slice; do NOT touch packages/contracts/openapi/** until the user approves THIS slice in-session"
+      - "stop if any operationId collides with or renames a shipped 005/007 operationId (renames are breaking)"
+    parallel_safety: serialize   # the gated contract is a hard ordering point; nothing implementing dispatches before it merges
+
+  # ----- 2.2 GATED schema + migration (hard serialization point) -------------
+
+  - id: 008-SCHEMA
+    task_ids: [T012, T013]
+    type: feat
+    status: proposed
+    approval_required: true   # [GATED] — packages/db/** schema + SQL migration (Constitution §VIII)
+    depends_on: [008-SETUP, 008-SIGNOFF-MONEY-LIB]
+    blocks:
+      - 008-ISOLATION-HARNESS
+      - 008-US1-CAPTURE
+      - 008-US3-VOID
+      - 008-US4-REFUND
+      - 008-US5-IDEMPOTENCY
+      - 008-US6-SAFETY
+      - 008-LIFECYCLE
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/sales/sales.ts
+      - packages/db/src/schema/sales/sale-lines.ts
+      - packages/db/drizzle/0012_sales.sql
+      - packages/db/drizzle/0012_sales.down.sql
+      - apps/api/test/catalog/sales/schema/sales-schema-shape.spec.ts
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- sales"
+        expected: GREEN — sales/sale_lines/void/refund created with numeric(19,4)+char(3) money, gate-B nullability, (tenant_id, source_system, external_id) unique, fail-closed RLS on every table, NO version column, NO tender columns; migration applies + rolls back clean.
+        docker_required: true   # Testcontainers — WSL only (reference_007_test_env)
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** schema + migration); do NOT author until the user approves THIS slice in-session"
+      - "stop if the migration is not paired with a reviewed *.down.sql, or lock duration on the new tables is not assessed"
+    parallel_safety: serialize   # hard ordering point; the isolation harness + all US GREEN slices consume these tables
+
+  # ----- 2.3 Isolation harness (blocking — serves all stories) ---------------
+
+  - id: 008-ISOLATION-HARNESS
+    task_ids: [T014, T015]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on: [008-SCHEMA]
+    blocks:
+      - 008-US1-CAPTURE
+      - 008-US3-VOID
+      - 008-US4-REFUND
+      - 008-US6-SAFETY
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/sales/__support__/seed-sales.ts
+      - apps/api/test/catalog/sales/isolation/sales-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/isolation"
+        expected: RED — sweep cases fail on missing capture/void/refund/read operations (NOT on RLS); fixtures seed across tenants A/B and stores X/Y.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts you to modify the 003-owned isolation-harness.ts — extend via the new seed-sales.ts only"
+    parallel_safety: safe   # new test files; shared seed helper is authored here (land before US slices consume it)
+
+  # ===== Phase 3: US1 — Capture (P1) 🎯 MVP ==================================
+
+  - id: 008-US1-CAPTURE
+    task_ids: [T030, T031, T032, T033, T034, T035, T036]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
+    blocks:
+      - 008-US2-DELAYED-SYNC
+      - 008-US5-IDEMPOTENCY
+      - 008-US6-SAFETY
+      - 008-WORKER
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.controller.ts
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/src/catalog/sales/dto/**
+      - apps/api/test/catalog/sales/capture/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/capture"
+        expected: GREEN — capture creates immutable sales+frozen sale_lines, POS totals verbatim, per-line/half-up advisory comparison, dedup on (tenant, sourceSystem, externalId), provenance + SHA-256-canonical payload_hash; snapshot immutable under later catalog edit (SC-001/002/003).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if capture would mutate the catalog or auto-create a tenant product from a sale line (FR-004) — that is forbidden"
+      - "stop if the POS-reported total is ever rewritten — it must be preserved verbatim (FR-030)"
+    parallel_safety: safe   # the single new sales module; no other slice writes it concurrently
+
+  # ===== Phase 4: US2 — Delayed offline sync (P1) ============================
+
+  - id: 008-US2-DELAYED-SYNC
+    task_ids: [T040, T041, T042, T043]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-US1-CAPTURE]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/test/catalog/sales/capture/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/capture/delayed-sync catalog/sales/capture/business-date catalog/sales/capture/server-clock-security"
+        expected: GREEN — stale occurredAt accepted; businessDate from store tz; sourceClockAt never a security clock; all timestamps UTC TIMESTAMPTZ (SC-007, FR-020..024).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if any security/TTL/expiry decision consults sourceClockAt or any client-reported clock (§X — server clock only)"
+    parallel_safety: caution   # touches the same sales.service.ts as US1; sequence after US1 GREEN
+
+  # ===== Phase 5: US3 — Void terminal event (P2) =============================
+
+  - id: 008-US3-VOID
+    task_ids: [T050, T051, T052, T053]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
+    blocks:
+      - 008-US5-IDEMPOTENCY
+      - 008-US6-SAFETY
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.controller.ts
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/test/catalog/sales/terminal/void-*.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/terminal/void"
+        expected: GREEN — void is a separate append-only record with voidedAt; original sale+lines byte-identical; second void deterministic already-voided; safe-404 cross-tenant; audited (SC-006).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a void mutates or deletes the original sale/lines — it MUST be a separate terminal event (§X)"
+    parallel_safety: caution   # shares sales.controller/service with US1/US4; sequence after US1; can run parallel-with US4 only if file-overlap is split (see groups note)
+
+  # ===== Phase 6: US4 — Refund terminal event (P2) ===========================
+
+  - id: 008-US4-REFUND
+    task_ids: [T055, T056, T057, T058]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
+    blocks:
+      - 008-US5-IDEMPOTENCY
+      - 008-US6-SAFETY
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.controller.ts
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/test/catalog/sales/terminal/refund-*.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/terminal/refund"
+        expected: GREEN — refund is a separate append-only record with refundedAt; POS refund amount preserved; original unchanged; re-delivery not double-applied; audited (SC-006).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if refund persists tender/payment data — tender is deferred to 010 (gate A.5); refund records only the POS-reported refund amount"
+    parallel_safety: caution   # shares the controller/service with US1/US3; sequence after US1
+
+  # ===== Phase 7: US5 — Idempotency + provenance (P2) ========================
+
+  - id: 008-US5-IDEMPOTENCY
+    task_ids: [T060, T061, T062, T063]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-US1-CAPTURE, 008-US3-VOID, 008-US4-REFUND]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/src/catalog/sales/dto/**
+      - apps/api/test/catalog/sales/idempotency/**
+      - apps/api/test/catalog/sales/provenance/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/idempotency catalog/sales/provenance"
+        expected: GREEN — replay ×5 → one record + identical response; same key + different payload → deterministic conflict no side-effects; SHA-256-canonical payload_hash reconcilable; capture telemetry not incremented (FR-050/051/052, SC-003/008).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a NEW idempotency primitive is introduced — reuse the 001/005 Idempotency-Key interceptor (FR-051)"
+    parallel_safety: caution   # touches sales.service after the capture+terminal paths exist
+
+  # ===== Phase 8: US6 — Isolation, object-safety, audit + lifecycle (P2) =====
+
+  - id: 008-US6-SAFETY
+    task_ids: [T070, T071, T072, T073, T074]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-US1-CAPTURE, 008-US3-VOID, 008-US4-REFUND, 008-ISOLATION-HARNESS]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/sales/sales.controller.ts
+      - apps/api/src/catalog/sales/sales.service.ts
+      - apps/api/test/catalog/sales/safety/**
+      - apps/api/test/catalog/sales/isolation/sales-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/safety catalog/sales/isolation"
+        expected: GREEN — mass-assignment rejected (SC-005); strict .strict() boundary + default-deny; canonical audit on capture/void/refund (SC-009); full cross-tenant/cross-store sweep + per-table RLS-bypass probe on ALL FOUR tables (sales, sale_lines, void, refund) → zero rows (SC-004).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if any of tenant_id/store_id/created_by/processed_at/business_date/mismatch_flag is body-assignable (FR-061)"
+    parallel_safety: caution   # final hardening over the capture+terminal runtime; sequence last among US slices
+
+  - id: 008-LIFECYCLE
+    task_ids: [T075]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [008-SCHEMA, 008-US6-SAFETY]
+    blocks: []
+    agent: sonnet-test
+    allowed_files:
+      - packages/db/drizzle/0012_sales.sql   # header-comment classification note (added under the [GATED] 008-SCHEMA approval)
+      - specs/008-sales-transaction-capture/data-model.md
+      - apps/api/test/catalog/sales/lifecycle/classification.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales/lifecycle"
+        expected: GREEN — guard test asserts no PII/payment-class field is persisted in v1; business-class classification + 001-inherited retention recorded (SI-012 / gate D.3).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if any customer-reference or tender field is present in v1 — that reclassifies to PII/payment-class and re-triggers SI-012"
+    parallel_safety: safe   # test-only + doc note; no controller/service overlap
+
+  # ===== Phase 9: Worker (off-request processing) ============================
+
+  - id: 008-WORKER
+    task_ids: [T080, T081, T082]
+    type: feat
+    status: proposed
+    approval_required: false
+    depends_on: [008-US1-CAPTURE]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/worker/src/sales/**
+      - apps/worker/test/sales/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/worker test -- sales"
+        expected: GREEN — worker sets processed_at + computes the advisory mismatch flag off-request, carrying tenantId/storeId/correlationId, tenant context before DB access; re-run converges (idempotent); raw payloads redacted in failed-job logs (FR-071/081/092, §V).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the worker touches tenant data without establishing app.current_tenant first (§V / §II)"
+    parallel_safety: safe   # apps/worker/** — distinct tree from the api sales module; can run parallel with US2..US6
+
+  # ===== Phase 10: Polish & closeout =========================================
+
+  - id: 008-POLISH
+    task_ids: [T090, T091, T092, T093]
+    type: test
+    status: proposed
+    approval_required: false
+    depends_on: [008-US6-SAFETY, 008-WORKER, 008-LIFECYCLE]
+    blocks:
+      - 008-CLOSEOUT
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/sales/**
+      - loadtests/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/sales --coverage"
+        expected: GREEN — ≥80% coverage on the sales module; full catalog suite green; bulk-sync 500/req ceiling enforced (FR-080); signals reuse POS-sync-lag/duplicate-event-rate/reconciliation-mismatch-rate (no new metric).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if perf cannot be measured in a real env — report SC-010 as report-only (005 T560 precedent), do not weaken the assertion"
+    parallel_safety: safe
+
+  - id: 008-CLOSEOUT
+    task_ids: [T094]
+    type: docs
+    status: proposed
+    approval_required: false
+    depends_on: [008-POLISH]
+    blocks: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/008-sales-transaction-capture/execution-map.yaml
+      - specs/008-sales-transaction-capture/wave-status.md
+    validation:
+      - command: 'grep -nE "status: (merged|closed)" specs/008-sales-transaction-capture/execution-map.yaml'
+        expected: All terminal slices reconciled to merged/closed with merged_in_pr / merged_at_commit provenance.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+    parallel_safety: safe
+
+# ============================================================================
+# groups — optional parallel groupings (proposed; awaiting endorsement)
+# ============================================================================
+# The two [GATED] foundational slices (008-CONTRACT, 008-SCHEMA) are NOT a
+# parallel group with each other in the strict sense, but they are independent
+# (contract YAML vs db schema) and MAY be approved + landed in either order;
+# both must merge before any implementing GREEN slice. 008-SCHEMA additionally
+# depends on the money-lib SIGN-OFF.
+#
+# CAUTION on the US slices: US1, US3, US4, US5, US6 all write the SAME files
+# (sales.controller.ts / sales.service.ts), so despite being conceptually
+# independent terminal-event paths they are NOT file-parallel-safe. They must
+# be SERIALIZED through the shared module (US1 first as MVP, then the rest).
+# The genuinely parallel-safe work is the worker (distinct apps/worker/** tree)
+# and the lifecycle guard (test-only).
+
+groups:
+
+  - id: GATED-FOUNDATIONAL
+    members:
+      - 008-CONTRACT
+      - 008-SCHEMA
+    parallel_safety: safe   # distinct surfaces (OpenAPI YAML vs db schema); both [GATED], both block all GREEN; order-independent between themselves
+    proposed: true
+
+  - id: POST-CAPTURE-PARALLEL
+    members:
+      - 008-WORKER        # apps/worker/** — distinct tree
+      - 008-LIFECYCLE     # test-only + doc note
+    parallel_safety: safe   # no overlap with each other or with the api sales module once US1 capture exists
+    proposed: true
