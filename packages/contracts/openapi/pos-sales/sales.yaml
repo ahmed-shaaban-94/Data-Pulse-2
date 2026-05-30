@@ -100,11 +100,23 @@ paths:
             schema:
               $ref: "#/components/schemas/CaptureSaleRequest"
       responses:
+        "200":
+          description: >
+            Idempotent replay — the same `(tenant, sourceSystem, externalId)` (or
+            same `Idempotency-Key`) was already captured. Returns the identical
+            `toBody` sale projection with the `Idempotent-Replayed: true` header
+            (mirrors `posCaptureItem`). No second record is created.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Sale"
         "201":
           description: >
-            Sale captured. Returns the `toBody` sale projection with a stable
-            reference. An idempotent replay returns the same projection (200 vs
-            201 is the interceptor's concern; the body is identical).
+            Sale captured for the first time. Returns the `toBody` sale
+            projection with a stable reference.
           content:
             application/json:
               schema:
@@ -173,8 +185,20 @@ paths:
             schema:
               $ref: "#/components/schemas/RecordVoidRequest"
       responses:
+        "200":
+          description: >
+            Idempotent replay — this void was already recorded (same provenance
+            or `Idempotency-Key`). Returns the identical terminal-event
+            projection with `Idempotent-Replayed: true`; no duplicate record.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleTerminalEvent"
         "201":
-          description: Void terminal event recorded (or replayed identically).
+          description: Void terminal event recorded for the first time.
           content:
             application/json:
               schema:
@@ -219,8 +243,20 @@ paths:
             schema:
               $ref: "#/components/schemas/RecordRefundRequest"
       responses:
+        "200":
+          description: >
+            Idempotent replay — this refund was already recorded (same provenance
+            or `Idempotency-Key`). Returns the identical terminal-event
+            projection with `Idempotent-Replayed: true`; not double-applied.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleTerminalEvent"
         "201":
-          description: Refund terminal event recorded (or replayed identically).
+          description: Refund terminal event recorded for the first time.
           content:
             application/json:
               schema:
@@ -277,6 +313,14 @@ components:
         Stable server-issued sale reference returned by `captureSale`. Resolves
         only within the caller's (tenant, store) scope — out-of-scope refs are
         non-disclosing 404s (FR-063/102).
+
+  headers:
+    IdempotentReplayed:
+      description: >
+        Present and `true` on a 200 idempotent-replay response (mirrors the
+        `posCaptureItem` convention). Absent on a fresh 201 create.
+      schema:
+        type: boolean
 
   schemas:
     # -----------------------------------------------------------------------
@@ -397,10 +441,6 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-        occurredAt:
-          type: string
-          format: date-time
-          description: OPTIONAL POS business-event time for the void; preserved as provenance.
     RecordRefundRequest:
       type: object
       additionalProperties: false
@@ -422,10 +462,6 @@ components:
           $ref: "#/components/schemas/DecimalAmount"
         currencyCode:
           $ref: "#/components/schemas/CurrencyCode"
-        occurredAt:
-          type: string
-          format: date-time
-          description: OPTIONAL POS business-event time for the refund; preserved as provenance.
 
     # -----------------------------------------------------------------------
     # Response projections (toBody) — NOT the DB row shape (§IV)
@@ -511,20 +547,27 @@ components:
         lineAmount:
           $ref: "#/components/schemas/DecimalAmount"
         taxAmount:
-          type: [string, "null"]
           description: Single per-line snapshot tax amount (gate A.2); null when not reported.
+          anyOf:
+            - $ref: "#/components/schemas/DecimalAmount"
+            - type: "null"
         unit:
           type: string
         tenantProductRef:
-          type: [string, "null"]
-          format: uuid
+          description: Optional lineage to a tenant product; null for ad-hoc lines (FR-004).
+          anyOf:
+            - type: string
+              format: uuid
+            - type: "null"
     SaleTerminalEvent:
       type: object
       additionalProperties: false
-      required: [eventRef, saleRef, kind, occurredAt, recordedAt]
+      required: [eventRef, saleRef, kind, recordedAt]
       description: >
         Wire projection of a void or refund terminal event. The original sale
-        is unchanged; this is a separate append-only record.
+        is unchanged; this is a separate append-only record. Terminal events
+        carry no POS business-event time — only the server-clock `recordedAt`
+        (the schema's `sale_voids`/`sale_refunds` tables have no `occurred_at`).
       properties:
         eventRef:
           type: string
@@ -537,10 +580,6 @@ components:
         kind:
           type: string
           enum: [void, refund]
-        occurredAt:
-          type: [string, "null"]
-          format: date-time
-          description: POS-reported business-event time, if supplied.
         recordedAt:
           type: string
           format: date-time
@@ -548,11 +587,15 @@ components:
             Server-clock terminal stamp — `voidedAt` for a void, `refundedAt`
             for a refund (gate B).
         posRefundAmount:
-          type: [string, "null"]
           description: Present only for refunds; the POS-reported amount, preserved verbatim.
+          anyOf:
+            - $ref: "#/components/schemas/DecimalAmount"
+            - type: "null"
         currencyCode:
-          type: [string, "null"]
           description: Present only for refunds.
+          anyOf:
+            - $ref: "#/components/schemas/CurrencyCode"
+            - type: "null"
 
     # -----------------------------------------------------------------------
     # Canonical Error envelope (mirrors auth.openapi.yaml / outbox.openapi.yaml)
@@ -561,11 +604,12 @@ components:
       type: object
       required: [error]
       description: >
-        Canonical error envelope used across the API. Matches the shape in
-        `auth.openapi.yaml` / `outbox.openapi.yaml`. The `error.code` values
-        encode the FR-101 eight-category failure set (see the per-response
-        descriptions). Cross-tenant / out-of-scope refusals are non-disclosing
-        (§II/§XII) — they never enumerate the underlying cause.
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `outbox.openapi.yaml` (used verbatim — no extra
+        fields, no `details`). The `error.code` values encode the FR-101
+        eight-category failure set (see the per-response descriptions).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII) —
+        they never enumerate the underlying cause.
       properties:
         error:
           type: object
@@ -581,10 +625,6 @@ components:
               type: string
               format: uuid
               description: Server-side correlation id; the actual cause is recorded server-side.
-            details:
-              type: object
-              additionalProperties: true
-              description: Optional structured validation detail (validation-failure only).
 
   responses:
     ValidationFailure:
@@ -620,10 +660,11 @@ components:
             $ref: "#/components/schemas/Error"
     Conflict:
       description: >
-        FR-101 `conflict` — includes `idempotency-token-mismatch`: the same
-        `Idempotency-Key` was reused with a different logical payload
-        (`idempotency_key_conflict`, FR-051 / 005 FR-021c). Deterministic, no
-        side effects.
+        FR-101 `conflict` category (which subsumes the idempotency-token-mismatch
+        case). The single wire `error.code` is `idempotency_key_conflict` — the
+        same `Idempotency-Key` reused with a different logical payload (FR-051 /
+        005 FR-021c). Deterministic, no side effects. ("idempotency-token-mismatch"
+        is the FR-101 category label only, never a second `error.code`.)
       content:
         application/json:
           schema:

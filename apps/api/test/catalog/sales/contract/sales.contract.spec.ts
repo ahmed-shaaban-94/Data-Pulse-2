@@ -290,15 +290,26 @@ describe("pos-sales/sales.yaml — error vocabulary", () => {
     }
   });
 
-  it("maps capture failures to 400/401/409/500 and reads to 401/404", () => {
+  it("maps capture to 200(replay)/201/400/401/409/500 and reads to 200/401/404", () => {
     const capture = salesDoc.paths?.[CAPTURE_PATH]?.["post"]?.responses ?? {};
     expect(Object.keys(capture)).toEqual(
-      expect.arrayContaining(["201", "400", "401", "409", "500"]),
+      expect.arrayContaining(["200", "201", "400", "401", "409", "500"]),
     );
     const read = salesDoc.paths?.[READ_PATH]?.["get"]?.responses ?? {};
     expect(Object.keys(read)).toEqual(
       expect.arrayContaining(["200", "401", "404", "500"]),
     );
+  });
+
+  it("declares a documented 200 idempotent-replay (Idempotent-Replayed header) on every write", () => {
+    for (const p of [CAPTURE_PATH, VOID_PATH, REFUND_PATH]) {
+      const post = salesDoc.paths?.[p]?.["post"];
+      const ok = (post?.responses ?? {})["200"] as
+        | { headers?: Record<string, unknown> }
+        | undefined;
+      expect(ok).toBeDefined();
+      expect(ok?.headers).toHaveProperty("Idempotent-Replayed");
+    }
   });
 });
 
@@ -363,5 +374,52 @@ describe("pos-sales/sales.yaml — object safety + gate A.5 (no tender)", () => 
       }
     }
     expect(offending).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// 6. CodeRabbit review invariants (PR #422)
+// ===========================================================================
+describe("pos-sales/sales.yaml — review-hardening invariants", () => {
+  function props(schema: string): Record<string, unknown> {
+    return (salesDoc.components?.schemas?.[schema]?.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it("Error envelope matches the shared auth/outbox shape verbatim (no details, exactly code/message/request_id)", () => {
+    const errorSchema = salesDoc.components?.schemas?.["Error"] as
+      | { properties?: { error?: { properties?: Record<string, unknown> } } }
+      | undefined;
+    const inner = errorSchema?.properties?.error?.properties ?? {};
+    expect(Object.keys(inner).sort()).toEqual(
+      ["code", "message", "request_id"].sort(),
+    );
+    expect(inner).not.toHaveProperty("details");
+  });
+
+  it("terminal events carry no occurredAt (no occurred_at column on sale_voids/sale_refunds)", () => {
+    expect(props("RecordVoidRequest")).not.toHaveProperty("occurredAt");
+    expect(props("RecordRefundRequest")).not.toHaveProperty("occurredAt");
+    expect(props("SaleTerminalEvent")).not.toHaveProperty("occurredAt");
+    // recordedAt (server-clock stamp) is the only timestamp.
+    expect(props("SaleTerminalEvent")).toHaveProperty("recordedAt");
+  });
+
+  it("nullable money/currency fields still reuse the DecimalAmount/CurrencyCode schemas (anyOf)", () => {
+    const checks: Array<{ schema: string; field: string; ref: string }> = [
+      { schema: "SaleLine", field: "taxAmount", ref: "#/components/schemas/DecimalAmount" },
+      { schema: "SaleTerminalEvent", field: "posRefundAmount", ref: "#/components/schemas/DecimalAmount" },
+      { schema: "SaleTerminalEvent", field: "currencyCode", ref: "#/components/schemas/CurrencyCode" },
+    ];
+    for (const { schema, field, ref } of checks) {
+      const f = props(schema)[field] as { anyOf?: Array<Record<string, unknown>> } | undefined;
+      expect(f?.anyOf).toBeDefined();
+      const refs = (f?.anyOf ?? []).map((m) => m["$ref"]);
+      const hasNull = (f?.anyOf ?? []).some((m) => m["type"] === "null");
+      expect(refs).toContain(ref);
+      expect(hasNull).toBe(true);
+    }
   });
 });
