@@ -51,6 +51,32 @@
 #     via PRs #400 / #402 (squashed; original branch SHAs aab701d / 45ae621 / 8a97e97).
 #   This update performs the slice-status reconciliation early (the work the
 #   CLOSEOUT note below anticipated); CLOSEOUT (T073) will re-affirm at wave close.
+#
+# Updated: 2026-05-30 — WAVE 2 MERGED (post-merge closeout). State reconciled to
+#   `main` at 4123664.
+#   - 007-US7-REOPEN (T050–T054) MERGED via PR #408 (squash 8f0c332) — reopen
+#     action: service-layer 403/404 authority split (R7.4), createdFresh 201/200
+#     + dual programmatic audit on a fresh row / none on reuse, pending-sibling
+#     guard, Idempotency-Key (T003 ISOLATE), optional-body contract. CodeRabbit
+#     follow-up folded into the same squash.
+#   - 007-US8-BULK-DISMISS (T055–T058) MERGED via PR #409 (squash 161058c) —
+#     POST /bulk-dismiss, ≤200 whole-batch reject (FR-044), decompose into the
+#     shipped per-item dismiss (FR-070a), per-item outcomes {id,outcome,details?},
+#     programmatic per-item audit via @Optional() enqueuer. CodeRabbit follow-up
+#     (details-optional, UUID-casing, void audit, denial-path + no-enqueuer
+#     tests) folded into the same squash.
+#   - 007-US4/US5/US6-REGRESSION (T060/T061/T062) MERGED via PR #410 (squash
+#     4123664; one test-only Phase-8 PR) — regression guards over the shipped
+#     link/create/dismiss + the T038 projection (no sale_context on responses),
+#     monotonic-guard no-duplicate, non-disclosing 404; NO key-replay (T003
+#     ISOLATE); NO runtime change.
+#   All 5 now carry `status: merged` + audit fields below. Validation was via
+#   targeted WSL Testcontainers paths (US7 reopen 11 tests; US8 bulk-dismiss 7;
+#   Phase-8 guards 10) + tsc build clean — the CI `db-integration` job is
+#   OOM/runner-offline (documented in wave-status; `main` is not branch-protected,
+#   so these were user-authorized merges on locally-verified green).
+#   Remaining `proposed` (deps now satisfied, awaiting execution approval):
+#   007-POLISH-AUDIT-SWEEP, 007-POLISH-SMOKE-COVERAGE, 007-CLOSEOUT.
 
 spec: 007-unknown-items-review-queue-api
 version: 1
@@ -474,13 +500,17 @@ slices:
   - id: 007-US7-REOPEN
     task_ids: [T050, T051, T052, T053, T054]
     type: feat
-    status: proposed
+    status: merged   # landed on `main` via PR #408 (squash 8f0c332) + CodeRabbit follow-up (createdFresh 201/200, optional-body, no-emit-on-reuse) in the same squash
+    merged_in_pr: 408
+    merged_at_commit: 8f0c332
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (merged in Wave 1) — retained for audit
       - 007-ISOLATION-HARNESS
       - 007-CONTRACT
       - 007-FORBIDDEN-CATEGORY    # the 403 forbidden / 404 not-found split needs the mapped category (T021)
-    blocks:
+    blocks: []
+    previously_blocked:
       - 007-POLISH-AUDIT-SWEEP    # T070/T074/T075 exercise reopen
     agent: sonnet-api
     allowed_files:
@@ -512,12 +542,16 @@ slices:
   - id: 007-US8-BULK-DISMISS
     task_ids: [T055, T056, T057, T058]
     type: feat
-    status: proposed
+    status: merged   # landed on `main` via PR #409 (squash 161058c) + CodeRabbit follow-up (details-optional, UUID-casing, void audit, denial-path + no-enqueuer tests) in the same squash
+    merged_in_pr: 409
+    merged_at_commit: 161058c
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (merged in Wave 1) — retained for audit
       - 007-ISOLATION-HARNESS
       - 007-CONTRACT
-    blocks:
+    blocks: []
+    previously_blocked:
       - 007-POLISH-AUDIT-SWEEP    # T070/T074 exercise bulk-dismiss
     agent: sonnet-api
     allowed_files:
@@ -546,9 +580,12 @@ slices:
   - id: 007-US4-LINK-REGRESSION
     task_ids: [T060]
     type: test
-    status: proposed
+    status: merged   # landed on `main` via PR #410 (squash 4123664; grouped with US5/US6 as the test-only Phase-8 PR)
+    merged_in_pr: 410
+    merged_at_commit: 4123664
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (Wave 1 merges) — retained for audit
       - 007-FORBIDDEN-CATEGORY                # T021
       - 007-US2-LIST-EXTENSIONS               # T037 (list extended)
       - 007-US1-RECONCILIATION-PROJECTION     # T038 (link response sale_context-free)
@@ -571,9 +608,12 @@ slices:
   - id: 007-US5-CREATE-REGRESSION
     task_ids: [T061]
     type: test
-    status: proposed
+    status: merged   # landed on `main` via PR #410 (squash 4123664; grouped with US4/US6 as the test-only Phase-8 PR)
+    merged_in_pr: 410
+    merged_at_commit: 4123664
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (Wave 1 merges) — retained for audit
       - 007-FORBIDDEN-CATEGORY
       - 007-US2-LIST-EXTENSIONS
       - 007-US1-RECONCILIATION-PROJECTION
@@ -596,9 +636,12 @@ slices:
   - id: 007-US6-DISMISS-REGRESSION
     task_ids: [T062]
     type: test
-    status: proposed
+    status: merged   # landed on `main` via PR #410 (squash 4123664; grouped with US4/US5 as the test-only Phase-8 PR)
+    merged_in_pr: 410
+    merged_at_commit: 4123664
+    merged_at_date: 2026-05-30
     approval_required: false
-    depends_on:
+    depends_on:    # all satisfied (Wave 1 merges) — retained for audit
       - 007-FORBIDDEN-CATEGORY
       - 007-US2-LIST-EXTENSIONS           # T037
       - 007-SIGNOFF-IDEMPOTENCY
