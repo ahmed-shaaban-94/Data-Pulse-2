@@ -26,6 +26,10 @@ const TZ_DOWN_PATH = resolve(DRIZZLE_DIR, "0013_store_timezone.down.sql");
 
 const TENANT_ID = "0e000000-0000-7000-8000-0000000013a1";
 const STORE_ID = "0e000000-0000-7000-8000-0000000013b1";
+// A store seeded BEFORE 0013 applies — proves the migration backfills
+// pre-existing rows, not just new inserts.
+const PRE_TENANT_ID = "0e000000-0000-7000-8000-0000000013c1";
+const PRE_STORE_ID = "0e000000-0000-7000-8000-0000000013d1";
 
 let env: PgTestEnv | null = null;
 let dockerSkipReason = "";
@@ -68,6 +72,17 @@ beforeAll(async () => {
   try {
     env = await startPgEnv();
     await applyPreMigrations(env);
+    // Seed a store BEFORE 0013 applies (stores has no timezone column yet).
+    await env.admin.query(
+      `INSERT INTO tenants (id, slug, name, default_currency_code)
+       VALUES ($1, 'tz-pre', 'TZ Pre Tenant', 'USD')`,
+      [PRE_TENANT_ID],
+    );
+    await env.admin.query(
+      `INSERT INTO stores (id, tenant_id, code, name)
+       VALUES ($1, $2, 'PRE1', 'Pre Store')`,
+      [PRE_STORE_ID, PRE_TENANT_ID],
+    );
   } catch (err: unknown) {
     dockerSkipReason = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -108,6 +123,15 @@ describe("0013_store_timezone — adds stores.timezone", () => {
     expect(col?.data_type).toBe("text");
     expect(col?.is_nullable).toBe("NO");
     expect(col?.column_default).toMatch(/'UTC'/);
+  });
+
+  it("a store that existed BEFORE the migration is backfilled to 'UTC'", async () => {
+    if (!env) throw new Error("env not initialized");
+    const r = await env.admin.query<{ timezone: string }>(
+      `SELECT timezone FROM stores WHERE id = $1`,
+      [PRE_STORE_ID],
+    );
+    expect(r.rows[0]?.timezone).toBe("UTC");
   });
 
   it("a newly inserted store backfills to 'UTC' (no timezone supplied)", async () => {

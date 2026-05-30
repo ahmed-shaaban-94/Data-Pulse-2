@@ -21,7 +21,7 @@ import {
   withTenant,
 } from "../../src/helpers/with-tenant";
 import {
-  applyUpAndCreateAppRole,
+  applyAllUpAndCreateAppRole,
   startPgEnv,
   stopPgEnv,
   type PgTestEnv,
@@ -37,7 +37,10 @@ let db: NodePgDatabase | null = null;
 beforeAll(async () => {
   try {
     env = await startPgEnv();
-    await applyUpAndCreateAppRole(env);
+    // Apply ALL migrations (through 0013_store_timezone) so the live schema
+    // matches the current Drizzle table objects — `stores` now carries the
+    // `timezone` column (008 US2), which a 0000-only schema would lack.
+    await applyAllUpAndCreateAppRole(env);
     pool = new Pool({ connectionString: env.adminUri });
     db = drizzle(pool);
 
