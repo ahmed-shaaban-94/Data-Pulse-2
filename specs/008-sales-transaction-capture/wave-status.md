@@ -25,7 +25,7 @@
 
 ## Dependency & parallel-safety graph
 
-```
+```text
                          008-SIGNOFF-MONEY-LIB  (T001, [SIGN-OFF] gate A.6 — no package.json dep)
                                    │
                                    ▼
@@ -46,21 +46,26 @@
             ┌──────────── 008-US1-CAPTURE (T030–T036) 🎯 MVP ────────────┐
             │   the FIRST GREEN; creates sales.controller/service         │
             └──────────────────────────┬──────────────────────────────────┘
-                                        │  (US slices below SHARE sales.controller/service → SERIALIZE)
-        ┌───────────────┬───────────────┼───────────────┬──────────────────┐
-        ▼               ▼               ▼               ▼                  ▼
- 008-US2-DELAYED   008-US3-VOID    008-US4-REFUND   008-WORKER*       008-LIFECYCLE*
- (T040–T043)       (T050–T053)     (T055–T058)      (T080–T082)        (T075)
-        │               │               │          apps/worker/**     test-only + doc
-        └───────────────┴───────┬───────┘          (PARALLEL-SAFE)    (PARALLEL-SAFE)
+                                        │  (US2–US6 below SHARE sales.controller/service → SERIALIZE)
+        ┌───────────────┬───────────────┼───────────────┐        008-WORKER*  (T080–T082)
+        ▼               ▼               ▼               ▼          apps/worker/** — PARALLEL-SAFE,
+ 008-US2-DELAYED   008-US3-VOID    008-US4-REFUND   (serialized    depends_on US1 only; runs
+ (T040–T043)       (T050–T053)     (T055–T058)       through the    concurrently with US2–US6
+        │               │               │           shared module)
+        └───────────────┴───────┬───────┘
                                 ▼
                       008-US5-IDEMPOTENCY (T060–T063)
                                 │
                                 ▼
                       008-US6-SAFETY (T070–T074)   ← per-table RLS-bypass probe (4 tables)
                                 │
-                                ▼
-                      008-POLISH (T090–T093) ──► 008-CLOSEOUT (T094)
+                 ┌──────────────┴──────────────┐
+                 ▼                             ▼
+   008-LIFECYCLE* (T075)              008-POLISH (T090–T093)
+   depends_on SCHEMA + US6-SAFETY;    depends_on US6-SAFETY + WORKER + LIFECYCLE
+   test-only + doc — PARALLEL-SAFE             │
+                 │                             ▼
+                 └──────────────►       008-CLOSEOUT (T094)
 ```
 
 ### Parallel-safe groups (proposed, awaiting endorsement)

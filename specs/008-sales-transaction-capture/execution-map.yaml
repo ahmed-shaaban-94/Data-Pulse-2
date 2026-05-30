@@ -434,12 +434,12 @@ slices:
 # both must merge before any implementing GREEN slice. 008-SCHEMA additionally
 # depends on the money-lib SIGN-OFF.
 #
-# CAUTION on the US slices: US1, US3, US4, US5, US6 all write the SAME files
-# (sales.controller.ts / sales.service.ts), so despite being conceptually
-# independent terminal-event paths they are NOT file-parallel-safe. They must
-# be SERIALIZED through the shared module (US1 first as MVP, then the rest).
-# The genuinely parallel-safe work is the worker (distinct apps/worker/** tree)
-# and the lifecycle guard (test-only).
+# CAUTION on the US slices: US1, US2, US3, US4, US5, US6 all write the SAME
+# files (sales.controller.ts / sales.service.ts — US2-DELAYED-SYNC also edits
+# sales.service.ts), so despite being conceptually independent paths they are
+# NOT file-parallel-safe. They must be SERIALIZED through the shared module
+# (US1 first as MVP, then the rest). The genuinely parallel-safe work is the
+# worker (distinct apps/worker/** tree) and the lifecycle guard (test-only).
 
 groups:
 
