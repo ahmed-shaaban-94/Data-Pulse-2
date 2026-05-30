@@ -123,9 +123,14 @@ const BulkDismissUnknownItemsRequestSchema = z
       .array(z.string().uuid())
       .min(1)
       .max(200)
-      .refine((arr) => new Set(arr).size === arr.length, {
-        message: "ids must be unique",
-      }),
+      // Canonicalize hex casing before the uniqueness check (CodeRabbit #409
+      // F3): Postgres treats UUIDs case-insensitively, so two ids differing
+      // only in casing are the same logical row — they must not both slip
+      // through the whole-batch uniqueness guard.
+      .refine(
+        (arr) => new Set(arr.map((id) => id.toLowerCase())).size === arr.length,
+        { message: "ids must be unique" },
+      ),
   })
   .strict();
 

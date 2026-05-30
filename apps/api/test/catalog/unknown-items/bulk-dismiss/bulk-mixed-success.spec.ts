@@ -352,4 +352,106 @@ describe("T056 / 007-US8-BULK-DISMISS — mixed per-item outcomes [FR-044, FR-07
     );
     expect(row.rows[0]?.resolution_status).toBe("dismissed");
   });
+
+  it("(d) bulkDismiss works with NO audit enqueuer (optional-chaining is safe — CodeRabbit #409 F1)", async () => {
+    if (dockerSkipped) return;
+
+    // Construct the service with ONLY the pool — no AUDIT_JOB_ENQUEUER (the
+    // posture of the ~15 existing service specs). This proves the optional
+    // enqueuer path does NOT throw (the `?.` short-circuits the whole
+    // enqueue().catch() chain when undefined — the flagged "throws on
+    // undefined" premise is incorrect). It must return outcomes normally.
+    const svc = new UnknownItemsService(env!.app);
+    const out = await svc.bulkDismissUnknownItems({
+      tenantId: TENANT_A,
+      storeId: null,
+      actorUserId: ACTOR_A,
+      ids: [UNK_005_A_X_BARCODE, ABSENT_ID],
+    });
+    expect(out.outcomes).toHaveLength(2);
+    expect(out.outcomes.find((o) => o.id === UNK_005_A_X_BARCODE)?.outcome).toBe(
+      "dismissed",
+    );
+    expect(out.outcomes.find((o) => o.id === ABSENT_ID)?.outcome).toBe(
+      "not_found",
+    );
+    // dismissed/not_found omit `details` (optional wire shape, F2).
+    expect(
+      out.outcomes.find((o) => o.id === UNK_005_A_X_BARCODE),
+    ).not.toHaveProperty("details");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Denial-path: RolesGuard denies → 403, no side effects (CodeRabbit #409 F4).
+// Separate module because the main suite overrides RolesGuard to ALLOW; here we
+// override it to DENY so the route's @Roles(..., { denyAs: 403 }) is exercised.
+// ---------------------------------------------------------------------------
+describe("T056 / 007-US8-BULK-DISMISS — RolesGuard denial → 403 [denyAs:403]", () => {
+  let denyApp: INestApplication | null = null;
+  let denyAudit: SpyAuditEnqueuer;
+
+  beforeAll(async () => {
+    if (dockerSkipped || !env) return;
+    const localEnv = env;
+    denyAudit = new SpyAuditEnqueuer();
+    const reflector = new Reflector();
+    const auditInterceptor = new AuditEmitterInterceptor(reflector, denyAudit);
+
+    const moduleRef = await Test.createTestingModule({
+      controllers: [UnknownItemsController],
+      providers: [
+        { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
+        UnknownItemsService,
+        { provide: AUDIT_JOB_ENQUEUER, useValue: denyAudit },
+        { provide: APP_INTERCEPTOR, useValue: auditInterceptor },
+      ],
+    })
+      .overrideGuard(DashboardAuthGuard).useValue({ canActivate: () => true })
+      .overrideGuard(PosOperatorAuthGuard).useValue({ canActivate: () => true })
+      .overrideGuard(TenantContextGuard).useValue({ canActivate: () => true })
+      // The role gate DENIES — exercises denyAs:403.
+      .overrideGuard(RolesGuard).useValue({ canActivate: () => false })
+      .compile();
+
+    denyApp = moduleRef.createNestApplication({ bufferLogs: true });
+    denyApp.useGlobalFilters(new GlobalExceptionFilter());
+    denyApp.useGlobalGuards(new ConfigurableContextGuard());
+    await denyApp.init();
+  }, 60_000);
+
+  afterAll(async () => {
+    if (denyApp) await denyApp.close();
+  }, 30_000);
+
+  it("returns 403 and dismisses nothing when the role gate denies", async () => {
+    if (dockerSkipped || !denyApp || !env) return;
+
+    // Ensure the target is pending before the (denied) attempt.
+    await env.admin.query(
+      `UPDATE unknown_items SET resolution_status='pending', resolution_action=NULL,
+          resolved_at=NULL, resolved_by=NULL, resolved_product_id=NULL WHERE id = $1`,
+      [UNK_005_A_X_BARCODE],
+    );
+    denyAudit.reset();
+
+    const res = await request(denyApp.getHttpServer())
+      .post(BULK_DISMISS_URL)
+      .set("Idempotency-Key", "bulk-t056-deny-key-000000001")
+      .send({ ids: [UNK_005_A_X_BARCODE] });
+
+    // denyAs:403 → forbidden (NOT 404 — the batch acts within the resolved tenant).
+    expect(res.status).toBe(403);
+
+    // No DB side effect — the pending item is untouched.
+    const row = await env.admin.query<{ resolution_status: string }>(
+      `SELECT resolution_status FROM unknown_items WHERE id = $1`,
+      [UNK_005_A_X_BARCODE],
+    );
+    expect(row.rows[0]?.resolution_status).toBe("pending");
+
+    // No dismiss audit emitted on the denied path.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(denyAudit.calls).toHaveLength(0);
+  });
 });

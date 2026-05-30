@@ -153,7 +153,10 @@ export interface UnknownItemRow {
 export interface BulkDismissOutcome {
   readonly id: string;
   readonly outcome: "dismissed" | "already_reconciled" | "not_found";
-  readonly details: Record<string, unknown> | null;
+  // Optional per the wire contract (`{ id, outcome, details? }`) — present only
+  // on `already_reconciled` (carries `prior_state`); omitted for `dismissed` /
+  // `not_found` (CodeRabbit #409 F2 — don't serialize `details: null`).
+  readonly details?: Record<string, unknown>;
 }
 
 /**
@@ -1041,29 +1044,35 @@ export class UnknownItemsService {
           storeId: input.storeId,
           actorUserId: input.actorUserId,
         });
-        outcomes.push({ id, outcome: "dismissed", details: null });
+        outcomes.push({ id, outcome: "dismissed" });
         // FR-070a / FR-064 / SC-004: the shipped single-dismiss audit
         // (`unknown_item.dismissed`) is emitted ROUTE-level by @Auditable +
         // AuditEmitterInterceptor — but the bulk path calls the service method
         // directly, bypassing that decorator. So emit the per-item dismiss audit
-        // PROGRAMMATICALLY (one event per transitioned item), best-effort:
-        // a failed enqueue must not change the per-item outcome. Skipped when
-        // the optional enqueuer is absent (existing single-route specs).
-        await this.auditEnqueuer
-          ?.enqueue({
-            actor_user_id: input.actorUserId,
-            actor_label: null,
-            tenant_id: input.tenantId,
-            store_id: input.storeId,
-            action: "unknown_item.dismissed",
-            target_type: "unknown_item",
-            target_id: id,
-            request_id: null,
-            metadata: { via: "bulk_dismiss" },
-          })
-          .catch(() => {
-            // Best-effort — a dropped bulk-dismiss audit must not fail the item.
-          });
+        // PROGRAMMATICALLY (one event per transitioned item). Guard the optional
+        // enqueuer explicitly, then fire-and-forget (`void`) so a best-effort
+        // audit never blocks the per-item loop and a dropped enqueue never fails
+        // the item (CodeRabbit #409: don't await best-effort work; the prior
+        // `?.enqueue().catch()` was correct by optional-chaining short-circuit
+        // but this is clearer and non-blocking). Skipped when the optional
+        // enqueuer is absent (existing single-route specs construct PG_POOL-only).
+        if (this.auditEnqueuer) {
+          void this.auditEnqueuer
+            .enqueue({
+              actor_user_id: input.actorUserId,
+              actor_label: null,
+              tenant_id: input.tenantId,
+              store_id: input.storeId,
+              action: "unknown_item.dismissed",
+              target_type: "unknown_item",
+              target_id: id,
+              request_id: null,
+              metadata: { via: "bulk_dismiss" },
+            })
+            .catch(() => {
+              // Best-effort — a dropped bulk-dismiss audit must not fail the item.
+            });
+        }
       } catch (err: unknown) {
         if (err instanceof ConflictException) {
           // already_reconciled — the row is in-scope but terminal. Read its
@@ -1083,15 +1092,18 @@ export class UnknownItemsService {
             // whole item — the outcome is still already_reconciled.
             priorState = null;
           }
-          outcomes.push({
-            id,
-            outcome: "already_reconciled",
-            details: priorState !== null ? { prior_state: priorState } : null,
-          });
+          // CodeRabbit #409 F2: `details` is OPTIONAL in the wire contract
+          // (`{ id, outcome, details? }`) — include it only when there's a
+          // prior_state to report; never serialize `details: null`.
+          outcomes.push(
+            priorState !== null
+              ? { id, outcome: "already_reconciled", details: { prior_state: priorState } }
+              : { id, outcome: "already_reconciled" },
+          );
         } else if (err instanceof NotFoundException) {
           // Non-disclosing not_found — RLS-filtered (cross-tenant/out-of-scope)
           // or absent. Does NOT abort the batch (FR-070a).
-          outcomes.push({ id, outcome: "not_found", details: null });
+          outcomes.push({ id, outcome: "not_found" });
         } else {
           // Genuine system failure (e.g. DB error) — propagate so the whole
           // request surfaces a system_failure rather than masking it as a
