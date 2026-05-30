@@ -1,11 +1,18 @@
 # Wave Status — `007-unknown-items-review-queue-api`
 
-**Last updated:** 2026-05-30 (POLISH-SMOKE-COVERAGE merged via #415; state reconciled to `main`)
+> ## ✅ WAVE CLOSED — 2026-05-30 (007-CLOSEOUT / T073, PR #417)
+> The 007 Unknown Items Review Queue API spec is **COMPLETE**. Every
+> Claude-executable slice has shipped to `main`. Final tally: **16 merged /
+> 3 proposed-by-design** (SETUP + the two `[SIGN-OFF]` decision gates, whose
+> verdicts are recorded below). **0 open findings.** No further 007 work is
+> planned — see § Wave-close summary.
+
+**Last updated:** 2026-05-30 (WAVE CLOSED via #417 — 007-CLOSEOUT/T073)
 **Spec:** [`specs/007-unknown-items-review-queue-api/`](./)
-**Base:** `origin/main` at `04cb058` (PR #415, POLISH-SMOKE-COVERAGE, 2026-05-30)
-**Branch:** Wave 1 + Wave 2 + both polish slices merged to `main`; only 007-CLOSEOUT (T073) remains (planning on `spec/007-unknown-items-review-queue-api`)
+**Base:** `origin/main` at `4edda4d` (PR #416, POLISH-SMOKE-COVERAGE closeout, 2026-05-30) → closed by #417
+**Branch:** ALL slices terminal on `main`; spec complete (planning on `spec/007-unknown-items-review-queue-api`)
 **Active findings:** 0
-**Resolved findings:** 0
+**Resolved findings:** 1 (reopen fresh-capture metric — deliberate POS-scoped exclusion)
 
 ---
 
@@ -266,18 +273,25 @@ wave-1 slices and `merged` for 007-CONTRACT via #404.
 
 _None._
 
-## Next recommended action
+## Wave-close summary (007-CLOSEOUT / T073)
 
-Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), **and both Phase-9 polish slices** (POLISH-AUDIT-SWEEP, POLISH-SMOKE-COVERAGE) are merged to `main` (#404 → … → #412 → #413 → #415). **One slice remains:**
+**The 007 spec is shipped and closed.** No next action — every slice is terminal.
 
-1. **`007-CLOSEOUT`** (T073) — the final wave-close pass: re-affirm every slice to terminal status, restate the two `[SIGN-OFF]` verdicts (T002 TIGHTEN / T003 ISOLATE), and record the resolved reopen-capture-metric finding (below) + the CI OOM/offline-runner posture as the wave's deferred-ops note. The incremental closeouts (#411 Wave-2, #413 polish-audit, this #415 follow-up) already reconciled the graph slice-by-slice, so T073 is largely confirm-and-affirm — but it's the canonical "the wave is closed" marker.
-2. Per standing rules: no implementation, push, or PR without explicit instruction.
+**Slice tally — 16 merged / 3 proposed-by-design:**
+- **Merged (16):** CONTRACT (#404) · FORBIDDEN-CATEGORY / REVIEW-QUEUE-PROJECTION / ISOLATION-HARNESS / US1-LIST-PROJECTION / US1-RECONCILIATION-PROJECTION / US2-LIST-EXTENSIONS / US3-INSPECT (#405) · US7-REOPEN (#408) · US8-BULK-DISMISS (#409) · US4/US5/US6 regression guards (#410) · POLISH-AUDIT-SWEEP (#412) · POLISH-SMOKE-COVERAGE (#415).
+- **Proposed-by-design (3, terminal):** `007-SETUP` (read-only compile check), `007-SIGNOFF-SALE-CONTEXT`, `007-SIGNOFF-IDEMPOTENCY`. These are decision/verification gates that never take a PR — `proposed` is their permanent terminal form (the schema has no `decided` status); they exist in the map to carry their dependency edges. Their verdicts are below.
 
-### RESOLVED FINDING — reopen fresh-capture metric (verdict: deliberate exclusion; CLOSED)
-`docs/observability/signals.md` defines `unknown_item_captured_total` as *"successful **POS capture** into `unknown_items`"* (005 FR-081). Reopen is a dashboard **admin** action, not a POS capture, so `reopenUnknownItem` correctly does **not** increment that counter — counting it would pollute POS-submission volume with admin-initiated rows. The `unknown_item.captured` **audit** event (FR-110) is the right traceability signal for the reopen-created row; the **metric** is intentionally POS-scoped. **No runtime change.** (T070 asserted audit linkage; this metric question is resolved here against signals.md, not by a test.)
+**`[SIGN-OFF]` verdicts (re-affirmed at close):**
+- **T002 — `sale_context` tightening → TIGHTEN** (option a, now). The shipped list + all new read ops project to `ReviewQueueItem` (no `sale_context`, FR-007); landed via the #404 GATED contract + the #405 projection swaps.
+- **T003 — idempotency-key retrofit → ISOLATE** (option b). Only the NEW reopen + bulk-dismiss carry `Idempotency-Key`; the shipped link/create/dismiss keep their monotonic-guard no-duplicate-effect (NOT retrofitted in v1). Consequence honored: the Phase-8 regression guards assert monotonic-guard only, no key-replay.
 
-### Next short Maestro prompt
+### Resolved finding — reopen fresh-capture metric (deliberate exclusion; CLOSED)
+`docs/observability/signals.md` defines `unknown_item_captured_total` as *"successful **POS capture** into `unknown_items`"* (005 FR-081). Reopen is a dashboard **admin** action, not a POS capture, so `reopenUnknownItem` correctly does **not** increment that counter (counting it would pollute POS-submission volume with admin rows). The `unknown_item.captured` **audit** event (FR-110) is the right traceability signal for the reopen-created row; the metric is intentionally POS-scoped. **No runtime change.**
 
-```text
-Use Agent OS. Execute slice 007-CLOSEOUT. Stop before commit.
-```
+### Deferred / out-of-007-scope (recorded, not bugs)
+- **CI `db-integration` full-suite job OOMs** on the shared self-hosted runner (exit 137 under full-suite+coverage load) — a documented infra-capacity ceiling, NOT a code defect. All slices were validated via **targeted WSL Testcontainers** paths + a full catalog suite run (480 passed, no local OOM) for the T072 coverage number. `main` is not branch-protected; merges were user-authorized on locally-verified green.
+- **Idempotency-key retrofit onto shipped link/create/dismiss** — the T003 ISOLATE deferral; an optional future enhancement, a NEW spec if ever pursued (not a 007 slice).
+- **US candidate-match hint on inspect** (FR-070) — explicitly out of v1.
+
+### Next
+**No 007 next action.** Subsequent unknown-items behavior changes are new specs, not 007 slices.
