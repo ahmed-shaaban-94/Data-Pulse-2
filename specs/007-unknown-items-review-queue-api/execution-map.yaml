@@ -89,6 +89,18 @@
 #     GREEN via WSL Testcontainers; tsc clean; adversarial review clean.
 #   Remaining `proposed` (deps now satisfied, awaiting execution approval):
 #   007-POLISH-SMOKE-COVERAGE (T071/T072), 007-CLOSEOUT (T073).
+#
+# Updated: 2026-05-30 — 007-POLISH-SMOKE-COVERAGE MERGED (post-merge closeout).
+#   - 007-POLISH-SMOKE-COVERAGE (T071/T072) MERGED via PR #415 (squash 04cb058):
+#     T071 quickstart journeys 1–6 integration smoke (6/6, order-immune dedicated
+#     per-journey fixtures); T072 coverage — the full catalog suite ran GREEN
+#     (69 suites / 480 passed) and did NOT OOM locally, with catalog-scoped LINE
+#     coverage on the new/extended 007 code all ≥80% (reconciliation.service 97.4
+#     / .controller 95.7 / unknown-items.service 96.8 / .controller 86.7 /
+#     DTOs 100). §VI / T072 gate met.
+#   Only 007-CLOSEOUT (T073) remains `proposed` — the final wave-close
+#   reconciliation. Every other 007 slice is terminal (merged). 15 merged / 4
+#   proposed (the 3 decision-gates/SETUP that never take a PR + CLOSEOUT).
 
 spec: 007-unknown-items-review-queue-api
 version: 1
@@ -726,14 +738,22 @@ slices:
   - id: 007-POLISH-SMOKE-COVERAGE
     task_ids: [T071, T072]
     type: test
-    # depends_on satisfied: 007-POLISH-AUDIT-SWEEP merged via #412 (226677c). Stays
-    # `proposed` (not promoted to `ready`) — every 007 runtime/test dep is now on
-    # `main`, but promotion to execution is a separate scheduling decision
-    # (closeout flips blocked→ready only; this was never `blocked`, it is `proposed`).
-    status: proposed
+    status: merged   # landed on `main` via PR #415 (squash 04cb058). T071 quickstart
+                     # journeys 1–6 integration smoke = 6/6 GREEN. T072 coverage: full
+                     # catalog suite ran GREEN (69 suites / 480 passed) and did NOT OOM
+                     # locally; catalog-scoped LINE coverage on the new/extended 007 code
+                     # all ≥80% (reconciliation.service 97.4 / .controller 95.7 /
+                     # unknown-items.service 96.8 / .controller 86.7 / DTOs 100) — the
+                     # T072 §VI gate is met. (The CI db-integration full-suite+coverage
+                     # job OOMs on the shared runner; the measurement was taken locally
+                     # where the box has the memory headroom.)
+    merged_in_pr: 415
+    merged_at_commit: 04cb058
+    merged_at_date: 2026-05-30
     approval_required: false
     depends_on: []   # 007-POLISH-AUDIT-SWEEP cleared (merged via #412); the merged slice remains in the map as the audit record
-    blocks:
+    blocks: []
+    previously_blocked:
       - 007-CLOSEOUT
     agent: sonnet-test
     allowed_files:
@@ -754,10 +774,14 @@ slices:
   - id: 007-CLOSEOUT
     task_ids: [T073]
     type: docs
+    # depends_on satisfied: 007-POLISH-SMOKE-COVERAGE merged via #415 (04cb058) — every
+    # other 007 slice is now terminal (merged). CLOSEOUT (T073) is the final wave-close
+    # reconciliation + SIGN-OFF re-affirmation; the incremental closeouts (#411 Wave-2,
+    # #413 polish-audit, this #415 follow-up) already reconciled the graph, so T073 is
+    # now a confirm-and-affirm pass. Stays `proposed` until run as the deliberate final step.
     status: proposed
     approval_required: false
-    depends_on:
-      - 007-POLISH-SMOKE-COVERAGE   # T073 records final state after all above
+    depends_on: []   # 007-POLISH-SMOKE-COVERAGE cleared (merged via #415); it remains in the map as the audit record
     blocks: []
     agent: opus-maestro
     allowed_files:
