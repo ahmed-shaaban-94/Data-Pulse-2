@@ -40,11 +40,11 @@
 #
 # Status: Phase 1 SETUP MERGED (PR #420, 6d01512). The two [GATED]
 #   foundational slices are USER-APPROVED and IN REVIEW:
-#     - 008-CONTRACT → PR #422 (OpenAPI sale contract; 16/16 + 89/89 conformance GREEN)
-#     - 008-SCHEMA   → PR #421 (0012 migration + Drizzle schema; 12/12 round-trip + 12/12 shape GREEN)
+#     - 008-CONTRACT → PR #422 (OpenAPI sale contract; contract-spec + conformance GREEN; CodeRabbit review addressed)
+#     - 008-SCHEMA   → PR #421 (0012 migration + Drizzle schema; round-trip + shape GREEN; CodeRabbit review addressed)
 #   Both rebased on main @ 6d01512; order-independent; BOTH must merge before
 #   any implementing GREEN slice (008-ISOLATION-HARNESS / 008-US1-CAPTURE).
-#   008-SIGNOFF-MONEY-LIB resolved; remaining slices `proposed`. The Money +
+#   008-SIGNOFF-MONEY-LIB merged/resolved (PR #419); remaining slices `proposed`. The Money +
 #   Temporal Decision Gate is RESOLVED (gate-money-temporal.md §Decisions
 #   Recorded), so there are no open WHAT-level blockers.
 #
@@ -89,9 +89,13 @@ slices:
     task_ids: [T001]
     type: docs
     # T001 is a [SIGN-OFF] gate (gate A.6): money = string-backed value object,
-    # NO package.json dependency. The verdict is recorded in wave-status.md.
-    # Status stays `proposed` (nothing on main); this slice carries the gate edge.
-    status: proposed
+    # NO package.json dependency. The verdict is RECORDED in wave-status.md
+    # (§SIGN-OFF Decisions), which merged to main via PR #419 — so this gate is
+    # resolved and terminal. Dependents (008-SETUP, 008-SCHEMA) may treat it as
+    # satisfied. A future big-decimal lib remains a SEPARATE [GATED] decision.
+    status: merged
+    merged_in_pr: 419
+    merged_at_commit: cecdaac
     approval_required: false   # decision gate, not a code gate
     depends_on: []
     blocks:
