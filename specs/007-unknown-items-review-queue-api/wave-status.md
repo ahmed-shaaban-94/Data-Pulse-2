@@ -1,11 +1,18 @@
 # Wave Status — `007-unknown-items-review-queue-api`
 
-**Last updated:** 2026-05-30 (POLISH-AUDIT-SWEEP merged via #412; state reconciled to `main`)
+> ## ✅ WAVE CLOSED — 2026-05-30 (007-CLOSEOUT / T073, PR #417)
+> The 007 Unknown Items Review Queue API spec is **COMPLETE**. Every
+> Claude-executable slice has shipped to `main`. Final tally: **16 merged /
+> 3 proposed-by-design** (SETUP + the two `[SIGN-OFF]` decision gates, whose
+> verdicts are recorded below). **0 open findings.** No further 007 work is
+> planned — see § Wave-close summary.
+
+**Last updated:** 2026-05-30 (WAVE CLOSED via #417 — 007-CLOSEOUT/T073)
 **Spec:** [`specs/007-unknown-items-review-queue-api/`](./)
-**Base:** `origin/main` at `226677c` (PR #412, POLISH-AUDIT-SWEEP, 2026-05-30)
-**Branch:** Wave 1 + Wave 2 + Polish-audit-sweep merged to `main` (planning on `spec/007-unknown-items-review-queue-api`)
+**Base:** `origin/main` at `4edda4d` (PR #416, POLISH-SMOKE-COVERAGE closeout, 2026-05-30) → closed by #417
+**Branch:** ALL slices terminal on `main`; spec complete (planning on `spec/007-unknown-items-review-queue-api`)
 **Active findings:** 0
-**Resolved findings:** 0
+**Resolved findings:** 1 (reopen fresh-capture metric — deliberate POS-scoped exclusion)
 
 ---
 
@@ -243,7 +250,9 @@ wave-1 slices and `merged` for 007-CONTRACT via #404.
 - **Wave 2 — US4/US5/US6 regression guards (Phase 8)** — `007-US4-LINK-REGRESSION` / `007-US5-CREATE-REGRESSION` / `007-US6-DISMISS-REGRESSION` (T060/T061/T062) — **merged via PR #410** (squash `4123664`): test-only guards proving the shipped link/create/dismiss still behave under 007 + the T038 `ReviewQueueItem` projection (no `sale_context` on responses), monotonic-guard no-duplicate, non-disclosing 404; NO key-replay (T003 ISOLATE); NO runtime change.
 - **Phase 9 — POLISH-AUDIT-SWEEP** — `007-POLISH-AUDIT-SWEEP` (T070/T074/T075/T076) — **merged via PR #412** (squash `226677c`, current `origin/main` HEAD): audit-linkage sweep (every state change + audited failure carries the canonical fields incl. a correlation id), failure determinism (byte-identical envelopes minus `request_id`), system-failure retry-safety (real-pool-wrapped fault → 500 `internal_error` → rollback → idempotent retry, no partial commit), and the forbidden-operations absence-guard (only the 8 allowed operationIds; force/bulk-link/bulk-create/bulk-reopen routes 404/405). **Runtime fix folded in (user-approved widening):** the bulk-dismiss per-item audit now threads the request correlation id (symmetric with reopen) — closes the T070 correlation gap the sweep surfaced.
 
-**In review / not yet on `main`:** _nothing._ Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), and Phase-9 POLISH-AUDIT-SWEEP are all landed. Remaining 007 scope — `007-POLISH-SMOKE-COVERAGE` (T071/T072) and `007-CLOSEOUT` (T073) — stays `proposed` in the execution-map (dependencies now satisfied; awaiting execution approval) and is not yet started.
+- **Phase 9 — POLISH-SMOKE-COVERAGE** — `007-POLISH-SMOKE-COVERAGE` (T071/T072) — **merged via PR #415** (squash `04cb058`, current `origin/main` HEAD): T071 quickstart journeys 1–6 integration smoke (6/6, one assertion per journey through one booted app, order-immune dedicated per-journey fixtures); T072 coverage — the full catalog suite ran GREEN (**69 suites / 480 passed**) and did **NOT** OOM locally, with catalog-scoped LINE coverage on the new/extended 007 code all **≥80%** (reconciliation.service 97.4 / .controller 95.7 / unknown-items.service 96.8 / .controller 86.7 / DTOs 100). §VI / T072 gate met. (CI `db-integration` full-suite+coverage OOMs on the shared runner; measured locally where the box has memory headroom.)
+
+**In review / not yet on `main`:** _nothing._ Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), and BOTH Phase-9 polish slices (POLISH-AUDIT-SWEEP, POLISH-SMOKE-COVERAGE) are all landed. **The only remaining 007 slice is `007-CLOSEOUT` (T073)** — the final wave-close reconciliation + SIGN-OFF re-affirmation (`proposed`; the incremental closeouts already reconciled the graph).
 
 ---
 
@@ -264,19 +273,25 @@ wave-1 slices and `merged` for 007-CONTRACT via #404.
 
 _None._
 
-## Next recommended action
+## Wave-close summary (007-CLOSEOUT / T073)
 
-Wave 1 (P1 MVP), Wave 2 (US7 / US8 / US4-6 guards), **and** Phase-9 POLISH-AUDIT-SWEEP are merged to `main` (#404 → … → #410 → #411 → #412). Two slices remain:
+**The 007 spec is shipped and closed.** No next action — every slice is terminal.
 
-1. **`007-POLISH-SMOKE-COVERAGE`** (T071 quickstart journeys 1–6 integration smoke, T072 ≥80% line coverage on new/extended catalog code) — all deps on `main`. **Note for T072:** the coverage check runs the FULL catalog suite with `--coverage`, which is the OOM-prone full-suite shape on the (offline) self-hosted runner; locally it may exceed the targeted-path memory budget — run it deliberately and report `NOT RUN` rather than weakening the gate if the local box can't complete it.
-2. **`007-CLOSEOUT`** (T073) — re-affirms every slice to terminal status + the two SIGN-OFF verdicts at wave close. The early closeouts (#411 Wave-2, #412-followup this doc) already reconciled most of the graph; T073 is the final confirmation.
-3. Per standing rules: no implementation, push, or PR without explicit instruction.
+**Slice tally — 16 merged / 3 proposed-by-design:**
+- **Merged (16):** CONTRACT (#404) · FORBIDDEN-CATEGORY / REVIEW-QUEUE-PROJECTION / ISOLATION-HARNESS / US1-LIST-PROJECTION / US1-RECONCILIATION-PROJECTION / US2-LIST-EXTENSIONS / US3-INSPECT (#405) · US7-REOPEN (#408) · US8-BULK-DISMISS (#409) · US4/US5/US6 regression guards (#410) · POLISH-AUDIT-SWEEP (#412) · POLISH-SMOKE-COVERAGE (#415).
+- **Proposed-by-design (3, terminal):** `007-SETUP` (read-only compile check), `007-SIGNOFF-SALE-CONTEXT`, `007-SIGNOFF-IDEMPOTENCY`. These are decision/verification gates that never take a PR — `proposed` is their permanent terminal form (the schema has no `decided` status); they exist in the map to carry their dependency edges. Their verdicts are below.
 
-### OPEN FINDING (still open — NOT addressed by T070; verify against signals.md)
-- **reopen fresh-capture metric:** `reopenUnknownItem` creates a fresh `pending` row but does NOT call `recordUnknownItemCaptured()` (a normal POS capture does). The audit correctly emits `unknown_item.captured` (FR-110), so this is **metric-only**, not a spec/correctness gap. T070 asserted audit linkage, NOT the metric — this remains open. Resolve during T072/closeout: confirm against `docs/observability/signals.md` whether `unknown_item_captured_total` should count reopen-created rows; if yes, add the call at the reopen INSERT site (a runtime change → its own slice); if no, record the deliberate exclusion.
+**`[SIGN-OFF]` verdicts (re-affirmed at close):**
+- **T002 — `sale_context` tightening → TIGHTEN** (option a, now). The shipped list + all new read ops project to `ReviewQueueItem` (no `sale_context`, FR-007); landed via the #404 GATED contract + the #405 projection swaps.
+- **T003 — idempotency-key retrofit → ISOLATE** (option b). Only the NEW reopen + bulk-dismiss carry `Idempotency-Key`; the shipped link/create/dismiss keep their monotonic-guard no-duplicate-effect (NOT retrofitted in v1). Consequence honored: the Phase-8 regression guards assert monotonic-guard only, no key-replay.
 
-### Next short Maestro prompt
+### Resolved finding — reopen fresh-capture metric (deliberate exclusion; CLOSED)
+`docs/observability/signals.md` defines `unknown_item_captured_total` as *"successful **POS capture** into `unknown_items`"* (005 FR-081). Reopen is a dashboard **admin** action, not a POS capture, so `reopenUnknownItem` correctly does **not** increment that counter (counting it would pollute POS-submission volume with admin rows). The `unknown_item.captured` **audit** event (FR-110) is the right traceability signal for the reopen-created row; the metric is intentionally POS-scoped. **No runtime change.**
 
-```text
-Use Agent OS. Execute slice 007-POLISH-SMOKE-COVERAGE. Stop before commit.
-```
+### Deferred / out-of-007-scope (recorded, not bugs)
+- **CI `db-integration` full-suite job OOMs** on the shared self-hosted runner (exit 137 under full-suite+coverage load) — a documented infra-capacity ceiling, NOT a code defect. All slices were validated via **targeted WSL Testcontainers** paths + a full catalog suite run (480 passed, no local OOM) for the T072 coverage number. `main` is not branch-protected; merges were user-authorized on locally-verified green.
+- **Idempotency-key retrofit onto shipped link/create/dismiss** — the T003 ISOLATE deferral; an optional future enhancement, a NEW spec if ever pursued (not a 007 slice).
+- **US candidate-match hint on inspect** (FR-070) — explicitly out of v1.
+
+### Next
+**No 007 next action.** Subsequent unknown-items behavior changes are new specs, not 007 slices.
