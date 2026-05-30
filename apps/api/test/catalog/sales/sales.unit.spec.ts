@@ -8,7 +8,11 @@
  * outbox enqueue, the read-projection nullish fallbacks, and the controller's
  * guard / rethrow paths) by mocking the pg client and the tenant-context runner.
  */
-import { NotFoundException, UnauthorizedException } from "@nestjs/common";
+import {
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
 
 // runWithTenantContext is mocked to invoke its callback with a scripted client,
 // so the service runs entirely in-process with no database.
@@ -24,6 +28,7 @@ jest.mock("@data-pulse-2/db", () => ({
 import {
   SalesService,
   SaleNotFoundError,
+  TerminalEventProvenanceConflictError,
   type SalesOutboxProducer,
 } from "../../../src/catalog/sales/sales.service";
 import { SalesController } from "../../../src/catalog/sales/sales.controller";
@@ -309,5 +314,140 @@ describe("SalesController — guard + status branches (unit)", () => {
     await expect(boom.readSale({ context: ctx } as never, VALID_REF)).rejects.toThrow(
       /db exploded/,
     );
+  });
+
+  const voidBody = { sourceSystem: "pos-1", externalId: "v" };
+
+  it("recordVoid: missing ctx / null tenant / null actor / null store → 401; bad ref → 404", async () => {
+    const c = new SalesController({ recordVoid: jest.fn() } as never);
+    for (const badCtx of [
+      { context: undefined },
+      { context: { ...ctx, tenantId: null } },
+      { context: { ...ctx, userId: null } },
+      { context: { ...ctx, storeId: null } },
+    ]) {
+      await expect(
+        c.recordVoid(badCtx as never, VALID_REF, voidBody as never, makeRes() as never),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+    await expect(
+      c.recordVoid({ context: ctx } as never, "not-a-uuid", voidBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("recordVoid: created → 201; replay → 200 + replay header", async () => {
+    const projection = { eventRef: "e", saleRef: VALID_REF, kind: "void" };
+    const svc = {
+      recordVoid: jest
+        .fn()
+        .mockResolvedValueOnce({ created: true, projection })
+        .mockResolvedValueOnce({ created: false, projection }),
+    };
+    const c = new SalesController(svc as never);
+
+    const r1 = makeRes();
+    await c.recordVoid({ context: ctx } as never, VALID_REF, voidBody as never, r1 as never);
+    expect(r1.status).toHaveBeenCalledWith(201);
+
+    const r2 = makeRes();
+    await c.recordVoid({ context: ctx } as never, VALID_REF, voidBody as never, r2 as never);
+    expect(r2.status).toHaveBeenCalledWith(200);
+    expect(r2.setHeader).toHaveBeenCalledWith("Idempotent-Replayed", "true");
+  });
+
+  it("recordVoid: SaleNotFoundError → 404; ProvenanceConflict → 409; other rethrows", async () => {
+    const nf = new SalesController({
+      recordVoid: jest.fn().mockRejectedValue(new SaleNotFoundError()),
+    } as never);
+    await expect(
+      nf.recordVoid({ context: ctx } as never, VALID_REF, voidBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    const conflict = new SalesController({
+      recordVoid: jest.fn().mockRejectedValue(new TerminalEventProvenanceConflictError()),
+    } as never);
+    await expect(
+      conflict.recordVoid({ context: ctx } as never, VALID_REF, voidBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const boom = new SalesController({
+      recordVoid: jest.fn().mockRejectedValue(new Error("kaboom")),
+    } as never);
+    await expect(
+      boom.recordVoid({ context: ctx } as never, VALID_REF, voidBody as never, makeRes() as never),
+    ).rejects.toThrow(/kaboom/);
+  });
+
+  const refundBody = {
+    sourceSystem: "pos-1",
+    externalId: "r",
+    posRefundAmount: "1.0000",
+    currencyCode: "USD",
+  };
+
+  it("recordRefund: missing ctx / null tenant / null actor / null store → 401; bad ref → 404", async () => {
+    const c = new SalesController({ recordRefund: jest.fn() } as never);
+    for (const badCtx of [
+      { context: undefined },
+      { context: { ...ctx, tenantId: null } },
+      { context: { ...ctx, userId: null } },
+      { context: { ...ctx, storeId: null } },
+    ]) {
+      await expect(
+        c.recordRefund(badCtx as never, VALID_REF, refundBody as never, makeRes() as never),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+    await expect(
+      c.recordRefund({ context: ctx } as never, "not-a-uuid", refundBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("recordRefund: created → 201; replay → 200 + replay header", async () => {
+    const projection = {
+      eventRef: "e",
+      saleRef: VALID_REF,
+      kind: "refund",
+      posRefundAmount: "1.0000",
+      currencyCode: "USD",
+    };
+    const svc = {
+      recordRefund: jest
+        .fn()
+        .mockResolvedValueOnce({ created: true, projection })
+        .mockResolvedValueOnce({ created: false, projection }),
+    };
+    const c = new SalesController(svc as never);
+
+    const r1 = makeRes();
+    await c.recordRefund({ context: ctx } as never, VALID_REF, refundBody as never, r1 as never);
+    expect(r1.status).toHaveBeenCalledWith(201);
+
+    const r2 = makeRes();
+    await c.recordRefund({ context: ctx } as never, VALID_REF, refundBody as never, r2 as never);
+    expect(r2.status).toHaveBeenCalledWith(200);
+    expect(r2.setHeader).toHaveBeenCalledWith("Idempotent-Replayed", "true");
+  });
+
+  it("recordRefund: SaleNotFoundError → 404; ProvenanceConflict → 409; other rethrows", async () => {
+    const nf = new SalesController({
+      recordRefund: jest.fn().mockRejectedValue(new SaleNotFoundError()),
+    } as never);
+    await expect(
+      nf.recordRefund({ context: ctx } as never, VALID_REF, refundBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    const conflict = new SalesController({
+      recordRefund: jest.fn().mockRejectedValue(new TerminalEventProvenanceConflictError()),
+    } as never);
+    await expect(
+      conflict.recordRefund({ context: ctx } as never, VALID_REF, refundBody as never, makeRes() as never),
+    ).rejects.toBeInstanceOf(ConflictException);
+
+    const boom = new SalesController({
+      recordRefund: jest.fn().mockRejectedValue(new Error("kaboom")),
+    } as never);
+    await expect(
+      boom.recordRefund({ context: ctx } as never, VALID_REF, refundBody as never, makeRes() as never),
+    ).rejects.toThrow(/kaboom/);
   });
 });
