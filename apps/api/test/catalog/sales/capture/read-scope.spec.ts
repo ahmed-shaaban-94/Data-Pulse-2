@@ -18,7 +18,7 @@ import {
   captureBody,
   idempKey,
   STORE_A_X,
-  STORE_B_X,
+  STORE_A_Y,
   type HarnessHandle,
 } from "./__capture-harness";
 
@@ -69,7 +69,7 @@ describe("read-scope — readSale object safety (FR-063, SI-004)", () => {
 
     // Same tenant, a DIFFERENT store binding than the sale's store → the sale
     // is filtered out by the store predicate and reads as absent.
-    h.harness.contextGuard.storeId = STORE_B_X;
+    h.harness.contextGuard.storeId = STORE_A_Y;
     const res = await h.harness.http().get(`/api/pos/v1/sales/${saleRef}`);
     expect(res.status).toBe(404);
 

@@ -49,6 +49,7 @@ import {
   TENANT_A,
   TENANT_B,
   STORE_A_X,
+  STORE_A_Y,
   STORE_B_X,
   PRODUCT_A_ACTIVE,
 } from "../../__support__/isolation-harness";
@@ -64,6 +65,7 @@ export {
   TENANT_A,
   TENANT_B,
   STORE_A_X,
+  STORE_A_Y,
   STORE_B_X,
   PRODUCT_A_ACTIVE,
   type PgTestEnv,
