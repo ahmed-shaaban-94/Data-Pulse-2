@@ -302,4 +302,19 @@ describe("T050 / 007-US7-REOPEN — tenant-wide actor reopens a dismissed item [
     expect(reopenEvents).toHaveLength(1);
     expect(captureEvents).toHaveLength(1);
   });
+
+  it("(d) an OMITTED request body still returns 201 (optional-body contract)", async () => {
+    if (dockerSkipped) return;
+
+    // The contract sets requestBody.required=false; every other case sends {}.
+    // This case omits .send() entirely so a future body-parser/pipe change that
+    // treats an absent body as `undefined` can't silently break the contract.
+    const res = await http()
+      .post(REOPEN_URL(UNK_007_A_X_DISMISSED))
+      .set("Idempotency-Key", `${IDEMPOTENCY_KEY}-d`);
+
+    expect(res.status).toBe(201);
+    expect(res.body.resolution_status).toBe("pending");
+    expect(res.body).not.toHaveProperty("sale_context");
+  });
 });

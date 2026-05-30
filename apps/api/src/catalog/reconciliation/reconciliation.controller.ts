@@ -98,10 +98,18 @@ import { ReconciliationService } from "./reconciliation.service";
  * `additionalProperties: false`. Tenant / store / authority are resolved from
  * the authenticated principal (Constitution §III) — no body-supplied scope is
  * honoured. `.strict()` rejects any smuggled field with 400 validation_error.
- * The body is optional (the contract sets `requestBody.required: false`); an
- * absent body parses as `{}`.
+ *
+ * The contract sets `requestBody.required: false`, so an OMITTED body is valid.
+ * A missing body arrives at the pipe as `undefined`/`null` (no parsed JSON), so
+ * `z.preprocess` coerces nullish → `{}` BEFORE the strict-object check —
+ * otherwise `z.object({}).strict().parse(undefined)` would 400 a legitimately
+ * empty request (CodeRabbit #408 F4: the optional-body contract must hold for an
+ * omitted body, not only for an explicit `{}`).
  */
-const ReopenUnknownItemRequestSchema = z.object({}).strict();
+const ReopenUnknownItemRequestSchema = z.preprocess(
+  (val) => (val == null ? {} : val),
+  z.object({}).strict(),
+);
 
 // ---------------------------------------------------------------------------
 // Request DTO + Zod schema
@@ -400,14 +408,15 @@ export class ReconciliationController {
     });
 
     if (result.kind === "ok") {
-      // A fresh pending row was created → 201 Created (005 FR-005). An
-      // already-pending sibling is a no-op but the contract's only success
-      // code for this op is 201; the fresh-vs-sibling distinction is not
-      // observable on the wire (both return the pending ReviewQueueItem).
-      res.status(HttpStatus.CREATED);
+      // CodeRabbit #408 F3: honour the documented two-status contract.
+      // createdFresh → a new pending row was INSERTed → 201 Created (005 FR-005).
+      // !createdFresh → an existing pending row was reused (target already
+      // pending, or a pending sibling) → 200 OK, no-op (no row created). This
+      // matches the wire contract and keeps the status truthful.
+      res.status(result.createdFresh ? HttpStatus.CREATED : HttpStatus.OK);
       // ACTION response: the caller just reopened/holds this item in their
       // tenant-wide scope (isTenantWide is true to reach here) → canSeeProduct
-      // = true, uniform with link/create/dismiss. A fresh pending row has
+      // = true, uniform with link/create/dismiss. A pending row has
       // resolved_product_id = NULL anyway.
       return toReviewQueueItem(result.row, true);
     }

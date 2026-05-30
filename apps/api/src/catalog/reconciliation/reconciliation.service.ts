@@ -157,7 +157,15 @@ const RECONCILIATION_CONFLICT_REJECTED = "unknown_item.reconciliation_conflict_r
  *                                absent → non-disclosing 404 (FR-062 / SI-004).
  */
 export type ReopenResult =
-  | { kind: "ok"; row: UnknownItemRow }
+  // `createdFresh` distinguishes the two `ok` paths (CodeRabbit #408 F2/F3):
+  //   true  — a fresh `pending` row was INSERTed (005 FR-005) → 201 Created;
+  //           emit BOTH `unknown_item.reopened` + `unknown_item.captured`.
+  //   false — an existing pending row was reused (target already pending, or a
+  //           pending sibling existed) → 200 OK, NO new row; emit NEITHER a
+  //           fresh-capture NOR a reopened event (reuse changes no state — a
+  //           phantom `captured` against a row that already existed would
+  //           corrupt the provenance trail, §XIII).
+  | { kind: "ok"; row: UnknownItemRow; createdFresh: boolean }
   | { kind: "forbidden" }
   | { kind: "already_reconciled"; priorState: "resolved" | "dismissed" }
   | { kind: "not_found" };
@@ -819,8 +827,10 @@ export class ReconciliationService {
         }
 
         // The target itself is already pending — reopen is a no-op; return it.
+        // createdFresh=false: no row was created, so the caller maps this to
+        // 200 OK and emits no fresh-capture audit.
         if (target.resolution_status === "pending") {
-          return { kind: "ok", row: toUnknownItemRow(target) };
+          return { kind: "ok", row: toUnknownItemRow(target), createdFresh: false };
         }
 
         // target is `dismissed` → reopen. First check for an existing pending
@@ -869,7 +879,10 @@ export class ReconciliationService {
         const sibling = siblingResult.rows[0];
         if (sibling) {
           // Already pending — no duplicate (FR-043). Return the sibling row.
-          return { kind: "ok", row: toUnknownItemRow(sibling) };
+          // createdFresh=false: reused an existing row → 200 OK, no fresh-capture
+          // audit (the row already existed; a `captured` event here would be a
+          // phantom provenance record).
+          return { kind: "ok", row: toUnknownItemRow(sibling), createdFresh: false };
         }
 
         // No sibling → INSERT a fresh pending row for the same logical
@@ -925,23 +938,32 @@ export class ReconciliationService {
           throw new Error("unknown_items: reopen insert produced no row");
         }
 
-        return { kind: "ok", row: toUnknownItemRow(inserted) };
+        // A fresh pending row was INSERTed → createdFresh=true (201 + both
+        // audit events).
+        return { kind: "ok", row: toUnknownItemRow(inserted), createdFresh: true };
       },
     );
 
     // ---- post-transaction audit (R7.5 / FR-110 / FR-111) -------------------
     // Emitted AFTER the txn resolves so an audit row is never tied to a
-    // rolled-back commit (mirrors emitConflictRejection). The success path
-    // emits BOTH the reopen action AND the fresh capture; rejections emit a
+    // rolled-back commit (mirrors emitConflictRejection). Only a FRESH reopen
+    // (createdFresh) emits state-change events: `unknown_item.reopened`
+    // targeting the DISMISSED row acted on (input.unknownItemId, NOT the fresh
+    // pending row), plus `unknown_item.captured` targeting the new row (FR-110).
+    // A reuse path (target already pending / sibling reused) changed no state →
+    // emit NOTHING (CodeRabbit #408 F2: a phantom `captured` against a
+    // pre-existing row would corrupt provenance, §XIII). Rejections emit a
     // single reopen_rejected; not_found emits nothing (non-disclosure).
-    if (result.kind === "ok") {
+    if (result.kind === "ok" && result.createdFresh) {
       await this.emitReopenAudit(UNKNOWN_ITEM_REOPENED, {
         tenantId: input.tenantId,
         storeId: input.storeId,
         actorUserId: input.actorUserId,
-        targetId: result.row.id,
+        // The reopen ACTION targets the dismissed item the caller addressed,
+        // not the freshly-created pending row.
+        targetId: input.unknownItemId,
         requestId: input.correlationId,
-        metadata: { action: "reopen" },
+        metadata: { action: "reopen", fresh_item_id: result.row.id },
       });
       await this.emitReopenAudit(UNKNOWN_ITEM_CAPTURED, {
         tenantId: input.tenantId,

@@ -305,15 +305,16 @@ describe("T052 / 007-US7-REOPEN — state guards + idempotency [FR-043, FR-063, 
       ],
     );
 
+    auditSpy.reset();
     const res = await http()
       .post(REOPEN_URL(UNK_007_A_X_DISMISSED))
       .set("Idempotency-Key", "reopen-t052-sibling-key-000001")
       .send({});
 
-    // The contract maps "already pending" onto a successful, idempotent
-    // outcome (no new row). Whatever the success code, there must be exactly
-    // ONE pending row for the tuple afterwards.
-    expect([200, 201]).toContain(res.status);
+    // Reuse path: an existing pending sibling is returned, NO new row. Per the
+    // 200-vs-201 contract (CodeRabbit #408 F3), a reuse no-op is 200 OK
+    // (createdFresh=false), distinct from the 201 fresh-insert path.
+    expect(res.status).toBe(200);
 
     const pending = await env!.admin.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count
@@ -322,6 +323,12 @@ describe("T052 / 007-US7-REOPEN — state guards + idempotency [FR-043, FR-063, 
       [TENANT_A, UNK_007_VAL_A_X_DISMISSED],
     );
     expect(pending.rows[0]?.count).toBe("1");
+
+    // CodeRabbit #408 F2: a reuse changes no state → emit NO audit events
+    // (neither a phantom fresh-capture nor a reopened action). This assertion
+    // LOCKS that decision so the T070 audit-sweep can't silently disagree.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(auditSpy.calls).toHaveLength(0);
   });
 
   it("(c) same Idempotency-Key + body replay → one fresh row, same response", async () => {
