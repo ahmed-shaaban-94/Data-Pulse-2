@@ -1,0 +1,117 @@
+/**
+ * SalesController — 008 US1 capture (T035).
+ *
+ * Implements the `captureSale` (+ `readSale`) operationIds from
+ * `packages/contracts/openapi/pos-sales/sales.yaml`:
+ *   POST /api/pos/v1/sales            → captureSale
+ *   GET  /api/pos/v1/sales/{saleRef}  → readSale
+ *
+ * Auth / context: mirrors `posCaptureItem` — `@UseGuards(PosOperatorAuthGuard,
+ * TenantContextGuard)` resolve the POS principal onto `req.context`; the
+ * tenant/store/actor come from there and are NEVER read from the body
+ * (FR-061). Body strictness (FR-062) is enforced by the `.strict()` Zod DTO.
+ *
+ * Idempotency: `@Idempotent("required")` engages the existing global
+ * IdempotencyInterceptor (FR-051) — no new primitive. Provenance dedup
+ * (FR-050) is enforced independently in the service, so a re-delivery with a
+ * different Idempotency-Key still resolves to the same sale.
+ *
+ * Audit: `@Auditable("sale.captured")` is passive metadata read by the global
+ * AuditEmitterInterceptor (FR-090).
+ *
+ * Status: 201 for a fresh capture; 200 with `Idempotent-Replayed: true` for a
+ * provenance dedup-hit (deterministic, identical body — FR-100).
+ */
+import {
+  Body,
+  Controller,
+  Get,
+  HttpStatus,
+  NotFoundException,
+  Param,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
+import type { Response } from "express";
+
+import { Auditable } from "../../audit/auditable.decorator";
+import { PosOperatorAuthGuard } from "../../auth/pos-operator-auth.guard";
+import { ZodValidationPipe } from "../../common/zod-validation.pipe";
+import { TenantContextGuard } from "../../context/tenant-context.guard";
+import type { TenantContextRequest } from "../../context/types";
+import { Idempotent } from "../../idempotency/idempotent.decorator";
+import {
+  CaptureSaleRequestSchema,
+  type CaptureSaleRequestDto,
+} from "./dto/capture-sale-request.dto";
+import {
+  SalesService,
+  SaleNotFoundError,
+  type SaleProjection,
+} from "./sales.service";
+
+@Controller()
+export class SalesController {
+  constructor(private readonly salesService: SalesService) {}
+
+  @Post("api/pos/v1/sales")
+  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  @Idempotent("required")
+  @Auditable("sale.captured")
+  async captureSale(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(CaptureSaleRequestSchema))
+    body: CaptureSaleRequestDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<SaleProjection> {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null || ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.storeId === null) {
+      // A POS sale MUST resolve a store binding (FR-001).
+      throw new UnauthorizedException("store_context_required");
+    }
+
+    const result = await this.salesService.captureSale({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      actorUserId: ctx.userId,
+      body,
+    });
+
+    if (result.created) {
+      res.status(HttpStatus.CREATED);
+    } else {
+      // Provenance dedup-hit: deterministic replay, identical body (FR-100).
+      res.status(HttpStatus.OK);
+      res.setHeader("Idempotent-Replayed", "true");
+    }
+    return result.projection;
+  }
+
+  @Get("api/pos/v1/sales/:saleRef")
+  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  async readSale(
+    @Req() request: TenantContextRequest,
+    @Param("saleRef") saleRef: string,
+  ): Promise<SaleProjection> {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    try {
+      return await this.salesService.readSaleProjection(ctx.tenantId, saleRef);
+    } catch (err) {
+      if (err instanceof SaleNotFoundError) {
+        // Non-disclosing 404 — cross-tenant / out-of-scope / absent are
+        // indistinguishable (FR-063/102, SI-004).
+        throw new NotFoundException("not_found");
+      }
+      throw err;
+    }
+  }
+}

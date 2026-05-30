@@ -16,15 +16,17 @@
  *     and invisible to tenant B (the migration round-trip proved fail-closed on
  *     EMPTY tables only).
  *
- *   GROUP B — operation sweep (RED NOW, on the unbuilt operation). The
- *     capture / void / refund / read API operations do not exist yet
- *     (008-US1-CAPTURE / US3 / US4 author the controller+service). These cases
- *     are scaffolded with a throwing placeholder that names the owning slice, so
- *     they FAIL on "operation not implemented" — NOT on an RLS leak — and are
- *     replaced with real object-level-authz / non-disclosing-404 assertions by
- *     T036 (capture), US3 (void), US4 (refund). No `SalesService` is imported at
- *     the top level: doing so would compile-error the whole file and prevent the
- *     Group A RLS probes (the slice's core deliverable) from running.
+ *   GROUP B — operation object-safety (HTTP). The capture/read operations now
+ *     exist (008-US1-CAPTURE authored SalesController/Service), so the
+ *     capture-owned cases (§B.1, T036) are REAL HTTP assertions driven through
+ *     the shared `__capture-harness` (real controller + service + RLS-active
+ *     PG_POOL): cross-tenant read → non-disclosing 404 (FR-102/SC-004),
+ *     out-of-scope store read → 404 (FR-063/SI-004), body-supplied
+ *     tenant_id/store_id/created_by ignored (FR-061), unauthenticated → 401.
+ *     The void/refund cases (§B.2) remain RED placeholders that name their
+ *     owning slice (US3/US4) — they FAIL on "operation not implemented", NOT on
+ *     an RLS leak. The capture harness is imported lazily inside §B.1's own
+ *     `beforeAll`, so a Docker-less skip in Group A still short-circuits cleanly.
  *
  * MUST NOT modify `isolation-harness.ts` (003-owned) — extend via seed-sales.ts.
  *
@@ -215,15 +217,21 @@ describe("sales-sweep §A.4 — in-scope baseline (anchors the sweep, prevents v
 });
 
 // ===========================================================================
-// GROUP B — operation sweep (RED NOW, on the unbuilt operation)
+// GROUP B — operation object-safety (HTTP)
 // ===========================================================================
 //
 // These prove the API-level object-safety contract (SI-001..005): unauthenticated
 // → 401; cross-tenant id → non-disclosing 404; out-of-scope store → 404; body
-// tenant_id/store_id/created_by ignored. They require the capture/void/refund/read
-// operations, which do NOT exist yet. Each is scaffolded to FAIL on the missing
-// operation (NOT on RLS) and will be replaced with real assertions by the owning
-// slice. No SalesService import at module scope (would compile-error Group A).
+// tenant_id/store_id/created_by ignored.
+//
+// §B.1 (capture/read) are REAL HTTP assertions (T036) — the operations now
+// exist. They run through the shared `__capture-harness` (real controller +
+// service + RLS-active PG_POOL + IdempotencyInterceptor), brought up in §B.1's
+// own `beforeAll` so a Docker-less Group-A skip short-circuits cleanly.
+//
+// §B.2 (void/refund) are still RED placeholders that name their owning slice —
+// they FAIL on "operation not implemented", NOT on an RLS leak, and US3/US4
+// replace them when those operations land.
 
 /** Scaffold-RED: throws naming the owning slice. Replaced when the op lands. */
 function pendingOperation(slice: string, op: string): never {
@@ -233,22 +241,132 @@ function pendingOperation(slice: string, op: string): never {
   );
 }
 
-describe("sales-sweep §B — operation object-safety (RED until the operations exist)", () => {
-  it("captureSale: cross-tenant read of a new sale → non-disclosing 404 (FR-102, SC-004) [008-US1-CAPTURE / T036]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US1-CAPTURE", "captureSale + readSale");
+// §B.1 — capture/read object-safety, HTTP-driven (T036). Imported lazily so the
+// SalesController/Service references do not affect the Group-A DB-only probes.
+import {
+  startCaptureHarness,
+  stopCaptureHarness,
+  resetHarness,
+  captureBody,
+  idempKey,
+  STORE_A_X,
+  STORE_B_X,
+  type HarnessHandle,
+} from "../capture/__capture-harness";
+
+describe("sales-sweep §B.1 — capture/read object-safety (HTTP) [T036]", () => {
+  const hb: HarnessHandle = { harness: null, dockerSkipped: false };
+
+  beforeAll(async () => {
+    Object.assign(hb, await startCaptureHarness());
+  }, 180_000);
+  afterAll(async () => {
+    await stopCaptureHarness(hb);
+  }, 60_000);
+  beforeEach(() => resetHarness(hb));
+  afterEach(async () => {
+    if (hb.harness) {
+      await hb.harness.env.admin.query(
+        "DELETE FROM sale_lines WHERE sale_id IN (SELECT id FROM sales WHERE source_system = 'pos-1')",
+      );
+      await hb.harness.env.admin.query(
+        "DELETE FROM sales WHERE source_system = 'pos-1'",
+      );
+    }
   });
 
-  it("readSale: out-of-scope store id → non-disclosing 404 (FR-063, SI-004) [008-US1-CAPTURE / T036]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US1-CAPTURE", "readSale");
+  it("captureSale → cross-tenant read of the new sale is a non-disclosing 404 (FR-102, SC-004)", async () => {
+    if (!hb.harness) return;
+    // Tenant A captures a sale and learns its ref.
+    const captured = await hb.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("swb1a"))
+      .send(captureBody({ externalId: "ext-sweep-xtenant" }));
+    expect(captured.status).toBe(201);
+    const saleRef: string = captured.body.saleRef;
+    expect(saleRef).toEqual(expect.any(String));
+
+    // Tenant B (different principal) reads A's ref → RLS filters it → 404 with
+    // NO existence leak (the body never distinguishes "not yours" from "absent").
+    hb.harness.contextGuard.tenantId = TENANT_B;
+    hb.harness.contextGuard.storeId = STORE_B_X;
+    const crossed = await hb.harness
+      .http()
+      .get(`/api/pos/v1/sales/${saleRef}`);
+    expect(crossed.status).toBe(404);
+    // Non-disclosing: the response carries no sale field / no id echo.
+    expect(JSON.stringify(crossed.body)).not.toContain(saleRef);
   });
 
-  it("captureSale: body-supplied tenant_id/store_id/created_by ignored (FR-061) [008-US1-CAPTURE]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US1-CAPTURE", "captureSale mass-assignment guard");
+  it("readSale → an unknown / out-of-scope sale ref is a non-disclosing 404 (FR-063, SI-004)", async () => {
+    if (!hb.harness) return;
+    // A well-formed UUID that was never captured in this tenant's scope.
+    const phantomRef = "0a000000-0000-7000-8000-00000000face";
+    const res = await hb.harness
+      .http()
+      .get(`/api/pos/v1/sales/${phantomRef}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain(phantomRef);
   });
 
+  it("captureSale → body-supplied tenant_id/store_id/created_by are ignored, never honored (FR-061)", async () => {
+    if (!hb.harness) return;
+    // Inject forbidden authority fields in the body. The strict DTO rejects
+    // unknown keys (400) OR the service ignores them — either way the persisted
+    // row resolves tenant/store from the principal (A.X), NEVER from the body.
+    const res = await hb.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("swb1c"))
+      .send(
+        captureBody({
+          externalId: "ext-sweep-massassign",
+          tenant_id: TENANT_B,
+          store_id: STORE_B_X,
+          created_by: "0b000000-0000-7000-8000-0000000000ff",
+        }),
+      );
+
+    if (res.status === 400) {
+      // Strict DTO refused the unknown keys — no row written.
+      const none = await hb.harness.env.admin.query<{ n: string }>(
+        `SELECT COUNT(*)::text AS n FROM sales WHERE external_id = 'ext-sweep-massassign'`,
+      );
+      expect(none.rows[0]?.n).toBe("0");
+      return;
+    }
+
+    // Otherwise the row exists but bound to the PRINCIPAL's tenant/store (A.X),
+    // proving the body authority fields were ignored, not honored.
+    expect(res.status).toBe(201);
+    const row = await hb.harness.env.admin.query<{
+      tenant_id: string;
+      store_id: string;
+      created_by: string;
+    }>(
+      `SELECT tenant_id, store_id, created_by FROM sales
+       WHERE external_id = 'ext-sweep-massassign'`,
+    );
+    expect(row.rows[0]?.tenant_id).toBe(TENANT_A);
+    expect(row.rows[0]?.store_id).toBe(STORE_A_X);
+    expect(row.rows[0]?.tenant_id).not.toBe(TENANT_B);
+  });
+
+  it("unauthenticated capture → 401 (no POS principal on the request)", async () => {
+    if (!hb.harness) return;
+    // The configurable context guard publishes NO context this request.
+    hb.harness.contextGuard.anonymous = true;
+    const res = await hb.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("swb1d"))
+      .send(captureBody({ externalId: "ext-sweep-anon" }));
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("sales-sweep §B.2 — void/refund object-safety (RED until US3/US4 land)", () => {
   it("recordVoid: cross-tenant sale ref → non-disclosing 404 (FR-014, SI-004) [008-US3-VOID]", () => {
     if (maybeSkip()) return;
     pendingOperation("008-US3-VOID", "recordVoid");
@@ -257,10 +375,5 @@ describe("sales-sweep §B — operation object-safety (RED until the operations 
   it("recordRefund: cross-tenant sale ref → non-disclosing 404 (FR-014, SI-004) [008-US4-REFUND]", () => {
     if (maybeSkip()) return;
     pendingOperation("008-US4-REFUND", "recordRefund");
-  });
-
-  it("unauthenticated capture/void/refund/read → 401 (SI authn) [008-US1-CAPTURE]", () => {
-    if (maybeSkip()) return;
-    pendingOperation("008-US1-CAPTURE", "unauthenticated 401 guard");
   });
 });
