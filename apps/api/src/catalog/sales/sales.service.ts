@@ -39,6 +39,7 @@ import type { Pool } from "pg";
 
 import { PG_POOL } from "../../auth/auth.module";
 import type { CaptureSaleRequestDto } from "./dto/capture-sale-request.dto";
+import type { RecordVoidRequestDto } from "./dto/record-void-request.dto";
 
 /** Optional outbox producer seam (kept optional for PG_POOL-only test wiring). */
 export interface SalesOutboxProducer {
@@ -88,6 +89,32 @@ export interface SaleLineProjection {
 export interface CaptureSaleResult {
   readonly projection: SaleProjection;
   /** false when a re-delivery resolved to an existing row (no INSERT). */
+  readonly created: boolean;
+}
+
+export interface RecordVoidInput {
+  readonly tenantId: string;
+  readonly storeId: string;
+  readonly actorUserId: string;
+  readonly saleRef: string;
+  readonly body: RecordVoidRequestDto;
+}
+
+/** Wire projection of a void/refund terminal event (contract `SaleTerminalEvent`). */
+export interface TerminalEventProjection {
+  readonly eventRef: string;
+  readonly saleRef: string;
+  readonly kind: "void" | "refund";
+  readonly recordedAt: string;
+  /** Present (non-null) only for refunds. */
+  readonly posRefundAmount: string | null;
+  /** Present (non-null) only for refunds. */
+  readonly currencyCode: string | null;
+}
+
+export interface TerminalEventResult {
+  readonly projection: TerminalEventProjection;
+  /** false when a re-delivery resolved to an existing terminal event. */
   readonly created: boolean;
 }
 
@@ -317,6 +344,86 @@ export class SalesService {
       },
     );
   }
+
+  /**
+   * Record a void terminal event (US3 / T053).
+   *
+   * A void is a SEPARATE append-only record — the original `sales` row and its
+   * `sale_lines` are NEVER mutated (§X); "voided" is derived from the presence
+   * of this event. Object-safety (FR-014, SI-004): the target sale must resolve
+   * within the caller's (tenant via RLS, store via predicate) scope, else a
+   * non-disclosing `SaleNotFoundError` (→ 404) and NO record is written.
+   *
+   * Idempotent on the void's OWN `(tenant_id, source_system, external_id)`
+   * provenance (FR-013): a re-delivery is a deterministic replay (no duplicate),
+   * via the same atomic `ON CONFLICT` pattern as capture. `voided_at` is the DB
+   * `now()` server clock — never client-supplied.
+   */
+  async recordVoid(input: RecordVoidInput): Promise<TerminalEventResult> {
+    const { tenantId, storeId, actorUserId, saleRef, body } = input;
+    const payloadHash = sha256CanonicalHex(body);
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client): Promise<TerminalEventResult> => {
+        // Object-safety gate: the sale must exist within (tenant, store) scope
+        // BEFORE any terminal-event write. A wrong-store/unknown ref is a
+        // non-disclosing 404 — no void row, no existence leak.
+        const sale = await client.query<{ id: string }>(
+          `SELECT id FROM sales WHERE id = $1 AND store_id = $2`,
+          [saleRef, storeId],
+        );
+        if (!sale.rows[0]) {
+          throw new SaleNotFoundError();
+        }
+
+        const eventId = newId();
+        const inserted = await client.query<{ id: string; voided_at: Date }>(
+          `INSERT INTO sale_voids
+             (id, sale_id, tenant_id, store_id, source_system, external_id,
+              payload_hash, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (tenant_id, source_system, external_id) DO NOTHING
+           RETURNING id, voided_at`,
+          [
+            eventId,
+            saleRef,
+            tenantId,
+            storeId,
+            body.sourceSystem,
+            body.externalId,
+            payloadHash,
+            actorUserId,
+          ],
+        );
+
+        if (inserted.rows.length === 0) {
+          // Same-provenance re-delivery — resolve to the existing void event
+          // deterministically (replay, no duplicate; FR-013).
+          const existing = await client.query<{ id: string; voided_at: Date }>(
+            `SELECT id, voided_at FROM sale_voids
+              WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3
+              LIMIT 1`,
+            [tenantId, body.sourceSystem, body.externalId],
+          );
+          const row = existing.rows[0];
+          if (!row) {
+            throw new Error("void conflict but no existing terminal event found");
+          }
+          return {
+            projection: toTerminalEvent("void", row.id, saleRef, row.voided_at, null, null),
+            created: false,
+          };
+        }
+
+        const row = inserted.rows[0]!;
+        return {
+          projection: toTerminalEvent("void", row.id, saleRef, row.voided_at, null, null),
+          created: true,
+        };
+      },
+    );
+  }
 }
 
 /** Thrown when a sale ref does not resolve within the caller's scope. */
@@ -354,5 +461,24 @@ function toBody(row: SaleRow, lines: ReadonlyArray<SaleLineRow>): SaleProjection
       unit: l.unit,
       tenantProductRef: l.tenant_product_ref,
     })),
+  };
+}
+
+/** Build the `SaleTerminalEvent` wire projection for a void/refund event. */
+function toTerminalEvent(
+  kind: "void" | "refund",
+  eventRef: string,
+  saleRef: string,
+  recordedAt: Date,
+  posRefundAmount: string | null,
+  currencyCode: string | null,
+): TerminalEventProjection {
+  return {
+    eventRef,
+    saleRef,
+    kind,
+    recordedAt: recordedAt.toISOString(),
+    posRefundAmount,
+    currencyCode,
   };
 }

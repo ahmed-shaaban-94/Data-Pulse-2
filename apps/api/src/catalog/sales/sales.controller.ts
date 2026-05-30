@@ -48,9 +48,14 @@ import {
   type CaptureSaleRequestDto,
 } from "./dto/capture-sale-request.dto";
 import {
+  RecordVoidRequestSchema,
+  type RecordVoidRequestDto,
+} from "./dto/record-void-request.dto";
+import {
   SalesService,
   SaleNotFoundError,
   type SaleProjection,
+  type TerminalEventProjection,
 } from "./sales.service";
 
 /** Canonical UUID shape (any version) — a saleRef that fails this never hits the DB. */
@@ -127,6 +132,53 @@ export class SalesController {
       if (err instanceof SaleNotFoundError) {
         // Non-disclosing 404 — cross-tenant / cross-store / absent are
         // indistinguishable (FR-063/102, SI-004).
+        throw new NotFoundException("not_found");
+      }
+      throw err;
+    }
+  }
+
+  @Post("api/pos/v1/sales/:saleRef/void")
+  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  @Idempotent("required")
+  @Auditable("sale.voided")
+  async recordVoid(
+    @Req() request: TenantContextRequest,
+    @Param("saleRef") saleRef: string,
+    @Body(new ZodValidationPipe(RecordVoidRequestSchema))
+    body: RecordVoidRequestDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<TerminalEventProjection> {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null || ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.storeId === null) {
+      throw new UnauthorizedException("store_context_required");
+    }
+    if (!SALE_REF_RE.test(saleRef)) {
+      // A malformed ref is a non-disclosing safe-404, never a 500 (SI-004).
+      throw new NotFoundException("not_found");
+    }
+    try {
+      const result = await this.salesService.recordVoid({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        actorUserId: ctx.userId,
+        saleRef,
+        body,
+      });
+      if (result.created) {
+        res.status(HttpStatus.CREATED);
+      } else {
+        // Provenance dedup-hit: deterministic replay, no duplicate (FR-013).
+        res.status(HttpStatus.OK);
+        res.setHeader("Idempotent-Replayed", "true");
+      }
+      return result.projection;
+    } catch (err) {
+      if (err instanceof SaleNotFoundError) {
+        // Cross-tenant / cross-store / unknown sale are indistinguishable.
         throw new NotFoundException("not_found");
       }
       throw err;
