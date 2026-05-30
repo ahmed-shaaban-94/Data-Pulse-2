@@ -135,17 +135,23 @@ beforeAll(async () => {
   await applyAllUpAndCreateAppRole(env);
   await seedCatalogIsolationFixture(env);
 
+  // Seed a NON-NULL sale_context on the source rows so the
+  // `not.toHaveProperty("sale_context")` guard in test (a) is non-vacuous
+  // (CodeRabbit #410): the projection must actively STRIP a present field, not
+  // pass trivially because the column was null.
   await env.admin.query(
     `INSERT INTO unknown_items
        (id, tenant_id, store_id, identifier_type, value,
-        source_system, resolution_status, correlation_id)
+        source_system, resolution_status, sale_context, correlation_id)
      VALUES
-       ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5),
-       ($6, $2, $7, 'barcode', $8, NULL, 'pending', $9)
+       ($1, $2, $3, 'barcode', $4, NULL, 'pending', $5, $6),
+       ($7, $2, $8, 'barcode', $9, NULL, 'pending', $10, $11)
      ON CONFLICT DO NOTHING`,
     [
-      UNK_T062, TENANT_A, STORE_A_X, UNK_T062_VALUE, UNK_T062_CORR,
-      UNK_T062_OTHER_STORE, STORE_A_Y, "T062-OTHER-STORE-001", UNK_T062_OTHER_CORR,
+      UNK_T062, TENANT_A, STORE_A_X, UNK_T062_VALUE,
+      JSON.stringify({ register: "R3" }), UNK_T062_CORR,
+      UNK_T062_OTHER_STORE, STORE_A_Y, "T062-OTHER-STORE-001",
+      JSON.stringify({ register: "R4" }), UNK_T062_OTHER_CORR,
     ],
   );
 
