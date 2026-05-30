@@ -97,7 +97,7 @@ This feature specifies that sale fact at the product level: the entities, the sn
 ## 3. Non-Goals
 
 - No application code, NestJS modules, services, controllers, workers, guards, interceptors, or jobs.
-- No `plan.md`, `tasks.md`, `data-model.md`, `research.md`, or contract YAML in **this** PR.
+- No `plan.md`, `tasks.md`, `data-model.md`, `research.md`, or contract YAML **authored by `/speckit-specify`** (this spec). Those design artifacts are produced by the later `/speckit-plan` + `/speckit-tasks` commands; the OpenAPI contract YAML remains a separate `[GATED]` slice (never authored by a planning command).
 - No DB schema, Drizzle schema, SQL migration, index, RLS policy, or CHECK constraint authored here. (An implementing slice would add migration `0012+` — current highest is `0011` — under the `[GATED]` path.)
 - No OpenAPI files, package files, lockfiles, CI changes, generated files, or app source modifications.
 - No API endpoint design, path strings, status codes, header or field names. No dashboard UI screens. No POS app implementation. No client SDK shape.

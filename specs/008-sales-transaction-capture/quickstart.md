@@ -17,7 +17,7 @@
 | `research.md` | settled decisions + rationale | this slice |
 | `data-model.md` | entities/fields/nullability (design, not DDL) | this slice |
 | `contracts/README.md` | operation/contract DESIGN (YAML deferred) | this slice |
-| `tasks.md` | ordered slices | **next** (`/speckit-tasks`) |
+| `tasks.md` | ordered slices (`/speckit-tasks`) | **present** (45 tasks; `/speckit-analyze`-remediated) |
 
 ## How to validate this plan (reviewer checklist)
 
@@ -48,4 +48,4 @@ Per Constitution §VIII + Standing Rules §3, each `[GATED]` artifact is its own
 
 ## Next command
 
-`/speckit-tasks` — generate the ordered, dependency-aware `tasks.md` / `execution-map.yaml` for the slices above. (Implementation remains gated on the `[GATED]` contract + migration slices clearing first.)
+`tasks.md` is already generated (`/speckit-tasks`) and `/speckit-analyze`-remediated. The next step is the first `[GATED]` implementing slice — **T010, the OpenAPI sale contract** — which requires explicit approval (Standing Rules §3). (Implementation remains gated on the `[GATED]` contract + migration slices clearing first. An `execution-map.yaml` may be added at closeout per repo convention.)
