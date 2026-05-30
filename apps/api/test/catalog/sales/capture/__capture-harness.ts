@@ -163,59 +163,73 @@ export async function startCaptureHarness(): Promise<HarnessHandle> {
     }
     throw new Error(`Container start failed: ${msg}`);
   }
-  await applyAllUpAndCreateAppRole(env);
-  await seedCatalogIsolationFixture(env);
 
-  const fakeRedis = new FakeRedis();
-  const fakeMarker = new FakeMarker();
-  const contextGuard = new ConfigurableContextGuard();
+  // From here the container is up: ANY failure (migrations, seeding, module
+  // compile, app.init) must tear it down, or the pool/container leaks and later
+  // suites go flaky. Track the app so it is closed if it was created.
+  let startedApp: INestApplication | undefined;
+  try {
+    await applyAllUpAndCreateAppRole(env);
+    await seedCatalogIsolationFixture(env);
 
-  const idempStore = new IdempotencyKeyStore({
-    redis: fakeRedis,
-    pgWriter: { async insert() {} },
-    pgReader: {
-      async find() {
-        return null;
+    const fakeRedis = new FakeRedis();
+    const fakeMarker = new FakeMarker();
+    const contextGuard = new ConfigurableContextGuard();
+
+    const idempStore = new IdempotencyKeyStore({
+      redis: fakeRedis,
+      pgWriter: { async insert() {} },
+      pgReader: {
+        async find() {
+          return null;
+        },
       },
-    },
-    defaultTtlMs: 72 * 60 * 60 * 1000,
-  });
-  const idempInterceptor = new IdempotencyInterceptor(
-    new Reflector(),
-    idempStore,
-    fakeMarker as unknown as InProgressMarker,
-  );
+      defaultTtlMs: 72 * 60 * 60 * 1000,
+    });
+    const idempInterceptor = new IdempotencyInterceptor(
+      new Reflector(),
+      idempStore,
+      fakeMarker as unknown as InProgressMarker,
+    );
 
-  const moduleRef = await Test.createTestingModule({
-    controllers: [SalesController],
-    providers: [
-      { provide: PG_POOL, useFactory: (): Pool => env.app },
-      SalesService,
-      { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
-      { provide: INFLIGHT_REDIS, useValue: fakeRedis },
-      { provide: InProgressMarker, useValue: fakeMarker },
-      { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-    ],
-  })
-    .overrideGuard(PosOperatorAuthGuard)
-    .useValue({ canActivate: () => true })
-    .overrideGuard(TenantContextGuard)
-    .useValue({ canActivate: () => true })
-    .compile();
+    const moduleRef = await Test.createTestingModule({
+      controllers: [SalesController],
+      providers: [
+        { provide: PG_POOL, useFactory: (): Pool => env.app },
+        SalesService,
+        { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
+        { provide: INFLIGHT_REDIS, useValue: fakeRedis },
+        { provide: InProgressMarker, useValue: fakeMarker },
+        { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
+      ],
+    })
+      .overrideGuard(PosOperatorAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TenantContextGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
-  const app = moduleRef.createNestApplication({ bufferLogs: true });
-  app.useGlobalFilters(new GlobalExceptionFilter());
-  app.useGlobalGuards(contextGuard);
-  await app.init();
+    const app = moduleRef.createNestApplication({ bufferLogs: true });
+    startedApp = app;
+    app.useGlobalFilters(new GlobalExceptionFilter());
+    app.useGlobalGuards(contextGuard);
+    await app.init();
 
-  const harness: CaptureHarness = {
-    env,
-    app,
-    fakeRedis,
-    contextGuard,
-    http: () => request(app.getHttpServer()),
-  };
-  return { harness, dockerSkipped: false };
+    const harness: CaptureHarness = {
+      env,
+      app,
+      fakeRedis,
+      contextGuard,
+      http: () => request(app.getHttpServer()),
+    };
+    return { harness, dockerSkipped: false };
+  } catch (err) {
+    // Startup failed after the container came up — close the app if it was
+    // created, then stop the container/pool so the next suite starts clean.
+    if (startedApp) await startedApp.close().catch(() => undefined);
+    await stopPgEnv(env).catch(() => undefined);
+    throw err;
+  }
 }
 
 export async function stopCaptureHarness(h: HarnessHandle): Promise<void> {

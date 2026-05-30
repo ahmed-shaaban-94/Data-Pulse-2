@@ -53,7 +53,15 @@ describe("T033 — dedup on (tenant, sourceSystem, externalId)", () => {
         // independent of the Idempotency-Key (a re-delivery, not a retry).
         .set("Idempotency-Key", idempKey(`dd${i}`))
         .send(body);
-      expect([200, 201]).toContain(res.status);
+      if (i === 0) {
+        // First delivery creates the fact.
+        expect(res.status).toBe(201);
+      } else {
+        // Every subsequent identical-provenance delivery is a deterministic
+        // replay (FR-100): 200 + the replay marker, never a second 201.
+        expect(res.status).toBe(200);
+        expect(res.headers["idempotent-replayed"]).toBe("true");
+      }
       responses.push({ saleRef: res.body.saleRef });
     }
 

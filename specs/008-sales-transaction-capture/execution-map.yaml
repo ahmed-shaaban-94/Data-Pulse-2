@@ -38,18 +38,18 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1 + Phase 2 (both [GATED] foundational slices) MERGED to main:
-#     - 008-SETUP    → PR #420 (6d01512) — empty SalesModule skeleton
-#     - 008-SCHEMA   → PR #421 (560d16c) — 0012 migration + Drizzle schema
-#     - 008-CONTRACT → PR #422 (7459ea5) — OpenAPI sale contract
+# Status: Phase 1 + Phase 2 + Phase 3 isolation harness MERGED to main:
+#     - 008-SETUP            → PR #420 (6d01512) — empty SalesModule skeleton
+#     - 008-SCHEMA           → PR #421 (560d16c) — 0012 migration + Drizzle schema
+#     - 008-CONTRACT         → PR #422 (7459ea5) — OpenAPI sale contract
+#     - 008-ISOLATION-HARNESS → PR #425 (7a1885e) — sale-fact seed + RLS/sweep
 #   008-SIGNOFF-MONEY-LIB resolved (PR #419). The two [GATED] hard
-#   serialization points are now satisfied, so implementing GREEN slices are
-#   UNBLOCKED. Next dispatchable: 008-ISOLATION-HARNESS (RED seed + sweep) →
-#   008-US1-CAPTURE (MVP first GREEN). US2–US6 serialize through the shared
+#   serialization points are satisfied. 008-US1-CAPTURE (MVP first GREEN) is
+#   IN REVIEW on PR #426. After it merges, US2–US6 serialize through the shared
 #   sales module; 008-WORKER + 008-LIFECYCLE run parallel. Remaining slices
 #   `proposed`. The Money + Temporal Decision Gate is RESOLVED.
 #
-# Updated: 2026-05-30 — Phase 1 + Phase 2 [GATED] slices merged (#420/#421/#422); GREEN slices unblocked.
+# Updated: 2026-05-30 — ISOLATION-HARNESS merged (#425); US1-CAPTURE in review (#426).
 
 version: 1
 spec: 008-sales-transaction-capture

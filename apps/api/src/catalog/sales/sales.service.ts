@@ -158,18 +158,11 @@ export class SalesService {
       this.pool,
       { tenantId, isPlatformAdmin: false },
       async (client): Promise<{ saleId: string; created: boolean }> => {
-        // Dedup-first (FR-050): a re-delivery with the same provenance resolves
-        // to the existing row deterministically. The dedup key is scoped by
-        // tenant_id, so a cross-tenant externalId collision is isolated.
-        const existing = await client.query<{ id: string }>(
-          `SELECT id FROM sales
-            WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3
-            LIMIT 1`,
-          [tenantId, body.sourceSystem, body.externalId],
-        );
-        if (existing.rows[0]) {
-          return { saleId: existing.rows[0].id, created: false };
-        }
+        // Dedup (FR-050) is enforced atomically by the INSERT ... ON CONFLICT
+        // below — a single race-safe path, no read-before-write window. A
+        // re-delivery with the same provenance resolves deterministically to
+        // the existing row (FR-100). The dedup key is scoped by tenant_id, so a
+        // cross-tenant externalId collision is isolated (SI-001).
 
         // Advisory comparison total (gate A.3/A.4): half-up sum of per-line
         // amounts, computed by Postgres numeric — NEVER JS float. mismatch_flag
@@ -188,14 +181,22 @@ export class SalesService {
         // business_date is derived from the store timezone in a later slice
         // (FR-023 / US2); for capture we record the occurredAt calendar date in
         // UTC. processed_at is intentionally NULL — the worker claims it.
-        await client.query(
+        //
+        // Atomic dedup (FR-050/100): ON CONFLICT on the
+        // (tenant_id, source_system, external_id) unique index makes the write
+        // race-safe — a concurrent or re-delivered identical capture does NOT
+        // double-insert or surface a 500; it falls through to the deterministic
+        // resolve below (zero rows returned ⇒ the row already exists).
+        const inserted = await client.query<{ id: string }>(
           `INSERT INTO sales
              (id, tenant_id, store_id, currency_code, pos_total, occurred_at,
-              business_date, source_system, external_id, payload_hash,
-              mismatch_flag, created_by)
+              business_date, source_clock_at, source_system, external_id,
+              payload_hash, mismatch_flag, created_by)
            VALUES ($1, $2, $3, $4, $5::numeric, $6::timestamptz,
-                   ($6::timestamptz AT TIME ZONE 'UTC')::date, $7, $8, $9,
-                   $10, $11)`,
+                   ($6::timestamptz AT TIME ZONE 'UTC')::date, $7::timestamptz,
+                   $8, $9, $10, $11, $12)
+           ON CONFLICT (tenant_id, source_system, external_id) DO NOTHING
+           RETURNING id`,
           [
             saleId,
             tenantId,
@@ -203,6 +204,7 @@ export class SalesService {
             body.currencyCode,
             body.posTotal,
             body.occurredAt,
+            body.sourceClockAt ?? null,
             body.sourceSystem,
             body.externalId,
             payloadHash,
@@ -210,6 +212,23 @@ export class SalesService {
             actorUserId,
           ],
         );
+
+        if (inserted.rows.length === 0) {
+          // The provenance already exists — a prior re-delivery or a concurrent
+          // racing capture won. Resolve to that row deterministically (replay,
+          // no double-apply). No line inserts: the winner already wrote them.
+          const winner = await client.query<{ id: string }>(
+            `SELECT id FROM sales
+              WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3
+              LIMIT 1`,
+            [tenantId, body.sourceSystem, body.externalId],
+          );
+          const winnerId = winner.rows[0]?.id;
+          if (!winnerId) {
+            throw new Error("dedup conflict but no existing sale row found");
+          }
+          return { saleId: winnerId, created: false };
+        }
 
         for (const line of body.lines) {
           await client.query(
@@ -250,13 +269,25 @@ export class SalesService {
         .catch(() => undefined);
     }
 
-    const projection = await this.readSaleProjection(tenantId, result.saleId);
+    const projection = await this.readSaleProjection(
+      tenantId,
+      storeId,
+      result.saleId,
+    );
     return { projection, created: result.created };
   }
 
-  /** Read a sale + its lines and build the `toBody` projection. */
+  /**
+   * Read a sale + its lines and build the `toBody` projection.
+   *
+   * Scoped by tenant AND store (spec §120/§449, FR-063): RLS enforces the
+   * tenant boundary, but the `sales_tenant_read` policy is tenant-only, so the
+   * store boundary is enforced here with an explicit `store_id` predicate. A
+   * sale outside the caller's store reads as absent (non-disclosing 404).
+   */
   async readSaleProjection(
     tenantId: string,
+    storeId: string,
     saleId: string,
   ): Promise<SaleProjection> {
     return runWithTenantContext(
@@ -267,13 +298,13 @@ export class SalesService {
           `SELECT id, store_id, currency_code, pos_total, occurred_at,
                   received_at, business_date, processed_at, source_clock_at,
                   source_system, external_id, mismatch_flag
-             FROM sales WHERE id = $1`,
-          [saleId],
+             FROM sales WHERE id = $1 AND store_id = $2`,
+          [saleId, storeId],
         );
         const row = sale.rows[0];
         if (!row) {
           // Object-level authz / non-disclosing: a sale outside the caller's
-          // scope is filtered by RLS and reads as absent.
+          // tenant (RLS) or store (predicate above) reads as absent.
           throw new SaleNotFoundError();
         }
         const lines = await client.query<SaleLineRow>(

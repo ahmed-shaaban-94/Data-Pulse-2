@@ -53,6 +53,10 @@ import {
   type SaleProjection,
 } from "./sales.service";
 
+/** Canonical UUID shape (any version) — a saleRef that fails this never hits the DB. */
+const SALE_REF_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 @Controller()
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
@@ -103,11 +107,25 @@ export class SalesController {
     if (!ctx || ctx.tenantId === null) {
       throw new UnauthorizedException("Unauthorized");
     }
+    if (ctx.storeId === null) {
+      // Reads are store-scoped: a POS principal may only read sales captured
+      // within its own store (spec §120/§449, FR-063). Mirrors captureSale.
+      throw new UnauthorizedException("store_context_required");
+    }
+    if (!SALE_REF_RE.test(saleRef)) {
+      // Non-disclosing input guard: a malformed ref must not reach the DB (an
+      // invalid uuid would surface as a 500). Treat it as a safe-404.
+      throw new NotFoundException("not_found");
+    }
     try {
-      return await this.salesService.readSaleProjection(ctx.tenantId, saleRef);
+      return await this.salesService.readSaleProjection(
+        ctx.tenantId,
+        ctx.storeId,
+        saleRef,
+      );
     } catch (err) {
       if (err instanceof SaleNotFoundError) {
-        // Non-disclosing 404 — cross-tenant / out-of-scope / absent are
+        // Non-disclosing 404 — cross-tenant / cross-store / absent are
         // indistinguishable (FR-063/102, SI-004).
         throw new NotFoundException("not_found");
       }
