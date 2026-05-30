@@ -398,10 +398,17 @@ export class SalesService {
         );
 
         if (inserted.rows.length === 0) {
-          // Same-provenance re-delivery — resolve to the existing void event
-          // deterministically (replay, no duplicate; FR-013).
-          const existing = await client.query<{ id: string; voided_at: Date }>(
-            `SELECT id, voided_at FROM sale_voids
+          // The void provenance already exists. It is a deterministic REPLAY
+          // only if it points at the SAME sale (FR-013). The unique index is
+          // (tenant, source_system, external_id) — NOT scoped by sale — so the
+          // existing row may belong to a different sale; we must read its
+          // sale_id and never echo the caller's saleRef.
+          const existing = await client.query<{
+            id: string;
+            sale_id: string;
+            voided_at: Date;
+          }>(
+            `SELECT id, sale_id, voided_at FROM sale_voids
               WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3
               LIMIT 1`,
             [tenantId, body.sourceSystem, body.externalId],
@@ -410,8 +417,13 @@ export class SalesService {
           if (!row) {
             throw new Error("void conflict but no existing terminal event found");
           }
+          if (row.sale_id !== saleRef) {
+            // Same provenance reused for a DIFFERENT sale — not a valid replay.
+            // Reject as a conflict; never disclose the other sale (FR-013/014).
+            throw new TerminalEventProvenanceConflictError();
+          }
           return {
-            projection: toTerminalEvent("void", row.id, saleRef, row.voided_at, null, null),
+            projection: toTerminalEvent("void", row.id, row.sale_id, row.voided_at, null, null),
             created: false,
           };
         }
@@ -431,6 +443,18 @@ export class SaleNotFoundError extends Error {
   constructor() {
     super("sale not found");
     this.name = "SaleNotFoundError";
+  }
+}
+
+/**
+ * Thrown when a terminal-event provenance `(tenant, source_system, external_id)`
+ * is reused for a DIFFERENT sale than the one it was first recorded against —
+ * a client conflict (→ 409), not a valid idempotent replay (FR-013).
+ */
+export class TerminalEventProvenanceConflictError extends Error {
+  constructor() {
+    super("terminal event provenance already used for a different sale");
+    this.name = "TerminalEventProvenanceConflictError";
   }
 }
 

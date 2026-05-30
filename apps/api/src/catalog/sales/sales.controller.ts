@@ -24,6 +24,7 @@
  */
 import {
   Body,
+  ConflictException,
   Controller,
   Get,
   HttpStatus,
@@ -54,6 +55,7 @@ import {
 import {
   SalesService,
   SaleNotFoundError,
+  TerminalEventProvenanceConflictError,
   type SaleProjection,
   type TerminalEventProjection,
 } from "./sales.service";
@@ -180,6 +182,10 @@ export class SalesController {
       if (err instanceof SaleNotFoundError) {
         // Cross-tenant / cross-store / unknown sale are indistinguishable.
         throw new NotFoundException("not_found");
+      }
+      if (err instanceof TerminalEventProvenanceConflictError) {
+        // Void provenance reused for a different sale → 409 (FR-013).
+        throw new ConflictException("conflict");
       }
       throw err;
     }

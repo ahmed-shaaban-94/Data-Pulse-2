@@ -13,6 +13,8 @@ import {
   idempKey,
   STORE_A_X,
   STORE_A_Y,
+  STORE_B_X,
+  TENANT_B,
   type HarnessHandle,
 } from "../capture/__capture-harness";
 
@@ -78,6 +80,34 @@ describe("T052 — recordVoid object-safety (non-disclosing 404, no record)", ()
 
     const voids = await h.harness.env.admin.query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM sale_voids WHERE external_id = 'void-evt-unknown'`,
+    );
+    expect(voids.rows[0]?.n).toBe("0");
+  });
+
+  it("a cross-tenant void of another tenant's sale → 404, nothing written", async () => {
+    if (h.dockerSkipped || !h.harness) return;
+    // Sale captured under TENANT_A / STORE_A_X (harness defaults).
+    const cap = await h.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("vs404t"))
+      .send(captureBody({ externalId: "ext-void-xtenant" }));
+    expect(cap.status).toBe(201);
+    const saleRef = cap.body.saleRef;
+
+    // Switch the principal to TENANT_B — RLS must hide TENANT_A's sale, so the
+    // void is a non-disclosing 404 (existence never leaked across tenants).
+    h.harness.contextGuard.tenantId = TENANT_B;
+    h.harness.contextGuard.storeId = STORE_B_X;
+    const res = await h.harness
+      .http()
+      .post(`/api/pos/v1/sales/${saleRef}/void`)
+      .set("Idempotency-Key", idempKey("vs3"))
+      .send({ sourceSystem: "pos-1", externalId: "void-evt-xtenant" });
+    expect(res.status).toBe(404);
+
+    const voids = await h.harness.env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM sale_voids WHERE external_id = 'void-evt-xtenant'`,
     );
     expect(voids.rows[0]?.n).toBe("0");
   });

@@ -71,4 +71,46 @@ describe("T051 — recordVoid is idempotent on provenance", () => {
     );
     expect(voids.rows[0]?.n).toBe("1");
   });
+
+  it("the SAME provenance reused for a DIFFERENT sale → 409, target sale not voided", async () => {
+    if (h.dockerSkipped || !h.harness) return;
+    // Two distinct sales in the same store.
+    const capA = await h.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("vxa"))
+      .send(captureBody({ externalId: "ext-void-collA" }));
+    const capB = await h.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("vxb"))
+      .send(captureBody({ externalId: "ext-void-collB" }));
+    expect(capA.status).toBe(201);
+    expect(capB.status).toBe(201);
+    const saleA = capA.body.saleRef;
+    const saleB = capB.body.saleRef;
+    const prov = { sourceSystem: "pos-1", externalId: "void-evt-coll" };
+
+    const v1 = await h.harness
+      .http()
+      .post(`/api/pos/v1/sales/${saleA}/void`)
+      .set("Idempotency-Key", idempKey("vc1"))
+      .send(prov);
+    expect(v1.status).toBe(201);
+
+    // Reusing the void's provenance against a DIFFERENT sale is a conflict, not
+    // a replay — it must NOT report saleB as voided, and must write no row.
+    const v2 = await h.harness
+      .http()
+      .post(`/api/pos/v1/sales/${saleB}/void`)
+      .set("Idempotency-Key", idempKey("vc2"))
+      .send(prov);
+    expect(v2.status).toBe(409);
+
+    const rows = await h.harness.env.admin.query<{ sale_id: string }>(
+      `SELECT sale_id FROM sale_voids WHERE external_id = 'void-evt-coll'`,
+    );
+    expect(rows.rowCount).toBe(1);
+    expect(rows.rows[0]?.sale_id).toBe(saleA);
+  });
 });
