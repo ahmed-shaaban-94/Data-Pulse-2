@@ -53,6 +53,10 @@ import {
   type RecordVoidRequestDto,
 } from "./dto/record-void-request.dto";
 import {
+  RecordRefundRequestSchema,
+  type RecordRefundRequestDto,
+} from "./dto/record-refund-request.dto";
+import {
   SalesService,
   SaleNotFoundError,
   TerminalEventProvenanceConflictError,
@@ -185,6 +189,54 @@ export class SalesController {
       }
       if (err instanceof TerminalEventProvenanceConflictError) {
         // Void provenance reused for a different sale → 409 (FR-013).
+        throw new ConflictException("conflict");
+      }
+      throw err;
+    }
+  }
+
+  @Post("api/pos/v1/sales/:saleRef/refund")
+  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  @Idempotent("required")
+  @Auditable("sale.refunded")
+  async recordRefund(
+    @Req() request: TenantContextRequest,
+    @Param("saleRef") saleRef: string,
+    @Body(new ZodValidationPipe(RecordRefundRequestSchema))
+    body: RecordRefundRequestDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<TerminalEventProjection> {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null || ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.storeId === null) {
+      throw new UnauthorizedException("store_context_required");
+    }
+    if (!SALE_REF_RE.test(saleRef)) {
+      throw new NotFoundException("not_found");
+    }
+    try {
+      const result = await this.salesService.recordRefund({
+        tenantId: ctx.tenantId,
+        storeId: ctx.storeId,
+        actorUserId: ctx.userId,
+        saleRef,
+        body,
+      });
+      if (result.created) {
+        res.status(HttpStatus.CREATED);
+      } else {
+        res.status(HttpStatus.OK);
+        res.setHeader("Idempotent-Replayed", "true");
+      }
+      return result.projection;
+    } catch (err) {
+      if (err instanceof SaleNotFoundError) {
+        throw new NotFoundException("not_found");
+      }
+      if (err instanceof TerminalEventProvenanceConflictError) {
+        // Refund provenance reused for a different sale → 409 (FR-013).
         throw new ConflictException("conflict");
       }
       throw err;

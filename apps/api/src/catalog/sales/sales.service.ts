@@ -40,6 +40,7 @@ import type { Pool } from "pg";
 import { PG_POOL } from "../../auth/auth.module";
 import type { CaptureSaleRequestDto } from "./dto/capture-sale-request.dto";
 import type { RecordVoidRequestDto } from "./dto/record-void-request.dto";
+import type { RecordRefundRequestDto } from "./dto/record-refund-request.dto";
 
 /** Optional outbox producer seam (kept optional for PG_POOL-only test wiring). */
 export interface SalesOutboxProducer {
@@ -98,6 +99,14 @@ export interface RecordVoidInput {
   readonly actorUserId: string;
   readonly saleRef: string;
   readonly body: RecordVoidRequestDto;
+}
+
+export interface RecordRefundInput {
+  readonly tenantId: string;
+  readonly storeId: string;
+  readonly actorUserId: string;
+  readonly saleRef: string;
+  readonly body: RecordRefundRequestDto;
 }
 
 /** Wire projection of a void/refund terminal event (contract `SaleTerminalEvent`). */
@@ -431,6 +440,110 @@ export class SalesService {
         const row = inserted.rows[0]!;
         return {
           projection: toTerminalEvent("void", row.id, saleRef, row.voided_at, null, null),
+          created: true,
+        };
+      },
+    );
+  }
+
+  /**
+   * Record a refund terminal event (US4 / T058).
+   *
+   * Same shape + invariants as `recordVoid` — a SEPARATE append-only
+   * `sale_refunds` record, never mutating the sale (§X); object-safety
+   * non-disclosing 404 (FR-014); idempotent on the refund's own provenance with
+   * the cross-sale-collision guard (FR-013). Additionally preserves the
+   * POS-reported refund amount VERBATIM (FR-012/030) — the SaaS stores it as-is
+   * and never rewrites it. `refunded_at` is the DB server clock.
+   */
+  async recordRefund(input: RecordRefundInput): Promise<TerminalEventResult> {
+    const { tenantId, storeId, actorUserId, saleRef, body } = input;
+    const payloadHash = sha256CanonicalHex(body);
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client): Promise<TerminalEventResult> => {
+        const sale = await client.query<{ id: string }>(
+          `SELECT id FROM sales WHERE id = $1 AND store_id = $2`,
+          [saleRef, storeId],
+        );
+        if (!sale.rows[0]) {
+          throw new SaleNotFoundError();
+        }
+
+        const eventId = newId();
+        const inserted = await client.query<{
+          id: string;
+          refunded_at: Date;
+          pos_refund_amount: string;
+          currency_code: string;
+        }>(
+          `INSERT INTO sale_refunds
+             (id, sale_id, tenant_id, store_id, pos_refund_amount, currency_code,
+              source_system, external_id, payload_hash, created_by)
+           VALUES ($1, $2, $3, $4, $5::numeric, $6, $7, $8, $9, $10)
+           ON CONFLICT (tenant_id, source_system, external_id) DO NOTHING
+           RETURNING id, refunded_at, pos_refund_amount, currency_code`,
+          [
+            eventId,
+            saleRef,
+            tenantId,
+            storeId,
+            body.posRefundAmount,
+            body.currencyCode,
+            body.sourceSystem,
+            body.externalId,
+            payloadHash,
+            actorUserId,
+          ],
+        );
+
+        if (inserted.rows.length === 0) {
+          // Provenance already exists — a replay only if it points at the SAME
+          // sale (FR-013); otherwise a conflict (never echo the caller's ref).
+          const existing = await client.query<{
+            id: string;
+            sale_id: string;
+            refunded_at: Date;
+            pos_refund_amount: string;
+            currency_code: string;
+          }>(
+            `SELECT id, sale_id, refunded_at, pos_refund_amount, currency_code
+               FROM sale_refunds
+              WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3
+              LIMIT 1`,
+            [tenantId, body.sourceSystem, body.externalId],
+          );
+          const row = existing.rows[0];
+          if (!row) {
+            throw new Error("refund conflict but no existing terminal event found");
+          }
+          if (row.sale_id !== saleRef) {
+            throw new TerminalEventProvenanceConflictError();
+          }
+          return {
+            projection: toTerminalEvent(
+              "refund",
+              row.id,
+              row.sale_id,
+              row.refunded_at,
+              row.pos_refund_amount,
+              row.currency_code,
+            ),
+            created: false,
+          };
+        }
+
+        const row = inserted.rows[0]!;
+        return {
+          projection: toTerminalEvent(
+            "refund",
+            row.id,
+            saleRef,
+            row.refunded_at,
+            row.pos_refund_amount,
+            row.currency_code,
+          ),
           created: true,
         };
       },
