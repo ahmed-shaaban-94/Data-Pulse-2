@@ -91,8 +91,10 @@ function scriptClient(opts: {
   winnerRows?: Array<{ id: string }>;
   saleRows?: Array<Record<string, unknown>>;
   lineRows?: Array<Record<string, unknown>>;
+  storeRows?: Array<{ timezone: string }>;
 }): jest.Mock {
   return jest.fn(async (sql: string) => {
+    if (/FROM stores WHERE id/.test(sql)) return { rows: opts.storeRows ?? [{ timezone: "UTC" }] };
     if (/SUM\(amt\)/.test(sql)) return { rows: opts.mismatchRows ?? [{ mismatch: false }] };
     if (/INSERT INTO sales/.test(sql)) return { rows: opts.insertedRows ?? [{ id: VALID_REF }] };
     if (/SELECT id FROM sales/.test(sql)) return { rows: opts.winnerRows ?? [] };
@@ -160,6 +162,14 @@ describe("SalesService — capture branches (unit)", () => {
     const svc = new SalesService({} as never);
     const res = await svc.captureSale({ ...CAPTURE, body: body() });
     expect(res.created).toBe(true);
+  });
+
+  it("an unresolvable store timezone → throws (defensive; store always resolves in prod)", async () => {
+    clientQuery = scriptClient({ storeRows: [] });
+    const svc = new SalesService({} as never);
+    await expect(svc.captureSale({ ...CAPTURE, body: body() })).rejects.toThrow(
+      /store timezone not resolvable/,
+    );
   });
 });
 
