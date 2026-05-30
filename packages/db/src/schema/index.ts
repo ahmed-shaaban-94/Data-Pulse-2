@@ -20,3 +20,6 @@ export * from "./catalog/store-product-overrides";
 export * from "./catalog/product-aliases";
 export * from "./catalog/price-history";
 export * from "./catalog/unknown-items";
+export * from "./sales/sales";
+export * from "./sales/sale-lines";
+export * from "./sales/sale-terminal-events";
