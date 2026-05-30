@@ -55,15 +55,19 @@ import {
   Body,
   ConflictException,
   Controller,
+  ForbiddenException,
   HttpCode,
   HttpStatus,
   NotFoundException,
   Param,
   Post,
   Req,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
@@ -73,6 +77,7 @@ import { RolesGuard } from "../../auth/roles.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
+import { Idempotent } from "../../idempotency/idempotent.decorator";
 import {
   toReviewQueueItem,
   type ReviewQueueItem,
@@ -82,6 +87,29 @@ import {
   type CreateProductFromUnknownItemRequestDto,
 } from "./dto/create-product-request.dto";
 import { ReconciliationService } from "./reconciliation.service";
+
+// ---------------------------------------------------------------------------
+// 007 US7 — Reopen request DTO + Zod schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Zod schema for `tenantAdminReopenUnknownItem` request body.
+ * Mirrors OpenAPI `ReopenUnknownItemRequest`: empty object, no properties,
+ * `additionalProperties: false`. Tenant / store / authority are resolved from
+ * the authenticated principal (Constitution §III) — no body-supplied scope is
+ * honoured. `.strict()` rejects any smuggled field with 400 validation_error.
+ *
+ * The contract sets `requestBody.required: false`, so an OMITTED body is valid.
+ * A missing body arrives at the pipe as `undefined`/`null` (no parsed JSON), so
+ * `z.preprocess` coerces nullish → `{}` BEFORE the strict-object check —
+ * otherwise `z.object({}).strict().parse(undefined)` would 400 a legitimately
+ * empty request (CodeRabbit #408 F4: the optional-body contract must hold for an
+ * omitted body, not only for an explicit `{}`).
+ */
+const ReopenUnknownItemRequestSchema = z.preprocess(
+  (val) => (val == null ? {} : val),
+  z.object({}).strict(),
+);
 
 // ---------------------------------------------------------------------------
 // Request DTO + Zod schema
@@ -299,6 +327,123 @@ export class ReconciliationController {
 
     // SI-001 / FR-092: non-disclosing 404 — RLS-filtered cross-tenant
     // or fabricated UUID.
+    throw new NotFoundException("Not Found");
+  }
+
+  /**
+   * POST /api/v1/catalog/unknown-items/:id/reopen (007 US7 / T054).
+   *
+   * operationId: tenantAdminReopenUnknownItem
+   *
+   * Reopen a `dismissed` unknown item by creating a fresh `pending` row for
+   * the same logical identifier (005 FR-005); the original `dismissed` row is
+   * preserved. Tenant-wide actors only.
+   *
+   * Authority (R7.1 / R7.4): the class-level
+   * `@UseGuards(DashboardAuthGuard, TenantContextGuard)` authenticates; this
+   * route adds `@UseGuards(RolesGuard)` + `@Roles("owner","tenant_admin",
+   * "store_manager", { denyAs: 404 })`. The store_manager role is in the set
+   * INTENTIONALLY so a store-scoped operator REACHES the service — the
+   * 403-forbidden-vs-404-not-found split is decided in
+   * `reopenUnknownItem(... isTenantWide ...)`, NOT at the guard. Using
+   * `@Roles("owner","tenant_admin")` here would wrongly 404 an in-scope
+   * store_manager (the R7.4 trap).
+   *
+   * `isTenantWide` is derived from `ctx.storeId === null` — `ResolvedContext`
+   * carries no role field, and a store context (even for a tenant_admin) means
+   * the actor is operating store-scoped (the same store-context rule the
+   * wave-1 canSeeProduct policy uses).
+   *
+   * Idempotency (FR-063, T003 ISOLATE — only new ops carry the key):
+   * `@Idempotent("required")` engages the shared `IdempotencyInterceptor` —
+   * `Idempotency-Key` header, per-principal scoping, replay short-circuit, and
+   * the `idempotency_key_conflict` 409 on a body mismatch. (Header is
+   * `Idempotency-Key`, code `idempotency_key_conflict` — never
+   * `Idempotency-Token`, T564 trap.)
+   *
+   * Audit (R7.5): emitted PROGRAMMATICALLY by the service (both the reopen
+   * action AND the fresh capture on success; a single reopen_rejected on
+   * 403/409; nothing on a non-disclosing 404). NO static `@Auditable` here —
+   * the one-shot decorator can only emit one subject.
+   *
+   * Status: 201 Created on a fresh-pending reopen; 200 OK when an existing
+   * pending sibling is returned (no new row). `@Res({ passthrough: true })`
+   * sets the status programmatically while the interceptors still see the body.
+   */
+  @Post("api/v1/catalog/unknown-items/:id/reopen")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin", "store_manager", { denyAs: 404 })
+  @Idempotent("required")
+  async tenantAdminReopenUnknownItem(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+    @Body(new ZodValidationPipe(ReopenUnknownItemRequestSchema))
+    _body: Record<string, never>,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<ReviewQueueItem> {
+    const ctx = request.context;
+    if (!ctx) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.tenantId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    if (ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    const result = await this.reconciliationService.reopenUnknownItem({
+      tenantId: ctx.tenantId,
+      storeId: ctx.storeId,
+      unknownItemId: id,
+      actorUserId: ctx.userId,
+      // R7.4: tenant-wide authority is signalled by the ABSENCE of a store
+      // context (ResolvedContext has no role field). A store-scoped actor
+      // (storeId set) is NOT tenant-wide → the service returns `forbidden`.
+      isTenantWide: ctx.storeId === null,
+      // correlation_id is NOT NULL on unknown_items; reopen has no POS
+      // correlation, so derive from the request id (mirrors captureItem).
+      correlationId:
+        (request as { requestId?: string }).requestId ?? randomUUID(),
+    });
+
+    if (result.kind === "ok") {
+      // CodeRabbit #408 F3: honour the documented two-status contract.
+      // createdFresh → a new pending row was INSERTed → 201 Created (005 FR-005).
+      // !createdFresh → an existing pending row was reused (target already
+      // pending, or a pending sibling) → 200 OK, no-op (no row created). This
+      // matches the wire contract and keeps the status truthful.
+      res.status(result.createdFresh ? HttpStatus.CREATED : HttpStatus.OK);
+      // ACTION response: the caller just reopened/holds this item in their
+      // tenant-wide scope (isTenantWide is true to reach here) → canSeeProduct
+      // = true, uniform with link/create/dismiss. A pending row has
+      // resolved_product_id = NULL anyway.
+      return toReviewQueueItem(result.row, true);
+    }
+
+    if (result.kind === "forbidden") {
+      // FR-042 / 007 `forbidden` 8th category: in-scope but lacks tenant-wide
+      // authority. 403 (NOT 404) — the item exists in the caller's scope.
+      throw new ForbiddenException({
+        code: "forbidden",
+        message:
+          "Reopening a dismissed item requires tenant-wide authority (FR-042).",
+      });
+    }
+
+    if (result.kind === "already_reconciled") {
+      // FR-043: the item is already `resolved`. 409 with prior_state detail so
+      // the client can render why the reopen was refused.
+      throw new ConflictException({
+        code: "already_reconciled",
+        message:
+          "The unknown item is already resolved; it cannot be reopened (FR-043).",
+        details: { prior_state: result.priorState },
+      });
+    }
+
+    // result.kind === "not_found" → SI-004 / FR-062 non-disclosing 404. RLS
+    // filtered the row (cross-tenant / out-of-scope) or it does not exist.
     throw new NotFoundException("Not Found");
   }
 }
