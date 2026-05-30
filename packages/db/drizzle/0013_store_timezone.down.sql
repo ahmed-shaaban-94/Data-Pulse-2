@@ -8,6 +8,6 @@
 
 BEGIN;
 
-ALTER TABLE stores DROP COLUMN timezone;
+ALTER TABLE stores DROP COLUMN IF EXISTS timezone;
 
 COMMIT;
