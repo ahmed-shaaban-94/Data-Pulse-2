@@ -223,6 +223,28 @@ describe("SalesController — guard + status branches (unit)", () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it("captureSale: null tenantId → 401", async () => {
+    const c = new SalesController({} as never);
+    await expect(
+      c.captureSale(
+        { context: { ...ctx, tenantId: null } } as never,
+        body() as never,
+        makeRes() as never,
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("captureSale: null userId → 401", async () => {
+    const c = new SalesController({} as never);
+    await expect(
+      c.captureSale(
+        { context: { ...ctx, userId: null } } as never,
+        body() as never,
+        makeRes() as never,
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
   it("captureSale: null storeId → 401 (store_context_required)", async () => {
     const c = new SalesController({} as never);
     await expect(
@@ -231,6 +253,13 @@ describe("SalesController — guard + status branches (unit)", () => {
         body() as never,
         makeRes() as never,
       ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("readSale: null tenantId → 401", async () => {
+    const c = new SalesController({ readSaleProjection: jest.fn() } as never);
+    await expect(
+      c.readSale({ context: { ...ctx, tenantId: null } } as never, VALID_REF),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
