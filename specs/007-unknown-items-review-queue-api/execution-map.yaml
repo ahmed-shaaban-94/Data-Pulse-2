@@ -101,6 +101,29 @@
 #   Only 007-CLOSEOUT (T073) remains `proposed` — the final wave-close
 #   reconciliation. Every other 007 slice is terminal (merged). 15 merged / 4
 #   proposed (the 3 decision-gates/SETUP that never take a PR + CLOSEOUT).
+#
+# ============================================================================
+# WAVE CLOSED — 2026-05-30 (007-CLOSEOUT / T073, PR #417).
+# ============================================================================
+#   The 007 Unknown Items Review Queue API spec is COMPLETE. All Claude-
+#   executable slices have shipped to `main`:
+#     • Contract (GATED): #404
+#     • Wave 1 P1-MVP (7 slices): #405 (+CodeRabbit #406)
+#     • Wave 2: US7-REOPEN #408, US8-BULK-DISMISS #409, US4/5/6 guards #410
+#     • Phase 9 polish: AUDIT-SWEEP #412, SMOKE-COVERAGE #415
+#     • Graph closeouts: #407 (wave-1), #411 (wave-2), #413, #416, #417 (this)
+#   Final tally: 16 merged / 3 proposed-by-design (SETUP + the two SIGN-OFF
+#   decision gates — terminal: T002=TIGHTEN, T003=ISOLATE, recorded in
+#   wave-status). 0 open findings. The reopen fresh-capture-metric question is
+#   RESOLVED (deliberate POS-scoped exclusion per signals.md — no runtime change).
+#   Validation posture: all GREEN via TARGETED WSL Testcontainers + a full
+#   catalog suite run (480 passed, no local OOM) for coverage; the CI
+#   `db-integration` job OOMs on the shared self-hosted runner under full-suite
+#   load (documented infra ceiling, not a code defect — `main` not
+#   branch-protected; merges were user-authorized on locally-verified green).
+#   No further 007 work is planned. Subsequent unknown-items behavior changes
+#   (e.g. idempotency-key retrofit onto shipped link/create/dismiss — the T003
+#   ISOLATE deferral) would be NEW specs, not 007 slices.
 
 spec: 007-unknown-items-review-queue-api
 version: 1
@@ -774,12 +797,15 @@ slices:
   - id: 007-CLOSEOUT
     task_ids: [T073]
     type: docs
-    # depends_on satisfied: 007-POLISH-SMOKE-COVERAGE merged via #415 (04cb058) — every
-    # other 007 slice is now terminal (merged). CLOSEOUT (T073) is the final wave-close
-    # reconciliation + SIGN-OFF re-affirmation; the incremental closeouts (#411 Wave-2,
-    # #413 polish-audit, this #415 follow-up) already reconciled the graph, so T073 is
-    # now a confirm-and-affirm pass. Stays `proposed` until run as the deliberate final step.
-    status: proposed
+    # Self-amending wave-close (T073): every other 007 slice is terminal — 15 merged,
+    # + SETUP/SIGNOFF-SALE-CONTEXT/SIGNOFF-IDEMPOTENCY which are decision/verification
+    # gates that never take a PR (their verdicts — T002 TIGHTEN, T003 ISOLATE — are
+    # recorded in wave-status; `proposed` is their permanent terminal form, the schema
+    # has no `decided` status). The incremental closeouts (#411 / #413 / #416) already
+    # reconciled the graph slice-by-slice; this is the canonical "WAVE CLOSED" marker.
+    status: merged   # this very closeout — landed via PR #417 (see merged_at_commit post-merge)
+    merged_in_pr: 417
+    merged_at_date: 2026-05-30
     approval_required: false
     depends_on: []   # 007-POLISH-SMOKE-COVERAGE cleared (merged via #415); it remains in the map as the audit record
     blocks: []
