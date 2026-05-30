@@ -1028,8 +1028,18 @@ export class UnknownItemsService {
     readonly storeId: string | null;
     readonly actorUserId: string;
     readonly ids: readonly string[];
+    // Request correlation id, threaded from the controller (request_id ??
+    // randomUUID), so each per-item dismiss audit carries the SAME
+    // correlation-id as the originating request — symmetric with reopen
+    // (T070 / SC-004 / FR-064 / FR-083 traceability; the batch's events are
+    // linkable to the one request that produced them). OPTIONAL so existing
+    // direct callers (service-level specs) don't break; the controller always
+    // supplies it. Falls back to a minted UUID when absent — a present id is
+    // strictly better for traceability than null.
+    readonly correlationId?: string;
   }): Promise<{ outcomes: BulkDismissOutcome[] }> {
     const outcomes: BulkDismissOutcome[] = [];
+    const correlationId = input.correlationId ?? randomUUID();
 
     // Decompose into the shipped per-item dismiss. Sequential (not parallel) so
     // each item's transaction is independent and the per-item outcome ordering
@@ -1066,7 +1076,7 @@ export class UnknownItemsService {
               action: "unknown_item.dismissed",
               target_type: "unknown_item",
               target_id: id,
-              request_id: null,
+              request_id: correlationId,
               metadata: { via: "bulk_dismiss" },
             })
             .catch(() => {

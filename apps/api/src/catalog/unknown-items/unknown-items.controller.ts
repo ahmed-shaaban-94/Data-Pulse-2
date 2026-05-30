@@ -610,6 +610,14 @@ export class UnknownItemsController {
       storeId: ctx.storeId,
       actorUserId: ctx.userId,
       ids: body.ids,
+      // Thread the request correlation id into every per-item dismiss audit so
+      // the whole batch's events are linkable to the one request (T070 /
+      // SC-004 / FR-064). Mirrors the reopen route; falls back to a minted
+      // UUID when no RequestIdInterceptor populated request.requestId
+      // (unknown_items audit request_id is nullable, but a present id is
+      // strictly better for traceability than null).
+      correlationId:
+        (request as { requestId?: string }).requestId ?? randomUUID(),
     });
 
     return { outcomes: result.outcomes };
