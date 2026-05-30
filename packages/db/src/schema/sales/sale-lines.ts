@@ -22,6 +22,7 @@ import { sql } from "drizzle-orm";
 import {
   char,
   check,
+  foreignKey,
   index,
   numeric,
   pgTable,
@@ -36,9 +37,9 @@ export const saleLines = pgTable(
   "sale_lines",
   {
     id: uuid("id").primaryKey().notNull(),
-    saleId: uuid("sale_id")
-      .notNull()
-      .references(() => sales.id, { onDelete: "restrict" }),
+    // FK is composite (sale_id, tenant_id, store_id) — declared in the table
+    // extra-config below so a line can only attach to a same-tenant/store sale.
+    saleId: uuid("sale_id").notNull(),
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "restrict" }),
@@ -71,6 +72,13 @@ export const saleLines = pgTable(
     ),
     index("idx_sale_lines_sale").on(t.saleId),
     index("idx_sale_lines_tenant_store").on(t.tenantId, t.storeId),
+    // Composite FK → sales(id, tenant_id, store_id): a line can only attach to
+    // a sale in the SAME tenant + store (cross-tenant linkage impossible).
+    foreignKey({
+      name: "fk_sale_lines_sale_tenant_store",
+      columns: [t.saleId, t.tenantId, t.storeId],
+      foreignColumns: [sales.id, sales.tenantId, sales.storeId],
+    }).onDelete("restrict"),
   ],
 );
 

@@ -262,6 +262,83 @@ describe("0012_sales — dedup uniqueness", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Append-only policy semantics (CodeRabbit #421): the frozen child tables get
+// SELECT + INSERT only (no UPDATE/DELETE policy); sales additionally gets
+// UPDATE (for SaaS-owned processed_at/mismatch_flag, FR-071) but never DELETE.
+// ---------------------------------------------------------------------------
+
+describe("0012_sales — append-only RLS policy commands", () => {
+  async function policyCmds(table: string): Promise<string[]> {
+    if (!env) throw new Error("env not initialized");
+    // pg_policies.cmd is one of: SELECT / INSERT / UPDATE / DELETE / ALL.
+    const r = await env.admin.query<{ cmd: string }>(
+      `SELECT cmd FROM pg_policies WHERE schemaname = 'public' AND tablename = $1`,
+      [table],
+    );
+    return r.rows.map((row) => row.cmd).sort();
+  }
+
+  it("sale_lines / sale_voids / sale_refunds have only SELECT + INSERT policies (no UPDATE/DELETE/ALL)", async () => {
+    for (const table of ["sale_lines", "sale_voids", "sale_refunds"]) {
+      const cmds = await policyCmds(table);
+      expect(cmds).toEqual(["INSERT", "SELECT"]);
+      expect(cmds).not.toContain("UPDATE");
+      expect(cmds).not.toContain("DELETE");
+      expect(cmds).not.toContain("ALL");
+    }
+  });
+
+  it("sales has SELECT + INSERT + UPDATE (FR-071) but NO DELETE / ALL policy", async () => {
+    const cmds = await policyCmds("sales");
+    expect(cmds).toEqual(["INSERT", "SELECT", "UPDATE"]);
+    expect(cmds).not.toContain("DELETE");
+    expect(cmds).not.toContain("ALL");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Composite parent-child tenant/store FK (CodeRabbit #421): each child carries
+// a 3-column FK to sales(id, tenant_id, store_id) so cross-tenant/store
+// linkage is impossible at the data layer.
+// ---------------------------------------------------------------------------
+
+describe("0012_sales — composite tenant/store foreign keys", () => {
+  it("sales exposes a UNIQUE (id, tenant_id, store_id) backing the child FKs", async () => {
+    if (!env) throw new Error("env not initialized");
+    const r = await env.admin.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+       WHERE conrelid = 'sales'::regclass AND contype = 'u'`,
+    );
+    expect(r.rows.some((row) => row.conname === "uq_sales_id_tenant_store")).toBe(
+      true,
+    );
+  });
+
+  it("each child has a 3-column FK referencing sales", async () => {
+    if (!env) throw new Error("env not initialized");
+    for (const { child, name } of [
+      { child: "sale_lines", name: "fk_sale_lines_sale_tenant_store" },
+      { child: "sale_voids", name: "fk_sale_voids_sale_tenant_store" },
+      { child: "sale_refunds", name: "fk_sale_refunds_sale_tenant_store" },
+    ]) {
+      const r = await env.admin.query<{
+        conname: string;
+        ncols: number;
+        confrelid: string;
+      }>(
+        `SELECT conname, array_length(conkey, 1) AS ncols, confrelid::regclass::text AS confrelid
+         FROM pg_constraint
+         WHERE conrelid = $1::regclass AND contype = 'f' AND conname = $2`,
+        [child, name],
+      );
+      expect(r.rowCount).toBe(1);
+      expect(Number(r.rows[0]?.ncols)).toBe(3);
+      expect(r.rows[0]?.confrelid).toBe("sales");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RLS: enabled + forced, and a per-table fail-closed bypass probe
 // ---------------------------------------------------------------------------
 

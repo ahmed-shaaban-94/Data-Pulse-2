@@ -35,6 +35,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -79,6 +80,10 @@ export const sales = pgTable(
       sql`${t.currencyCode} ~ '^[A-Z]{3}$'`,
     ),
     check("sales_pos_total_non_negative", sql`${t.posTotal} >= 0`),
+    // Backs the composite FK from each child table (sale_lines / sale_voids /
+    // sale_refunds reference (id, tenant_id, store_id) so a child can never
+    // attach to a sale in a different tenant/store).
+    unique("uq_sales_id_tenant_store").on(t.id, t.tenantId, t.storeId),
     // Dedup contract (FR-050/041): one sale per (tenant, sourceSystem, externalId).
     uniqueIndex("uq_sales_tenant_source_external").on(
       t.tenantId,

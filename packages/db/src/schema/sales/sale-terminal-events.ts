@@ -26,6 +26,7 @@ import { sql } from "drizzle-orm";
 import {
   char,
   check,
+  foreignKey,
   index,
   numeric,
   pgTable,
@@ -42,9 +43,8 @@ export const saleVoids = pgTable(
   "sale_voids",
   {
     id: uuid("id").primaryKey().notNull(),
-    saleId: uuid("sale_id")
-      .notNull()
-      .references(() => sales.id, { onDelete: "restrict" }),
+    // FK is composite (sale_id, tenant_id, store_id) — declared below.
+    saleId: uuid("sale_id").notNull(),
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "restrict" }),
@@ -71,6 +71,11 @@ export const saleVoids = pgTable(
     ),
     index("idx_sale_voids_sale").on(t.saleId),
     index("idx_sale_voids_tenant_store").on(t.tenantId, t.storeId),
+    foreignKey({
+      name: "fk_sale_voids_sale_tenant_store",
+      columns: [t.saleId, t.tenantId, t.storeId],
+      foreignColumns: [sales.id, sales.tenantId, sales.storeId],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -78,9 +83,8 @@ export const saleRefunds = pgTable(
   "sale_refunds",
   {
     id: uuid("id").primaryKey().notNull(),
-    saleId: uuid("sale_id")
-      .notNull()
-      .references(() => sales.id, { onDelete: "restrict" }),
+    // FK is composite (sale_id, tenant_id, store_id) — declared below.
+    saleId: uuid("sale_id").notNull(),
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "restrict" }),
@@ -121,6 +125,11 @@ export const saleRefunds = pgTable(
     ),
     index("idx_sale_refunds_sale").on(t.saleId),
     index("idx_sale_refunds_tenant_store").on(t.tenantId, t.storeId),
+    foreignKey({
+      name: "fk_sale_refunds_sale_tenant_store",
+      columns: [t.saleId, t.tenantId, t.storeId],
+      foreignColumns: [sales.id, sales.tenantId, sales.storeId],
+    }).onDelete("restrict"),
   ],
 );
 

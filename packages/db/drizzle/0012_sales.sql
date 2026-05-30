@@ -23,8 +23,29 @@
 --   columns (gate A.5 — deferred to 010).
 -- Dedup: UNIQUE (tenant_id, source_system, external_id) on sales and on each
 --   terminal-event table (FR-050/013).
--- RLS: ENABLE + FORCE on every table; fail-closed tenant policy keyed on
---   current_setting('app.current_tenant', true)::uuid (FR-060).
+--
+-- Append-only enforcement at the RLS layer (CodeRabbit #421 review):
+--   - sale_lines / sale_voids / sale_refunds are TRULY immutable once written:
+--     each gets a SELECT policy + an INSERT-only write policy. NO UPDATE/DELETE
+--     policy exists, so even a role holding UPDATE/DELETE grants is denied by
+--     RLS (FORCE), preserving the append-only contract.
+--   - sales is immutable EXCEPT for the SaaS-owned processed_at + mismatch_flag,
+--     which the off-request worker sets (FR-071). It therefore gets SELECT +
+--     INSERT + UPDATE policies (NO DELETE). The columns the UPDATE may touch are
+--     constrained at the service layer (FR-061 mass-assignment ban); RLS here
+--     enforces tenant scope on the update, not column-level immutability.
+--
+-- Cross-tenant integrity (CodeRabbit #421 review): each child carries a
+--   composite FK (sale_id, tenant_id, store_id) -> sales(id, tenant_id, store_id)
+--   so a child row can never reference a sale in a different tenant/store. This
+--   is defense-in-depth beneath the per-table RLS (which already filters each
+--   table by its own tenant_id).
+--
+-- RLS: ENABLE + FORCE on every table; tenant policies keyed on
+--   current_setting('app.current_tenant', true) with the empty-GUC CASE guard
+--   (a bare ::uuid cast throws 22P02 on an unset GUC — repo-wide fix from
+--   migrations 0009/0010). NULL = tenant_id evaluates to NULL → row filtered
+--   → fail-closed (FR-060).
 --
 -- ---------------------------------------------------------------------------
 -- DATA-LIFECYCLE CLASSIFICATION + RETENTION (T075 / SI-012 / gate D.3, §XIV)
@@ -38,7 +59,7 @@
 -- customer-reference or tender field, this RECLASSIFIES (PII/payment-class)
 -- and re-triggers SI-012. A guard test
 -- (apps/api/test/catalog/sales/lifecycle/classification.spec.ts, slice
--- 008-LIFECYCLE) asserts no PII/payment-class field is persisted in v1.
+-- 008-LIFECYCLE) will assert no PII/payment-class field is persisted in v1.
 --
 -- Lock duration: all four are CREATE TABLE on NEW relations (no ALTER on a
 -- populated table, no rewrite), so the migration takes only brief catalog
@@ -71,7 +92,11 @@ CREATE TABLE IF NOT EXISTS sales (
   CONSTRAINT sales_currency_code_format
     CHECK (currency_code ~ '^[A-Z]{3}$'),
   CONSTRAINT sales_pos_total_non_negative
-    CHECK (pos_total >= 0)
+    CHECK (pos_total >= 0),
+  -- Backs the composite FK from every child table (id is already the PK; this
+  -- adds the (id, tenant_id, store_id) tuple the children reference).
+  CONSTRAINT uq_sales_id_tenant_store
+    UNIQUE (id, tenant_id, store_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sales_tenant_source_external
@@ -96,8 +121,18 @@ CREATE POLICY sales_tenant_read ON sales
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
-CREATE POLICY sales_tenant_write ON sales
-  FOR ALL
+CREATE POLICY sales_tenant_insert ON sales
+  FOR INSERT
+  WITH CHECK (tenant_id = CASE
+      WHEN current_setting('app.current_tenant', true) = '' THEN NULL
+      ELSE current_setting('app.current_tenant', true)::uuid
+    END);
+
+-- sales is immutable EXCEPT processed_at + mismatch_flag (SaaS-owned, FR-071,
+-- set off-request by the worker). UPDATE is tenant-scoped here; column-level
+-- immutability is enforced at the service boundary. NO DELETE policy exists.
+CREATE POLICY sales_tenant_update ON sales
+  FOR UPDATE
   USING (tenant_id = CASE
       WHEN current_setting('app.current_tenant', true) = '' THEN NULL
       ELSE current_setting('app.current_tenant', true)::uuid
@@ -108,12 +143,12 @@ CREATE POLICY sales_tenant_write ON sales
     END);
 
 -- =============================================================================
--- 2. sale_lines (data-model.md §2)
+-- 2. sale_lines (data-model.md §2) — frozen snapshot, INSERT-only
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS sale_lines (
   id                  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-  sale_id             UUID          NOT NULL REFERENCES sales(id)   ON DELETE RESTRICT,
+  sale_id             UUID          NOT NULL,
   tenant_id           UUID          NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   store_id            UUID          NOT NULL REFERENCES stores(id)  ON DELETE RESTRICT,
   line_name           TEXT          NOT NULL,
@@ -123,8 +158,8 @@ CREATE TABLE IF NOT EXISTS sale_lines (
   line_amount         NUMERIC(19,4) NOT NULL,
   tax_amount          NUMERIC(19,4),
   unit                TEXT          NOT NULL,
-  -- Soft lineage only (FR-003); NULL for ad-hoc lines (FR-004). NO FK — the
-  -- line is a frozen snapshot, never a live read of the tenant product.
+  -- Soft lineage only (FR-003); NULL for ad-hoc lines (FR-004). NO FK to
+  -- tenant_products — the line is a frozen snapshot, never a live read.
   tenant_product_ref  UUID,
   CONSTRAINT sale_lines_currency_code_format
     CHECK (currency_code ~ '^[A-Z]{3}$'),
@@ -135,7 +170,11 @@ CREATE TABLE IF NOT EXISTS sale_lines (
   CONSTRAINT sale_lines_quantity_non_negative
     CHECK (quantity >= 0),
   CONSTRAINT sale_lines_tax_amount_non_negative
-    CHECK (tax_amount IS NULL OR tax_amount >= 0)
+    CHECK (tax_amount IS NULL OR tax_amount >= 0),
+  -- Composite FK: a line can only attach to a sale in the SAME tenant + store.
+  CONSTRAINT fk_sale_lines_sale_tenant_store
+    FOREIGN KEY (sale_id, tenant_id, store_id)
+    REFERENCES sales (id, tenant_id, store_id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sale_lines_sale
@@ -154,24 +193,21 @@ CREATE POLICY sale_lines_tenant_read ON sale_lines
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
-CREATE POLICY sale_lines_tenant_write ON sale_lines
-  FOR ALL
-  USING (tenant_id = CASE
-      WHEN current_setting('app.current_tenant', true) = '' THEN NULL
-      ELSE current_setting('app.current_tenant', true)::uuid
-    END)
+-- INSERT-only: frozen snapshot, no UPDATE/DELETE policy (append-only contract).
+CREATE POLICY sale_lines_tenant_insert ON sale_lines
+  FOR INSERT
   WITH CHECK (tenant_id = CASE
       WHEN current_setting('app.current_tenant', true) = '' THEN NULL
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
 -- =============================================================================
--- 3. sale_voids (data-model.md §3) — append-only terminal event
+-- 3. sale_voids (data-model.md §3) — append-only terminal event, INSERT-only
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS sale_voids (
   id             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  sale_id        UUID         NOT NULL REFERENCES sales(id)   ON DELETE RESTRICT,
+  sale_id        UUID         NOT NULL,
   tenant_id      UUID         NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   store_id       UUID         NOT NULL REFERENCES stores(id)  ON DELETE RESTRICT,
   voided_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -179,7 +215,10 @@ CREATE TABLE IF NOT EXISTS sale_voids (
   external_id    TEXT         NOT NULL,
   payload_hash   TEXT         NOT NULL,
   created_by     UUID         NOT NULL,
-  created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
+  created_at     TIMESTAMPTZ  NOT NULL DEFAULT now(),
+  CONSTRAINT fk_sale_voids_sale_tenant_store
+    FOREIGN KEY (sale_id, tenant_id, store_id)
+    REFERENCES sales (id, tenant_id, store_id) ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sale_voids_tenant_source_external
@@ -201,24 +240,20 @@ CREATE POLICY sale_voids_tenant_read ON sale_voids
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
-CREATE POLICY sale_voids_tenant_write ON sale_voids
-  FOR ALL
-  USING (tenant_id = CASE
-      WHEN current_setting('app.current_tenant', true) = '' THEN NULL
-      ELSE current_setting('app.current_tenant', true)::uuid
-    END)
+CREATE POLICY sale_voids_tenant_insert ON sale_voids
+  FOR INSERT
   WITH CHECK (tenant_id = CASE
       WHEN current_setting('app.current_tenant', true) = '' THEN NULL
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
 -- =============================================================================
--- 4. sale_refunds (data-model.md §4) — append-only terminal event
+-- 4. sale_refunds (data-model.md §4) — append-only terminal event, INSERT-only
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS sale_refunds (
   id                 UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-  sale_id            UUID          NOT NULL REFERENCES sales(id)   ON DELETE RESTRICT,
+  sale_id            UUID          NOT NULL,
   tenant_id          UUID          NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
   store_id           UUID          NOT NULL REFERENCES stores(id)  ON DELETE RESTRICT,
   refunded_at        TIMESTAMPTZ   NOT NULL DEFAULT now(),
@@ -232,7 +267,10 @@ CREATE TABLE IF NOT EXISTS sale_refunds (
   CONSTRAINT sale_refunds_currency_code_format
     CHECK (currency_code ~ '^[A-Z]{3}$'),
   CONSTRAINT sale_refunds_pos_refund_amount_non_negative
-    CHECK (pos_refund_amount >= 0)
+    CHECK (pos_refund_amount >= 0),
+  CONSTRAINT fk_sale_refunds_sale_tenant_store
+    FOREIGN KEY (sale_id, tenant_id, store_id)
+    REFERENCES sales (id, tenant_id, store_id) ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_sale_refunds_tenant_source_external
@@ -254,12 +292,8 @@ CREATE POLICY sale_refunds_tenant_read ON sale_refunds
       ELSE current_setting('app.current_tenant', true)::uuid
     END);
 
-CREATE POLICY sale_refunds_tenant_write ON sale_refunds
-  FOR ALL
-  USING (tenant_id = CASE
-      WHEN current_setting('app.current_tenant', true) = '' THEN NULL
-      ELSE current_setting('app.current_tenant', true)::uuid
-    END)
+CREATE POLICY sale_refunds_tenant_insert ON sale_refunds
+  FOR INSERT
   WITH CHECK (tenant_id = CASE
       WHEN current_setting('app.current_tenant', true) = '' THEN NULL
       ELSE current_setting('app.current_tenant', true)::uuid
