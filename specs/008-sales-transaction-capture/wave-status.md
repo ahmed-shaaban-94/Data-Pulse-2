@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-30 — Phase 1 merged (#420); Phase 2 [GATED] slices in review (#421 SCHEMA / #422 CONTRACT) |
+| Updated | 2026-05-30 — Phase 1 + Phase 2 [GATED] slices MERGED (#420 SETUP / #421 SCHEMA / #422 CONTRACT); GREEN slices unblocked |
 
 ---
 
@@ -15,9 +15,9 @@
 
 008 introduces the **first sale fact** the SaaS owns (`sales` + `sale_lines` + void/refund terminal events), built **alongside** the shipped 005 POS ingestion seam (reuses Idempotency-Key interceptor, `sourceSystem+externalId` dedup, tenant-context/RLS, audit, outbox — no re-invention).
 
-**Planning chain + Agent-OS coordination MERGED to `main`** (PRs #414/#418/#419). **Phase 1 SETUP MERGED** (#420, `6d01512` — empty `SalesModule`). **Both `[GATED]` Phase-2 slices USER-APPROVED + IN REVIEW**: `008-CONTRACT` (#422) and `008-SCHEMA` (#421), each rebased on `main` @ `6d01512`, all validation GREEN.
+**Phase 1 + both `[GATED]` Phase-2 slices MERGED to `main`**: `008-SETUP` (#420, `6d01512`), `008-SCHEMA` (#421, `560d16c`), `008-CONTRACT` (#422, `7459ea5`); planning chain + coordination on main via #414/#418/#419. CodeRabbit review on all three addressed before merge.
 
-**Both gated PRs (#421 + #422) must merge before any implementing GREEN slice** dispatches (the hard serialization points). They are order-independent between themselves. The Money + Temporal gate is resolved, so there are **no open WHAT-level blockers** — only the two gated PRs awaiting merge.
+**The two hard serialization points (gated schema + contract) are now satisfied — implementing GREEN slices are UNBLOCKED.** The Money + Temporal gate is resolved, so there are **no open WHAT-level blockers**. Next: `008-ISOLATION-HARNESS` → `008-US1-CAPTURE` (the MVP).
 
 **MVP** = `008-US1-CAPTURE` + its foundational prerequisites. That alone delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
 
@@ -108,15 +108,17 @@ None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0
 
 - **Planning chain MERGED to `main` via #418** (`f4b4688`) + Agent-OS coordination layer via **#419** (`cecdaac`): spec / plan / tasks / analyze + gate RESOLVED + `execution-map.yaml` + `wave-status.md`.
 - **Phase 1 SETUP MERGED via #420** (`6d01512`): empty `SalesModule` skeleton (T002). `008-SIGNOFF-MONEY-LIB` (T001) resolved.
-- **Phase 2 `[GATED]` slices USER-APPROVED + IN REVIEW** (both rebased on `main` @ `6d01512`; order-independent; both must merge before any GREEN):
-  - **`008-CONTRACT` → PR #422** — POS sales OpenAPI contract (`pos-sales/sales.yaml`). Validation: `sales.contract.spec` 16/16 + umbrella conformance 89/89 GREEN.
-  - **`008-SCHEMA` → PR #421** — `0012_sales` migration + Drizzle schema (4 tables: `sales` / `sale_lines` / `sale_voids` / `sale_refunds`). Validation: `0012-sales.spec` 12/12 round-trip (WSL Testcontainers) + `sales-schema-shape.spec` 12/12 GREEN. Notable: the migration's tenant RLS policies use the established empty-GUC `CASE` guard (the bare `::uuid` cast — fixed repo-wide in 0009/0010 — was caught by the round-trip probe).
-- Remaining slices `proposed`; no runtime GREEN on `main` yet.
+- **Phase 2 `[GATED]` slices MERGED to `main`** (CodeRabbit review addressed on each before merge):
+  - **`008-SCHEMA` → PR #421 (`560d16c`)** — `0012_sales` migration + Drizzle schema (4 tables: `sales` / `sale_lines` / `sale_voids` / `sale_refunds`). Validation: `0012-sales.spec` **16/16** round-trip (WSL Testcontainers) + `sales-schema-shape.spec` 12/12 GREEN. RLS uses the empty-GUC `CASE` guard; append-only INSERT-only child policies + composite tenant/store FKs added per review.
+  - **`008-CONTRACT` → PR #422 (`7459ea5`)** — POS sales OpenAPI contract (`pos-sales/sales.yaml`). Validation: `sales.contract.spec` **19/19** + umbrella conformance 89/89 GREEN. Documented 200 replay, verbatim Error envelope, nullable-money `anyOf`, terminal events carry no `occurredAt` (no such column) per review.
+- **Map status reconciled to `merged` via this follow-up PR.** Remaining slices `proposed`; no runtime GREEN (controller/service) on `main` yet.
 
 ---
 
 ## Next recommended action
 
-1. **Review + merge `008-SCHEMA` (#421) and `008-CONTRACT` (#422)** — order-independent between themselves; **both must merge before any implementing GREEN**.
-2. Then dispatch **`008-ISOLATION-HARNESS`** (RED seed + sweep) → **`008-US1-CAPTURE`** 🎯 (the MVP first GREEN — creates `sales.controller.ts` + `sales.service.ts`).
+The two `[GATED]` hard serialization points are now satisfied — **implementing GREEN slices are UNBLOCKED**:
+
+1. Dispatch **`008-ISOLATION-HARNESS`** (RED seed + sweep — `seed-sales.ts` + `sales-sweep.spec.ts`).
+2. Then **`008-US1-CAPTURE`** 🎯 — the MVP first GREEN; creates `sales.controller.ts` + `sales.service.ts`.
 3. After US1: serialize the remaining US slices through the shared `sales` module, while running `008-WORKER` (distinct `apps/worker/**` tree) and `008-LIFECYCLE` (test-only + doc) in parallel.
