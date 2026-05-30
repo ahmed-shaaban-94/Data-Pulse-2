@@ -57,9 +57,10 @@
 -- immutable fact. Right-to-erasure is handled by TOMBSTONING any future PII
 -- field rather than deleting the fact row. If a later slice admits a
 -- customer-reference or tender field, this RECLASSIFIES (PII/payment-class)
--- and re-triggers SI-012. A guard test
--- (apps/api/test/catalog/sales/lifecycle/classification.spec.ts, slice
--- 008-LIFECYCLE) will assert no PII/payment-class field is persisted in v1.
+-- and re-triggers SI-012. The future 008-LIFECYCLE slice will add a guard test
+-- (apps/api/test/catalog/sales/lifecycle/classification.spec.ts) asserting no
+-- PII/payment-class field is persisted in v1. That test is NOT part of this
+-- schema slice and does not yet exist on `main` (mirrors data-model.md §107).
 --
 -- Lock duration: all four are CREATE TABLE on NEW relations (no ALTER on a
 -- populated table, no rewrite), so the migration takes only brief catalog
