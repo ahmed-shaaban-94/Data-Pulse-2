@@ -214,9 +214,22 @@ export class SalesService {
         // UUIDv7 (time-ordered) via the shared id policy — fact tables are
         // high-write, so v7 B-tree locality matters; matches reconciliation.
         const saleId = newId();
-        // business_date is derived from the store timezone in a later slice
-        // (FR-023 / US2); for capture we record the occurredAt calendar date in
-        // UTC. processed_at is intentionally NULL — the worker claims it.
+
+        // business_date is the occurredAt CALENDAR DATE in the STORE's timezone
+        // (FR-023) — never the client clock. Resolve the store's IANA zone under
+        // tenant RLS; the principal's own store always resolves (the sales FK
+        // guarantees the store exists), so a miss is a misconfigured principal —
+        // fail loudly, never silently default to UTC. (Stores default to 'UTC'
+        // until an operator sets a real zone, so this reproduces the prior UTC
+        // behavior until then.) processed_at stays NULL — the worker claims it.
+        const tz = await client.query<{ timezone: string }>(
+          `SELECT timezone FROM stores WHERE id = $1`,
+          [storeId],
+        );
+        const storeTimezone = tz.rows[0]?.timezone;
+        if (!storeTimezone) {
+          throw new Error("store timezone not resolvable for capture");
+        }
         //
         // Atomic dedup (FR-050/100): ON CONFLICT on the
         // (tenant_id, source_system, external_id) unique index makes the write
@@ -229,7 +242,7 @@ export class SalesService {
               business_date, source_clock_at, source_system, external_id,
               payload_hash, mismatch_flag, created_by)
            VALUES ($1, $2, $3, $4, $5::numeric, $6::timestamptz,
-                   ($6::timestamptz AT TIME ZONE 'UTC')::date, $7::timestamptz,
+                   ($6::timestamptz AT TIME ZONE $13)::date, $7::timestamptz,
                    $8, $9, $10, $11, $12)
            ON CONFLICT (tenant_id, source_system, external_id) DO NOTHING
            RETURNING id`,
@@ -246,6 +259,7 @@ export class SalesService {
             payloadHash,
             mismatchFlag,
             actorUserId,
+            storeTimezone,
           ],
         );
 
@@ -331,8 +345,13 @@ export class SalesService {
       { tenantId, isPlatformAdmin: false },
       async (client): Promise<SaleProjection> => {
         const sale = await client.query<SaleRow>(
+          // business_date::text returns the exact calendar date as a string. A
+          // bare `date` column is parsed by node-pg into a JS Date at LOCAL
+          // midnight, and `.toISOString()` then shifts it by the process tz —
+          // corrupting the store-local date (FR-023). Casting to text avoids it.
           `SELECT id, store_id, currency_code, pos_total, occurred_at,
-                  received_at, business_date, processed_at, source_clock_at,
+                  received_at, business_date::text AS business_date,
+                  processed_at, source_clock_at,
                   source_system, external_id, mismatch_flag
              FROM sales WHERE id = $1 AND store_id = $2`,
           [saleId, storeId],

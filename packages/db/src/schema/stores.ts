@@ -16,6 +16,9 @@ export const stores = pgTable("stores", {
     .references(() => tenants.id, { onDelete: "restrict" }),
   code: text("code").notNull(),
   name: text("name").notNull(),
+  // IANA timezone name; drives a sale's store-local `business_date` (008 FR-023).
+  // Defaults to 'UTC' until a store-management surface sets the real zone (0013).
+  timezone: text("timezone").notNull().default("UTC"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
