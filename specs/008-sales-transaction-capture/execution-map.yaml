@@ -38,17 +38,18 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1 SETUP MERGED (PR #420, 6d01512). The two [GATED]
-#   foundational slices are USER-APPROVED and IN REVIEW:
-#     - 008-CONTRACT → PR #422 (OpenAPI sale contract; contract-spec + conformance GREEN; CodeRabbit review addressed)
-#     - 008-SCHEMA   → PR #421 (0012 migration + Drizzle schema; round-trip + shape GREEN; CodeRabbit review addressed)
-#   Both rebased on main @ 6d01512; order-independent; BOTH must merge before
-#   any implementing GREEN slice (008-ISOLATION-HARNESS / 008-US1-CAPTURE).
-#   008-SIGNOFF-MONEY-LIB merged/resolved (PR #419); remaining slices `proposed`. The Money +
-#   Temporal Decision Gate is RESOLVED (gate-money-temporal.md §Decisions
-#   Recorded), so there are no open WHAT-level blockers.
+# Status: Phase 1 + Phase 2 (both [GATED] foundational slices) MERGED to main:
+#     - 008-SETUP    → PR #420 (6d01512) — empty SalesModule skeleton
+#     - 008-SCHEMA   → PR #421 (560d16c) — 0012 migration + Drizzle schema
+#     - 008-CONTRACT → PR #422 (7459ea5) — OpenAPI sale contract
+#   008-SIGNOFF-MONEY-LIB resolved (PR #419). The two [GATED] hard
+#   serialization points are now satisfied, so implementing GREEN slices are
+#   UNBLOCKED. Next dispatchable: 008-ISOLATION-HARNESS (RED seed + sweep) →
+#   008-US1-CAPTURE (MVP first GREEN). US2–US6 serialize through the shared
+#   sales module; 008-WORKER + 008-LIFECYCLE run parallel. Remaining slices
+#   `proposed`. The Money + Temporal Decision Gate is RESOLVED.
 #
-# Updated: 2026-05-30 — Phase 1 merged; Phase 2 [GATED] slices in review (#421/#422).
+# Updated: 2026-05-30 — Phase 1 + Phase 2 [GATED] slices merged (#420/#421/#422); GREEN slices unblocked.
 
 version: 1
 spec: 008-sales-transaction-capture
@@ -120,8 +121,9 @@ slices:
   - id: 008-CONTRACT
     task_ids: [T010, T011]
     type: feat
-    status: in_review        # PR #422 open against main (user-approved [GATED], 16/16 + 89/89 conformance GREEN); not yet merged
-    pr: 422
+    status: merged           # PR #422 squash-merged to main (user-approved [GATED]; contract-spec 19/19 + conformance 89/89 GREEN; CodeRabbit review addressed)
+    merged_in_pr: 422
+    merged_at_commit: 7459ea5
     approval_required: true   # [GATED] — packages/contracts/openapi/** (Constitution §IV/§VIII) — APPROVED in-session
     depends_on: [008-SETUP]   # SETUP merged via PR #420 (6d01512); this branch rebased on it
     blocks:
@@ -152,8 +154,9 @@ slices:
   - id: 008-SCHEMA
     task_ids: [T012, T013]
     type: feat
-    status: in_review        # PR #421 open against main (user-approved [GATED], 12/12 round-trip + 12/12 shape GREEN); not yet merged
-    pr: 421
+    status: merged           # PR #421 squash-merged to main (user-approved [GATED]; round-trip 16/16 + shape 12/12 GREEN; CodeRabbit review addressed)
+    merged_in_pr: 421
+    merged_at_commit: 560d16c
     approval_required: true   # [GATED] — packages/db/** schema + SQL migration (Constitution §VIII) — APPROVED in-session
     depends_on: [008-SETUP, 008-SIGNOFF-MONEY-LIB]   # SETUP merged via PR #420 (6d01512); money SIGN-OFF resolved
     blocks:
