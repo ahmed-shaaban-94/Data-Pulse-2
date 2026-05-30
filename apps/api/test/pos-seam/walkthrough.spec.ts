@@ -504,19 +504,22 @@ describe("[SC-8] Seam 5 — DB schema barrel contains no POS-domain tables", () 
 
     // These names would indicate a schema change snuck in without approval.
     // The list is deliberately broad to catch naming variants.
+    //
+    // NOTE (008-sales-transaction-capture): the SaaS now OWNS its own sale fact —
+    // `sales` / `sale_lines` / `sale_voids` / `sale_refunds` were added by the
+    // [GATED] 008-SCHEMA migration (#421). They are first-class SaaS tables, not
+    // leaked POS-app tables, so they are no longer forbidden here. This guard rail
+    // still protects against the POS application's own domain tables sneaking in.
     const forbidden = [
       "posSales",
       "posReceipts",
       "posOrders",
       "posLineItems",
       "posItems",
-      "salesLines",
-      "saleLines",
       "receiptLines",
       "orderLines",
       "orders",
       "receipts",
-      "sales",
     ];
     for (const name of forbidden) {
       expect(exported).not.toContain(name);
