@@ -12,9 +12,15 @@
  */
 import { z } from "zod";
 
+// A refund amount is non-negative (the DB enforces `pos_refund_amount >= 0`);
+// reject a leading `-` at the boundary so it fails as a 400 validation error,
+// not a 500 DB CHECK violation.
 const decimalAmount = z
   .string()
-  .regex(/^-?[0-9]{1,15}(\.[0-9]{1,4})?$/, "must be an exact-decimal string");
+  .regex(
+    /^[0-9]{1,15}(\.[0-9]{1,4})?$/,
+    "must be a non-negative exact-decimal string",
+  );
 
 const currencyCode = z.string().regex(/^[A-Z]{3}$/, "must be an ISO-4217 code");
 

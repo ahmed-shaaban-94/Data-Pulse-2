@@ -70,4 +70,55 @@ describe("T056 — recordRefund preserves the POS amount verbatim", () => {
     );
     expect(row.rows[0]?.pos_refund_amount).toBe("7.3300");
   });
+
+  it("a sub-scale amount normalizes to numeric(19,4) scale, not rewritten in value", async () => {
+    if (h.dockerSkipped || !h.harness) return;
+    const cap = await h.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("rfn"))
+      .send(captureBody({ externalId: "ext-refund-norm" }));
+    expect(cap.status).toBe(201);
+
+    const res = await h.harness
+      .http()
+      .post(`/api/pos/v1/sales/${cap.body.saleRef}/refund`)
+      .set("Idempotency-Key", idempKey("rfn1"))
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "refund-evt-norm",
+        posRefundAmount: "7.3",
+        currencyCode: "USD",
+      });
+    // numeric(19,4) — same value, canonical 4-dp scale (documents the contract).
+    expect(res.status).toBe(201);
+    expect(res.body.posRefundAmount).toBe("7.3000");
+  });
+
+  it("a negative refund amount is rejected at the boundary (400), nothing written", async () => {
+    if (h.dockerSkipped || !h.harness) return;
+    const cap = await h.harness
+      .http()
+      .post("/api/pos/v1/sales")
+      .set("Idempotency-Key", idempKey("rfneg"))
+      .send(captureBody({ externalId: "ext-refund-neg" }));
+    expect(cap.status).toBe(201);
+
+    const res = await h.harness
+      .http()
+      .post(`/api/pos/v1/sales/${cap.body.saleRef}/refund`)
+      .set("Idempotency-Key", idempKey("rfneg1"))
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "refund-evt-neg",
+        posRefundAmount: "-5.0000",
+        currencyCode: "USD",
+      });
+    expect(res.status).toBe(400);
+
+    const n = await h.harness.env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM sale_refunds WHERE external_id = 'refund-evt-neg'`,
+    );
+    expect(n.rows[0]?.n).toBe("0");
+  });
 });
