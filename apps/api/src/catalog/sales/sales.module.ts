@@ -10,16 +10,32 @@
  *   - 008-US1-CAPTURE 🎯 MVP  — adds sales.controller.ts + sales.service.ts
  *                               and the first POS capture route.
  *
- * NOTE on root wiring:
- *   This module is intentionally NOT registered in
- *   `apps/api/src/app.module.ts` by the 008-SETUP slice. The slice's
- *   `allowed_files` is scoped to this file only (execution-map.yaml), and an
- *   empty module exposes no routes, so app-level registration has no
- *   behavioural effect yet. Root registration is deferred to the slice that
- *   first adds a real route surface (008-US1-CAPTURE), mirroring how the
- *   sibling `reconciliation` module was staged before its wiring slice.
+ * 008-US1-CAPTURE wires the first route surface (captureSale + readSale) and
+ * registers this module in `apps/api/src/app.module.ts` (the root-wiring step
+ * SETUP deferred to "the slice that adds a real route surface").
+ *
+ * Imports (mirror UnknownItemsModule):
+ *   - AuthModule        — provides PG_POOL (shared pool) + PosOperatorAuthGuard.
+ *   - IdempotencyModule — registers the global IdempotencyInterceptor that the
+ *                         `@Idempotent("required")` decorator on captureSale
+ *                         engages (FR-051).
+ *   - AuditModule       — registers the global AuditEmitterInterceptor that the
+ *                         `@Auditable("sale.captured")` decorator triggers.
+ *   - ContextModule     — provides TenantContextGuard.
  */
 import { Module } from "@nestjs/common";
 
-@Module({})
+import { AuditModule } from "../../audit/audit.module";
+import { AuthModule } from "../../auth/auth.module";
+import { ContextModule } from "../../context/context.module";
+import { IdempotencyModule } from "../../idempotency/idempotency.module";
+import { SalesController } from "./sales.controller";
+import { SalesService } from "./sales.service";
+
+@Module({
+  imports: [AuthModule, IdempotencyModule, AuditModule, ContextModule],
+  controllers: [SalesController],
+  providers: [SalesService],
+  exports: [SalesService],
+})
 export class SalesModule {}

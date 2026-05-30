@@ -123,6 +123,7 @@ describe("data-pulse-migrate CLI", () => {
     "0009_catalog_store_empty_guc_fix",
     "0010_catalog_tenant_empty_guc_fix",
     "0011_catalog_store_carveout_sentinel",
+    "0012_sales",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
@@ -190,8 +191,8 @@ describe("data-pulse-migrate CLI", () => {
         EXPECTED_MIGRATIONS.slice(0, -1),
       );
 
-      // 0008 is a policy-only migration — rolling it back removes no tables.
-      // All seven catalog tables introduced by 0007 are still present.
+      // Rolling back the latest migration does not touch the catalog: all seven
+      // catalog tables introduced by 0007 are still present afterwards.
       const catalogCount = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = ANY($1::text[])
@@ -242,8 +243,8 @@ describe("data-pulse-migrate CLI", () => {
     const r = await runCli(["up"], { DATABASE_URL: env.adminUri });
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(new RegExp(`up: applying ${LATEST_MIGRATION}`));
-    // 0008 is policy-only — re-applying it leaves all seven catalog tables
-    // from 0007 intact; no new tables are created or dropped.
+    // Re-applying the latest migration leaves all seven catalog tables from
+    // 0007 intact; the catalog set is unaffected by the latest migration.
     const catalogCount = await env.admin.query<{ count: string }>(`
       SELECT COUNT(*)::text AS count FROM information_schema.tables
       WHERE table_schema = 'public' AND table_name = ANY($1::text[])

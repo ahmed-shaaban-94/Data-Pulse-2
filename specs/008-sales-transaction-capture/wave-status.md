@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-30 — Phase 1 + Phase 2 [GATED] slices MERGED (#420 SETUP / #421 SCHEMA / #422 CONTRACT); GREEN slices unblocked |
+| Updated | 2026-05-30 — Phase 3 MVP: `008-ISOLATION-HARNESS` MERGED (#425); `008-US1-CAPTURE` 🎯 **in review** (PR #426) — first runtime GREEN (capture controller/service); capture gate 5 suites/8 GREEN, isolation §B.1 GREEN + §B.2 intended-RED |
 
 ---
 
@@ -111,14 +111,21 @@ None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0
 - **Phase 2 `[GATED]` slices MERGED to `main`** (CodeRabbit review addressed on each before merge):
   - **`008-SCHEMA` → PR #421 (`560d16c`)** — `0012_sales` migration + Drizzle schema (4 tables: `sales` / `sale_lines` / `sale_voids` / `sale_refunds`). Validation: `0012-sales.spec` **16/16** round-trip (WSL Testcontainers) + `sales-schema-shape.spec` 12/12 GREEN. RLS uses the empty-GUC `CASE` guard; append-only INSERT-only child policies + composite tenant/store FKs added per review.
   - **`008-CONTRACT` → PR #422 (`7459ea5`)** — POS sales OpenAPI contract (`pos-sales/sales.yaml`). Validation: `sales.contract.spec` **19/19** + umbrella conformance 89/89 GREEN. Documented 200 replay, verbatim Error envelope, nullable-money `anyOf`, terminal events carry no `occurredAt` (no such column) per review.
-- **Map status reconciled to `merged` via this follow-up PR.** Remaining slices `proposed`; no runtime GREEN (controller/service) on `main` yet.
+- **`008-ISOLATION-HARNESS` MERGED via #425** (`7a1885e`): `seed-sales.ts` + `sales-sweep.spec.ts`. Group-A RLS/isolation sweep GREEN with rows present (wrong/unset/cross-tenant GUC ⇒ zero rows on all 4 sale-fact tables); Group-B operation cases scaffolded RED on the unbuilt capture/void/refund/read ops.
+- **`008-US1-CAPTURE` 🎯 IN REVIEW via PR #426** (branch `feat/008-us1-capture`, rebased on `db8f70d`) — the **first runtime GREEN**, T030–T036:
+  - `SalesController` (captureSale POST + readSale GET) + `SalesService` (immutable `sales` header + frozen `sale_lines` under RLS; POS total verbatim FR-030; advisory `mismatch_flag` via PG-`numeric` half-up per-line compare, no JS float; dedup on `(tenant_id, source_system, external_id)` FR-050 + cross-tenant isolation SI-001; SHA-256-canonical `payload_hash`; no catalog mutation / no auto-create FR-004) + strict Zod DTO (FR-061/062) + root-wiring (`app.module.ts` + filled SETUP skeleton). Row ids via shared `newId()` UUIDv7 (matches `reconciliation`; B-tree locality on the high-write fact tables).
+  - **T036** = sweep §B.1 capture object-safety (HTTP): cross-tenant read → non-disclosing 404 (FR-102/SC-004), out-of-scope ref → 404 (FR-063/SI-004), body authority fields ignored (FR-061), unauthenticated → 401. §B.2 void/refund left intended-RED for US3/US4.
+  - **Validation (WSL Testcontainers):** capture gate `catalog/sales/capture` → **5 suites / 8 GREEN**; `catalog/sales/isolation` → 18 passed, only the 2 §B.2 placeholders intended-RED. `tsc --noEmit` clean.
+  - **Fixed 2 RED-phase test-file bugs** (both `capture/**`, assertion intent preserved): `capture-happy` afterEach referenced a non-existent `source_system` column on `sale_lines` (→ parent subquery); T031 `UPDATE` set `default_price` without paired `default_currency_code` (→ set both, satisfies `tenant_products_currency_paired`).
+  - **Scope note (flagged in PR #426):** `app.module.ts` / `sales.module.ts` / `isolation/sales-sweep.spec.ts` sit beyond the slice's literal `allowed_files` (`capture/**`), but SETUP's merged docstring defers root-wiring here and T036 is in this slice's `task_ids` (placeholders tagged `[T036]`) — documented intent, not a `[GATED]` path. Spec-authoring gap in the glob.
+- Remaining slices `proposed`. Map: SETUP/SCHEMA/CONTRACT/ISOLATION-HARNESS `merged`; US1-CAPTURE `in_review` (#426).
 
 ---
 
 ## Next recommended action
 
-The two `[GATED]` hard serialization points are now satisfied — **implementing GREEN slices are UNBLOCKED**:
+The MVP keystone (`008-US1-CAPTURE`) is **in review** (PR #426) — the shared `sales` module now exists, unblocking the rest of the wave:
 
-1. Dispatch **`008-ISOLATION-HARNESS`** (RED seed + sweep — `seed-sales.ts` + `sales-sweep.spec.ts`).
-2. Then **`008-US1-CAPTURE`** 🎯 — the MVP first GREEN; creates `sales.controller.ts` + `sales.service.ts`.
-3. After US1: serialize the remaining US slices through the shared `sales` module, while running `008-WORKER` (distinct `apps/worker/**` tree) and `008-LIFECYCLE` (test-only + doc) in parallel.
+1. **Land PR #426** (CI + CodeRabbit). On merge, reconcile this slice's status `in_review → merged` with `merged_at_commit`.
+2. After US1 merges, **serialize** the remaining US slices through the shared `sales.controller.ts` / `sales.service.ts`: **US2-DELAYED-SYNC** (owns `business_date` store-tz derivation + `sourceClockAt` handling — US1 left `sourceClockAt` unwired by design), then **US3-VOID** / **US4-REFUND** (each replaces its §B.2 sweep placeholder), then **US5-IDEMPOTENCY**, then **US6-SAFETY** (4-table RLS-bypass probe).
+3. Run **`008-WORKER`** (distinct `apps/worker/**` tree; `processed_at` claim via `idx_sales_unprocessed`) and **`008-LIFECYCLE`** (test-only + doc) **in parallel** with the US2–US6 chain — the one real post-MVP parallelism win.

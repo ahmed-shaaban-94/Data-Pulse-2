@@ -38,18 +38,18 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1 + Phase 2 (both [GATED] foundational slices) MERGED to main:
-#     - 008-SETUP    → PR #420 (6d01512) — empty SalesModule skeleton
-#     - 008-SCHEMA   → PR #421 (560d16c) — 0012 migration + Drizzle schema
-#     - 008-CONTRACT → PR #422 (7459ea5) — OpenAPI sale contract
+# Status: Phase 1 + Phase 2 + Phase 3 isolation harness MERGED to main:
+#     - 008-SETUP            → PR #420 (6d01512) — empty SalesModule skeleton
+#     - 008-SCHEMA           → PR #421 (560d16c) — 0012 migration + Drizzle schema
+#     - 008-CONTRACT         → PR #422 (7459ea5) — OpenAPI sale contract
+#     - 008-ISOLATION-HARNESS → PR #425 (7a1885e) — sale-fact seed + RLS/sweep
 #   008-SIGNOFF-MONEY-LIB resolved (PR #419). The two [GATED] hard
-#   serialization points are now satisfied, so implementing GREEN slices are
-#   UNBLOCKED. Next dispatchable: 008-ISOLATION-HARNESS (RED seed + sweep) →
-#   008-US1-CAPTURE (MVP first GREEN). US2–US6 serialize through the shared
+#   serialization points are satisfied. 008-US1-CAPTURE (MVP first GREEN) is
+#   IN REVIEW on PR #426. After it merges, US2–US6 serialize through the shared
 #   sales module; 008-WORKER + 008-LIFECYCLE run parallel. Remaining slices
 #   `proposed`. The Money + Temporal Decision Gate is RESOLVED.
 #
-# Updated: 2026-05-30 — Phase 1 + Phase 2 [GATED] slices merged (#420/#421/#422); GREEN slices unblocked.
+# Updated: 2026-05-30 — ISOLATION-HARNESS merged (#425); US1-CAPTURE in review (#426).
 
 version: 1
 spec: 008-sales-transaction-capture
@@ -200,7 +200,9 @@ slices:
   - id: 008-ISOLATION-HARNESS
     task_ids: [T014, T015]
     type: test
-    status: proposed
+    status: merged           # PR #425 merged to main (7a1885e); Group-A RLS sweep GREEN, Group-B operation cases RED placeholders as designed
+    merged_in_pr: 425
+    merged_at_commit: 7a1885e
     approval_required: false
     depends_on: [008-SCHEMA]
     blocks:
@@ -226,7 +228,8 @@ slices:
   - id: 008-US1-CAPTURE
     task_ids: [T030, T031, T032, T033, T034, T035, T036]
     type: feat
-    status: proposed
+    status: in_review        # PR #426 open (branch feat/008-us1-capture, rebased on db8f70d). WSL TC: capture gate 5 suites/8 GREEN; isolation 18 pass + 2 §B.2 void/refund intended-RED (US3/US4). T036 = sweep §B.1 capture cases. row ids via shared newId() UUIDv7.
+    in_review_pr: 426
     approval_required: false
     depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
     blocks:
