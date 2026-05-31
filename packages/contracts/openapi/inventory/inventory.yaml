@@ -524,6 +524,8 @@ components:
       properties:
         items:
           type: array
+          maxItems: 200
+          description: Bounded by the `limit` query parameter ceiling (max 200), symmetric with the request-side caps.
           items:
             $ref: "#/components/schemas/StockMovement"
         nextCursor:
