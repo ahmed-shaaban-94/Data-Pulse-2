@@ -201,10 +201,12 @@ describe("008-LIFECYCLE (T075) — classification + retention recorded in source
   // PROSE, not a column shape — so the durable record lives in the migration
   // header + data-model.md. These secondary assertions prove that record exists
   // (kept lenient: keyword presence, not brittle wording).
-  // repoRoot: __dirname is apps/api/test/catalog/sales/lifecycle → 6 hops up
-  // (lifecycle→sales→catalog→test→api→apps→root). Verified by the GREEN run that
-  // reads both files below; CodeRabbit's "use one fewer .." was a miscount.
-  const repoRoot = path.resolve(__dirname, "../../../../..");
+  // repoRoot: __dirname is apps/api/test/catalog/sales/lifecycle → SIX hops up
+  // (lifecycle→sales→catalog→test→api→apps→root). DO NOT reduce to five: five
+  // resolves to <repo>/apps and the readFileSync calls below ENOENT on
+  // <repo>/apps/packages/... CodeRabbit flagged "use one fewer .." — that is a
+  // miscount; an autofix once applied it and broke the suite (PR #430). Six.
+  const repoRoot = path.resolve(__dirname, "../../../../../..");
 
   it("0012_sales.sql header records business-class + 001-inherited retention", () => {
     const sqlPath = path.join(
