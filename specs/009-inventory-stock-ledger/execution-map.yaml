@@ -228,7 +228,7 @@ slices:
       - apps/api/src/inventory/inventory.controller.ts
       - apps/api/src/inventory/inventory.module.ts   # register the new controller + service in the (currently empty) InventoryModule
       - apps/api/test/inventory/on-hand/*.spec.ts
-      - apps/api/test/inventory/isolation/inventory-sweep.spec.ts   # T034 extends the sweep (un-skips GROUP B read-path object-safety) — F-01-class allowed_files addition
+      - apps/api/test/inventory/isolation/inventory-sweep.spec.ts   # T034: updates the sweep's GROUP B note — read-path object-safety is now covered Docker-FREE in on-hand/read-object-safety.spec.ts; GROUP B retains only the write-path (FR-052) deferral for US2. F-01-class allowed_files addition.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/on-hand inventory/isolation
         expected: >
