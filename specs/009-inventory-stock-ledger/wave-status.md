@@ -2,21 +2,23 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **NOT STARTED** — planning chain complete (specify → clarify → plan → tasks). No slice dispatched. Created 2026-05-31.
+**Status**: **IN PROGRESS** — 7 of 15 slices merged through PR #444 (`8d3e6d9`, 2026-05-31): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL. Both `[GATED]` slices were approved in-session and merged. The MVP read path (US1: compute-on-read on-hand + movement list) and the manual write path (US2: createStockMovement) are live on `main`. Created 2026-05-31.
 
 ---
 
 ## Next recommended action
 
-Dispatch the **MVP path** once the two `[GATED]` slices are approved:
+Dispatch **`009-US3-IDEMPOTENCY`** (T050–T053; depends only on US2's create path T044):
 
-1. **`009-SIGNOFF-QTY-LIB`** (T001) — record the no-`package.json`-dependency quantity decision (SIGN-OFF below). No code.
-2. **`009-SETUP`** (T002) — scaffold the empty `apps/api/src/inventory/` module.
-3. **`009-CONTRACT`** (T010/T011) — **`[GATED]`**, needs explicit in-session approval (`packages/contracts/openapi/inventory/**`).
-4. **`009-SCHEMA`** (T012/T013) — **`[GATED]`**, needs explicit in-session approval (`packages/db/**`, `0014_inventory`).
-5. **`009-ISOLATION-HARNESS`** (T014/T015) → **`009-US1-ONHAND`** (the MVP keystone).
+- `Idempotency-Key` replay — same key + same body ×N → exactly one movement, identical response, on-hand applied once (FR-030, SC-003);
+- divergent body under the same key → deterministic 409, no side-effect (FR-030);
+- backfill/external provenance `(sourceSystem, externalId)` dedup ×N → one movement, not double-applied (FR-031).
 
-Neither `[GATED]` slice dispatches without approval; no GREEN implementing slice dispatches until both merge.
+US4/US5/US6 each depend only on US2 (T044) but all write the shared `inventory.service.ts`, so they are **NOT safely parallel in a shared worktree** (parallel agents share git worktree state) — dispatch serially, or `git worktree add` for true isolation.
+
+**Carried [GATED] deferrals for 009-POLISH / closeout** (both touch `packages/db/**`, outside any per-slice allowed_files — see Active findings #6/#7):
+- movement **outbox emit** (new `INVENTORY_MOVEMENT_*` type in `OUTBOX_EVENT_TYPES`);
+- **established-unit concurrency guard** (DB UNIQUE trigger/constraint or per-key advisory lock).
 
 ---
 
@@ -45,6 +47,8 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 3. **Pharmacy lot/batch/serial/expiry/FEFO (FR-040..042)** — designed-for seam (a future nullable `stock_lot_id` / `stock_serial_id` FK), **gated future decision**; v1 implements none of it. Generic-retail movements never populate it. Addable without rewriting existing movements (SC-009).
 4. **On-hand materialization (FR-003)** — v1 is **compute-on-read SUM**; a materialized `stock_balances` table is permitted later purely as a perf optimization (reconstructible from the ledger), not built in v1 (plan §10).
 5. **SC-010-style perf** — on-hand/movement perf assertions are **report-only** in v1 (no perf env; 005/008 precedent).
+6. **Movement outbox emit (US2/T044)** — `createStockMovement` emits **audit-in-transaction only** (mirrors the shipped 005 catalog write). An async outbox event for inventory movements needs a new `INVENTORY_MOVEMENT_*` type registered in `OUTBOX_EVENT_TYPES` (`packages/db/src/outbox/producer.ts`) — a forbidden `packages/db/**` path outside US2's allowed_files; same shape as the 008 `sale.captured` deferral. **`[GATED]` follow-up for closeout.** (PR #444)
+7. **Established-unit concurrency guard (US2/T044)** — `assertUnitMatchesEstablished` is a best-effort read-before-insert under READ COMMITTED: two concurrent FIRST movements for the same `(store, product)` in different units could both commit, leaving divergent units FR-022 forbids (rare for manual entry). A hard guarantee belongs at the data layer — a UNIQUE `(store_id, tenant_product_ref, stocking_unit)`-style trigger/constraint or a per-key advisory lock — `packages/db/**`, **`[GATED]` follow-up for closeout.** The failure window + remedy are captured in the method docstring. (PR #444)
 
 ---
 
@@ -52,14 +56,14 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 
 | Slice | Tasks | Status | Gate |
 |---|---|---|---|
-| 009-SIGNOFF-QTY-LIB | T001 | pending | `[SIGN-OFF]` |
-| 009-SETUP | T002 | pending | — |
-| 009-CONTRACT | T010, T011 | pending | **`[GATED]`** OpenAPI |
-| 009-SCHEMA | T012, T013 | pending | **`[GATED]`** schema/migration |
-| 009-ISOLATION-HARNESS | T014, T015 | pending | — |
-| 009-US1-ONHAND 🎯 | T030–T034 | pending | — (MVP) |
-| 009-US2-MANUAL | T040–T044 | pending | — |
-| 009-US3-IDEMPOTENCY | T050–T053 | pending | — |
+| 009-SIGNOFF-QTY-LIB | T001 | **merged** (#437 `581708a`) | `[SIGN-OFF]` |
+| 009-SETUP | T002 | **merged** (#438 `9f18621`) | — |
+| 009-CONTRACT | T010, T011 | **merged** (#439 `1aee57f`) | **`[GATED]`** OpenAPI ✅ |
+| 009-SCHEMA | T012, T013 | **merged** (#440 `4d5f1e7`) | **`[GATED]`** schema/migration ✅ |
+| 009-ISOLATION-HARNESS | T014, T015 | **merged** (#442 `c863216`) | — |
+| 009-US1-ONHAND 🎯 | T030–T034 | **merged** (#443 `4449f13`) | — (MVP) |
+| 009-US2-MANUAL | T040–T044 | **merged** (#444 `8d3e6d9`) | — |
+| 009-US3-IDEMPOTENCY | T050–T053 | pending | — (next) |
 | 009-US4-SALELINKED | T060–T064 | pending | — (decoupling proof) |
 | 009-US5-TRANSFER | T070–T073 | pending | — |
 | 009-US6-COUNT | T080–T083 | pending | — |
@@ -69,3 +73,4 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-POLISH | T100–T104 | pending | — |
 
 **15 slices · 45 tasks · 2 `[GATED]` + 1 `[SIGN-OFF]` · 1 new observability signal.**
+**Progress: 7/15 slices merged** (both `[GATED]` approved + merged); MVP read path (US1) + manual write path (US2) live on `main`. Next: US3-IDEMPOTENCY.
