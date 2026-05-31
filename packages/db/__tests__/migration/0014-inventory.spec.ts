@@ -227,23 +227,47 @@ describe("0014_inventory — column shape (quantity numeric, forbidden columns)"
 // CHECK constraints (CodeRabbit #440): reason length + count_correction link
 // ---------------------------------------------------------------------------
 describe("0014_inventory — CHECK constraints", () => {
-  it("rejects a reason longer than 500 chars (stock_movements_reason_length)", async () => {
+  /** The CHECK definition for a named constraint ON stock_movements, or null. */
+  async function checkDef(conname: string): Promise<string | null> {
     if (!env) throw new Error("env not initialized");
-    const r = await env.admin.query<{ conname: string }>(
-      `SELECT conname FROM pg_constraint
-       WHERE conname = 'stock_movements_reason_length' AND contype = 'c'`,
+    const r = await env.admin.query<{ def: string }>(
+      `SELECT pg_get_constraintdef(oid) AS def
+       FROM pg_constraint
+       WHERE conname = $1
+         AND contype = 'c'
+         AND conrelid = 'stock_movements'::regclass`,
+      [conname],
     );
-    expect(r.rows).toHaveLength(1);
+    return r.rows[0]?.def ?? null;
+  }
+
+  it("reason length CHECK bounds reason to <= 500 (definition, scoped to stock_movements)", async () => {
+    const def = await checkDef("stock_movements_reason_length");
+    expect(def).not.toBeNull();
+    // Definition contains the length bound + the 500 ceiling (CodeRabbit: assert
+    // the expression, not just presence).
+    expect(def).toMatch(/char_length/i);
+    expect(def).toContain("500");
   });
 
-  it("declares the count_correction <-> stock_count_id biconditional CHECK", async () => {
-    if (!env) throw new Error("env not initialized");
-    const r = await env.admin.query<{ conname: string }>(
-      `SELECT conname FROM pg_constraint
-       WHERE conname = 'stock_movements_count_correction_link' AND contype = 'c'`,
-    );
-    expect(r.rows).toHaveLength(1);
+  it("count_correction <-> stock_count_id biconditional CHECK (definition, scoped to stock_movements)", async () => {
+    const def = await checkDef("stock_movements_count_correction_link");
+    expect(def).not.toBeNull();
+    // The biconditional names both sides: movement_type = 'count_correction'
+    // and stock_count_id IS NOT NULL.
+    expect(def).toContain("count_correction");
+    expect(def).toMatch(/stock_count_id/i);
   });
+
+  // NOTE — enforcement-by-violating-INSERT (CHECK rejects a bad row) is NOT
+  // asserted at the migration level: a movement row also has FK parents
+  // (tenant_id/store_id -> tenants/stores), so a bare INSERT could fail on the
+  // FK rather than the CHECK, making the assertion ambiguous/flaky. The seeded
+  // path with real FK parents — which can isolate and prove CHECK enforcement
+  // (and the full cross-tenant sweep) — is owned by the next slice,
+  // 009-ISOLATION-HARNESS (T014 seeds tenants A/B + stores X/Y; T015 sweep).
+  // Here we assert the CHECK DEFINITION (the bound + the biconditional), which
+  // is the robust, FK-independent proof at this layer.
 });
 
 // ---------------------------------------------------------------------------
