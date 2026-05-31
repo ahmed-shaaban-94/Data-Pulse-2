@@ -1,0 +1,668 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Inventory — Stock Movement Ledger API
+  version: "1.0.0-draft"
+  description: >
+    Spec 009 Inventory & Stock Movement Ledger contract surface. Defines the
+    Inventory source-of-truth domain the SaaS owns: an append-only
+    `stock_movements` ledger and a derived (compute-on-read) on-hand balance.
+    Built ALONGSIDE the shipped 001/005/008 seams — it reuses the
+    `Idempotency-Key` interceptor, the `sourceSystem + externalId` dedup key,
+    tenant-context/RLS, audit, and the outbox/worker. It does NOT re-invent
+    ingestion.
+
+    DECOUPLED from the gated 008 live loop: v1 does NOT subscribe to
+    `sale.captured`. A movement MAY reference an 008 `sale_id` / `sale_line_id`
+    (or a void/refund terminal event) as PROVENANCE ONLY; the sale-linked
+    backfill reads the CAPTURED (immutable) 008 sale rows directly, never
+    `processed_at`-stamped ones. Automatic decrement and automatic
+    restock-on-void are DEFERRED to a future follow-up (FR-060/FR-025) and are
+    NOT modeled here.
+
+    AUTH SURFACE (plan §4.2): the operator operations are a dashboard /
+    back-office `cookieAuth` surface (the same `dp2_session` cookie scheme as
+    `auth.openapi.yaml` / `outbox.openapi.yaml`) — NOT a POS-device
+    (`/api/pos/v1/...`) surface. The sale-linked BACKFILL is a separate
+    platform/admin-invoked path (`platformAdmin`), not a public route. The
+    principal's resolved tenant + store binding supplies `tenant_id` and
+    `store_id`; body-supplied tenant / store / actor / derived-balance fields
+    are NEVER accepted (Constitution §III/§XII, FR-052).
+
+    Six operations:
+
+      1. `createStockMovement` — append an inbound / outbound / adjustment
+         movement (write-off = a reason-coded outbound). Exact-decimal quantity
+         in the product's single stocking unit; cross-unit is rejected
+         (FR-022). Idempotent via the `Idempotency-Key` header (FR-030). A
+         movement MAY carry sale / terminal-event provenance refs (FR-032/025).
+         Negative stock is ALLOWED and FLAGGED — never rejected for going below
+         zero (FR-024).
+      2. `getOnHand` — the derived on-hand for a `(store, product)`: the signed
+         SUM of its movements (FR-003). The projection carries a
+         `negative_balance` flag (FR-024). Empty key ⇒ deterministic zero
+         (FR-005).
+      3. `listStockMovements` — list the movements behind a balance in a stable
+         order (FR-004). Ad-hoc (null-product) movements are listable
+         (scoped to store, no product filter) but roll up to no product on-hand.
+      4. `createStockTransfer` — an intra-tenant transfer as LINKED movements
+         (a `transfer_out` at source + `transfer_in` at destination sharing a
+         transfer group); mutually discoverable (FR-020). Same-store / zero-qty
+         ⇒ validation error; cross-tenant destination ⇒ non-disclosing 404.
+      5. `recordStockCount` — record a physical count; any variance from the
+         derived on-hand is appended as a `count_correction` movement, never a
+         history rewrite (FR-021).
+      6. `backfillSaleLinkedMovements` — PLATFORM/ADMIN: create outbound (or
+         restock) movements referencing captured 008 sale / terminal-event rows
+         as provenance; idempotent on the provenance pair; re-run converges
+         (FR-031/033). Bounded per request (default 500).
+
+    Quantity: every quantity is an exact-decimal STRING (`numeric(p,s)` at
+    rest); no float appears on the wire. There is NO money / tender / payment
+    field anywhere (out of scope — 010). Timestamps are RFC 3339 / `date-time`
+    in UTC.
+
+    Response bodies are explicit `toBody()` wire projections — the
+    `stock_movements` / `stock_counts` DB shape is NEVER returned directly
+    (Constitution §IV). Internal-only fields and the lineage-only
+    `idempotency_key` column are not projected. The failure vocabulary encodes
+    a canonical `Error` envelope shared verbatim with `auth.openapi.yaml` /
+    `outbox.openapi.yaml`. There is NO PII / payment-class field (§XIV).
+
+servers:
+  - url: https://api.datapulse.example
+    description: Placeholder; the dashboard/back-office surface is same-origin.
+
+security:
+  - cookieAuth: []
+
+tags:
+  - name: inventory
+    description: Stock movement ledger + derived on-hand (operator / cookieAuth surface).
+  - name: inventory-admin
+    description: Platform/admin sale-linked backfill (not a public route).
+
+paths:
+  /api/inventory/v1/stores/{storeId}/movements:
+    post:
+      operationId: createStockMovement
+      tags: [inventory]
+      summary: Append a stock movement (inbound / outbound / adjustment).
+      description: >
+        Append an append-only stock movement at the path-scoped store.
+        `movementType` is one of `inbound` | `outbound` | `adjustment`
+        (write-off is a reason-coded `outbound`;
+        `transfer_out`/`transfer_in`/`count_correction` are produced only by
+        `createStockTransfer` / `recordStockCount`, never accepted here).
+        Quantity is a SIGNED exact-decimal string in the product's single
+        stocking unit (see `DecimalQuantity` — `outbound` carries a negative
+        value, `inbound` positive); a unit inconsistent with the product's
+        stocking unit is rejected (no coercion, FR-022). `adjustment` requires a
+        `reason`. A movement MAY carry `saleId` / `saleLineId` /
+        `terminalEventRef` as provenance only (FR-032/025). Negative resulting
+        on-hand is allowed and flagged, never rejected (FR-024). The `storeId`
+        is the PATH-scoped selection target, authorized server-side against the
+        principal's store-access set; tenant / store-write-authority / actor are
+        resolved server-side and are NEVER taken from the body (Constitution
+        §XII, FR-052). Idempotent via the required `Idempotency-Key` header
+        (FR-030).
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreIdPath"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockMovementCommand"
+      responses:
+        "201":
+          description: Movement appended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovement"
+        "400": { $ref: "#/components/responses/ValidationFailure" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+    get:
+      operationId: listStockMovements
+      tags: [inventory]
+      summary: List the movements behind a balance, in a stable order.
+      description: >
+        List stock movements for the path-scoped store (and optional product) in
+        a stable order (FR-004). `productId` MAY be omitted to list ad-hoc
+        (null-product) movements scoped to the store — those are auditable
+        ledger entries that roll up to no product's on-hand (SC-001). Each entry
+        is a `toBody` projection carrying type, signed quantity, timestamps,
+        acting principal (`createdBy`), reason, and provenance / linkage refs.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreIdPath"
+        - name: productId
+          in: query
+          required: false
+          description: Tenant Catalog product id; omit to list ad-hoc (null-product) movements.
+          schema: { type: string, format: uuid }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: A page of movements in stable order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockMovementList"
+        "400": { $ref: "#/components/responses/ValidationFailure" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+
+  /api/inventory/v1/on-hand/{storeId}/{productId}:
+    get:
+      operationId: getOnHand
+      tags: [inventory]
+      summary: Derived on-hand for a (store, product).
+      description: >
+        The compute-on-read signed SUM of the product's movements at the store
+        (FR-003). A `(store, product)` with no movements returns a deterministic
+        zero (FR-005), never an error. The projection carries a
+        `negativeBalance` flag that is `true` when the derived quantity is below
+        zero (FR-024); on-hand is never a stored mutable value.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreIdPath"
+        - name: productId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The derived on-hand projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnHand"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+
+  /api/inventory/v1/transfers:
+    post:
+      operationId: createStockTransfer
+      tags: [inventory]
+      summary: Transfer stock between stores as linked movements.
+      description: >
+        Create an intra-tenant transfer as LINKED movements — a `transfer_out`
+        at the source store and a `transfer_in` at the destination, sharing a
+        transfer group id so they are mutually discoverable (FR-020/SC-004).
+        Source ≠ destination and quantity > 0 (else validation error). The
+        destination store MUST belong to the same tenant; a cross-tenant
+        destination is a non-disclosing 404 (FR-051). A transfer-out driving
+        the source on-hand below zero is still recorded and flagged, never
+        rejected (FR-024). Idempotent via the `Idempotency-Key` header.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStockTransferCommand"
+      responses:
+        "201":
+          description: Transfer recorded as a linked movement pair.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockTransfer"
+        "400": { $ref: "#/components/responses/ValidationFailure" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+
+  /api/inventory/v1/stores/{storeId}/counts:
+    post:
+      operationId: recordStockCount
+      tags: [inventory]
+      summary: Record a physical count; append a correction movement for any variance.
+      description: >
+        Record a physical stock count for a product at the path-scoped store.
+        Any variance from the derived on-hand is appended as a
+        `count_correction` movement (signed variance) linked to the count; the
+        movement history is NEVER rewritten (FR-021/SC-005). After the count,
+        the derived on-hand equals the counted quantity. A zero-variance count
+        is deterministic (no correction, or an explicit zero-variance record).
+        The `storeId` is the PATH-scoped selection target, authorized
+        server-side; it is never taken from the body (§XII). Idempotent via the
+        `Idempotency-Key` header.
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: "#/components/parameters/StoreIdPath"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordStockCountCommand"
+      responses:
+        "201":
+          description: Count recorded; correction movement (if any) appended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StockCountResult"
+        "400": { $ref: "#/components/responses/ValidationFailure" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+
+  /api/inventory/v1/admin/sale-linked-backfill:
+    post:
+      operationId: backfillSaleLinkedMovements
+      tags: [inventory-admin]
+      summary: "PLATFORM/ADMIN: backfill sale-linked outbound / restock movements."
+      description: >
+        Platform/admin-invoked backfill that creates outbound (or restock)
+        movements referencing CAPTURED 008 sale / terminal-event rows as
+        provenance (FR-032/033). It reads the captured (immutable) sale fact
+        directly — it does NOT subscribe to `sale.captured` and does NOT read
+        `processed_at`-stamped rows (decoupling, SC-002). Dedup is on the
+        provenance pair (`sourceSystem + externalId` / sale-ref); a re-run
+        converges to the same ledger state (no double-apply, FR-031/033). The
+        request is bounded (default 500 movements); over-ceiling is rejected
+        (429). This is NOT a public route — it uses the `platformAdmin` scheme,
+        never `cookieAuth` operator sessions.
+      security:
+        - platformAdmin: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaleLinkedBackfillCommand"
+      responses:
+        "200":
+          description: Backfill result — created vs deduped counts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleLinkedBackfillResult"
+        "400": { $ref: "#/components/responses/ValidationFailure" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFoundOrCrossTenant" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "5XX": { $ref: "#/components/responses/SystemFailure" }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+    platformAdmin:
+      type: http
+      scheme: bearer
+      description: >
+        Platform/admin credential for the sale-linked backfill worker path.
+        NOT an operator session and NOT a POS-device token. Tied to a
+        platform-admin principal; audited.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        Replay-safety key for write operations (FR-030). A replay with the same
+        key + same body returns the prior result with no second movement; a
+        replay with the same key + different body is a 409 conflict. Resolved by
+        the reused 001/005 idempotency interceptor (the manual-movement dedup
+        contract; the backfill additionally dedups on its provenance pair).
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+    StoreIdPath:
+      name: storeId
+      in: path
+      required: true
+      description: Store the request is scoped to; access is authorized server-side.
+      schema: { type: string, format: uuid }
+
+  schemas:
+    # ----- Commands (request bodies) — strict; server-owned fields are NOT accepted (FR-052)
+    CreateStockMovementCommand:
+      type: object
+      additionalProperties: false
+      required: [movementType, quantity, stockingUnit]
+      description: >
+        Strict command. The store is the PATH parameter (`storeId`), authorized
+        server-side; `tenantId`, `createdBy`, `receivedAt`, and any derived
+        balance are resolved server-side. NONE of these are accepted from the
+        body — there is no body `storeId` (Constitution §XII, FR-052).
+      properties:
+        movementType:
+          type: string
+          enum: [inbound, outbound, adjustment]
+          description: Write-off is a reason-coded `outbound`. transfer/count types are produced by their own operations only.
+        quantity:
+          allOf:
+            - $ref: "#/components/schemas/DecimalQuantity"
+          description: >
+            SIGNED quantity in the stocking unit — `inbound` is positive,
+            `outbound` is negative; `movementType` is the semantic label, the
+            sign is authoritative for the on-hand SUM. The server validates that
+            the sign agrees with `movementType` (FR-022).
+        stockingUnit:
+          type: string
+          description: Unit the quantity is expressed in; MUST match the product's stocking unit (cross-unit rejected, FR-022).
+        tenantProductRef:
+          type: [string, "null"]
+          format: uuid
+          description: Resolved Tenant Catalog product. Null for ad-hoc / unresolved references (provenance only; never auto-created — FR-023).
+        reason:
+          type: string
+          description: Required for `adjustment` (and recommended for write-off outbounds); bounded, PII-free.
+        occurredAt:
+          type: string
+          format: date-time
+          description: Business-event time (UTC). Backfilled / out-of-order values are normal; the server clock is the security clock.
+        saleId:
+          type: [string, "null"]
+          format: uuid
+          description: Provenance only — references a CAPTURED 008 sale (FR-032). Never required; never mutates the sale fact.
+        saleLineId:
+          type: [string, "null"]
+          format: uuid
+          description: Provenance only — references a captured 008 sale line.
+        terminalEventRef:
+          type: [string, "null"]
+          format: uuid
+          description: Provenance only — references an 008 void/refund terminal event (restock, FR-025).
+    CreateStockTransferCommand:
+      type: object
+      additionalProperties: false
+      required: [sourceStoreId, destinationStoreId, tenantProductRef, quantity, stockingUnit]
+      description: >
+        Strict command. `sourceStoreId` is the operator's authorized scope
+        (validated server-side against the principal's store-access set — it
+        grants no authority by being in the body, §XII); `destinationStoreId` is
+        a legitimate TARGET reference (not write-authority over the actor's
+        scope). Both resolve within the caller's tenant.
+      properties:
+        sourceStoreId:
+          type: string
+          format: uuid
+          description: Source store; authorized server-side against the principal's store-access set.
+        destinationStoreId:
+          type: string
+          format: uuid
+          description: Target store. MUST be in the same tenant (cross-tenant ⇒ non-disclosing 404) and MUST differ from source.
+        tenantProductRef: { type: string, format: uuid }
+        quantity:
+          allOf:
+            - $ref: "#/components/schemas/DecimalQuantity"
+          description: Strictly positive; a zero-quantity transfer is a validation error.
+        stockingUnit: { type: string }
+        reason: { type: string }
+    RecordStockCountCommand:
+      type: object
+      additionalProperties: false
+      required: [tenantProductRef, countedQuantity, stockingUnit]
+      description: >
+        Strict command. The store is the PATH parameter (`storeId`), authorized
+        server-side; never a body field (§XII).
+      properties:
+        tenantProductRef: { type: string, format: uuid }
+        countedQuantity:
+          allOf:
+            - $ref: "#/components/schemas/DecimalQuantity"
+          description: The physical count (non-negative); the signed variance vs derived on-hand becomes the correction movement.
+        stockingUnit: { type: string }
+        countedAt:
+          type: string
+          format: date-time
+    SaleLinkedBackfillCommand:
+      type: object
+      additionalProperties: false
+      required: [sourceSystem, items]
+      description: Bounded batch (default max 500 items); over-ceiling ⇒ 429.
+      properties:
+        sourceSystem:
+          type: string
+          description: Provenance source for the dedup pair `(sourceSystem, externalId)`.
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/SaleLinkedBackfillItem"
+    SaleLinkedBackfillItem:
+      type: object
+      additionalProperties: false
+      required: [externalId, storeId, quantity, stockingUnit]
+      properties:
+        externalId:
+          type: string
+          description: Stable provenance id paired with `sourceSystem` for dedup.
+        storeId: { type: string, format: uuid }
+        saleId: { type: [string, "null"], format: uuid }
+        saleLineId: { type: [string, "null"], format: uuid }
+        terminalEventRef: { type: [string, "null"], format: uuid }
+        tenantProductRef: { type: [string, "null"], format: uuid }
+        quantity:
+          $ref: "#/components/schemas/DecimalQuantity"
+        stockingUnit: { type: string }
+        direction:
+          type: string
+          enum: [outbound, restock]
+          default: outbound
+          description: outbound = sale decrement; restock = void/refund/return inbound (FR-025).
+
+    # ----- Projections (response bodies) — explicit toBody wire shapes (§IV); NO raw DB entity
+    StockMovement:
+      type: object
+      required: [id, storeId, movementType, quantity, stockingUnit, occurredAt, receivedAt, createdBy]
+      description: >
+        toBody projection of a stock_movements row. The lineage-only
+        `idempotency_key` column and internal fields are NOT projected.
+      properties:
+        id: { type: string, format: uuid }
+        storeId: { type: string, format: uuid }
+        movementType:
+          type: string
+          enum: [inbound, outbound, adjustment, transfer_out, transfer_in, count_correction]
+        quantity:
+          $ref: "#/components/schemas/DecimalQuantity"
+        stockingUnit: { type: string }
+        tenantProductRef: { type: [string, "null"], format: uuid }
+        reason: { type: [string, "null"] }
+        occurredAt: { type: string, format: date-time }
+        receivedAt: { type: string, format: date-time }
+        createdBy:
+          type: string
+          format: uuid
+          description: >
+            The acting principal's user id (FR-004 "acting principal"). An
+            internal actor reference — NOT customer PII; the full audit record
+            lives in the audit pipeline (§XIII).
+        saleId: { type: [string, "null"], format: uuid }
+        saleLineId: { type: [string, "null"], format: uuid }
+        terminalEventRef: { type: [string, "null"], format: uuid }
+        transferGroupId: { type: [string, "null"], format: uuid }
+        stockCountId: { type: [string, "null"], format: uuid }
+    StockMovementList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          description: Bounded by the `limit` query parameter ceiling (max 200), symmetric with the request-side caps.
+          items:
+            $ref: "#/components/schemas/StockMovement"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page; null when exhausted.
+    OnHand:
+      type: object
+      required: [storeId, productId, quantity, negativeBalance]
+      description: >
+        Derived on-hand projection. `quantity` is the compute-on-read signed
+        SUM (FR-003). `negativeBalance` is true when `quantity` < 0 (FR-024);
+        on-hand is never a stored mutable value.
+      properties:
+        storeId: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        quantity:
+          $ref: "#/components/schemas/DecimalQuantity"
+        stockingUnit: { type: [string, "null"] }
+        negativeBalance:
+          type: boolean
+          description: True when the derived quantity is below zero (allow-and-flag, FR-024).
+    StockTransfer:
+      type: object
+      required: [transferGroupId, outbound, inbound]
+      properties:
+        transferGroupId: { type: string, format: uuid }
+        outbound: { $ref: "#/components/schemas/StockMovement" }
+        inbound: { $ref: "#/components/schemas/StockMovement" }
+    StockCountResult:
+      type: object
+      required: [stockCountId, countedQuantity, variance]
+      properties:
+        stockCountId: { type: string, format: uuid }
+        countedQuantity:
+          $ref: "#/components/schemas/DecimalQuantity"
+        variance:
+          allOf:
+            - $ref: "#/components/schemas/DecimalQuantity"
+          description: Signed variance (counted − derived on-hand). Zero ⇒ no correction movement.
+        correctionMovement:
+          oneOf:
+            - $ref: "#/components/schemas/StockMovement"
+            - type: "null"
+          description: The appended count_correction movement, or null on zero variance.
+    SaleLinkedBackfillResult:
+      type: object
+      required: [created, deduped]
+      properties:
+        created:
+          type: integer
+          description: Movements newly appended this run.
+        deduped:
+          type: integer
+          description: Items skipped because their provenance pair already applied (idempotent re-run, FR-033).
+
+    # ----- Shared
+    DecimalQuantity:
+      type: string
+      pattern: '^-?\d+(\.\d+)?$'
+      description: >
+        Exact-decimal quantity as a STRING (`numeric(p,s)` at rest); no float on
+        the wire. May be negative on a derived on-hand (allow-and-flag, FR-024).
+        There is NO money / currency / tender field anywhere in this contract.
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `outbox.openapi.yaml` (used verbatim — no extra
+        fields, no `details`). Cross-tenant / out-of-scope refusals are
+        non-disclosing (§II/§XII) — they never enumerate the underlying cause.
+        NOTE: negative resulting stock is NOT an error (allow-and-flag, FR-024)
+        — there is no error code for going below zero.
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: >
+        400 — strict-schema validation failure: unknown keys, malformed values,
+        a non-positive / zero transfer quantity, a same-store transfer, a
+        cross-unit quantity (FR-022), or a missing `reason` on an adjustment.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 401 — no valid session / credential.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: 403 — authenticated but insufficient role within the resolved tenant.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFoundOrCrossTenant:
+      description: >
+        404 — the target (movement / on-hand / store / product / sale ref /
+        destination store) does not exist OR belongs to another tenant. The two
+        are INDISTINGUISHABLE by design (non-disclosing, §II/§XII, FR-051).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    IdempotencyConflict:
+      description: >
+        409 — an `Idempotency-Key` replay with a DIFFERENT body (FR-030), or a
+        provenance-pair conflict on the backfill path.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: 429 — backfill request exceeded the per-request ceiling (default 500 items).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: 5xx — internal failure; the cause is recorded server-side under `request_id`.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
