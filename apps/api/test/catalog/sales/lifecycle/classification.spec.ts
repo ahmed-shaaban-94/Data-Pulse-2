@@ -31,6 +31,9 @@
  */
 import "reflect-metadata";
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+
 import { getTableConfig } from "drizzle-orm/pg-core";
 
 import {
@@ -198,8 +201,9 @@ describe("008-LIFECYCLE (T075) — classification + retention recorded in source
   // PROSE, not a column shape — so the durable record lives in the migration
   // header + data-model.md. These secondary assertions prove that record exists
   // (kept lenient: keyword presence, not brittle wording).
-  const fs = require("node:fs") as typeof import("node:fs");
-  const path = require("node:path") as typeof import("node:path");
+  // repoRoot: __dirname is apps/api/test/catalog/sales/lifecycle → 6 hops up
+  // (lifecycle→sales→catalog→test→api→apps→root). Verified by the GREEN run that
+  // reads both files below; CodeRabbit's "use one fewer .." was a miscount.
   const repoRoot = path.resolve(__dirname, "../../../../../..");
 
   it("0012_sales.sql header records business-class + 001-inherited retention", () => {
