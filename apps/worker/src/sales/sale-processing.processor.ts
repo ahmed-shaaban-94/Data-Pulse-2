@@ -178,10 +178,12 @@ export class SaleProcessingProcessor {
           );
           const row = existing.rows[0];
           if (!row || row.processed_at === null) {
-            // The sale exists but is still unprocessed despite the UPDATE
-            // touching no row — only possible under a concurrent claim. The
-            // converged state is whatever the winner wrote; surface as not yet
-            // resolvable so the job retries rather than reporting a false state.
+            // The UPDATE touched no row yet the sale still reads unprocessed:
+            // another worker concurrently claimed the same sale (both txns
+            // initially saw processed_at IS NULL). Throwing forces a retry,
+            // which converges to the winner's committed state — or succeeds if
+            // that concurrent claim rolled back. Intentional: never report a
+            // false resolved state.
             throw new SaleProcessingNotFoundError();
           }
           return {

@@ -66,26 +66,21 @@ beforeAll(async () => {
     });
 
     // Mismatching sale: lines sum (40.00 + 60.00 = 100.0000) != pos_total 99.50.
-    await env.admin.query(
-      `INSERT INTO sales
-         (id, tenant_id, store_id, currency_code, pos_total, occurred_at,
-          business_date, source_system, external_id, payload_hash,
-          processed_at, mismatch_flag, created_by)
-       VALUES ($1, $2, $3, 'USD', '99.50'::numeric, now(),
-               (now() AT TIME ZONE 'UTC')::date, 'pos-x', 'ext-mismatch-1',
-               $4, NULL, NULL, $5)`,
-      [SALE_MISMATCH, TENANT_A, STORE_A, "0".repeat(64), ACTOR_A],
-    );
-    for (const amt of ["40.00", "60.00"]) {
-      await env.admin.query(
-        `INSERT INTO sale_lines
-           (id, sale_id, tenant_id, store_id, line_name, unit_price,
-            currency_code, quantity, line_amount, unit, tenant_product_ref)
-         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::numeric, 'USD',
-                 '1'::numeric, $5::numeric, 'each', NULL)`,
-        [SALE_MISMATCH, TENANT_A, STORE_A, `l-${amt}`, amt],
-      );
-    }
+    // seedUnprocessedSale does not validate sum(lineAmounts) == posTotal, so it
+    // seeds the mismatch directly (TENANT_A/STORE_A already exist via SALE_MATCH
+    // above; ON CONFLICT DO NOTHING makes the re-seed idempotent).
+    await seedUnprocessedSale(env.admin, {
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      saleId: SALE_MISMATCH,
+      actorId: ACTOR_A,
+      slugSuffix: "a-mismatch",
+      currencyCode: "USD",
+      posTotal: "99.50",
+      lineAmounts: ["40.00", "60.00"],
+      sourceSystem: "pos-x",
+      externalId: "ext-mismatch-1",
+    });
 
     // Tenant B sale (cross-tenant isolation probe).
     await seedUnprocessedSale(env.admin, {

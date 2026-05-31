@@ -107,8 +107,13 @@ export async function readProcessingState(
     [saleId],
   );
   const row = r.rows[0];
+  if (!row) {
+    // Tests always call this after seeding the sale; a miss means a test-setup
+    // bug (wrong saleId), so fail loudly rather than masking it as nulls.
+    throw new Error(`readProcessingState: sale ${saleId} not found`);
+  }
   return {
-    processedAt: row?.processed_at ?? null,
-    mismatchFlag: row?.mismatch_flag ?? null,
+    processedAt: row.processed_at,
+    mismatchFlag: row.mismatch_flag,
   };
 }
