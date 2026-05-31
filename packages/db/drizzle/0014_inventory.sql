@@ -159,6 +159,17 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   -- Provenance pair is all-or-nothing (a half-pair cannot dedup).
   CONSTRAINT stock_movements_provenance_pair
     CHECK ((source_system IS NULL) = (external_id IS NULL)),
+  -- `reason` is a bounded short operator note (write-off / adjustment / count
+  -- context); enforce the documented bound at the DB layer (§III) and keep it
+  -- well under any free-text size that could smuggle PII (§XIV). No existing
+  -- char_length CHECK precedent in repo migrations; 500 is a generous note bound.
+  CONSTRAINT stock_movements_reason_length
+    CHECK (reason IS NULL OR char_length(reason) <= 500),
+  -- A count_correction movement MUST link a stock_count, and ONLY a
+  -- count_correction may (FR-021): movement_type = 'count_correction' IFF
+  -- stock_count_id IS NOT NULL. Database-enforced invariant (§III).
+  CONSTRAINT stock_movements_count_correction_link
+    CHECK ((movement_type = 'count_correction') = (stock_count_id IS NOT NULL)),
   -- Cross-tenant integrity: a count_correction's count must be in the SAME
   -- tenant + store (composite FK into stock_counts).
   CONSTRAINT fk_stock_movements_count_tenant_store

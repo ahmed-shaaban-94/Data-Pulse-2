@@ -174,6 +174,18 @@ export const stockMovements = pgTable(
       "stock_movements_provenance_pair",
       sql`(${t.sourceSystem} IS NULL) = (${t.externalId} IS NULL)`,
     ),
+    // `reason` is a bounded short operator note (§III DB-enforced bound; §XIV
+    // PII-safety). 500 chars — generous for a note, no repo char_length precedent.
+    check(
+      "stock_movements_reason_length",
+      sql`${t.reason} IS NULL OR char_length(${t.reason}) <= 500`,
+    ),
+    // count_correction IFF stock_count_id set (FR-021): only a count_correction
+    // links a stock_count, and every count_correction must (§III invariant).
+    check(
+      "stock_movements_count_correction_link",
+      sql`(${t.movementType} = 'count_correction') = (${t.stockCountId} IS NOT NULL)`,
+    ),
     // ONE movement-level dedup index (FR-031): backfill / external-origin
     // provenance. Partial — manual movements (NULL provenance) are NOT deduped
     // here (the interceptor handles them). No manual idempotency_key index.

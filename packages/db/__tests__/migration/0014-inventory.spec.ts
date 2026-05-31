@@ -224,6 +224,29 @@ describe("0014_inventory — column shape (quantity numeric, forbidden columns)"
 });
 
 // ---------------------------------------------------------------------------
+// CHECK constraints (CodeRabbit #440): reason length + count_correction link
+// ---------------------------------------------------------------------------
+describe("0014_inventory — CHECK constraints", () => {
+  it("rejects a reason longer than 500 chars (stock_movements_reason_length)", async () => {
+    if (!env) throw new Error("env not initialized");
+    const r = await env.admin.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+       WHERE conname = 'stock_movements_reason_length' AND contype = 'c'`,
+    );
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it("declares the count_correction <-> stock_count_id biconditional CHECK", async () => {
+    if (!env) throw new Error("env not initialized");
+    const r = await env.admin.query<{ conname: string }>(
+      `SELECT conname FROM pg_constraint
+       WHERE conname = 'stock_movements_count_correction_link' AND contype = 'c'`,
+    );
+    expect(r.rows).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RLS: enabled + forced + fail-closed; append-only (SELECT + INSERT only)
 // ---------------------------------------------------------------------------
 describe("0014_inventory — RLS enabled, forced, append-only, fail-closed", () => {
