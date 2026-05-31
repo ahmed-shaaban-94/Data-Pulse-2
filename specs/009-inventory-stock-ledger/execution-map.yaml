@@ -32,9 +32,12 @@
 # (R3, mirrors 008 gate A.6). If a big-decimal library becomes necessary, that
 # is a SEPARATE [GATED] package.json decision — stop and request approval.
 #
-# ONE new observability signal: the negative-balance signal (flag + Prometheus
-# counter) — NOT in the constitution §VII named list, consciously introduced
-# (plan §3.3, T045). Registered with the negative-balance-handling slice.
+# ONE new observability signal: the negative-balance signal (flag + a new
+# OpenTelemetry meter.createCounter in api.metrics.ts, exported via the
+# Prometheus exporter) — NOT in the constitution §VII named list, consciously
+# introduced (plan §3.3, T045). Labels follow the existing api.metrics.ts
+# allowlist (closed, low-cardinality, PII-free — NOT tenant/store).
+# Registered with the negative-balance-handling slice.
 #
 # Schema reference: docs/agent-os/slice-schema.yaml
 # Wave summary:     specs/009-inventory-stock-ledger/wave-status.md
@@ -366,16 +369,17 @@ slices:
     agent: sonnet-api
     allowed_files:
       - apps/api/src/inventory/inventory.service.ts
-      - apps/api/src/observability/metrics/api.metrics.ts   # CONFIRMED path (apps/api/src/observability/metrics/ holds api.metrics.ts + db.metrics.ts) — register the negative-balance Counter here
+      - apps/api/src/observability/metrics/api.metrics.ts   # CONFIRMED path (holds api.metrics.ts + db.metrics.ts) — add a NEW meter.createCounter here (no such counter exists yet); follow the existing registrar + assertMetricLabels pattern
       - apps/api/test/inventory/signal/negative-balance.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/signal
-        expected: GREEN — on-hand projection carries negative_balance flag AND a Prometheus counter (labelled tenant/store, PII-free) increments on outbound-below-zero; never an error (FR-024/R2, plan §3.3).
+        expected: GREEN — on-hand projection carries negative_balance flag AND a NEW OpenTelemetry meter.createCounter (labels = closed low-cardinality PII-free set per the assertMetricLabels allowlist, NOT tenant/store) increments on outbound-below-zero; never an error (FR-024/R2, plan §3.3).
         docker_required: true
     stop:
       - standing-rules universal stops
       - "stop if the negative-balance signal is named to collide with an existing §VII signal — it is a NEW category, register it cleanly (plan §3.3)"
-      - "metrics module path is apps/api/src/observability/metrics/api.metrics.ts (CONFIRMED at review) — register the Counter alongside the existing api.metrics registrars"
+      - "metrics module path is apps/api/src/observability/metrics/api.metrics.ts (CONFIRMED at review) — add a NEW meter.createCounter (no such counter exists yet) following the existing registrar + assertMetricLabels pattern"
+      - "stop if the counter is given a tenant_id/store_id label — the assertMetricLabels allowlist forbids unregistered labels and per-tenant labels are high-cardinality + PII-adjacent; use a closed low-cardinality reason-style label (precedent: tenant_context_failure_total labels by reason)"
     parallel_safety: serialize   # touches inventory.service.ts + shared metrics module
 
   - id: 009-RESTOCK

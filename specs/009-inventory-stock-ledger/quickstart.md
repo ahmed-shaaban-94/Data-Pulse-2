@@ -50,8 +50,8 @@ For each implementing slice, the test suite MUST cover:
 
 ```bash
 # from repo root
-pnpm --filter @datapulse/api lint
-pnpm --filter @datapulse/api test -- inventory
+pnpm --filter @data-pulse-2/api lint
+pnpm --filter @data-pulse-2/api test -- inventory
 # Docker-less local: MIGRATION_TEST_ALLOW_SKIP=1 where supported; CI runs Testcontainers
 ```
 

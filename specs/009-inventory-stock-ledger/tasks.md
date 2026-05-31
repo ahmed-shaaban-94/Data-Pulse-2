@@ -153,7 +153,7 @@ The five owner decisions (negative-stock, quantity/unit, restock, product identi
 
 ### 12.1 New observability signal (lands with the first outbound-below-zero path)
 
-- [ ] T045 [P] [TC] RED→GREEN — `apps/api/test/inventory/signal/negative-balance.spec.ts`: an outbound driving on-hand below zero → the on-hand projection carries the `negative_balance` flag **and** a **Prometheus counter** of negative-balance occurrences increments (labelled tenant/store, PII-free); never an error (FR-024, R2, plan §3.3). Then register the counter in the api/worker metrics. Predecessors: T044. Acceptance: flag present on the projection; counter registered + incremented; no parallel naming.
+- [ ] T045 [P] [TC] RED→GREEN — `apps/api/test/inventory/signal/negative-balance.spec.ts`: an outbound driving on-hand below zero → the on-hand projection carries the `negative_balance` flag **and** a **new OpenTelemetry counter** (`meter.createCounter`) of negative-balance occurrences increments; never an error (FR-024, R2, plan §3.3). Then register the counter in `apps/api/src/observability/metrics/api.metrics.ts` alongside the existing registrars (follow the `meter.createCounter` + `assertMetricLabels` pattern; labels must be a CLOSED low-cardinality PII-free set — e.g. a `reason`-style label — **NOT** `tenant_id`/`store_id`, which the allowlist forbids). Predecessors: T044. Acceptance: flag present on the projection; counter registered (passes `assertMetricLabels`) + incremented; no parallel naming.
 
 ### 12.2 Void/refund/return → restock (manual/backfill)
 
@@ -217,6 +217,6 @@ T010 (OpenAPI) and T013 (migration/schema) each require explicit approval and la
 - **Total**: 45 tasks (T001–T002 setup; T010–T015 foundational incl. 2 `[GATED]`; T030–T083 + T063b the six user stories; T045 signal; T090–T091 restock; T095 lifecycle; T100–T104 polish).
 - **Per story**: US1=5 (T030–T034), US2=5 (T040–T044), US3=4 (T050–T053), US4=6 (T060–T064 incl. T063b worker tenant-context), US5=4 (T070–T073), US6=4 (T080–T083).
 - **`[GATED]`**: 2 (T010 OpenAPI, T013 migration/schema) + 1 `[SIGN-OFF]` (T001 no-dependency).
-- **New observability signal**: 1 (negative-balance flag + Prometheus counter, T045).
+- **New observability signal**: 1 (negative-balance flag + a new OpenTelemetry `meter.createCounter` in `api.metrics.ts`, T045).
 - **MVP scope**: US1 + Foundational.
 - **Parallel**: all per-story RED tests `[P]`; US4 ∥ US5 ∥ US6; contract ∥ schema-shape in Foundational.

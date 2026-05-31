@@ -1,6 +1,6 @@
 # Implementation Plan: Inventory & Stock Movement Ledger
 
-**Branch**: `009-inventory-stock-ledger` (spec dir; current git branch `docs/claude-md-008-closed`) | **Date**: 2026-05-31 | **Spec**: [spec.md](./spec.md)
+**Branch**: `docs/009-inventory-stock-ledger` (spec dir: `009-inventory-stock-ledger`) | **Date**: 2026-05-31 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification at [`spec.md`](./spec.md); five owner decisions resolved in [`spec.md` §Clarifications](./spec.md) (Session 2026-05-31).
 
@@ -74,7 +74,7 @@ Anchored to `.specify/memory/constitution.md` v3.0.1. 009 is the **first feature
 | IV. Contract-first POS integration | PASS-with-gate | The inventory OpenAPI contract is a **`[GATED]`** slice (not authored here). No raw DB entities in responses — `toBody()` projection (binds plan/tasks). `security` per §4.2 (cookieAuth operator surface + platform backfill). |
 | V. Async work in workers | PASS | The sale-linked **backfill** and any future auto-decrement (FR-060) run off-request in a worker carrying `tenantId`/`storeId`/`correlationId`, tenant context set before DB access. Inline movement creation stays synchronous (validation + single append). |
 | VI. Test-first quality | PASS-with-binding | SC-001..009 + the **mandatory RLS-bypass probe** (wrong-tenant GUC ⇒ zero rows) on the new movement table, cross-tenant + cross-store sweep, malicious-override (FR-052), idempotency-replay + backfill re-run (FR-031/033); RED before GREEN. |
-| VII. Observable systems | PASS-with-new-signal | **009 introduces ONE new signal: the negative-balance signal** (FR-024) — a per-`(tenant, store, product)` flag on the balance **and** a Prometheus counter of negative-balance occurrences. Not in §VII's named list; consciously added (§3.3). All other logging reuses request/correlation-id; no secret/PII in logs. |
+| VII. Observable systems | PASS-with-new-signal | **009 introduces ONE new signal: the negative-balance signal** (FR-024) — a per-`(tenant, store, product)` flag on the balance **and** a new OpenTelemetry counter (`meter.createCounter`, exported via the Prometheus exporter) of negative-balance occurrences. Labels follow the existing `api.metrics.ts` allowlist (closed, low-cardinality, PII-free — NOT tenant/store, which the `assertMetricLabels` allowlist forbids). Not in §VII's named list; consciously added (§3.3). All other logging reuses request/correlation-id; no secret/PII in logs. |
 | VIII. Reproducible & versioned releases | PASS-with-gate | New schema/migration (`0014+`) is **`[GATED]`** + reversible (paired `*.down.sql`, lock-duration reviewed); none authored here. Quantity value object adds **no dependency** (§10). |
 | IX. Source-of-truth model | PASS (exercised) | 009 **owns** Inventory truth (movement ledger). Reads Tenant Catalog product (reference) + 008 sale fact (provenance) **read-only**; never writes either. Cross-layer write forbidden (FR-023 no auto-create of catalog product). |
 | X. Retail temporal semantics | PASS | Movements carry `occurredAt` (business event) + `receivedAt` (server clock); backfilled/out-of-order movements accepted (the decoupling premise). Storage UTC `TIMESTAMPTZ`; security clock = server clock. |
@@ -106,12 +106,12 @@ Per Constitution Working Agreement ([`.specify/memory/architecture-impact.md`](.
 - **`[GATED]` OpenAPI contract** — the inventory contract under `packages/contracts/openapi/**` requires explicit per-slice approval (§IV/§VIII, Standing Rules §3). Its own slice, before any implementing slice's GREEN. **Not created by this plan.**
 - **`[GATED]` SQL migration** — the `0014+` migration creating the movement-ledger table(s) + their fail-closed RLS policies (§VIII). Paired `*.down.sql`, reviewed for lock duration. Its own slice. **Not created by this plan.**
 - **Isolation-harness extension** — every new movement / on-hand / transfer / count operation MUST be added to the cross-tenant + cross-store sweep, and a raw-SQL **RLS-bypass probe** added for the new table (§VI).
-- **New observability signal registration** — the negative-balance signal (§3.3) must land registered (Prometheus counter + the balance flag) with the slice that introduces negative-balance handling; §VII requires it be named, not ad-hoc.
+- **New observability signal registration** — the negative-balance signal (§3.3) must land registered (a new OpenTelemetry `meter.createCounter` in `api.metrics.ts` + the balance flag) with the slice that introduces negative-balance handling; §VII requires it be named, not ad-hoc.
 - **Per-tenant resource-isolation posture** — the backfill batch bound (500/req initial default) must land documented with the backfill slice.
 
 ### 3.3 New observability signals
 
-**ONE new signal — the negative-balance signal (FR-024).** Unlike 008 (which reused named signals), 009's allow-and-flag policy requires a signal that does **not** exist in the constitution §VII named list (queue lag, failed-job, auth-failure, RLS failures, POS sync lag, duplicate-event, unknown-item, reconciliation-mismatch). It manifests as **both**: (a) a per-`(tenant, store, product)` **negative-balance flag** queryable on the on-hand projection, and (b) a **Prometheus counter** of negative-balance occurrences (labelled by tenant/store, PII-free). Registered with the negative-balance-handling slice. No other new metric category.
+**ONE new signal — the negative-balance signal (FR-024).** Unlike 008 (which reused named signals), 009's allow-and-flag policy requires a signal that does **not** exist in the constitution §VII named list (queue lag, failed-job, auth-failure, RLS failures, POS sync lag, duplicate-event, unknown-item, reconciliation-mismatch). It manifests as **both**: (a) a per-`(tenant, store, product)` **negative-balance flag** queryable on the on-hand projection, and (b) a **new OpenTelemetry counter** of negative-balance occurrences (`meter.createCounter` in `api.metrics.ts`, exported via the Prometheus exporter; labels per the existing allowlist — closed, low-cardinality, PII-free — NOT tenant/store). Registered with the negative-balance-handling slice. No other new metric category.
 
 ---
 
@@ -130,7 +130,7 @@ Per Constitution Working Agreement ([`.specify/memory/architecture-impact.md`](.
 | 008 sale fact (provenance target) | **Shipped** — `sales`/`sale_lines`/void/refund on `main`; composite FK `(sale_id, tenant_id, store_id) → sales(id, tenant_id, store_id)` | **Read-only as provenance**; a sale-linked movement carries `(sale_id, tenant_id, store_id)` (or stays nullable provenance) — 009 never writes the sale fact |
 | Movement-ledger schema | **NOT shipped** — highest migration `0013`; no inventory schema anywhere | **New + `[GATED]`** — Drizzle schema + `0014+` migration, its own slice |
 | Inventory OpenAPI contract | **NOT shipped** | **New + `[GATED]`** — its own slice; designed in `contracts/README.md`, YAML not authored here |
-| Negative-balance signal | **NOT shipped** — not in §VII named list | **New** — Prometheus counter + balance flag (§3.3) |
+| Negative-balance signal | **NOT shipped** — not in §VII named list | **New** — OpenTelemetry `meter.createCounter` (in `api.metrics.ts`) + balance flag (§3.3) |
 
 ### 4.2 Audience + auth — operator surface, NOT a POS-device route
 
@@ -215,7 +215,7 @@ A likely slice order (the authoritative ordered list is `tasks.md` / `execution-
 3. **Isolation harness extension** — cross-tenant/cross-store sweep + RLS-bypass probe for the new table (RED).
 4. **On-hand read + movement list (US1)** — compute-on-read SUM + stable-order listing (RED→GREEN).
 5. **Manual movements + idempotency (US2/US3)** — inbound/outbound/adjustment + `Idempotency-Key` dedup + mass-assignment ban + audit.
-6. **Negative-balance signal** — flag + Prometheus counter (lands with the first outbound-below-zero path).
+6. **Negative-balance signal** — flag + a new OpenTelemetry `meter.createCounter` in `api.metrics.ts` (lands with the first outbound-below-zero path).
 7. **Sale-linked outbound via reference + backfill (US4)** — provenance reference, worker backfill, `sourceSystem+externalId`/sale-ref dedup, decoupling test (008 loop unwired).
 8. **Transfers (US5)** — linked outbound/inbound movements + cross-tenant safety.
 9. **Stock count + variance correction (US6)** — count → correction movement, no history rewrite.

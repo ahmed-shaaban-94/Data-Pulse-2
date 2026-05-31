@@ -22,7 +22,7 @@ Neither `[GATED]` slice dispatches without approval; no GREEN implementing slice
 
 ## SIGN-OFF Decisions
 
-- **T001 — quantity value object adds NO `package.json` dependency.** Quantity is a string-backed exact-decimal value object round-tripped to `numeric(p,s)` (R3, mirrors 008 gate A.6). v1 sums quantities in a single stocking unit (no cross-unit conversion, FR-022), so no big-decimal library is needed. **Anticipated verdict: no dependency added** — *to be CONFIRMED by T001's `pnpm --filter @data-pulse-2/api build` verification before 009-SCHEMA dispatches (this is the expected outcome, not yet a confirmed result).* If a big-decimal lib ever becomes necessary, that is a SEPARATE `[GATED]` `package.json` decision — STOP and request approval.
+- **T001 — owner DECISION: v1 WILL NOT add a `package.json` dependency for Quantity.** Quantity is a string-backed exact-decimal value object round-tripped to `numeric(p,s)` (R3, mirrors 008 gate A.6); v1 sums quantities in a single stocking unit with no cross-unit conversion (FR-022), so no big-decimal library is needed. **VERIFICATION step (when T001 dispatches):** `pnpm --filter @data-pulse-2/api build` must succeed with no dependency added — this merely confirms compliance with the decision; it does not re-open it. If a big-decimal lib ever becomes necessary, that is a SEPARATE `[GATED]` `package.json` decision — STOP and request approval.
 
 ---
 
@@ -40,7 +40,7 @@ Neither `[GATED]` slice dispatches without approval; no GREEN implementing slice
 
 These are **scope decisions, not blockers** — the planned v1 work is complete and correct as specified.
 
-1. **Automatic sale-event decrement (FR-060)** — deferred to a future **008-live-loop / 009-sale-consumer** slice. Depends on the producer binding + `sale.captured` added to `OUTBOX_EVENT_TYPES` + `SaleWorker.start()` (the 008 documented deferral). v1 ships only the **manual/backfill** sale-linked outbound (US4), which reads **captured** 008 sale rows — never `processed_at`-stamped (R8). Addable without redesigning the ledger (SC-008).
+1. **Automatic sale-event decrement (FR-060)** — deferred to a future **008-live-loop / 009-sale-consumer** slice. Depends on the producer binding + `sale.captured` added to `OUTBOX_EVENT_TYPES` + `SaleWorker.start()` (the 008 documented deferral). v1 ships only the **manual/backfill** sale-linked outbound (US4). Because that 008 loop is unwired, captured sale rows have **`processed_at = NULL`**; the backfill therefore reads rows in the **`captured`** state (`processed_at IS NULL`) and **intentionally does NOT read or wait for any row with a non-NULL `processed_at`** (R8). This is why 009 needs nothing from the gated loop. Addable without redesigning the ledger (SC-008).
 2. **Automatic restock-on-void (FR-025)** — deferred with #1; v1 ships only the **manual/backfill** restock (T090/T091).
 3. **Pharmacy lot/batch/serial/expiry/FEFO (FR-040..042)** — designed-for seam (a future nullable `stock_lot_id` / `stock_serial_id` FK), **gated future decision**; v1 implements none of it. Generic-retail movements never populate it. Addable without rewriting existing movements (SC-009).
 4. **On-hand materialization (FR-003)** — v1 is **compute-on-read SUM**; a materialized `stock_balances` table is permitted later purely as a perf optimization (reconstructible from the ledger), not built in v1 (plan §10).
