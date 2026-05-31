@@ -105,6 +105,8 @@ import {
 } from "./email/email.worker";
 import { AuditFanoutProcessor, AUDIT_DB, type AuditDbLike } from "./audit/audit-fanout.processor";
 import { AuditWorker } from "./audit/audit.worker";
+import { SaleProcessingProcessor } from "./sales/sale-processing.processor";
+import { SaleWorker } from "./sales/sale.worker";
 import {
   DrizzleAuditDbAdapter,
   NoOpAuditDbAdapter,
@@ -325,6 +327,52 @@ export function auditDbProviderFactory(wrapper: AuditDbPool): AuditDbLike {
     return new NoOpAuditDbAdapter();
   }
   return new DrizzleAuditDbAdapter(pool);
+}
+
+/**
+ * Factory for the `SaleProcessingProcessor` provider (008 WIRING).
+ *
+ * The processor takes a RAW `pg.Pool` (not a seam like `AUDIT_DB`). We REUSE
+ * the existing `AuditDbPool` wrapper rather than creating a second Postgres
+ * pool — the module's design explicitly shares one pool across the audit /
+ * outbox / sales pipelines (see `auditRetentionRepoProviderFactory` and
+ * `drainerProcessorProviderFactory`, which do the same). Lifecycle stays on
+ * `AuditDbPool.onModuleDestroy`; this factory never owns the pool.
+ *
+ * Null-pool path: `wrapper.pool === null` is the safe non-prod / no-Redis /
+ * no-DB path, which by the module's truth table is ALWAYS paired with
+ * `NoOpWorkerFactory`. The `SaleWorker` on that path never consumes a job, so
+ * `process()` — the only method that touches the pool — never runs. We pass
+ * `wrapper.pool as Pool` so the processor is still constructible (Nest needs a
+ * value); any path that actually consumes (REDIS_URL set) forces
+ * `pgPoolProviderFactory` to guarantee a non-null pool via the
+ * consume-without-persist guard. We do NOT change the processor's constructor.
+ *
+ * Exported so tests can call it directly without booting Nest DI.
+ */
+export function saleProcessingProcessorProviderFactory(
+  wrapper: AuditDbPool,
+): SaleProcessingProcessor {
+  return new SaleProcessingProcessor(wrapper.pool as Pool);
+}
+
+/**
+ * Factory for the `SaleWorker` provider (008 WIRING).
+ *
+ * Mirrors how `AuditWorker` is wired, but `SaleWorker`'s constructor takes its
+ * collaborators positionally (`processor, workerFactory`) with no `@Inject`
+ * token decorator, so we construct it explicitly here injecting the processor
+ * and the shared `WORKER_FACTORY`. The same `WorkerFactory` instance
+ * (`BullMqWorkerFactory` in prod, `NoOpWorkerFactory` in dev) is shared with
+ * `EmailWorker` / `AuditWorker`.
+ *
+ * Exported so tests can call it directly.
+ */
+export function saleWorkerProviderFactory(
+  processor: SaleProcessingProcessor,
+  workerFactory: WorkerFactory,
+): SaleWorker {
+  return new SaleWorker(processor, workerFactory);
 }
 
 /**
@@ -575,6 +623,35 @@ export class OutboxPendingGaugeRegistrar implements OnModuleInit, OnModuleDestro
     AuditFanoutProcessor,
     AuditWorker,
 
+    // ── Sale-processing pipeline (008 WIRING) ─────────────────────────
+    //
+    // Closes the merged-but-unwired gap: SaleProcessingProcessor had no
+    // BullMQ Worker bootstrap. Mirrors the AuditWorker registration above.
+    //
+    // The processor takes a RAW pg.Pool — it REUSES the existing AuditDbPool
+    // wrapper (no second Postgres pool; same precedent as the audit-retention
+    // and outbox-drainer factories). SaleWorker shares the same WORKER_FACTORY
+    // (NoOp in dev / BullMQ in prod) as Email/Audit. Both providers are
+    // constructed via explicit factories because their constructors take
+    // positional args without @Inject token decorators.
+    //
+    // SCOPE NOTE: the lag-gauge entry (worker.metrics.ts WORKER_QUEUE_NAMES,
+    // forbidden) and the DLQ-monitoring entry (queue.config.ts, whose guard
+    // spec pins exactly 3 entries and lives outside this slice's test globs)
+    // are DEFERRED to a monitoring follow-up that owns those files. The
+    // enqueue (outbox → queue) half is likewise deferred (it needs apps/api +
+    // the gated packages/db OUTBOX_EVENT_TYPES registry).
+    {
+      provide: SaleProcessingProcessor,
+      useFactory: saleProcessingProcessorProviderFactory,
+      inject: [AuditDbPool],
+    },
+    {
+      provide: SaleWorker,
+      useFactory: saleWorkerProviderFactory,
+      inject: [SaleProcessingProcessor, WORKER_FACTORY],
+    },
+
     // ── Audit retention pipeline (T311 Layer B) ───────────────────────
     //
     // AuditRetentionProcessor has a second constructor param (clock: () => Date)
@@ -667,6 +744,8 @@ export class OutboxPendingGaugeRegistrar implements OnModuleInit, OnModuleDestro
     EmailProcessor,
     AuditWorker,
     AuditFanoutProcessor,
+    SaleWorker,
+    SaleProcessingProcessor,
     AuditRetentionWorker,
     AuditRetentionProcessor,
     OutboxRetentionWorker,
