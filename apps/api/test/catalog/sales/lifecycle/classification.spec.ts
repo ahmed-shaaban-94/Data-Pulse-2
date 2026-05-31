@@ -204,7 +204,7 @@ describe("008-LIFECYCLE (T075) — classification + retention recorded in source
   // repoRoot: __dirname is apps/api/test/catalog/sales/lifecycle → 6 hops up
   // (lifecycle→sales→catalog→test→api→apps→root). Verified by the GREEN run that
   // reads both files below; CodeRabbit's "use one fewer .." was a miscount.
-  const repoRoot = path.resolve(__dirname, "../../../../../..");
+  const repoRoot = path.resolve(__dirname, "../../../../..");
 
   it("0012_sales.sql header records business-class + 001-inherited retention", () => {
     const sqlPath = path.join(
