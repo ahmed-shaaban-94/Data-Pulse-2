@@ -228,8 +228,8 @@ slices:
   - id: 008-US1-CAPTURE
     task_ids: [T030, T031, T032, T033, T034, T035, T036]
     type: feat
-    status: in_review        # PR #426 open (branch feat/008-us1-capture, rebased on db8f70d). WSL TC: capture gate 5 suites/8 GREEN; isolation 18 pass + 2 §B.2 void/refund intended-RED (US3/US4). T036 = sweep §B.1 capture cases. row ids via shared newId() UUIDv7.
-    in_review_pr: 426
+    status: merged           # PR #426 merged to main (merged_at_commit d1748aa). First runtime GREEN: capture controller/service, immutable sales+frozen sale_lines, dedup + SHA-256 payload_hash, T036 §B.1 capture sweep. CI + CodeRabbit addressed.
+    merged_at_commit: d1748aa
     approval_required: false
     depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
     blocks:
@@ -258,7 +258,7 @@ slices:
   - id: 008-US2-DELAYED-SYNC
     task_ids: [T040, T041, T042, T043]
     type: feat
-    status: proposed
+    status: merged           # PR #428 merged to main (merged_at_commit bc2248b). [GATED 0013] migration. US2 dep-legal after US1 (US2 depends_on US1 only).
     approval_required: false
     depends_on: [008-US1-CAPTURE]
     blocks: []
@@ -280,7 +280,7 @@ slices:
   - id: 008-US3-VOID
     task_ids: [T050, T051, T052, T053]
     type: feat
-    status: proposed
+    status: merged           # PR #427 merged to main (merged_at_commit 2f76ac6). Bundled US3/US4/US5/US6. Void = separate append-only terminal event; original sale/lines byte-identical.
     approval_required: false
     depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
     blocks:
@@ -305,7 +305,7 @@ slices:
   - id: 008-US4-REFUND
     task_ids: [T055, T056, T057, T058]
     type: feat
-    status: proposed
+    status: merged           # PR #427 merged to main (merged_at_commit 2f76ac6). Bundled US3/US4/US5/US6. Refund = separate append-only record; POS refund amount preserved; no tender data (gate A.5).
     approval_required: false
     depends_on: [008-CONTRACT, 008-SCHEMA, 008-ISOLATION-HARNESS]
     blocks:
@@ -330,7 +330,7 @@ slices:
   - id: 008-US5-IDEMPOTENCY
     task_ids: [T060, T061, T062, T063]
     type: feat
-    status: proposed
+    status: merged           # PR #427 merged to main (merged_at_commit 2f76ac6). Bundled US3/US4/US5/US6. Reuses 001/005 Idempotency-Key interceptor; SHA-256-canonical payload_hash; replay convergence.
     approval_required: false
     depends_on: [008-US1-CAPTURE, 008-US3-VOID, 008-US4-REFUND]
     blocks: []
@@ -354,7 +354,7 @@ slices:
   - id: 008-US6-SAFETY
     task_ids: [T070, T071, T072, T073, T074]
     type: feat
-    status: proposed
+    status: merged           # PR #427 merged to main (merged_at_commit 2f76ac6). Bundled US3/US4/US5/US6. Mass-assignment rejected; 4-table RLS-bypass probe → zero rows; canonical audit on capture/void/refund.
     approval_required: false
     depends_on: [008-US1-CAPTURE, 008-US3-VOID, 008-US4-REFUND, 008-ISOLATION-HARNESS]
     blocks: []
