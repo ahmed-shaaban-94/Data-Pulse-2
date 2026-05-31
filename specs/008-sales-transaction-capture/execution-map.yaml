@@ -38,8 +38,7 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1–9 (foundational + all six user stories + worker + lifecycle)
-#   MERGED to main:
+# Status: 008 CLOSED — every slice MERGED to main:
 #     - 008-SETUP            → PR #420 (6d01512) — empty SalesModule skeleton
 #     - 008-SCHEMA           → PR #421 (560d16c) — 0012 migration + Drizzle schema
 #     - 008-CONTRACT         → PR #422 (7459ea5) — OpenAPI sale contract
@@ -49,14 +48,24 @@
 #     - 008-US2-DELAYED-SYNC → PR #428 (bc2248b) — store-tz business_date + delayed sync
 #     - 008-LIFECYCLE        → PR #430 (ead7b5a) — SI-012 data-class + retention guard
 #     - 008-WORKER           → PR #431 (8039a22) — off-request processedAt + mismatch
-#   008-SIGNOFF-MONEY-LIB resolved (PR #419). Both [GATED] hard serialization
-#   points satisfied; all six user stories + worker + lifecycle landed.
-#   Remaining `proposed`: 008-POLISH (coverage ≥80% + full-suite + bulk ceiling)
-#   → 008-CLOSEOUT. DEFERRED/tracked into POLISH-or-wiring: WORKER BullMQ
-#   registration + reconciliation-mismatch-rate signal emit (KNOWN-GAP, no new
-#   event type per §6.9). The Money + Temporal Decision Gate is RESOLVED.
+#     - 008-POLISH (split)   → PR #433 (381b717) — k6 perf (report-only) + coverage/suite + repoRoot repair
+#     - 008-WIRING           → PR #434 (e412e7a) — register SaleProcessingProcessor + no-unbounded-path guard
+#     - 008-CLOSEOUT         → this doc PR — terminal reconciliation
+#   008-SIGNOFF-MONEY-LIB resolved (PR #419). Money + Temporal Gate RESOLVED.
 #
-# Updated: 2026-05-31 — WORKER (#431) + LIFECYCLE (#430) merged; map reconciled. Only POLISH + CLOSEOUT remain.
+#   DOCUMENTED DEFERRALS (see wave-status Active findings — NOT blockers, the
+#   merged work is correct + tested, but the live loop is not yet exercised):
+#     1. Live capture→process loop is GATED: needs producer binding in
+#        SalesModule + `sale.captured` added to OUTBOX_EVENT_TYPES (gated
+#        packages/db, T541-style approval) + imperative SaleWorker.start() in
+#        main.ts. WIRING registered the consumer only; processed_at stays NULL
+#        until that slice ships (inert today — nothing reads it yet).
+#     2. reconciliation-mismatch-rate signal emit — FR-031 MAY (optional). The
+#        §VII counter is unregistered in api/worker metrics; emitting is the
+#        remaining T092 work. NOT a new event type (§6.9).
+#     3. SC-010 perf — report-only (no perf env; 005 T560 precedent).
+#
+# Updated: 2026-05-31 — POLISH (#433) + WIRING (#434) merged; 008 CLOSED via this CLOSEOUT. All slices terminal.
 
 version: 1
 spec: 008-sales-transaction-capture
@@ -406,8 +415,7 @@ slices:
   - id: 008-WORKER
     task_ids: [T080, T081, T082]
     type: feat
-    status: merged           # PR #431 merged to main (merged_at_commit 8039a22). Off-request sale-processing processor: sets processed_at + recomputes advisory mismatch flag in PG numeric (half-up, no JS float), tenant context via runWithTenantContext before DB access, idempotent convergence (WHERE processed_at IS NULL), redacted failed-job logs. WSL TC: 2 suites/7 GREEN (RED→GREEN proven by removing the idempotency guard). Also added jest.config.cjs dockerOutboxSuites exclusion for the 2 new TC specs (fast-job stays Docker-free). DEFERRED (KNOWN-GAP, tracked): (1) BullMQ registration in worker.module.ts/queue.config.ts; (2) reconciliation-mismatch-rate signal emit (FR-031 MAY / FR-091 existing signal, NOT a new event type — adding OUTBOX_EVENT_TYPES would violate §6.9). Both for 008-POLISH or a wiring slice.
-    status: proposed
+    status: merged           # PR #431 merged to main (merged_at_commit 8039a22). Off-request sale-processing processor: sets processed_at + recomputes advisory mismatch flag in PG numeric (half-up, no JS float), tenant context via runWithTenantContext before DB access, idempotent convergence (WHERE processed_at IS NULL), redacted failed-job logs. WSL TC: 2 suites/7 GREEN (RED→GREEN proven by removing the idempotency guard). Also added jest.config.cjs dockerOutboxSuites exclusion for the 2 new TC specs. NOTE: #431 shipped the processor CLASS only; BullMQ registration was a REAL gap (NOT an "AuditFanoutProcessor precedent" — that processor IS registered) and was closed by 008-WIRING (#434). reconciliation-mismatch-rate emit deferred (FR-031 MAY) — see wave-status Active findings.
     approval_required: false
     depends_on: [008-US1-CAPTURE]
     blocks: []
@@ -426,10 +434,29 @@ slices:
 
   # ===== Phase 10: Polish & closeout =========================================
 
+  # 008-WIRING was NOT in the original map — added post-hoc when POLISH's
+  # T091/T092 verification revealed the worker processor (merged in #431) was
+  # never registered into the BullMQ bootstrap. Closes the consumer-registration
+  # half only; the live capture→process loop remains gated (see Active findings).
+  - id: 008-WIRING
+    task_ids: []             # no original task id; emerged from POLISH verification
+    type: feat
+    status: merged           # PR #434 (e412e7a). Registers SaleProcessingProcessor + SaleWorker in worker.module.ts; queue name "sale-processing"; reuses AuditDbPool (no 2nd pool). Registered-but-NOT-self-started (AuditRetentionWorker precedent — review caught a self-start that would idle-poll an unfed queue in prod). WSL TC worker sales GREEN; Docker-free sale specs 24 + no-unbounded-path 7 GREEN. CodeRabbit: ._def→.keyof() applied; Supertest-HTTP suggestion declined (can't HTTP-test a non-existent bulk endpoint). DEFERRED (gated): producer binding + sale.captured in OUTBOX_EVENT_TYPES + main.ts start() — see Active findings.
+    approval_required: false
+    depends_on: [008-WORKER]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/worker/src/sales/**
+      - apps/worker/test/sales/**
+      - apps/worker/src/worker.module.ts
+      - apps/api/test/catalog/sales/safety/no-unbounded-path.spec.ts
+    parallel_safety: safe
+
   - id: 008-POLISH
     task_ids: [T090, T091, T092, T093]
     type: test
-    status: proposed
+    status: merged           # SPLIT across 2 PRs (the validation's "bulk ceiling enforced" + "signals reuse" assumed production behavior that did not exist — see Active findings). T090 (k6 sales-capture perf, REPORT-ONLY per stop condition — no perf env + no POS-auth seam) + T093 (full api --coverage GREEN 245 suites/3069, 97.98/90.12/95.95/98.10) → PR #433 (381b717). T091 satisfied as a no-unbounded-path guard (no bulk endpoint exists; ceiling documented binding-when-bulk-ships) → PR #434 (e412e7a). T092 (reconciliation-mismatch-rate emit) DEFERRED — FR-031 MAY, counter unregistered; see Active findings.
     approval_required: false
     depends_on: [008-US6-SAFETY, 008-WORKER, 008-LIFECYCLE]
     blocks:
@@ -450,7 +477,7 @@ slices:
   - id: 008-CLOSEOUT
     task_ids: [T094]
     type: docs
-    status: proposed
+    status: merged           # T094 — this reconciliation. All 008 slices terminal: SETUP/SIGNOFF/CONTRACT/SCHEMA/ISOLATION-HARNESS/US1–US6/LIFECYCLE/WORKER/WIRING/POLISH/CLOSEOUT merged. 008 is CLOSED with documented deferrals (see wave-status Active findings): live capture→process loop gated (producer binding + sale.captured OUTBOX_EVENT_TYPES + main.ts start); reconciliation-mismatch-rate emit (FR-031 MAY).
     approval_required: false
     depends_on: [008-POLISH]
     blocks: []
