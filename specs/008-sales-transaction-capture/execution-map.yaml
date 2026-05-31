@@ -38,18 +38,21 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1 + Phase 2 + Phase 3 isolation harness MERGED to main:
+# Status: Phase 1–8 (foundational + all six user stories) MERGED to main:
 #     - 008-SETUP            → PR #420 (6d01512) — empty SalesModule skeleton
 #     - 008-SCHEMA           → PR #421 (560d16c) — 0012 migration + Drizzle schema
 #     - 008-CONTRACT         → PR #422 (7459ea5) — OpenAPI sale contract
 #     - 008-ISOLATION-HARNESS → PR #425 (7a1885e) — sale-fact seed + RLS/sweep
-#   008-SIGNOFF-MONEY-LIB resolved (PR #419). The two [GATED] hard
-#   serialization points are satisfied. 008-US1-CAPTURE (MVP first GREEN) is
-#   IN REVIEW on PR #426. After it merges, US2–US6 serialize through the shared
-#   sales module; 008-WORKER + 008-LIFECYCLE run parallel. Remaining slices
-#   `proposed`. The Money + Temporal Decision Gate is RESOLVED.
+#     - 008-US1-CAPTURE      → PR #426 (d1748aa) — first runtime GREEN (capture)
+#     - 008-US3/US4/US5/US6  → PR #427 (2f76ac6) — void/refund/idempotency/safety (bundled)
+#     - 008-US2-DELAYED-SYNC → PR #428 (bc2248b) — store-tz business_date + delayed sync
+#   008-SIGNOFF-MONEY-LIB resolved (PR #419). Both [GATED] hard serialization
+#   points satisfied; all six user stories landed; the shared sales runtime is
+#   complete. Remaining `proposed`: 008-WORKER + 008-LIFECYCLE (both now
+#   unblocked + parallel-safe → dispatch concurrently), then 008-POLISH →
+#   008-CLOSEOUT. The Money + Temporal Decision Gate is RESOLVED.
 #
-# Updated: 2026-05-30 — ISOLATION-HARNESS merged (#425); US1-CAPTURE in review (#426).
+# Updated: 2026-05-31 — US1–US6 all merged (#426/#427/#428); map reconciled to git reality.
 
 version: 1
 spec: 008-sales-transaction-capture
