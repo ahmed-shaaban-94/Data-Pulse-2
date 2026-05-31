@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-31 — **All six user stories US1–US6 MERGED to `main`**: US1-CAPTURE (#426, `d1748aa`), US3-VOID/US4-REFUND/US5-IDEMPOTENCY/US6-SAFETY (bundled, #427, `2f76ac6`), US2-DELAYED-SYNC (#428, `bc2248b`). Execution-map reconciled to merged reality. Remaining `proposed`: WORKER, LIFECYCLE (both now unblocked + parallel-safe), POLISH, CLOSEOUT. |
+| Updated | 2026-05-31 — **WORKER (#431, `8039a22`) + LIFECYCLE (#430, `ead7b5a`) MERGED** (parallel dispatch, isolated worktrees). All six user stories + worker + lifecycle now on `main`. Execution-map reconciled. Remaining `proposed`: **POLISH → CLOSEOUT** only. Deferred/tracked: WORKER BullMQ registration + reconciliation-mismatch-rate signal emit (KNOWN-GAP). |
 
 ---
 
@@ -17,7 +17,7 @@
 
 **Phase 1 + both `[GATED]` Phase-2 slices MERGED to `main`**: `008-SETUP` (#420, `6d01512`), `008-SCHEMA` (#421, `560d16c`), `008-CONTRACT` (#422, `7459ea5`); planning chain + coordination on main via #414/#418/#419. CodeRabbit review on all three addressed before merge.
 
-**All six user stories (US1–US6) are now MERGED to `main`** — the full capture + terminal-event (void/refund) + idempotency + safety-hardening runtime is live. The MVP keystone shipped and the post-MVP US chain serialized through the shared `sales` module as designed. Remaining 008 work: `008-WORKER` (off-request processing, distinct `apps/worker/**` tree) and `008-LIFECYCLE` (test-only + doc note) — both now **unblocked and parallel-safe** — then `008-POLISH` → `008-CLOSEOUT`.
+**All six user stories (US1–US6) + `008-WORKER` + `008-LIFECYCLE` are now MERGED to `main`** — the full capture + terminal-event (void/refund) + idempotency + safety-hardening runtime is live, plus off-request worker processing (`processedAt` + advisory mismatch flag) and the SI-012 data-class/retention guard. WORKER (#431) and LIFECYCLE (#430) were dispatched as two parallel agents in isolated worktrees → separate PRs, both validated GREEN before merge. Remaining 008 work: `008-POLISH` (≥80% coverage + full-suite + bulk-sync ceiling) → `008-CLOSEOUT`. Two WORKER follow-ups are deliberately deferred + tracked (see Active findings).
 
 **MVP** = `008-US1-CAPTURE` + its foundational prerequisites — **DELIVERED**. It delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
 
@@ -100,7 +100,12 @@
 
 ## Active findings
 
-None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0 constitution violations, 100% behavioral coverage after the T075/SI-012 remediation).
+**WORKER deferred wiring (KNOWN-GAP, 2 items)** — `008-WORKER` (#431) ships the off-request `SaleProcessingProcessor` + tests (GREEN), but two integration pieces are deliberately deferred, following the `AuditFanoutProcessor` KNOWN-GAP precedent. They must be wired before the worker actually runs in the live system — fold into `008-POLISH` or a dedicated wiring slice:
+
+1. **BullMQ registration** — the processor is not registered in `worker.module.ts` / `queue.config.ts` (Layer-B bootstrap). The job class exists and is unit/integration-tested, but nothing enqueues/consumes it yet.
+2. **Observability signal emit** — the worker computes the advisory mismatch flag but does **not** yet emit the **reconciliation-mismatch-rate** signal (FR-031 *MAY* / FR-091). This is the **existing** signal — NOT a new event type; adding an `OUTBOX_EVENT_TYPES` value would violate FR-091/§6.9 ("008 adds no new event/metric category"), so the agent correctly avoided it. Wiring the emit into the existing signal is the remaining work.
+
+Planning chain otherwise internally consistent (`/speckit-analyze`: 0 CRITICAL, 0 constitution violations, 100% behavioral coverage after the T075/SI-012 remediation).
 
 ---
 
@@ -124,8 +129,9 @@ None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0
 
 ## Next recommended action
 
-All six user stories are merged; the shared `sales` runtime is complete. Remaining work is the post-capture tail, dispatched as **separate PRs in parallel** (the one real post-MVP parallelism win — distinct trees, no shared-file overlap):
+All six user stories + WORKER + LIFECYCLE are merged. Only the polish/closeout tail remains:
 
-1. **`008-WORKER`** (T080–T082) — off-request sale processing in `apps/worker/**`: sets `processed_at` + computes the advisory mismatch flag, claims via `idx_sales_unprocessed`, establishes tenant context before DB access, redacts raw payloads in failed-job logs (FR-071/081/092). `depends_on: [008-US1-CAPTURE]` (merged). RED→GREEN in an isolated worktree → own PR.
-2. **`008-LIFECYCLE`** (T075) — test-only + doc: SI-012 / gate D.3 data-class + retention guard (`classification.spec.ts` asserts no PII/payment-class field persisted in v1) + migration header note + `data-model.md` line. `depends_on: [008-SCHEMA, 008-US6-SAFETY]` (both merged). Isolated worktree → own PR. Runs **concurrently** with WORKER.
-3. After both land: **`008-POLISH`** (T090–T093 — ≥80% coverage, full catalog suite green, bulk-sync 500/req ceiling) → **`008-CLOSEOUT`** (T094).
+1. **`008-POLISH`** (T090–T093) — ≥80% coverage on the new sales module, full catalog suite green, bulk-sync 500/req ceiling enforced (FR-080), signals reuse the existing POS-sync-lag / duplicate-event-rate / reconciliation-mismatch-rate (no new metric). `depends_on: [008-US6-SAFETY, 008-WORKER, 008-LIFECYCLE]` — **all now merged**, so POLISH is unblocked. Natural home to also land the two deferred WORKER wiring items (BullMQ registration + reconciliation-mismatch-rate emit — see Active findings).
+2. **`008-CLOSEOUT`** (T094) — final terminal-status reconciliation with provenance.
+
+Note: WORKER's two deferred wiring items (Active findings) are KNOWN-GAP, not blockers for the merged slice; decide whether POLISH absorbs them or a small dedicated wiring slice does.
