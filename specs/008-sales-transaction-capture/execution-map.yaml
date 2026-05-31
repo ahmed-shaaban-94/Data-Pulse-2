@@ -38,7 +38,8 @@
 # tasks.md ID T001..T094 (45 distinct) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: Phase 1–8 (foundational + all six user stories) MERGED to main:
+# Status: Phase 1–9 (foundational + all six user stories + worker + lifecycle)
+#   MERGED to main:
 #     - 008-SETUP            → PR #420 (6d01512) — empty SalesModule skeleton
 #     - 008-SCHEMA           → PR #421 (560d16c) — 0012 migration + Drizzle schema
 #     - 008-CONTRACT         → PR #422 (7459ea5) — OpenAPI sale contract
@@ -46,13 +47,16 @@
 #     - 008-US1-CAPTURE      → PR #426 (d1748aa) — first runtime GREEN (capture)
 #     - 008-US3/US4/US5/US6  → PR #427 (2f76ac6) — void/refund/idempotency/safety (bundled)
 #     - 008-US2-DELAYED-SYNC → PR #428 (bc2248b) — store-tz business_date + delayed sync
+#     - 008-LIFECYCLE        → PR #430 (ead7b5a) — SI-012 data-class + retention guard
+#     - 008-WORKER           → PR #431 (8039a22) — off-request processedAt + mismatch
 #   008-SIGNOFF-MONEY-LIB resolved (PR #419). Both [GATED] hard serialization
-#   points satisfied; all six user stories landed; the shared sales runtime is
-#   complete. Remaining `proposed`: 008-WORKER + 008-LIFECYCLE (both now
-#   unblocked + parallel-safe → dispatch concurrently), then 008-POLISH →
-#   008-CLOSEOUT. The Money + Temporal Decision Gate is RESOLVED.
+#   points satisfied; all six user stories + worker + lifecycle landed.
+#   Remaining `proposed`: 008-POLISH (coverage ≥80% + full-suite + bulk ceiling)
+#   → 008-CLOSEOUT. DEFERRED/tracked into POLISH-or-wiring: WORKER BullMQ
+#   registration + reconciliation-mismatch-rate signal emit (KNOWN-GAP, no new
+#   event type per §6.9). The Money + Temporal Decision Gate is RESOLVED.
 #
-# Updated: 2026-05-31 — US1–US6 all merged (#426/#427/#428); map reconciled to git reality.
+# Updated: 2026-05-31 — WORKER (#431) + LIFECYCLE (#430) merged; map reconciled. Only POLISH + CLOSEOUT remain.
 
 version: 1
 spec: 008-sales-transaction-capture
@@ -379,7 +383,7 @@ slices:
   - id: 008-LIFECYCLE
     task_ids: [T075]
     type: docs
-    status: proposed
+    status: merged           # PR #430 merged to main (merged_at_commit ead7b5a). Only the guard test landed — the 0012_sales.sql classification header + data-model.md SI-012 note were ALREADY recorded under the [GATED] 008-SCHEMA slice, so re-writing them was correctly skipped (avoid no-op touch of a [GATED] path). Guard uses set-equality column tripwire → SI-012 re-review on any add/rename. WSL TC: catalog/sales/lifecycle 10/10 GREEN.
     approval_required: false
     depends_on: [008-SCHEMA, 008-US6-SAFETY]
     blocks: []
@@ -402,6 +406,7 @@ slices:
   - id: 008-WORKER
     task_ids: [T080, T081, T082]
     type: feat
+    status: merged           # PR #431 merged to main (merged_at_commit 8039a22). Off-request sale-processing processor: sets processed_at + recomputes advisory mismatch flag in PG numeric (half-up, no JS float), tenant context via runWithTenantContext before DB access, idempotent convergence (WHERE processed_at IS NULL), redacted failed-job logs. WSL TC: 2 suites/7 GREEN (RED→GREEN proven by removing the idempotency guard). Also added jest.config.cjs dockerOutboxSuites exclusion for the 2 new TC specs (fast-job stays Docker-free). DEFERRED (KNOWN-GAP, tracked): (1) BullMQ registration in worker.module.ts/queue.config.ts; (2) reconciliation-mismatch-rate signal emit (FR-031 MAY / FR-091 existing signal, NOT a new event type — adding OUTBOX_EVENT_TYPES would violate §6.9). Both for 008-POLISH or a wiring slice.
     status: proposed
     approval_required: false
     depends_on: [008-US1-CAPTURE]
