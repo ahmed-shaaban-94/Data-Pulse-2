@@ -231,23 +231,25 @@ describe("inventory-sweep §A.4 — in-scope baseline (anchors the sweep, preven
 });
 
 // ===========================================================================
-// GROUP B — operation object-safety (HTTP) — RED until 009-US1-ONHAND lands
+// GROUP B — operation object-safety (HTTP)
 // ===========================================================================
 //
-// The movement-create / on-hand / list / transfer / count routes do not exist
-// yet. These cases are placeholders for the object-safety sweep the US1+ slices
-// turn GREEN (cross-tenant id → non-disclosing 404; out-of-scope store → 404;
-// unauthenticated → 401; body-supplied tenant_id/store_id/created_by/derived
-// balance ignored, FR-052). They are intentionally skipped until the
-// InventoryController exists — the slice's RED is "missing operation", asserted
-// once the HTTP harness is wired in 009-US1-ONHAND (which extends THIS sweep,
-// mirroring 008 T034/T074 extending sales-sweep).
-describe.skip("inventory-sweep §B — operation object-safety (HTTP) [RED until 009-US1-ONHAND]", () => {
-  it("cross-tenant movement/on-hand read → non-disclosing 404 (FR-051)", () => {
-    // Authored in 009-US1-ONHAND (T034) once getOnHand/listStockMovements exist.
-    expect(true).toBe(true);
-  });
-
+// READ-path object-safety (T034) is DONE — authored Docker-FREE in
+// `apps/api/test/inventory/on-hand/read-object-safety.spec.ts` (a
+// FakeInventoryService + the real InventoryController + supertest), proving the
+// corrected aggregate-read semantics:
+//   - cross-STORE (scoped principal, wrong store) → 404 (non-disclosing, FR-051);
+//   - cross-TENANT on-hand → 200/"0" and list → 200/empty (non-disclosure via
+//     emptiness — a 404 would contradict FR-005; the tenant resolves from
+//     context, never the path);
+//   - unauthenticated / no resolved context → 401.
+// The DB-layer half of T034 (RLS-bypass + seeded cross-tenant invisibility)
+// lives in GROUP A above (§A.1/§A.2/§A.4).
+//
+// The WRITE-path object-safety (FR-052 mass-assignment: body-supplied
+// tenant_id/store_id/created_by/derived balance ignored) is authored in
+// 009-US2-MANUAL once createStockMovement exists.
+describe.skip("inventory-sweep §B — write-path object-safety (HTTP) [RED until 009-US2-MANUAL]", () => {
   it("body-supplied tenant_id/store_id/created_by/derived balance ignored (FR-052)", () => {
     // Authored in 009-US2-MANUAL once createStockMovement exists.
     expect(true).toBe(true);
