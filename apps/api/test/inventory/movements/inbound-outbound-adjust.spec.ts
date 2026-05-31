@@ -157,7 +157,7 @@ describe('createStockMovement — inbound/outbound/adjustment appended + on-hand
         stockingUnit: 'ea',
         tenantProductRef: PRODUCT_A_ACTIVE,
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/adjustment requires a reason/i);
   });
 
   it('each successful create writes exactly one audit event for the movement (SC-007)', async () => {
@@ -202,7 +202,7 @@ describe('createStockMovement — validation guards exercise the real service (F
         stockingUnit: 'ea',
         tenantProductRef: PRODUCT_A_ACTIVE,
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/inbound quantity must be positive/i);
   });
 
   it('an outbound with a positive quantity is rejected (sign rule)', async () => {
@@ -215,7 +215,7 @@ describe('createStockMovement — validation guards exercise the real service (F
         stockingUnit: 'ea',
         tenantProductRef: PRODUCT_A_ACTIVE,
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/outbound quantity must be negative/i);
   });
 
   it('a zero quantity is rejected (non-zero rule)', async () => {
@@ -229,7 +229,7 @@ describe('createStockMovement — validation guards exercise the real service (F
         tenantProductRef: PRODUCT_A_ACTIVE,
         reason: 'noop',
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/non-zero/i);
   });
 
   it('a first movement for a NEW ad-hoc null-product needs no established-unit match', async () => {

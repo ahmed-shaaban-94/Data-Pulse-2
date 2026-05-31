@@ -108,7 +108,7 @@ describe('createStockMovement — write-off is a reason-coded outbound (FR-002)'
         tenantProductRef: PRODUCT_A_ACTIVE,
         reason: 'damaged',
       }),
-    ).rejects.toBeDefined();
+    ).rejects.toThrow(/movementType must be one of/i);
   });
 
   it('the write-off outbound is visible on the movement list with its reason', async () => {
