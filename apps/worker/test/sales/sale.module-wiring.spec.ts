@@ -9,8 +9,9 @@
  * adding our provider does not disturb it).
  *
  * It also pins the two pure provider factories directly (the pool-reuse +
- * worker-construction decisions), and that `onModuleInit` self-start is a
- * harmless no-op on the NoOp-factory dev path (no throw).
+ * worker-construction decisions), and that the module resolves SaleWorker
+ * without self-starting (no onModuleInit — start() is wired imperatively in
+ * main.ts by the gated enqueue slice; precedent: AuditRetentionWorker).
  *
  * Docker-free — runs in the fast CI job.
  */
@@ -82,12 +83,15 @@ describe("WorkerModule — SaleWorker DI graph (dev / no-Redis / no-DB path)", (
     await moduleRef.close();
   });
 
-  it("compiling the module auto-starts SaleWorker via onModuleInit (NoOp no-op)", async () => {
+  it("resolves SaleWorker from the compiled module WITHOUT self-starting", async () => {
     delete process.env["NODE_ENV"];
     delete process.env["REDIS_URL"];
     delete process.env["DATABASE_URL"];
 
-    // If onModuleInit threw or required Redis, compile()/init would reject.
+    // SaleWorker is registered but has no onModuleInit, so module init must not
+    // start a worker (no Redis needed). The enqueue-wiring slice adds the
+    // imperative start() in main.ts. compile()/init succeeding proves DI
+    // resolves and nothing self-starts.
     const moduleRef = await Test.createTestingModule({
       imports: [WorkerModule],
     }).compile();
@@ -95,6 +99,9 @@ describe("WorkerModule — SaleWorker DI graph (dev / no-Redis / no-DB path)", (
 
     const saleWorker = moduleRef.get(SaleWorker);
     expect(saleWorker).toBeInstanceOf(SaleWorker);
+    expect(
+      (saleWorker as unknown as { onModuleInit?: unknown }).onModuleInit,
+    ).toBeUndefined();
     await moduleRef.close();
   });
 });

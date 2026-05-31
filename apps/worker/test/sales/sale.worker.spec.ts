@@ -12,7 +12,8 @@
  * runs in the fast CI job and is NOT added to `jest.config.cjs`'s Docker
  * exclusion list. The end-to-end tenant-context / idempotency proofs live in
  * the Testcontainers `processing.spec.ts` / `idempotent-processing.spec.ts`;
- * this spec proves the WIRING (delegation, queue name, lifecycle, self-start).
+ * this spec proves the WIRING (delegation, queue name, lifecycle, and that the
+ * worker is registered-but-not-self-started).
  *
  * Coverage:
  *   - registers a handler against queue name `"sale-processing"`
@@ -25,7 +26,9 @@
  *   - propagates handler errors so BullMQ can retry
  *   - `start()` is idempotent; `close()` before start / twice is tolerated
  *   - `onModuleDestroy` invokes `close()`
- *   - `onModuleInit` self-starts the worker (the divergence from AuditWorker)
+ *   - registered-but-NOT-self-started: no `onModuleInit`; construction opens no
+ *     worker; `start()` (called imperatively from main.ts by the enqueue slice)
+ *     constructs exactly one. Precedent: AuditRetentionWorker.
  */
 import {
   SALE_PROCESSING_QUEUE_NAME,
@@ -233,17 +236,25 @@ describe("SaleWorker.close", () => {
   });
 });
 
-describe("SaleWorker.onModuleInit — self-start (divergence from AuditWorker)", () => {
-  it("starts the worker on module init (registration alone would never consume)", () => {
-    worker.onModuleInit();
-    expect(factory.calls).toHaveLength(1);
-    expect(factory.calls[0]!.queueName).toBe(SALE_PROCESSING_QUEUE_NAME);
+describe("SaleWorker — registered-but-not-self-started (AuditRetentionWorker precedent)", () => {
+  it("does NOT construct a worker until start() is called explicitly", () => {
+    // No onModuleInit self-start: the sale-processing queue has no producer
+    // yet, so a self-started worker would idle-poll an empty queue in prod.
+    // Constructing the SaleWorker must not open a worker by itself.
+    expect(factory.calls).toHaveLength(0);
   });
 
-  it("does not double-start when onModuleInit then start() are both called", () => {
-    worker.onModuleInit();
+  it("has no onModuleInit hook (start is wired imperatively in main.ts by the enqueue slice)", () => {
+    expect(
+      (worker as unknown as { onModuleInit?: unknown }).onModuleInit,
+    ).toBeUndefined();
+  });
+
+  it("constructs exactly one worker on the first explicit start(), idempotent thereafter", () => {
+    worker.start();
     worker.start();
     expect(factory.calls).toHaveLength(1);
+    expect(factory.calls[0]!.queueName).toBe(SALE_PROCESSING_QUEUE_NAME);
   });
 });
 

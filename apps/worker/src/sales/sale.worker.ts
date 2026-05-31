@@ -71,11 +71,7 @@
  *   - `close()` shuts the worker down cleanly; tolerated before `start()` and
  *     idempotent. Wired to `onModuleDestroy`.
  */
-import {
-  Injectable,
-  type OnModuleDestroy,
-  type OnModuleInit,
-} from "@nestjs/common";
+import { Injectable, type OnModuleDestroy } from "@nestjs/common";
 import { DEFAULT_WORKER_OPTIONS } from "@data-pulse-2/shared/queues/queue-config";
 
 import {
@@ -105,7 +101,7 @@ export type { JobLike, WorkerFactory, WorkerLike } from "../email/email.worker";
 export { WORKER_FACTORY } from "../email/email.worker";
 
 @Injectable()
-export class SaleWorker implements OnModuleInit, OnModuleDestroy {
+export class SaleWorker implements OnModuleDestroy {
   private worker: WorkerLike | null = null;
 
   constructor(
@@ -114,14 +110,22 @@ export class SaleWorker implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   /**
-   * Nest lifecycle hook — fires after the module's providers are resolved.
-   * Starts consuming the sale-processing queue. See the file docstring for why
-   * this self-starts (vs `main.ts` for Email/Audit) and why it is a no-op in
-   * dev / test (NoOp factory).
+   * Registered-but-NOT-self-started, by design — the precedent is
+   * `AuditRetentionWorker` (registered in WorkerModule, started elsewhere), NOT
+   * `OutboxDrainerRunner` (which self-starts because it has a live feed).
+   *
+   * The sale-processing queue has NO producer yet: `SalesService` emits a
+   * `sale.captured` event but `SALES_OUTBOX_PRODUCER` is unbound and
+   * `sale.captured` is not in the (gated) `OUTBOX_EVENT_TYPES`. So a
+   * self-started worker would just open a Redis connection and poll an empty
+   * queue in every environment that loads `WorkerModule`. The enqueue side +
+   * the imperative `saleWorker.start()` in `main.ts` (mirroring `EmailWorker` /
+   * `AuditWorker`) land together in the gated enqueue-wiring slice, so the whole
+   * live capture→process loop becomes functional in one consistent place.
+   *
+   * `start()` / `close()` remain fully implemented and tested so that slice only
+   * has to add the `main.ts` call + the producer binding.
    */
-  onModuleInit(): void {
-    this.start();
-  }
 
   /**
    * Constructs the BullMQ worker and starts consuming. Idempotent: a second

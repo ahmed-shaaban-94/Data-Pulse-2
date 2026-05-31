@@ -67,11 +67,11 @@ describe("T091: capture body is single-sale — rejects an unbounded array (FR-0
     // This pins that the array dimension is per-sale, so adding a multi-sale
     // path would require a NEW shape (and a [GATED] contract change), which
     // this assertion would force a reviewer to notice.
-    const shape = (CaptureSaleRequestSchema as unknown as {
-      _def: { shape: () => Record<string, unknown> };
-    })._def.shape();
-    expect(Object.keys(shape)).toContain("lines");
-    expect(Object.keys(shape)).not.toContain("sales");
+    // Public key-introspection API (`.keyof().options`), not the brittle
+    // internal `._def.shape()`.
+    const keys = CaptureSaleRequestSchema.keyof().options;
+    expect(keys).toContain("lines");
+    expect(keys).not.toContain("sales");
   });
 });
 
