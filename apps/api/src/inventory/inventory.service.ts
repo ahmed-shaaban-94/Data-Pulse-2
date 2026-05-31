@@ -288,9 +288,18 @@ export class InventoryService {
         `movementType must be one of ${MANUAL_MOVEMENT_TYPES.join(', ')}`,
       );
     }
-    const qty = Number(input.quantity);
-    if (!Number.isFinite(qty) || qty === 0) {
-      throw new BadRequestException('quantity must be a non-zero number');
+    const qtyRaw = Number(input.quantity);
+    if (!Number.isFinite(qtyRaw)) {
+      throw new BadRequestException('quantity must be a number');
+    }
+    // The row persists as numeric(19,4); evaluate the sign/zero rules on the
+    // value AT THAT SCALE so a sub-0.0001 input (e.g. "0.00004") that Postgres
+    // would round to 0.0000 cannot slip past the non-zero / adjustment rules
+    // and persist as a zero-quantity movement. (The DTO regex also bounds this
+    // at the boundary; this is the defense-in-depth half for direct callers.)
+    const qty = Math.round(qtyRaw * 1e4) / 1e4;
+    if (qty === 0) {
+      throw new BadRequestException('quantity must be non-zero at numeric(19,4) scale');
     }
     if (input.movementType === 'inbound' && qty < 0) {
       throw new BadRequestException('inbound quantity must be positive');
@@ -392,6 +401,16 @@ export class InventoryService {
    * Throw `CrossUnitError` if the product already has movements at the store in
    * a stocking unit different from `suppliedUnit` (FR-022). Runs on the same
    * RLS-active client as the insert.
+   *
+   * Concurrency caveat (v1, best-effort at the app layer): this is a
+   * read-before-insert under READ COMMITTED, so two concurrent FIRST movements
+   * for the same `(store, product)` in different units could both see "no
+   * established unit" and both commit, leaving divergent units. For manual entry
+   * this is rare. A hard guarantee belongs at the data layer (a UNIQUE
+   * `(store_id, tenant_product_ref, stocking_unit)`-style trigger/constraint, or
+   * a per-key advisory lock) — that touches `packages/db/**` (a [GATED] path
+   * outside this slice's allowed_files), so it is a documented follow-up, not
+   * silently reached into here.
    */
   private async assertUnitMatchesEstablished(
     client: PoolClient,

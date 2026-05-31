@@ -181,3 +181,41 @@ describe('createStockMovement — object-safety / mass-assignment (FR-052, §XII
     expect(fake.lastCreateArgs?.userId).toBe(USER_A); // actor from context, never body
   });
 });
+
+// The quantity DTO is bounded to the numeric(19,4) shape so a value that the
+// DB cast would silently round to 0.0000 (>4 fraction digits) or overflow
+// (>15 integer digits) is rejected 400 at the boundary — never a stored zero,
+// never a 500 (CodeRabbit #444).
+describe('createStockMovement — quantity bounded to numeric(19,4) (FR-022)', () => {
+  it('more than 4 fraction digits → 400 (would silently round to 0.0000 / lose precision)', async () => {
+    contextGuard.context = tenantLevelCtx();
+    await http()
+      .post(`/api/inventory/v1/stores/${STORE_A_X}/movements`)
+      .send({ movementType: 'inbound', quantity: '0.00004', stockingUnit: 'ea' })
+      .expect(400);
+  });
+
+  it('more than 15 integer digits → 400 (would overflow numeric(19,4) at insert)', async () => {
+    contextGuard.context = tenantLevelCtx();
+    await http()
+      .post(`/api/inventory/v1/stores/${STORE_A_X}/movements`)
+      .send({
+        movementType: 'inbound',
+        quantity: '1234567890123456',
+        stockingUnit: 'ea',
+      })
+      .expect(400);
+  });
+
+  it('a well-formed numeric(19,4) value (≤15 int, ≤4 frac) is accepted', async () => {
+    contextGuard.context = tenantLevelCtx();
+    await http()
+      .post(`/api/inventory/v1/stores/${STORE_A_X}/movements`)
+      .send({ movementType: 'inbound', quantity: '12.5000', stockingUnit: 'ea' })
+      .expect((res) => {
+        if (res.status >= 400) {
+          throw new Error(`expected success, got ${res.status}`);
+        }
+      });
+  });
+});

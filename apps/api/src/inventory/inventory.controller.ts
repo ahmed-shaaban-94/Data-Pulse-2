@@ -67,9 +67,16 @@ const OptionalUuidSchema = z.string().uuid().optional();
  * verbatim (no float coercion). Nullable provenance refs are accepted as
  * provenance only.
  */
+// Bounded to the `numeric(19,4)` shape (≤15 integer + ≤4 fraction digits). An
+// unbounded regex would let the DTO accept values that the `$5::numeric(19,4)`
+// cast silently rounds to 0.0000 (defeating the non-zero / adjustment rules) or
+// that overflow numeric(19,4) at insert (a 500 escaping the 400 boundary).
 const DecimalQtySchema = z
   .string()
-  .regex(/^-?\d+(\.\d+)?$/, 'quantity must be a signed decimal string');
+  .regex(
+    /^-?\d{1,15}(\.\d{1,4})?$/,
+    'quantity must be a signed numeric(19,4) decimal string (≤15 integer, ≤4 fraction digits)',
+  );
 const CreateStockMovementSchema = z
   .object({
     movementType: z.enum(['inbound', 'outbound', 'adjustment']),
