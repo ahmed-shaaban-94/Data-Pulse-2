@@ -23,5 +23,26 @@
  */
 import { Module } from "@nestjs/common";
 
-@Module({})
+import { AuthModule } from "../auth/auth.module";
+import { ContextModule } from "../context/context.module";
+import { InventoryController } from "./inventory.controller";
+import { InventoryService } from "./inventory.service";
+
+/**
+ * InventoryModule — populated by 009-US1-ONHAND (T033).
+ *
+ * Imports (mirror ReconciliationModule):
+ *   - AuthModule    — provides PG_POOL (shared pool) + DashboardAuthGuard.
+ *   - ContextModule — provides TenantContextGuard (publishes request.context).
+ *
+ * No AuditModule yet — the US1 READ routes are not audited; the US2 write
+ * routes (createStockMovement etc.) will add it. No RolesGuard — US1 uses
+ * inline object-level store authz, not @Roles.
+ */
+@Module({
+  imports: [AuthModule, ContextModule],
+  controllers: [InventoryController],
+  providers: [InventoryService],
+  exports: [InventoryService],
+})
 export class InventoryModule {}

@@ -226,10 +226,23 @@ slices:
     allowed_files:
       - apps/api/src/inventory/inventory.service.ts
       - apps/api/src/inventory/inventory.controller.ts
+      - apps/api/src/inventory/inventory.module.ts   # register the new controller + service in the (currently empty) InventoryModule
       - apps/api/test/inventory/on-hand/*.spec.ts
+      - apps/api/test/inventory/isolation/inventory-sweep.spec.ts   # T034: updates the sweep's GROUP B note — read-path object-safety is now covered Docker-FREE in on-hand/read-object-safety.spec.ts; GROUP B retains only the write-path (FR-052) deferral for US2. F-01-class allowed_files addition.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/on-hand inventory/isolation
-        expected: GREEN — on-hand = compute-on-read SUM (FR-003/SC-001), empty key deterministic zero (FR-005), store isolation, stable-order movement list summing to on-hand (FR-004); cross-tenant read safe-404 + RLS-bypass probe zero rows (SC-006).
+        expected: >
+          GREEN — on-hand = compute-on-read SUM (FR-003/SC-001), empty key
+          deterministic "0" (FR-005), store isolation, stable-order movement
+          list summing to on-hand (FR-004). Object-safety (read paths): a
+          store-scoped principal requesting a different store → 404
+          (non-disclosing, FR-051); a cross-TENANT on-hand read → 200/"0" and
+          list → 200/empty (non-disclosure via EMPTINESS, NOT 404 — a 404 would
+          contradict FR-005; tenant resolves from context, never the path);
+          unauthenticated → 401; RLS-bypass probe (wrong GUC) → zero rows
+          (SC-006). NOTE: the read object-safety is proven Docker-FREE in
+          on-hand/read-object-safety.spec.ts; the SUM/isolation/seeded-RLS proof
+          is Docker-gated (CI db-integration only).
         docker_required: true
     stop:
       - standing-rules universal stops
