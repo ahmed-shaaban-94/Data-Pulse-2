@@ -22,7 +22,11 @@ const dockerOutboxSuites = includeDbBackedTests
   ? []
   : ["/outbox/retry-budget\\.spec\\.ts$",
      "/outbox/idempotent-consumer\\.spec\\.ts$",
-     "/outbox/tenant-context\\.spec\\.ts$"];
+     "/outbox/tenant-context\\.spec\\.ts$",
+     // 008-WORKER Testcontainers suites — Docker-free fast job excludes them,
+     // db-integration job clears the exclusion via WORKER_INCLUDE_DB_TESTS=1.
+     "/sales/processing\\.spec\\.ts$",
+     "/sales/idempotent-processing\\.spec\\.ts$"];
 
 /** @type {import('jest').Config} */
 module.exports = {
