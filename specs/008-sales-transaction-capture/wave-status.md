@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-30 — Phase 3 MVP: `008-ISOLATION-HARNESS` MERGED (#425); `008-US1-CAPTURE` 🎯 **in review** (PR #426) — first runtime GREEN (capture controller/service); capture gate 5 suites/8 GREEN, isolation §B.1 GREEN + §B.2 intended-RED |
+| Updated | 2026-05-31 — **All six user stories US1–US6 MERGED to `main`**: US1-CAPTURE (#426, `d1748aa`), US3-VOID/US4-REFUND/US5-IDEMPOTENCY/US6-SAFETY (bundled, #427, `2f76ac6`), US2-DELAYED-SYNC (#428, `bc2248b`). Execution-map reconciled to merged reality. Remaining `proposed`: WORKER, LIFECYCLE (both now unblocked + parallel-safe), POLISH, CLOSEOUT. |
 
 ---
 
@@ -17,9 +17,9 @@
 
 **Phase 1 + both `[GATED]` Phase-2 slices MERGED to `main`**: `008-SETUP` (#420, `6d01512`), `008-SCHEMA` (#421, `560d16c`), `008-CONTRACT` (#422, `7459ea5`); planning chain + coordination on main via #414/#418/#419. CodeRabbit review on all three addressed before merge.
 
-**The two hard serialization points (gated schema + contract) are now satisfied — implementing GREEN slices are UNBLOCKED.** The Money + Temporal gate is resolved, so there are **no open WHAT-level blockers**. Next: `008-ISOLATION-HARNESS` → `008-US1-CAPTURE` (the MVP).
+**All six user stories (US1–US6) are now MERGED to `main`** — the full capture + terminal-event (void/refund) + idempotency + safety-hardening runtime is live. The MVP keystone shipped and the post-MVP US chain serialized through the shared `sales` module as designed. Remaining 008 work: `008-WORKER` (off-request processing, distinct `apps/worker/**` tree) and `008-LIFECYCLE` (test-only + doc note) — both now **unblocked and parallel-safe** — then `008-POLISH` → `008-CLOSEOUT`.
 
-**MVP** = `008-US1-CAPTURE` + its foundational prerequisites. That alone delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
+**MVP** = `008-US1-CAPTURE` + its foundational prerequisites — **DELIVERED**. It delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
 
 ---
 
@@ -124,8 +124,8 @@ None. Planning chain is internally consistent (`/speckit-analyze`: 0 CRITICAL, 0
 
 ## Next recommended action
 
-The MVP keystone (`008-US1-CAPTURE`) is **in review** (PR #426) — the shared `sales` module now exists, unblocking the rest of the wave:
+All six user stories are merged; the shared `sales` runtime is complete. Remaining work is the post-capture tail, dispatched as **separate PRs in parallel** (the one real post-MVP parallelism win — distinct trees, no shared-file overlap):
 
-1. **Land PR #426** (CI + CodeRabbit). On merge, reconcile this slice's status `in_review → merged` with `merged_at_commit`.
-2. After US1 merges, **serialize** the remaining US slices through the shared `sales.controller.ts` / `sales.service.ts`: **US2-DELAYED-SYNC** (owns `business_date` store-tz derivation + `sourceClockAt` handling — US1 left `sourceClockAt` unwired by design), then **US3-VOID** / **US4-REFUND** (each replaces its §B.2 sweep placeholder), then **US5-IDEMPOTENCY**, then **US6-SAFETY** (4-table RLS-bypass probe).
-3. Run **`008-WORKER`** (distinct `apps/worker/**` tree; `processed_at` claim via `idx_sales_unprocessed`) and **`008-LIFECYCLE`** (test-only + doc) **in parallel** with the US2–US6 chain — the one real post-MVP parallelism win.
+1. **`008-WORKER`** (T080–T082) — off-request sale processing in `apps/worker/**`: sets `processed_at` + computes the advisory mismatch flag, claims via `idx_sales_unprocessed`, establishes tenant context before DB access, redacts raw payloads in failed-job logs (FR-071/081/092). `depends_on: [008-US1-CAPTURE]` (merged). RED→GREEN in an isolated worktree → own PR.
+2. **`008-LIFECYCLE`** (T075) — test-only + doc: SI-012 / gate D.3 data-class + retention guard (`classification.spec.ts` asserts no PII/payment-class field persisted in v1) + migration header note + `data-model.md` line. `depends_on: [008-SCHEMA, 008-US6-SAFETY]` (both merged). Isolated worktree → own PR. Runs **concurrently** with WORKER.
+3. After both land: **`008-POLISH`** (T090–T093 — ≥80% coverage, full catalog suite green, bulk-sync 500/req ceiling) → **`008-CLOSEOUT`** (T094).
