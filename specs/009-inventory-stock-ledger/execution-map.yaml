@@ -173,12 +173,14 @@ slices:
     agent: sonnet-db
     allowed_files:
       - packages/db/src/schema/inventory/stock-movements.ts
+      - packages/db/src/schema/index.ts   # barrel re-export of the new schema (mirrors the 008 sales export) — required for @data-pulse-2/db/schema to resolve the shape test import; F-01-class allowed_files addition
       - packages/db/drizzle/0014_inventory.sql
       - packages/db/drizzle/0014_inventory.down.sql
       - apps/api/test/inventory/schema/stock-movements-schema-shape.spec.ts
+      - packages/db/__tests__/migration/0014-inventory.spec.ts   # Testcontainers migration round-trip (mirrors 008 0012-sales.spec.ts) — the file that realizes the "applies + rolls back clean" validation; Docker-gated, CI-run
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/schema
-        expected: GREEN — schema-shape 1:1 with data-model.md (movement_type enum, quantity numeric(p,s), stocking_unit, nullable tenant_product_ref + provenance refs, transfer_group_id, stock_count_id, occurred_at/received_at NOT NULL, two partial-unique dedup indexes, NO version column, NO batch/expiry/serial column on base movement; stock_counts fields); migration applies + rolls back clean under Testcontainers; lock-duration reviewed.
+        expected: GREEN — schema-shape 1:1 with data-model.md (movement_type CHECK-constrained text, quantity numeric(19,4) SIGNED, stocking_unit, nullable tenant_product_ref + provenance refs, transfer_group_id, stock_count_id, occurred_at/received_at NOT NULL, EXACTLY ONE movement-level dedup index = backfill partial-unique (tenant_id, source_system, external_id), NO manual idempotency_key unique index, NO version column, NO batch/expiry/serial column on base movement; stock_counts fields). The Docker-gated round-trip (packages/db/__tests__/migration/0014-inventory.spec.ts) asserts migration applies + rolls back clean under Testcontainers — CI-RUN (local Docker unavailable ⇒ MIGRATION_TEST_ALLOW_SKIP=1 skips it locally); lock-duration reviewed.
         docker_required: true
     stop:
       - standing-rules universal stops

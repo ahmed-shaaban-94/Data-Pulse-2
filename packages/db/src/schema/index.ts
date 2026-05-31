@@ -23,3 +23,4 @@ export * from "./catalog/unknown-items";
 export * from "./sales/sales";
 export * from "./sales/sale-lines";
 export * from "./sales/sale-terminal-events";
+export * from "./inventory/stock-movements";
