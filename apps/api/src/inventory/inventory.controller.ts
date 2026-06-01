@@ -45,6 +45,7 @@ import { z } from 'zod';
 
 import { DashboardAuthGuard } from '../auth/dashboard-auth.guard';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import { Idempotent } from '../idempotency/idempotent.decorator';
 import { TenantContextGuard } from '../context/tenant-context.guard';
 import type { ResolvedContext, TenantContextRequest } from '../context/types';
 import {
@@ -153,6 +154,7 @@ export class InventoryController {
    */
   @Post('api/inventory/v1/stores/:storeId/movements')
   @HttpCode(HttpStatus.CREATED)
+  @Idempotent('required')
   async createStockMovement(
     @Req() request: TenantContextRequest,
     @Param('storeId', new ZodValidationPipe(UuidSchema)) storeId: string,

@@ -25,6 +25,7 @@ import { Module } from "@nestjs/common";
 
 import { AuthModule } from "../auth/auth.module";
 import { ContextModule } from "../context/context.module";
+import { IdempotencyModule } from "../idempotency/idempotency.module";
 import { InventoryController } from "./inventory.controller";
 import { InventoryService } from "./inventory.service";
 
@@ -40,7 +41,11 @@ import { InventoryService } from "./inventory.service";
  * inline object-level store authz, not @Roles.
  */
 @Module({
-  imports: [AuthModule, ContextModule],
+  // IdempotencyModule (009-US3): registers the global IdempotencyInterceptor
+  // that honors @Idempotent("required") on the createStockMovement POST route —
+  // manual replay returns the same movement, a divergent body under the same
+  // key 409s. Reuses the existing 001/005 primitive; no new machinery.
+  imports: [AuthModule, ContextModule, IdempotencyModule],
   controllers: [InventoryController],
   providers: [InventoryService],
   exports: [InventoryService],
