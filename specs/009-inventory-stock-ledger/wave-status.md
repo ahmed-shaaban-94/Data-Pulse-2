@@ -99,4 +99,16 @@ Owner-directed slice after PR #446 destabilised hosted CI. Goal: GitHub-hosted `
 - Companion **PR #450** seeds inventory audit-actor users — greens the 3 failing US2 movements specs (finding #10).
 - Kept `ubuntu-latest`; no self-hosted; no product/package/lockfile/test-semantics changes.
 
-Predecessor remediation already merged: PR #447 (migrate.spec migration-count), PR #448 (event-types-registry import). **Gate to unblock US3–US6: a GREEN hosted `db-integration` canary** (all three Docker steps pass, per-job durations recorded here).
+Predecessor remediation already merged: PR #447 (migrate.spec migration-count), PR #448 (event-types-registry import).
+
+**GREEN hosted canary achieved (2026-06-01, run `26759392590` on the combined #449+#450 tree, sha `5585387`).** Per-job durations:
+
+| Step | Result | Duration |
+|---|---|---|
+| `fast` (build + Docker-free) | ✅ pass | ~1m 22s |
+| db-integration › db (Testcontainers migrations) | ✅ pass | 2m 55s |
+| db-integration › worker (Testcontainers outbox) | ✅ pass | 0m 30s |
+| db-integration › api (RLS+audit+auth, no-coverage, --forceExit) | ✅ pass | **8m 51s** |
+| **db-integration job total** | ✅ **success** | **~13m 5s** |
+
+Key proof: the api step is **8m 51s** — vs the ~21–28 min hanging/cancelled runs before. The excess was the open-handle hang, not test work; `--forceExit` makes Jest exit cleanly once tests pass. Total db-integration ~13 min is comfortably under even the old 25-min timeout, so the 40-min bump is now harmless margin. **Gate to unblock US3–US6 is satisfied.**
