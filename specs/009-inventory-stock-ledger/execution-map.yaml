@@ -473,12 +473,59 @@ slices:
       - specs/009-inventory-stock-ledger/execution-map.yaml
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory
-        expected: GREEN — full inventory suite; ≥80% coverage on the new module; backfill 500/req bound enforced (no unbounded path); SC-008/SC-009 seam-design verdicts recorded; perf report-only.
+        expected: GREEN — full inventory suite; ≥80% coverage on the new module (collected MANUALLY/LOCALLY — `--coverage` was removed from the blocking CI api step by 009-CI-OPT; CI no longer emits lcov); backfill 500/req bound enforced (no unbounded path); SC-008/SC-009 seam-design verdicts recorded; perf report-only.
         docker_required: true
     stop:
       - standing-rules universal stops
       - "stop if perf is treated as a hard gate — report-only in v1 (no perf env, 005/008 precedent)"
+      - "note: the ≥80% coverage check is a LOCAL/manual verification — CI does not produce a coverage report (009-CI-OPT deferral); run `pnpm --filter @data-pulse-2/api test -- --coverage` locally and record the figure"
     parallel_safety: serialize   # closeout reconciliation, runs last
+
+  # ===== Infra: hosted-CI reliability (blocks all remaining Docker-gated work) =
+
+  - id: 009-CI-OPT
+    task_ids: []   # infrastructure slice — no tasks.md task IDs; created in-session after PR #446 destabilised hosted CI
+    type: ci
+    status: in_progress
+    approval_required: true   # [GATED] — .github/workflows/** (Constitution §VIII / Standing Rules §3) — APPROVED in-session by owner directive
+    depends_on: []   # remediation of the CI lane itself; depends on nothing in the feature graph
+    blocks:
+      # Every remaining Docker-gated slice runs through the db-integration api
+      # step. None may dispatch until 009-CI-OPT lands a GREEN hosted canary.
+      - 009-US3-IDEMPOTENCY
+      - 009-US4-SALELINKED
+      - 009-US5-TRANSFER
+      - 009-US6-COUNT
+      - 009-SIGNAL-NEGBAL
+      - 009-RESTOCK
+      - 009-LIFECYCLE
+      - 009-POLISH
+    agent: opus-maestro
+    allowed_files:
+      - .github/workflows/ci.yml
+      - .github/workflows/update-loc-badge.yml
+      - CLAUDE.md
+      - specs/009-inventory-stock-ledger/execution-map.yaml
+      - specs/009-inventory-stock-ledger/wave-status.md
+    validation:
+      - command: 'git diff --check && grep -R "runs-on:" .github/workflows && (grep -R "self-hosted" .github/workflows || true)'
+        expected: No whitespace errors; all jobs runs-on ubuntu-latest; no self-hosted runner SELECTOR (a documentary "self-hosted" mention in a comment is acceptable).
+        docker_required: false
+      - command: re-run CI on GitHub-hosted ubuntu-latest (push/PR)
+        expected: >
+          db-integration completes GREEN (not cancelled, not timed out) — all
+          three Docker steps (db / worker / api RLS+audit+auth) pass; api step
+          finishes well under the bumped 40-min job timeout. Per-job duration
+          recorded in wave-status. This GREEN hosted canary is the gate that
+          unblocks US3-US6.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "[GATED] .github/** — owner directive (2026-06-01) authorises THIS slice's workflow edits; do not expand beyond ci.yml/update-loc-badge.yml"
+      - "do NOT touch product code, package.json, pnpm-lock.yaml, or change any test semantics (no --maxWorkers/--runInBand on the api suite — RLS tests share DB state)"
+      - "do NOT start 009-US3/US4/US5/US6 until a hosted CI canary finishes GREEN"
+      - "stop before merge unless CI is green"
+    parallel_safety: serialize   # CI-lane remediation; nothing else dispatches until it is green
 
 # ============================================================================
 # serialization edges (hard ordering)

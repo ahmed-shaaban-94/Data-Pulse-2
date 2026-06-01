@@ -8,7 +8,13 @@
 
 ## Next recommended action
 
-Dispatch **`009-US3-IDEMPOTENCY`** (T050–T053; depends only on US2's create path T044):
+**BLOCKED on `009-CI-OPT`** — hosted CI must be green before any further Docker-gated slice (US3–US6 etc.) dispatches.
+
+Background (2026-06-01): the CI runner was switched self-hosted → GitHub-hosted `ubuntu-latest` (PR #446) because the self-hosted runner was **dead** — `db-integration` (the only Docker/Postgres lane) had not completed across the whole 009 feature, so latent breakage accumulated unobserved. Once it ran on hosted it surfaced, in order: a stale migration-count assertion (PR #447), a self-referential barrel import (PR #448), and finally a **25-min job timeout** — the api RLS+audit+auth step ran ~21 min under `--coverage` and the job was killed twice before reporting a verdict. The api suites (which US3–US6 depend on) have therefore **never been seen passing on hosted**.
+
+**`009-CI-OPT`** (owner-directed infra slice, `[GATED]` `.github/**`) makes hosted CI reliable: bump `db-integration` `timeout-minutes` 25 → 40 (so a slow cold run cannot be cancelled mid-flight, wasting completed db+worker work), and drop `--coverage` from the blocking api step (the dominant runtime/memory cost; the suite assertions still run + gate). **Coverage is deferred** — see Active findings #8. US3–US6 stay parked until `009-CI-OPT` lands a **GREEN hosted canary**.
+
+Once CI is green, resume with **`009-US3-IDEMPOTENCY`** (T050–T053; depends only on US2's create path T044):
 
 - `Idempotency-Key` replay — same key + same body ×N → exactly one movement, identical response, on-hand applied once (FR-030, SC-003);
 - divergent body under the same key → deterministic 409, no side-effect (FR-030);
@@ -49,6 +55,7 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 5. **SC-010-style perf** — on-hand/movement perf assertions are **report-only** in v1 (no perf env; 005/008 precedent).
 6. **Movement outbox emit (US2/T044)** — `createStockMovement` emits **audit-in-transaction only** (mirrors the shipped 005 catalog write). An async outbox event for inventory movements needs a new `INVENTORY_MOVEMENT_*` type registered in `OUTBOX_EVENT_TYPES` (`packages/db/src/outbox/producer.ts`) — a forbidden `packages/db/**` path outside US2's allowed_files; same shape as the 008 `sale.captured` deferral. **`[GATED]` follow-up for closeout.** (PR #444)
 7. **Established-unit concurrency guard (US2/T044)** — `assertUnitMatchesEstablished` is a best-effort read-before-insert under READ COMMITTED: two concurrent FIRST movements for the same `(store, product)` in different units could both commit, leaving divergent units FR-022 forbids (rare for manual entry). A hard guarantee belongs at the data layer — a UNIQUE `(store_id, tenant_product_ref, stocking_unit)`-style trigger/constraint or a per-key advisory lock — `packages/db/**`, **`[GATED]` follow-up for closeout.** The failure window + remedy are captured in the method docstring. (PR #444)
+8. **CI-collected api coverage (009-CI-OPT / 009-POLISH)** — `--coverage` was removed from the blocking `db-integration` api step (it ran ~21 min and tripped the job timeout on the 2-core hosted runner). The full api RLS/audit/auth suite still runs and gates CI; only the lcov/text-summary **report** is no longer produced. The 009-POLISH ≥80% coverage target (T100–T104) is therefore a **LOCAL/manual** verification — `pnpm --filter @data-pulse-2/api test -- --coverage` — recorded at closeout, not a CI artifact. A dedicated non-blocking/nightly coverage workflow was **out of scope** for 009-CI-OPT (its allowed files do not include a new `.github/workflows/*` file). Re-introducible later as its own slice.
 
 ---
 
@@ -71,6 +78,16 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-RESTOCK | T090, T091 | pending | — |
 | 009-LIFECYCLE | T095 | pending | — |
 | 009-POLISH | T100–T104 | pending | — |
+| 009-CI-OPT | — (infra) | **in progress** | **`[GATED]`** `.github/**` (owner-directed) |
 
-**15 slices · 45 tasks · 2 `[GATED]` + 1 `[SIGN-OFF]` · 1 new observability signal.**
-**Progress: 7/15 slices merged** (both `[GATED]` approved + merged); MVP read path (US1) + manual write path (US2) live on `main`. Next: US3-IDEMPOTENCY.
+**15 feature slices · 45 tasks · 2 `[GATED]` + 1 `[SIGN-OFF]` · 1 new observability signal · +1 infra slice (009-CI-OPT).**
+**Progress: 7/15 feature slices merged** (both `[GATED]` approved + merged); MVP read path (US1) + manual write path (US2) live on `main`. **All remaining Docker-gated slices are BLOCKED on `009-CI-OPT`** (hosted-CI reliability) until a green hosted canary lands. Next after CI green: US3-IDEMPOTENCY.
+
+### 009-CI-OPT — hosted CI reliability (infra, in progress 2026-06-01)
+
+Owner-directed slice after PR #446 destabilised hosted CI. Goal: GitHub-hosted `ubuntu-latest` CI usable + reliable. Changes (minimal, workflow-only):
+- `db-integration` `timeout-minutes` **25 → 40** — a slow cold hosted run can no longer be cancelled mid-api-step, wasting the already-green db+worker steps.
+- Drop `--coverage --coverageReporters=*` from the blocking api step — the dominant runtime/memory cost (suite still runs + gates; coverage deferred, finding #8).
+- Kept `ubuntu-latest`; no self-hosted; no product/package/lockfile/test-semantics changes.
+
+Predecessor remediation already merged: PR #447 (migrate.spec migration-count), PR #448 (event-types-registry import). **Gate to unblock US3–US6: a GREEN hosted `db-integration` canary** (all three Docker steps pass, per-job durations recorded here).
