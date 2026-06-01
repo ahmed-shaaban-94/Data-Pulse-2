@@ -26,7 +26,10 @@
  * No Docker, no Postgres, no Nest — pure unit test against the
  * compile-time-frozen const.
  */
-import { OUTBOX_EVENT_TYPES, type OutboxEventType } from "@data-pulse-2/db";
+import {
+  OUTBOX_EVENT_TYPES,
+  type OutboxEventType,
+} from "../../src/outbox/producer";
 
 describe("T599 — outbox event-types registry: only audit.event.created", () => {
   it("OUTBOX_EVENT_TYPES has exactly one entry", () => {
