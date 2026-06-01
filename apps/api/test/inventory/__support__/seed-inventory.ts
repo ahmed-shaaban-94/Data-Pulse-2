@@ -141,6 +141,26 @@ export async function seedInventoryFixture(
 ): Promise<InventoryFixtureIds> {
   const { admin }: { admin: Pool } = env;
 
+  // ---- actor users (audit FK) -------------------------------------------
+  // `createStockMovement` writes an audit_events row IN-TRANSACTION whose
+  // `actor_user_id` carries a real FK -> users(id) (0000_initial.sql).
+  // ACTOR_A/ACTOR_B are 003-owned isolation IDs used across catalog tables as
+  // bare `created_by` UUIDs (those columns are NOT FK'd to users), so the
+  // catalog fixture never inserts them into `users`. Catalog audit is written
+  // via HTTP-authed paths (real users); inventory tests drive the service
+  // DIRECTLY with a synthetic ACTOR_A principal, so the audit FK has no target
+  // on a clean DB and the INSERT fails. Seed the actor users here — the single
+  // chokepoint every inventory spec imports — mirroring the working pattern in
+  // audit/audit.repository.spec.ts. Idempotent; safe if a future catalog
+  // change starts seeding them.
+  await admin.query(
+    `INSERT INTO users (id, email, password_hash) VALUES
+       ($1, 'actor-a@fixture.invalid', NULL),
+       ($2, 'actor-b@fixture.invalid', NULL)
+     ON CONFLICT DO NOTHING`,
+    [ACTOR_A, ACTOR_B],
+  );
+
   // ---- one generic stock movement per cell ------------------------------
   // inbound (+) at A.X / B.X, outbound (−) at A.Y / B.Y — enough signed
   // variety to probe each cell. Generic: NULL provenance + NULL stock_count_id.
