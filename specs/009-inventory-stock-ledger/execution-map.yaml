@@ -289,7 +289,7 @@ slices:
   # ===== Phase 5: US3 — Idempotency (P1) ======================================
 
   - id: 009-US3-IDEMPOTENCY
-    task_ids: [T050, T051, T052, T053]
+    task_ids: [T050, T051, T053]   # F-03: T052 (provenance dedup) MOVED to 009-US4-SALELINKED — see note below
     type: feat
     status: pending
     approval_required: false
@@ -297,21 +297,34 @@ slices:
     blocks: []
     agent: sonnet-api
     allowed_files:
-      - apps/api/src/inventory/inventory.service.ts
+      - apps/api/src/inventory/inventory.controller.ts   # F-02: add @Idempotent("required") to the createStockMovement POST route — manual idempotency is HTTP-layer (the interceptor runs on the request), mirroring sales.controller.ts. NOT a new primitive.
+      - apps/api/src/inventory/inventory.module.ts        # F-02: import IdempotencyModule so the global interceptor's @Idempotent metadata is honored on the inventory write route (mirrors sales.module.ts imports). Currently imports AuthModule+ContextModule only.
       - apps/api/test/inventory/idempotency/*.spec.ts
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/idempotency
-        expected: GREEN — manual replay (same Idempotency-Key) one movement (FR-030); divergent body 409; backfill provenance dedup one movement (FR-031); on-hand applied once (SC-003).
+        expected: GREEN — manual replay (same Idempotency-Key) one movement + on-hand applied once (FR-030, SC-003); divergent body under same key → 409, no side-effect (FR-030). (Backfill provenance dedup is US4/T052 — the createStockMovement manual path is provenance-free + .strict().)
         docker_required: true
     stop:
       - standing-rules universal stops
-      - "stop if a new idempotency primitive is introduced — reuse the 001/005 Idempotency-Key interceptor unchanged (FR-030)"
+      - "stop if a new idempotency primitive is introduced — reuse the 001/005 Idempotency-Key interceptor unchanged (FR-030). US3 is MANUAL idempotency only: NO new service logic — just wire @Idempotent('required') + IdempotencyModule (the interceptor does the replay/409). No inventory.service.ts change (dropped from allowed_files)."
+      - "manual-idempotency specs (T050/T051) MUST exercise the HTTP layer (the interceptor runs on the request) — use the app+supertest __movement-harness, NOT a direct `new InventoryService()` service-layer call"
     parallel_safety: safe
+    # F-03 (2026-06-01): T052 (provenance/backfill dedup) reconciled OUT of US3 into US4.
+    # Rationale: (1) the (tenant_id,source_system,external_id) partial-unique already
+    # exists in 0014 — a raw-constraint probe is GREEN-on-arrival, violating T052's RED
+    # requirement; (2) US4/T064 already explicitly owns the provenance WRITE+dedup path
+    # ("on the createStockMovement route, dedups on (sourceSystem,externalId)"); (3)
+    # createStockMovement is .strict() and provenance-free today — provenance fields are
+    # a US4 surface addition. So US3 is purely MANUAL idempotency (Idempotency-Key
+    # replay + divergent-body 409, both pure interceptor wiring); inventory.service.ts
+    # dropped from US3 allowed_files (no service change needed). T052 + its backfill
+    # dedup land with US4's write path. Owner-approved in-session.
+    # F-02 (2026-06-01): allowed_files expanded to include inventory.controller.ts + inventory.module.ts. createStockMovement is a @Post route but was never wired to the idempotency interceptor (US2 was audit-only); manual idempotency requires that controller+module wiring (the 008 sales pattern). Owner-approved in-session.
 
   # ===== Phase 6: US4 — Sale-linked / backfill (P2) — DECOUPLED ===============
 
   - id: 009-US4-SALELINKED
-    task_ids: [T060, T061, T062, T063, T063b, T064]
+    task_ids: [T052, T060, T061, T062, T063, T063b, T064]   # F-03: T052 (provenance dedup) moved here from US3 — it belongs with the provenance write path this slice owns (T064)
     type: feat
     status: pending
     approval_required: false
