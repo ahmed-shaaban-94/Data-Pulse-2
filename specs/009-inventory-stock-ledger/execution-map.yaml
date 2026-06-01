@@ -336,6 +336,7 @@ slices:
       - apps/api/src/inventory/inventory.service.ts
       - apps/worker/src/inventory/backfill.processor.ts
       - apps/api/test/inventory/sale-linked/*.spec.ts
+      - apps/worker/jest.config.cjs   # F-04: new Docker-backed worker spec(s) for the backfill processor must be registered in `dockerOutboxSuites` or the fast CI job (no Docker) goes RED (project_008_worker_ci_jest_exclusion). Outside the original allowed_files; owner-approved expansion.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/sale-linked
         expected: GREEN — sale-linked outbound carries provenance + decrements on-hand (FR-032); DECOUPLING — all flows pass with the 008 live loop UNWIRED, backfill reads CAPTURED rows not processed_at-stamped (SC-002/R8); backfill re-run idempotent (FR-033); ad-hoc NULL-product no auto-create rolls up to no product on-hand (FR-023/R5).
@@ -345,6 +346,26 @@ slices:
       - "stop if any flow subscribes to sale.captured or reads processed_at — v1 is decoupled; the backfill reads CAPTURED sale rows (FR-032/060, R8). Auto-decrement is the deferred follow-up."
       - "stop if the backfill mutates the 008 sale fact — read-only provenance only"
     parallel_safety: serialize   # touches inventory.service.ts shared with US5/US6 — serialize in same repo (parallel-agent worktree contention)
+    # F-04 (2026-06-01): US4 reshaped after RED-baseline probing (WSL Docker).
+    # T060 (API sale-linked outbound REFERENCE) is GREEN-on-arrival — US2's
+    # createStockMovement already accepts saleId/saleLineId, decrements on-hand,
+    # and surfaces the ref on the list (verified: outbound-reference.spec passes
+    # unchanged). So US4's genuine NEW work is the off-request WORKER backfill:
+    #   - service-layer entry accepting sourceSystem/externalId (worker-internal;
+    #     the HTTP DTO stays .strict() + provenance-free) — inventory.service.ts;
+    #   - T052 provenance dedup: catch the (tenant_id,source_system,external_id)
+    #     partial-unique, return the existing movement, do NOT re-apply on-hand;
+    #   - backfill.processor.ts (T064): reads CAPTURED 008 sales/sale_lines,
+    #     establishes tenant context (SET LOCAL app.current_tenant) BEFORE any DB
+    #     access (§V), carries tenantId/storeId/correlationId, dedups, never
+    #     mutates the sale fact, never auto-creates a product, redacts payloads.
+    #   - specs T061 (decoupling) / T062 (backfill idempotent) / T063 (ad-hoc
+    #     null-product) / T063b (worker tenant-context + RLS-bypass probe).
+    # allowed_files expanded to include apps/worker/jest.config.cjs (F-04 above).
+    # OPEN: T063b is filed under apps/api/test/ but tests apps/worker source —
+    # confirm which jest project runs the worker backfill spec before authoring
+    # (api harness vs worker harness; worker Docker suites need
+    # WORKER_INCLUDE_DB_TESTS=1). Owner-approved reshape in-session.
 
   # ===== Phase 7: US5 — Transfers (P2) ========================================
 
