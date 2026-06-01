@@ -30,8 +30,7 @@ permissions:
 jobs:
   fast:
     name: fast (build + Docker-free tests)
-    # CI uses the repo self-hosted Linux runner because GitHub-hosted quota is exhausted; db-integration requires Docker/Testcontainers.
-    runs-on: [self-hosted, Linux, X64, dp2-linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -69,7 +68,7 @@ jobs:
 
   db-integration:
     name: db-integration (Testcontainers + RLS + migrations)
-    runs-on: [self-hosted, Linux, X64, dp2-linux]
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Checkout
