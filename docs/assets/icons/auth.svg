@@ -1,1 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" aria-labelledby="title desc" role="img" viewBox="0 0 96 96"><title id="title">Auth icon</title><desc id="desc">Secure lock and token icon.</desc><rect width="96" height="96" fill="#ecfdf5" rx="20"/><rect width="46" height="36" x="25" y="42" fill="#0f766e" rx="8"/><path fill="none" stroke="#115e59" stroke-linecap="round" stroke-width="7" d="M34 42v-9c0-9 6-15 14-15s14 6 14 15v9"/><circle cx="48" cy="60" r="6" fill="#ccfbf1"/><path stroke="#ccfbf1" stroke-linecap="round" stroke-width="4" d="M48 66v6"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Auth icon</title>
+  <desc id="desc">Three-dimensional padlock with a pulsing token core, representing argon2id auth and bearer tokens.</desc>
+  <defs>
+    <linearGradient id="au-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ecfdf5"/>
+      <stop offset="1" stop-color="#a7f3d0"/>
+    </linearGradient>
+    <linearGradient id="au-body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#0d9488"/>
+      <stop offset="1" stop-color="#134e4a"/>
+    </linearGradient>
+    <linearGradient id="au-shackle" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#065f46"/>
+    </linearGradient>
+    <linearGradient id="au-hi" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="au-core" cx="0.5" cy="0.4" r="0.6">
+      <stop offset="0" stop-color="#ccfbf1"/>
+      <stop offset="0.5" stop-color="#14b8a6"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </radialGradient>
+    <filter id="au-shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#064e3b" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect width="96" height="96" rx="20" fill="url(#au-bg)"/>
+  <ellipse cx="48" cy="84" rx="22" ry="3" fill="#064e3b" opacity="0.22"/>
+  <g filter="url(#au-shadow)">
+    <path d="M34 42v-9c0-9 6-15 14-15s14 6 14 15v9" fill="none" stroke="url(#au-shackle)" stroke-width="7" stroke-linecap="round"/>
+    <rect x="25" y="42" width="46" height="36" rx="8" fill="url(#au-body)"/>
+    <rect x="25" y="42" width="46" height="36" rx="8" fill="url(#au-hi)"/>
+  </g>
+  <circle cx="48" cy="58" r="6" fill="url(#au-core)">
+    <animate attributeName="r" values="6;7.5;6" dur="2.4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0.85;1" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+  <path d="M48 64v8" stroke="#ccfbf1" stroke-width="4" stroke-linecap="round"/>
+</svg>
