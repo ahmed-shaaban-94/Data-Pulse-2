@@ -24,7 +24,8 @@
         013  product-master-from-erpnext         ── gated by: posting
          │
          ▼
-        014  branch-inventory-from-erpnext        ── gated by: stock-impact
+        014  branch-inventory-reconciliation-     ── gated by: stock-impact
+             and-warehouse-mapping
          │
          ▼
         015  pos-sale-posting-to-erpnext          ── gated by: posting + stock-impact
@@ -52,11 +53,11 @@
 - **Gated by**: `posting-decision-record` (item identity & mapping inform posting).
 - **Why here**: you cannot post a sale line (015) referencing an item that has no agreed master/mapping.
 
-### 014 — `branch-inventory-from-erpnext`
-- **Domain**: Branch/warehouse inventory sourced from ERPNext, related to the 009 stock ledger.
+### 014 — `branch-inventory-reconciliation-and-warehouse-mapping`
+- **Domain**: ERPNext **Warehouse ↔ DP2 store/branch mapping** and the **reconciliation/mismatch-detection** between DP2 operational on-hand (009) and ERPNext Bin/valuation. **NOT** an ERPNext stock read-down: per the [stock-impact decision](./decisions/stock-impact-decision-record.md), **DP2 remains the operational availability authority** and POS/Console sellability is driven by DP2 operational stock; ERPNext Bin/Warehouse quantities may be mirrored **for reconciliation only**.
 - **Depends on**: 012, 013 (items must exist before stock against them).
 - **Gated by**: `stock-impact-decision-record`.
-- **Why here**: stock posting (015) needs the on-hand/valuation authority decided first.
+- **Why here**: stock posting (015) needs the operational-vs-accounting authority split and the warehouse mapping settled first.
 
 ### 015 — `pos-sale-posting-to-erpnext`
 - **Domain**: Posting DP2 sale facts (008) into ERPNext (Sales Invoice / Payment Entry / optional Stock Entry).

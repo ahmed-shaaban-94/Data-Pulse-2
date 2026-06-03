@@ -15,7 +15,7 @@
 
 ## TL;DR
 
-011 establishes **ERPNext/Frappe as the reference ERP** for Retail Tower OS, fixes the **integration boundaries** (POS-Pulse never calls Frappe directly; Retail-Tower-Console consumes Data-Pulse generated clients only; ERPNext POS is **reference-only**, never the production cashier), and stands up the **signed-decision gate** — four decision records (posting, stock impact, tax/fiscal Egypt v1, version pin) that **block** the downstream specs 012–017 until signed. This is **docs/spec only**: no code, no schema/migration, no OpenAPI YAML, no package/lockfile, no CI, no connector code, no runtime change. The next move is the **owner signs the four decision records**; then 012 may be planned.
+011 establishes **ERPNext/Frappe as the reference ERP** for Retail Tower OS, fixes the **integration boundaries** (POS-Pulse never calls Frappe directly; Retail-Tower-Console consumes Data-Pulse generated clients only; ERPNext POS is **reference-only**, never the production cashier), and stands up the **signed-decision gate** — four decision records (posting, stock impact, tax/fiscal Egypt v1, version pin) that **block** the downstream specs 012–017 until signed. This is **docs/spec only**: no code, no schema/migration, no OpenAPI YAML, no package/lockfile, no CI, no connector code, no runtime change. **Update 2026-06-03:** the foundation PR (#468) merged, and the **four decision records are now SIGNED** (owner Ahmed Shaaban) — the gate is **SATISFIED** and 012–017 are unblocked. The next move is to **plan 012-erpnext-connector-contracts** (consistent with the posting + version-pin decisions).
 
 ---
 
@@ -26,10 +26,10 @@
 | `spec.md` | Foundation spec: goals, non-goals, actors, boundaries, numbering + connector decisions, follow-up map, acceptance criteria, signed-decision gate, closeout | Authored |
 | `erpnext-pos-reference-map.md` | ERPNext POS ↔ Retail Tower OS concept map; ERPNext POS marked reference-only | Authored |
 | `integration-boundaries.md` | Trust/ownership boundaries; one-path-to-ERPNext invariant | Authored |
-| `decisions/posting-decision-record.md` | Posting model gate | **UNSIGNED** |
-| `decisions/stock-impact-decision-record.md` | Stock impact / valuation gate | **UNSIGNED** |
-| `decisions/tax-fiscal-egypt-decision-record.md` | Tax / fiscal (Egypt v1) gate | **UNSIGNED** |
-| `decisions/version-pin-upgrade-policy.md` | ERPNext/Frappe version pin & upgrade gate | **UNSIGNED** |
+| `decisions/posting-decision-record.md` | Posting model gate | **SIGNED 2026-06-03** |
+| `decisions/stock-impact-decision-record.md` | Stock impact / valuation gate | **SIGNED 2026-06-03** |
+| `decisions/tax-fiscal-egypt-decision-record.md` | Tax / fiscal (Egypt v1) gate | **SIGNED 2026-06-03** |
+| `decisions/version-pin-upgrade-policy.md` | ERPNext/Frappe version pin & upgrade gate | **SIGNED 2026-06-03** |
 | `follow-up-spec-map.md` | 012–017 sequence, dependencies, gating decisions | Authored |
 | `wave-status.md` | This file | Authored |
 
@@ -61,7 +61,7 @@ _None._
 
 | Spec | Blocked by | Notes |
 |---|---|---|
-| 012–017 | The four `decisions/` records being `UNSIGNED` | Per spec §9 the signed-decisions gate is a hard stop on all downstream ERPNext specs. |
+| _None_ | — | The signed-decisions gate is **SATISFIED** (all four records SIGNED 2026-06-03). 012–017 are unblocked to begin their own planning chains. Each still runs its own Spec-Kit + Agent OS gates before any code. |
 
 ---
 
@@ -79,7 +79,7 @@ The 012–017 ERPNext integration arc (see [follow-up-spec-map.md](./follow-up-s
 
 ## Next recommended action
 
-**Owner signs the four decision records** in [decisions/](./decisions/) (posting, stock impact, tax/fiscal, version pin). Each is signed by setting `Status: SIGNED` with a dated owner sign-off and recording the chosen option. Once all four are signed, **012-erpnext-connector-contracts** may begin its Spec-Kit planning chain (and, within it, the `Retail-Tower-ERPNext-Connector` split ADR per `future-repo-split-criteria.md`). Until then, no ERPNext integration code may be written.
+The four decision records are **SIGNED** (2026-06-03) — the gate is **SATISFIED**. The next move is to **plan `012-erpnext-connector-contracts`**: begin its Spec-Kit planning chain (`spec.md` → `plan.md` → Constitution Check → `[GATED]` OpenAPI contract → `tasks.md` → `execution-map.yaml`) and, within it, propose the `Retail-Tower-ERPNext-Connector` split ADR per `future-repo-split-criteria.md`. 012 must respect the **posting** decision (async outbox posting; one submitted Sales Invoice per sale; reversing documents) and the **version-pin** decision (ERPNext v15 self-hosted; DP2↔connector contract insulated from ERPNext churn; any new dependency a separate `[GATED]` call).
 
 ---
 
