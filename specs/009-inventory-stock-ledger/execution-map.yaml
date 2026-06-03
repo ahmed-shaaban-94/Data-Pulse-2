@@ -53,10 +53,17 @@
 # tasks.md ID T001..T104 (45 distinct, incl. T063b) is assigned to exactly one slice's
 # `task_ids` — verified at authoring time.
 #
-# Status: 009 NOT STARTED — planning chain complete (spec + clarify + plan +
-#   tasks). No slice dispatched. All slices `status: pending`. The two [GATED]
-#   slices (009-CONTRACT, 009-SCHEMA) require explicit in-session approval
-#   before they dispatch.
+# Status: 009 CLOSED — 15/15 slices merged 2026-06-03 (PRs #437–#444, #451,
+#   #454/#455/#456/#458/#459/#461/#464). Full append-only stock ledger live on
+#   main: compute-on-read on-hand (US1), manual movements (US2), manual
+#   idempotency (US3), sale-linked outbound + off-request backfill (US4),
+#   transfers (US5), counts + append-only corrections (US6), negative-balance
+#   allow-and-flag counter (SIGNAL), void/refund→restock inbound (RESTOCK),
+#   §XIV data-class guard (LIFECYCLE), closeout (POLISH). The 009-CI-OPT infra
+#   slice made hosted CI reliable. TWO [GATED] packages/db deferrals carried OUT
+#   to a future gated slice — durable tracker: issue #465 — (1) established-unit
+#   concurrency guard (a real FR-022 gap under concurrent first-movements);
+#   (2) movement outbox emit (INVENTORY_MOVEMENT_* in OUTBOX_EVENT_TYPES).
 #
 #   DEFERRED (modeled, not v1 — see spec FR-060/FR-025/FR-040..042):
 #     1. Automatic sale-event decrement — future 008-live-loop / 009-sale-
@@ -567,15 +574,15 @@ slices:
   - id: 009-POLISH
     task_ids: [T100, T101, T102, T103, T104]
     type: chore
-    # IMPLEMENTED + GREEN on feat/009-polish (rebased onto main with LIFECYCLE).
-    # NOT yet merged — ready for PR; the LAST 009 slice → 15/15 on merge.
     # T100 k6 report-only (inventory-on-hand.js + inventory-movement.js, never run
     # in CI/never faked); T101 500/req backfill ceiling (MAX_BACKFILL_MOVEMENTS +
     # guard before the processor loop; over→reject zero-write, at→succeed; worker
     # spec 10/10); T102 SC-008/SC-009 verdicts in wave-status (both PASS); T103
     # coverage recorded local (stmts 87.45/lines 87.89, ≥80 met) + full inventory
-    # suite 22/106 GREEN; T104 this reconciliation. F-11 below.
-    status: implemented
+    # suite 22/106 GREEN; T104 reconciliation. F-11 below. The LAST 009 slice →
+    # 15/15. Two [GATED] packages/db deferrals tracked durably in issue #465.
+    status: merged
+    merged_at_commit: af4c17d   # PR #464 (squash) — db-integration + fast + CodeRabbit green
     approval_required: false
     depends_on:
       - 009-US1-ONHAND
