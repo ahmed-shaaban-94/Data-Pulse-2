@@ -156,11 +156,38 @@ export interface StockTransferBody {
   readonly inbound: StockMovementBody;
 }
 
+/** Server-resolved input to recordStockCount (009-US6, FR-021). */
+export interface RecordStockCountInput {
+  /** Resolved from the principal — never the body. */
+  readonly tenantId: string;
+  /** Resolved from the path — never the body. */
+  readonly storeId: string;
+  /** Resolved from the principal — never the body. */
+  readonly userId: string;
+  readonly tenantProductRef: string;
+  /** The physical count (non-negative) at numeric(19,4). */
+  readonly countedQuantity: string;
+  readonly stockingUnit: string;
+  readonly countedAt?: string | null | undefined;
+}
+
+/** Result of a recorded count (contract `StockCountResult`). */
+export interface StockCountResultBody {
+  readonly stockCountId: string;
+  readonly countedQuantity: string;
+  /** Signed variance (counted − derived on-hand). Zero ⇒ no correction. */
+  readonly variance: string;
+  /** The appended count_correction movement, or null on zero variance. */
+  readonly correctionMovement: StockMovementBody | null;
+}
+
 const AUDIT_ACTION_MOVEMENT_CREATE = 'inventory.movement.create';
 const AUDIT_ACTION_MOVEMENT_BACKFILL = 'inventory.movement.backfill';
 const AUDIT_ACTION_TRANSFER_CREATE = 'inventory.transfer.create';
+const AUDIT_ACTION_COUNT_RECORD = 'inventory.count.record';
 const AUDIT_TARGET_TYPE_MOVEMENT = 'stock_movement';
 const AUDIT_TARGET_TYPE_TRANSFER = 'stock_transfer';
+const AUDIT_TARGET_TYPE_COUNT = 'stock_count';
 
 /** Wire projection of a stock_movements row (contract `StockMovement`, §IV). */
 export interface StockMovementBody {
@@ -611,6 +638,138 @@ export class InventoryService {
           transferGroupId,
           outbound: toMovementBody(outRow),
           inbound: toMovementBody(inRow),
+        };
+      },
+    );
+  }
+
+  /**
+   * Record a physical stock count and append a `count_correction` movement for
+   * any variance (009-US6, FR-021). The history is NEVER rewritten: the variance
+   * (counted − derived on-hand) is an APPEND-ONLY signed correction movement
+   * linked to the recorded count via `stock_count_id`. After the count, the
+   * derived on-hand equals the counted quantity (SC-005). A zero-variance count
+   * is deterministic — the count is recorded but NO correction movement is
+   * appended (`correctionMovement: null`). The stock_counts insert + the optional
+   * correction + the audit all run in ONE `runWithTenantContext` transaction.
+   *
+   * The store is the PATH-scoped target (authorized at the controller), never a
+   * body field (§XII). The count_correction movement is the ONLY movement type
+   * that may carry a `stock_count_id` (and MUST, when it is that type) — the
+   * 0014 biconditional CHECK enforces it; the composite FK ties it to a count in
+   * the SAME tenant + store.
+   */
+  async recordStockCount(input: RecordStockCountInput): Promise<StockCountResultBody> {
+    const countedRaw = Number(input.countedQuantity);
+    if (!Number.isFinite(countedRaw)) {
+      throw new BadRequestException('countedQuantity must be a number');
+    }
+    const counted = Math.round(countedRaw * 1e4) / 1e4;
+    if (counted < 0) {
+      throw new BadRequestException('countedQuantity must be non-negative');
+    }
+    const stockingUnit = input.stockingUnit.trim();
+    if (stockingUnit.length === 0) {
+      throw new BadRequestException('stockingUnit is required');
+    }
+
+    const stockCountId = newId();
+    const auditId = newId();
+
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<StockCountResultBody> => {
+        // ---- Established-unit check (FR-022) ------------------------------
+        await this.assertUnitMatchesEstablished(
+          client,
+          input.storeId,
+          input.tenantProductRef,
+          stockingUnit,
+        );
+
+        // ---- Derived on-hand at count time (signed SUM) -------------------
+        const onHandRow = await client.query<{ quantity: string }>(
+          `SELECT COALESCE(SUM(quantity), 0)::numeric(19,4)::text AS quantity
+             FROM stock_movements
+            WHERE store_id = $1 AND tenant_product_ref = $2`,
+          [input.storeId, input.tenantProductRef],
+        );
+        const derivedOnHand = Number(onHandRow.rows[0]?.quantity ?? '0.0000');
+        // Variance = counted − derived on-hand, at numeric(19,4) scale.
+        const variance = Math.round((counted - derivedOnHand) * 1e4) / 1e4;
+        const varianceStr = variance.toFixed(4);
+
+        // ---- Record the count (provenance for the correction) -------------
+        await client.query(
+          `INSERT INTO stock_counts
+             (id, tenant_id, store_id, tenant_product_ref, counted_quantity,
+              derived_on_hand_at_count, stocking_unit, counted_at, created_by)
+           VALUES ($1, $2, $3, $4, $5::numeric(19,4), $6::numeric(19,4), $7,
+                   COALESCE($8::timestamptz, now()), $9)`,
+          [
+            stockCountId,
+            input.tenantId,
+            input.storeId,
+            input.tenantProductRef,
+            counted.toFixed(4),
+            derivedOnHand.toFixed(4),
+            stockingUnit,
+            input.countedAt ?? null,
+            input.userId,
+          ],
+        );
+
+        // ---- Append the count_correction ONLY for a non-zero variance ----
+        let correctionMovement: StockMovementBody | null = null;
+        if (variance !== 0) {
+          const corr = await client.query<MovementRow>(
+            `INSERT INTO stock_movements
+               (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
+                tenant_product_ref, stock_count_id, reason, occurred_at, created_by)
+             VALUES
+               ($1, $2, $3, 'count_correction', $4::numeric(19,4), $5, $6, $7,
+                'count variance', now(), $8)
+             RETURNING ${MOVEMENT_COLUMNS}`,
+            [
+              newId(),
+              input.tenantId,
+              input.storeId,
+              varianceStr,
+              stockingUnit,
+              input.tenantProductRef,
+              stockCountId,
+              input.userId,
+            ],
+          );
+          const row = corr.rows[0];
+          if (!row) {
+            throw new Error('InventoryService.recordStockCount: correction INSERT returned no row');
+          }
+          correctionMovement = toMovementBody(row);
+        }
+
+        // ---- Audit the count in the SAME transaction ----------------------
+        await client.query(
+          `INSERT INTO audit_events
+             (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          [
+            auditId,
+            input.userId,
+            input.tenantId,
+            AUDIT_ACTION_COUNT_RECORD,
+            AUDIT_TARGET_TYPE_COUNT,
+            stockCountId,
+            JSON.stringify({ variance: varianceStr, hasCorrection: variance !== 0 }),
+          ],
+        );
+
+        return {
+          stockCountId,
+          countedQuantity: counted.toFixed(4),
+          variance: varianceStr,
+          correctionMovement,
         };
       },
     );

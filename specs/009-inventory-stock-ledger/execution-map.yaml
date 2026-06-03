@@ -327,12 +327,10 @@ slices:
   - id: 009-US4-SALELINKED
     task_ids: [T052, T060, T061, T062, T063, T063b, T064]   # F-03: T052 (provenance dedup) moved here from US3 — it belongs with the provenance write path this slice owns (T064)
     type: feat
-    # IMPLEMENTED + verified GREEN on feat/009-us4-salelinked (commits 2fdbc59,
-    # 085cea4, 0aea179, bfe71b6 atop RED-baseline e1f591f). NOT yet merged —
-    # ready for PR. api sale-linked 6/6 + full api inventory regression 84 pass
-    # (1 skip) + worker backfill 8/8, all via WSL Docker. F-06 (FR-022 worker
-    # mirror gap) found by adversarial review + fixed (bfe71b6) — see note below.
-    status: implemented
+    # F-06 (FR-022 worker mirror gap) found by adversarial review + fixed
+    # (bfe71b6) — see note below. api sale-linked 6/6 + worker backfill 8/8.
+    status: merged
+    merged_at_commit: 51b2e80   # PR #454 (squash) — db-integration + fast + CodeRabbit green
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks:
@@ -411,10 +409,11 @@ slices:
   - id: 009-US5-TRANSFER
     task_ids: [T070, T071, T072, T073]
     type: feat
-    # IMPLEMENTED + verified GREEN on feat/009-us5-transfer (commit 4668803 off
-    # main@51b2e80 which includes merged US4). NOT yet merged — ready for PR.
     # transfer 6/6 + full api inventory regression 90 pass (1 skip), via WSL Docker.
-    status: implemented
+    # A transient CI flake (inbound-outbound-adjust container reaped mid-connection)
+    # did NOT reproduce on re-run nor full-concurrency local run — see F-09 below.
+    status: merged
+    merged_at_commit: 08be518   # PR #455 (squash) — db-integration green on re-run
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks: []
@@ -438,7 +437,12 @@ slices:
   - id: 009-US6-COUNT
     task_ids: [T080, T081, T082, T083]
     type: feat
-    status: pending
+    # count 4/4 + full api inventory regression 94 pass (1 skip), via WSL Docker.
+    # Stacked on US5; rebased --onto main after US5's squash-merge (the squash
+    # orphaned the stacked base → CONFLICTING → rebase dropped US5's commits,
+    # leaving a clean count-only diff). F-08 below.
+    status: merged
+    merged_at_commit: pending-456   # PR #456 (squash) — re-targeted to main + rebased; merging now
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks: []
@@ -447,6 +451,7 @@ slices:
       - apps/api/src/inventory/inventory.service.ts
       - apps/api/src/inventory/inventory.controller.ts
       - apps/api/test/inventory/count/*.spec.ts
+      - apps/api/test/inventory/count/__count-harness.ts   # F-08: support harness (not a *.spec.ts) — same allowed_files gap as F-05/F-07. Owner-approved expansion.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/count
         expected: GREEN — count variance => count_correction movement = signed variance linked via stock_count_id; on-hand == counted; no history rewrite (FR-021/SC-005); zero-variance deterministic; correction traceable.

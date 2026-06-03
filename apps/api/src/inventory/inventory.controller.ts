@@ -54,6 +54,7 @@ import {
   type StockMovementBody,
   type StockMovementListBody,
   type StockTransferBody,
+  type StockCountResultBody,
 } from './inventory.service';
 
 const UuidSchema = z.string().uuid();
@@ -122,6 +123,29 @@ const CreateStockTransferSchema = z
   })
   .strict();
 type CreateStockTransferDto = z.infer<typeof CreateStockTransferSchema>;
+
+/**
+ * Strict record-count command (contract `RecordStockCountCommand`,
+ * `additionalProperties: false`). The store is the PATH parameter — never a body
+ * field (§XII); a body `storeId` is an unknown key → 400. `countedQuantity` is a
+ * NON-NEGATIVE numeric(19,4) (the signed variance vs derived on-hand becomes the
+ * correction movement).
+ */
+const NonNegativeDecimalQtySchema = z
+  .string()
+  .regex(
+    /^\d{1,15}(\.\d{1,4})?$/,
+    'countedQuantity must be an unsigned numeric(19,4) decimal string (≤15 integer, ≤4 fraction digits)',
+  );
+const RecordStockCountSchema = z
+  .object({
+    tenantProductRef: z.string().uuid(),
+    countedQuantity: NonNegativeDecimalQtySchema,
+    stockingUnit: z.string().min(1).max(32),
+    countedAt: z.string().datetime({ offset: true }).optional(),
+  })
+  .strict();
+type RecordStockCountDto = z.infer<typeof RecordStockCountSchema>;
 
 @Controller()
 @UseGuards(DashboardAuthGuard, TenantContextGuard)
@@ -243,6 +267,37 @@ export class InventoryController {
       quantity: body.quantity,
       stockingUnit: body.stockingUnit,
       reason: body.reason ?? null,
+    });
+  }
+
+  /**
+   * POST /api/inventory/v1/stores/{storeId}/counts
+   *
+   * Record a physical count at the path-scoped store; any variance from the
+   * derived on-hand is appended as a `count_correction` movement (signed
+   * variance) linked to the count — the history is NEVER rewritten (FR-021). The
+   * store is the PATH parameter, authorized object-level against the principal's
+   * scope; tenant + actor resolve from context. Idempotent via `Idempotency-Key`.
+   */
+  @Post('api/inventory/v1/stores/:storeId/counts')
+  @HttpCode(HttpStatus.CREATED)
+  @Idempotent('required')
+  async recordStockCount(
+    @Req() request: TenantContextRequest,
+    @Param('storeId', new ZodValidationPipe(UuidSchema)) storeId: string,
+    @Body(new ZodValidationPipe(RecordStockCountSchema))
+    body: RecordStockCountDto,
+  ): Promise<StockCountResultBody> {
+    const ctx = this.requireContext(request);
+    this.authorizeStore(ctx, storeId);
+    return this.inventoryService.recordStockCount({
+      tenantId: ctx.tenantId as string,
+      storeId,
+      userId: ctx.userId as string,
+      tenantProductRef: body.tenantProductRef,
+      countedQuantity: body.countedQuantity,
+      stockingUnit: body.stockingUnit,
+      countedAt: body.countedAt ?? null,
     });
   }
 
