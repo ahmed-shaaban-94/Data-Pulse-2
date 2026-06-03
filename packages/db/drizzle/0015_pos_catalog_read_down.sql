@@ -71,15 +71,30 @@ BEGIN;
 -- ===========================================================================
 -- 1. catalog_change_log (data-model.md §3) — append-only read-down change-log
 -- ===========================================================================
+-- FK deletion action: ON DELETE CASCADE on ALL three FKs — this table
+-- DELIBERATELY DEVIATES from the schema-wide ON DELETE RESTRICT convention.
+-- Rationale: catalog_change_log is a TRIGGER-POPULATED DERIVED PROJECTION, not
+-- an independent fact. A derived projection must NEVER veto deletion of the
+-- entities it mirrors. RESTRICT would deadlock every real catalog deletion: the
+-- trigger writes a change-log row on any tenant_products / store_product_overrides
+-- insert/update, and that row's RESTRICT FK would then block deleting the very
+-- product / store / tenant that produced it (the existing 005/007 catalog tests
+-- + production teardown both hit this). CASCADE is also the only CORRECT
+-- semantic for the advisory-op delta read: a change-log row pointing at a
+-- hard-deleted product is unresolvable (the read re-resolves Tenant ⊕ Override
+-- and finds nothing), so the projection must die with its subject. CASCADE
+-- removes the row exactly when it would otherwise become unresolvable. (Postgres
+-- referential-integrity cascade actions bypass RLS, so the append-only no-DELETE
+-- policy does not block the cascade — proven by the round-trip test.)
 CREATE TABLE IF NOT EXISTS catalog_change_log (
   -- Single GLOBAL monotonic cursor (R9). PK + IDENTITY: concurrency-safe,
   -- monotonic-within-tenant when filtered by tenant_id at read.
   sequence      BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  tenant_id     UUID         NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+  tenant_id     UUID         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   -- NULLABLE: NULL = tenant-wide (sentinel) event; non-NULL = store-scoped (R9).
-  store_id      UUID         REFERENCES stores(id) ON DELETE RESTRICT,
+  store_id      UUID         REFERENCES stores(id) ON DELETE CASCADE,
   -- Provenance only — the resolved payload is computed at read time (§1/§4).
-  product_id    UUID         NOT NULL REFERENCES tenant_products(id) ON DELETE RESTRICT,
+  product_id    UUID         NOT NULL REFERENCES tenant_products(id) ON DELETE CASCADE,
   op            TEXT         NOT NULL,
   -- Diagnostics only — ordering uses `sequence`, never this.
   occurred_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),

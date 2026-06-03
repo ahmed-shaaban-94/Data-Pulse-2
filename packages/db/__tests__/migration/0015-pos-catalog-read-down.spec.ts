@@ -492,6 +492,59 @@ describe("0015_pos_catalog_read_down — population triggers fire under tenant G
 });
 
 // ---------------------------------------------------------------------------
+// FK CASCADE — the change-log is a derived projection and must NOT veto deletion
+// of the entities it mirrors. RESTRICT here deadlocked every real catalog delete
+// (the trigger logs a row on insert/update, then RESTRICT blocked deleting the
+// product/store/tenant — broke the existing 005/007 catalog teardown paths).
+// ---------------------------------------------------------------------------
+describe("0015_pos_catalog_read_down — FK ON DELETE CASCADE (derived projection)", () => {
+  it("all three FKs are ON DELETE CASCADE (not the schema-wide RESTRICT)", async () => {
+    if (!env) throw new Error("env not initialized");
+    const r = await env.admin.query<{ conname: string; confdeltype: string }>(
+      `SELECT conname, confdeltype FROM pg_constraint
+       WHERE contype = 'f' AND conrelid = 'catalog_change_log'::regclass
+       ORDER BY conname`,
+    );
+    // confdeltype 'c' = CASCADE (vs 'r' = RESTRICT, 'a' = NO ACTION).
+    expect(r.rows.length).toBe(3);
+    for (const row of r.rows) {
+      expect(row.confdeltype).toBe("c");
+    }
+  });
+
+  it("deleting a tenant_products row that has a change-log row SUCCEEDS + cascades the row away", async () => {
+    if (!env) throw new Error("env not initialized");
+    // Reproduce the exact CI break: create a product (the trigger logs an upsert
+    // change-log row referencing it), then DELETE the product. With RESTRICT
+    // this raised catalog_change_log_product_id_fkey; with CASCADE it succeeds
+    // and the change-log row is removed (the cascade bypasses the append-only
+    // no-DELETE RLS policy — Postgres referential actions bypass RLS).
+    const doomed = "99999999-9999-9999-9999-999999999999";
+    await env.admin.query(
+      `INSERT INTO tenant_products
+         (id, tenant_id, name, default_price, default_currency_code, is_active,
+          tax_category, created_by, updated_by)
+       VALUES ($1, $2, 'Doomed', '5.00', 'EGP', true, 'standard', $3, $3)`,
+      [doomed, TENANT_A, ACTOR],
+    );
+    const logged = await env.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM catalog_change_log WHERE product_id = $1`,
+      [doomed],
+    );
+    expect(Number(logged.rows[0]?.count)).toBeGreaterThanOrEqual(1);
+
+    // The delete must SUCCEED (the regression: RESTRICT made this throw).
+    await env.admin.query(`DELETE FROM tenant_products WHERE id = $1`, [doomed]);
+
+    const after = await env.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM catalog_change_log WHERE product_id = $1`,
+      [doomed],
+    );
+    expect(after.rows[0]?.count).toBe("0"); // cascaded away
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Rollback round-trip (UP -> DOWN -> UP)
 // ---------------------------------------------------------------------------
 describe("0015_pos_catalog_read_down — rollback round-trip (UP -> DOWN -> UP)", () => {

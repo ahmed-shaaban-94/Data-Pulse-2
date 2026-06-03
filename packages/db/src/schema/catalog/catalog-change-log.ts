@@ -62,19 +62,26 @@ export const catalogChangeLog = pgTable(
     // Drizzle models the column as bigint; the IDENTITY clause + PK live in the
     // migration (no Drizzle generatedAlwaysAsIdentity round-trip dependency).
     sequence: bigint("sequence", { mode: "bigint" }).primaryKey().notNull(),
+    // ON DELETE CASCADE on ALL three FKs — DELIBERATE deviation from the
+    // schema-wide RESTRICT convention. catalog_change_log is a trigger-populated
+    // DERIVED PROJECTION; it must never veto deletion of the entities it mirrors.
+    // RESTRICT would deadlock every real catalog deletion (the trigger writes a
+    // change-log row on a tenant_products/override insert/update, and that row
+    // would then block deleting the product/store/tenant). CASCADE is also the
+    // correct semantic for the advisory-op delta read: a row pointing at a
+    // hard-deleted product is unresolvable, so the projection dies with its
+    // subject. See 0015_pos_catalog_read_down.sql for the full rationale.
     tenantId: uuid("tenant_id")
       .notNull()
-      .references(() => tenants.id, { onDelete: "restrict" }),
+      .references(() => tenants.id, { onDelete: "cascade" }),
     // NULLABLE: NULL = tenant-wide (sentinel) event; non-NULL = store-scoped (R9).
     storeId: uuid("store_id").references(() => stores.id, {
-      onDelete: "restrict",
+      onDelete: "cascade",
     }),
-    // Provenance only — references the CAPTURED product fact. Restricted FK so a
-    // change-log row can never dangle past its product (additive, defense beneath
-    // RLS); the resolved payload is computed at read, not stored here.
+    // Provenance only — the resolved payload is computed at read time (§1/§4).
     productId: uuid("product_id")
       .notNull()
-      .references(() => tenantProducts.id, { onDelete: "restrict" }),
+      .references(() => tenantProducts.id, { onDelete: "cascade" }),
     op: text("op").notNull(),
     // Diagnostics only — ordering uses `sequence`, never this (data-model §3).
     occurredAt: timestamp("occurred_at", { withTimezone: true })
