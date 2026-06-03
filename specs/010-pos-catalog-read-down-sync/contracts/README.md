@@ -38,7 +38,7 @@
 
 ## Payload
 
-Each sellable row carries the [data-model §1](../data-model.md) wire shape: `product_id`, `sku`, `name_ar` (NOT NULL), `name_en`, `aliases[]`, `price { amount, currency_code }`, `tax_category`, `unit_pack_label`, `active`, `controlled_substance`, `prescription_required`, `row_cursor`. **No raw DB entity** (§IV `toBody()` projection). **Never a float** — `amount` is the existing `DecimalAmount` string at the currency's natural minor precision; single currency per `(tenant, store)` v1.
+Each sellable row carries the [data-model §1](../data-model.md) wire shape (revised 2026-06-03, R-1/Option B — real-schema-backed fields only): `product_id`, `sku`, `name` (NOT NULL — single `tenant_products.name`; no ar/en split), `aliases[]`, `price { amount, currency_code }`, `tax_category`, `active`, `row_cursor`. The pharmacy-domain fields (`name_ar`/`name_en`, `controlled_substance`, `prescription_required`, `unit_pack_label`) are **NOT in the v1 payload** — no backing 003 column. **No raw DB entity** (§IV `toBody()` projection). **Never a float** — `amount` is the existing `DecimalAmount` string at the currency's natural minor precision; single currency per `(tenant, store)` v1. **Lock the per-row token name as `row_cursor`** in the YAML (resolves analyze finding I2/R-5).
 
 ## Sellable-stream + null-price (Decisions #2/#3)
 

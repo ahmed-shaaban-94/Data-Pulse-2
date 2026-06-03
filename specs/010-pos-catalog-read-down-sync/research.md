@@ -16,10 +16,10 @@ Resolves the spec's deferred decision (delta mechanism) and sets the remaining t
 - The repo already has an **`outbox_events`** pattern (verified: `packages/db/src/schema/outbox_events.ts`) — a proven monotonic change-event mechanism to mirror, reducing novelty.
 - Cursor is **opaque** to the consumer (FR-011), so this choice stays invisible across the contract — the spec's clarify deferral was correct; the plan is the right place to land it.
 
-**Migration shape (for the gated slice — NOT authored here)**: additive only — a catalogue change-log/version mechanism (sequence column or change-log table) capturing upsert + `remove_from_sellable` events per `(tenant, store)`, populated when sellable-relevant fields change (price, currency, availability, retire, name/alias/tax). Reviewed for lock duration + rollback (Backend Authority). No change to existing 003 column semantics.
+**Migration shape (for the gated slice — NOT authored here)**: additive only — a catalogue change-log table capturing upsert + `remove_from_sellable` events with a **single per-tenant monotonic sequence** (see R9 for the fan-out decision), populated when sellable-relevant fields change (price, currency, availability, retire, name/alias/tax). Reviewed for lock duration + rollback (Backend Authority). No change to existing 003 column semantics.
 
 **Alternatives considered**:
-- *Derive from `updated_at`/`row_version`* — rejected: cannot express the removal tombstone (FR-042); ordering/gap-detection fragile. (This was the spec's "Option B".)
+- *Derive from `updated_at`/`row_version`* — rejected: cannot express the removal tombstone (FR-042); ordering/gap-detection fragile. (This was the *delta-mechanism* "Option B" — distinct from, and unrelated to, the 2026-06-03 R-1 **payload** "Option B" recorded in spec.md Clarifications.)
 - *Hybrid (upserts from `updated_at` + tombstone log only)* — rejected for v1: two mechanisms with two consistency models; the single change-log subsumes it more simply and matches the existing outbox pattern.
 - *Full event-sourcing of the catalogue* — rejected: out of scope; the change-log is a projection-versioning aid, not a new SoT.
 
@@ -27,7 +27,7 @@ Resolves the spec's deferred decision (delta mechanism) and sets the remaining t
 
 ## R2 — Cursor semantics
 
-**Decision**: Server-issued **opaque, monotonic, scope-bound** cursor (encodes `(tenant, store, sequence)`; opaque to the client). Snapshot returns the current cursor; delta advances it. A cursor older than the retained change-log horizon → `snapshot_required`. A cursor presented under a different `(tenant, store)` → non-disclosing rejection (FR-024).
+**Decision**: Server-issued **opaque, monotonic, scope-bound** cursor (encodes `(tenant_id, sequence)`; opaque to the client — the store scope is applied at read time via the R9 union filter, NOT encoded in the token). Snapshot returns the current cursor; delta advances it. A cursor older than the retained change-log horizon → `snapshot_required`. A cursor presented under a different scope → non-disclosing rejection (FR-024). (Per-tenant sequence + sentinel-row fan-out is fixed in R9.)
 
 **Rationale**: Opaqueness lets the mechanism (R1) evolve without a contract break; monotonic + scope-bound gives deterministic ordering and isolation. No client wall-clock dependence (immune to terminal clock skew).
 
@@ -85,6 +85,33 @@ Resolves the spec's deferred decision (delta mechanism) and sets the remaining t
 
 ---
 
+## R9 — Change-log fan-out for tenant-level changes (resolves external-review R-3)
+
+**Context**: A change to a *tenant-level* field (e.g. `tenant_products.default_price`, `name`, `tax_category`) affects the resolved view of **every store that does not override that field**. R1 keyed the change-log "per `(tenant, store)`", which forced a decision: how does one tenant-product UPDATE become per-store change-log entries?
+
+**Decision — single per-tenant sequence + tenant-wide (`store_id IS NULL`) sentinel rows; a deliberately *dumb* trigger.**
+
+1. **One monotonic `sequence` per `tenant_id`** (NOT per `(tenant, store)`). This supersedes the data-model §2/§3 "per tenant+store" wording (corrected there).
+2. **Fan-out = NONE at write time.** A tenant-level change writes **one** row with `store_id IS NULL`. A store-override change (`store_product_overrides`) writes one row with `store_id = S`. An alias change writes one row scoped as the alias is scoped (tenant-wide alias → `store_id IS NULL`; store-scoped alias → `store_id = S`).
+3. **Delta query filters** `tenant_id = T AND (store_id = S OR store_id IS NULL) AND sequence > C`, ordered by `sequence`. The store sees its own override events **unioned with** tenant-wide events.
+4. **The trigger does NOT consult `store_product_overrides`** to decide which stores "really" changed. It is a one-row-per-raw-table-change insert. Correctness of "did store S's resolved view actually change?" lives in the **read-side resolver + idempotent application** (next point), not in the trigger.
+5. **Override-masking is handled as a harmless idempotent re-upsert** (resolves the §3 gap the external review flagged): if a tenant-level field changes but store S overrides that exact field, S still receives the tenant-wide `upsert` event; applying it re-writes S's resolved row to the **same** value it already held (the resolver computes Tenant ⊕ Override, the override still wins). FR-021 idempotency makes this a no-op for the consumer. No write-time override-consultation is needed.
+
+**Rationale**:
+- **The change-log carries only `product_id` + `op`, never payload** (data-model §3); the resolved `row` is computed at *read* time per `(tenant, store)` regardless (§4). So write-time fan-out would pre-resolve **nothing** — it would only multiply inserts (N = store count per tenant-level change) and force an override-aware, high-amplification trigger. Pure cost, no benefit.
+- **R8 governs over R1's "dense sequence" lean.** Reads are latency-tolerant (offline replica absorbs latency); the design should favor **light writes + heavy reads**. The sentinel is one insert per change vs. N; the read does a slightly wider filtered scan — exactly the right trade at the ~50k-product, multi-store scale.
+- **FR-022 "gap-detectable" = server-guaranteed completeness**, NOT consumer-verified cursor contiguity. The delta contract guarantees "all rows `> C` for this store's filter are returned"; the consumer does NOT prove completeness by sequence density. A per-tenant sequence is therefore *sparse* for any single store (e.g. 5, 9, 12) and that is correct and expected — gaps are other stores' events, not missing data. (A per-store dense sequence would be the only design requiring consumer-side contiguity checking; it is not chosen.)
+- **Single sequence preserves total order** for a product changed twice in quick succession (tenant-wide then store-override) — two interleaved per-scope streams would lose that ordering. One sequence keeps it.
+- Invisible across the **opaque** cursor (FR-011): this entire mechanism choice is internal; the consumer and acceptance tests never see it, so it is correctly a plan/research-level decision, not a contract change.
+
+**Alternatives considered**:
+- *Per-store fan-out (dense per-`(tenant,store)` sequence, N inserts per tenant-level change)* — rejected: write-amplification with zero read-time benefit (payload already resolves at read); requires an override-aware trigger; only justified if FR-022 demanded consumer-verified contiguity, which it does not.
+- *Two interleaved sequences (tenant-wide + per-store)* — rejected: loses total order across the two streams for the same product.
+
+**Lock/perf note for the gated `010-SCHEMA` slice (T013)**: with the sentinel, the worst-case write is **one** change-log INSERT per raw catalog UPDATE — no per-store amplification — so the trigger's lock footprint on `tenant_products` / `store_product_overrides` / `product_aliases` is bounded and additive. The delta read adds a `(store_id = S OR store_id IS NULL)` predicate; index the change-log on `(tenant_id, sequence)` with `store_id` as an included/filter column.
+
+---
+
 ## Resolved → into Phase 1
 
-R1/R2 → data-model (change-log/cursor entity + tombstone). R4/R5 → data-model (sellable projection + money). R3 → contracts (idempotent replay). R6 → contracts + observability. R7/R8 → contracts (headers, pagination). No NEEDS CLARIFICATION remain.
+R1/R2/R9 → data-model (change-log/cursor entity + tombstone + per-tenant sequence/sentinel fan-out). R4/R5 → data-model (sellable projection + money). R3 → contracts (idempotent replay). R6 → contracts + observability. R7/R8 → contracts (headers, pagination). No NEEDS CLARIFICATION remain; external-review R-1 (payload) + R-3 (fan-out, R9) resolved.
