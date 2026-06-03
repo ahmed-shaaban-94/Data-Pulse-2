@@ -109,6 +109,10 @@ assertMetricLabels("idempotency_token_mismatch_total", []);
 assertMetricLabels("catalog_duplicate_alias_conflict_total", []);
 // Inventory domain — 009-SIGNAL-NEGBAL (plan §3.3, FR-024). UNLABELED.
 assertMetricLabels("inventory_negative_balance_total", []);
+// Catalog domain — 010-US1-SNAPSHOT (read-down R6, FR-070). UNLABELED — no
+// product/price/PII in labels; the excluded product is on the reconciliation
+// backlog, not the metric.
+assertMetricLabels("catalog_unpriced_issue_rate", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -193,6 +197,14 @@ const _inventoryNegativeBalance: Counter = meter.createCounter(
   {
     description:
       "Outbound movements (manual outbound / transfer_out / sale-linked backfill) that drove a (tenant, store, product) on-hand below zero under the allow-and-flag policy (009 FR-024). Unlabeled — the affected key is high-cardinality / PII-adjacent and lives on the movement + audit rows, not metric labels.",
+  },
+);
+
+const _catalogUnpricedIssue: Counter = meter.createCounter(
+  "catalog_unpriced_issue_rate",
+  {
+    description:
+      "Products excluded from the read-down sellable stream because the resolved price is missing / has no currency / is non-representable in the currency minor unit (010 R5/R6, FR-041/044). Unlabeled — the excluded product is recorded on the reconciliation backlog, not in metric labels (no product/price/PII).",
   },
 );
 
@@ -401,6 +413,18 @@ export function recordDuplicateAliasConflict(): void {
  */
 export function recordInventoryNegativeBalance(): void {
   _inventoryNegativeBalance.add(1);
+}
+
+/**
+ * Increment catalog_unpriced_issue_rate (010 R6 / FR-070).
+ * Emission site: ReadDownService snapshot/delta resolution, once per product
+ * excluded from the sellable stream for a PRICE-related reason (missing price /
+ * missing currency / non-representable). Unlabeled — the excluded product goes
+ * to the reconciliation backlog, not metric labels. This is a SIGNAL on a
+ * read path: emission MUST NOT alter the response (the row is simply absent).
+ */
+export function recordCatalogUnpricedIssue(): void {
+  _catalogUnpricedIssue.add(1);
 }
 
 // ---------------------------------------------------------------------------

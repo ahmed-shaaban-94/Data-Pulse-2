@@ -19,21 +19,34 @@
  *   - 010-US2-DELTA          — adds the `posGetCatalogDeltas` route (shares the
  *                               controller/service → serialized after US1).
  *
- * 010-US1-SNAPSHOT will add the import surface this read-only module needs
+ * 010-US1-SNAPSHOT adds the snapshot route surface + the import set below
  * (mirroring SalesModule / ReconciliationModule):
  *   - AuthModule    — provides PG_POOL (shared pool) + PosOperatorAuthGuard
  *                     (the device-principal guard `posCaptureItem` + the 008
  *                     sales POS routes use).
  *   - ContextModule — provides TenantContextGuard / scope resolution.
  *   - AuditModule   — registers the global AuditEmitterInterceptor that the
- *                     `@Auditable(...)` read-access audit (FR-080) triggers.
+ *                     `@Auditable("catalog.snapshot.read")` read-access audit
+ *                     (FR-080) triggers.
+ * 010-US2-DELTA adds the `posGetCatalogDeltas` route to the SAME
+ * controller/service (serialized after US1).
  *
  * The platform stays the catalogue authority (§IX); there is NO write surface
- * (GET only). Unlike 008, this module is registered in app.module.ts at SETUP
- * time (per the 010 execution-map allowed_files) — the empty module compiles
- * and wires cleanly with no routes.
+ * (GET only). Registered in app.module.ts at SETUP time (per the 010
+ * execution-map allowed_files).
  */
 import { Module } from "@nestjs/common";
 
-@Module({})
+import { AuditModule } from "../../audit/audit.module";
+import { AuthModule } from "../../auth/auth.module";
+import { ContextModule } from "../../context/context.module";
+import { ReadDownController } from "./read-down.controller";
+import { ReadDownService } from "./read-down.service";
+
+@Module({
+  imports: [AuthModule, ContextModule, AuditModule],
+  controllers: [ReadDownController],
+  providers: [ReadDownService],
+  exports: [ReadDownService],
+})
 export class ReadDownModule {}

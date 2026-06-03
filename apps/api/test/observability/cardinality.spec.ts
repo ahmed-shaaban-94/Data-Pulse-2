@@ -199,6 +199,8 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "catalog_duplicate_alias_conflict_total",
     // Inventory domain — 009-SIGNAL-NEGBAL (FR-024 / plan §3.3). Unlabeled.
     "inventory_negative_balance_total",
+    // Catalog domain — 010-US1-SNAPSHOT read-down (R6 / FR-070). Unlabeled.
+    "catalog_unpriced_issue_rate",
   ];
 
   for (const name of expectedSignals) {
