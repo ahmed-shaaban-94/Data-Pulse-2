@@ -2,13 +2,21 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **IN PROGRESS** — 7 of 15 slices merged through PR #444 (`8d3e6d9`, 2026-05-31): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL. Both `[GATED]` slices were approved in-session and merged. The MVP read path (US1: compute-on-read on-hand + movement list) and the manual write path (US2: createStockMovement) are live on `main`. Created 2026-05-31.
+**Status**: **IN PROGRESS** — 8 of 15 slices merged through PR #451 (`1ef6e07`, 2026-06-01): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY. Both `[GATED]` slices were approved in-session and merged. The MVP read path (US1: compute-on-read on-hand + movement list), the manual write path (US2: createStockMovement), and manual idempotency (US3: `@Idempotent("required")` on the create route) are live on `main`. Hosted CI is green (`009-CI-OPT` PR #449 + canary). Created 2026-05-31. **US4-SALELINKED in progress** on `feat/009-us4-salelinked` (RED-baseline `e1f591f`).
 
 ---
 
 ## Next recommended action
 
-**BLOCKED on `009-CI-OPT`** — hosted CI must be green before any further Docker-gated slice (US3–US6 etc.) dispatches.
+**IN PROGRESS: `009-US4-SALELINKED`** on branch `feat/009-us4-salelinked` (RED-baseline `e1f591f`). Hosted CI is green (`009-CI-OPT`), US3 merged (#451). The slice was reshaped post-RED (finding **F-04**) and re-confirmed with the advisor (finding **F-05**, below):
+
+- **T060 (API sale-linked outbound reference)** — GREEN-on-arrival; US2's `createStockMovement` already accepts `saleId/saleLineId`, decrements on-hand, surfaces the ref. `outbound-reference.spec.ts` passes unchanged.
+- **The genuine new work splits by jest project:**
+  - **Service-layer specs (T052/T061/T062/T063)** stay in `apps/api/test/inventory/sale-linked/*.spec.ts` — `inventory.service.ts` is in the **api** package, and the slice's validation command (`pnpm --filter @data-pulse-2/api test -- inventory/sale-linked`) only matches this glob. Start RED here with **T052** (provenance dedup): call the worker-internal `(sourceSystem,externalId)` entry twice → one movement, on-hand applied once. Fails today because US2's DTO is `.strict()` + provenance-free.
+  - **Worker-side (T064 `backfill.processor.ts` + T063b tenant-context probe)** need Testcontainers + `WORKER_INCLUDE_DB_TESTS=1`, live under `apps/worker/test/inventory/**`, and must register in `dockerOutboxSuites` (`project_008_worker_ci_jest_exclusion`). **Blocked on F-05 allowed_files expansion** (see below).
+- **R8 boundary**: the backfill selects CAPTURED rows via `processed_at IS NULL` — that `IS NULL` predicate IS the decoupling mechanism (not a `processed_at` *read/wait*). The stop's prohibition is on subscribing to `sale.captured` or depending on a non-NULL `processed_at`. Confirm the row predicate is exactly the R8 form.
+
+US5/US6 each depend only on US2 (T044) but all write the shared `inventory.service.ts`, so they are **NOT safely parallel in a shared worktree** (parallel agents share git worktree state) — dispatch serially, or `git worktree add` for true isolation.
 
 Background (2026-06-01): the CI runner was switched self-hosted → GitHub-hosted `ubuntu-latest` (PR #446) because the self-hosted runner was **dead** — `db-integration` (the only Docker/Postgres lane) had not completed across the whole 009 feature, so latent breakage accumulated unobserved. Once it ran on hosted it surfaced, in order: a stale migration-count assertion (PR #447), a self-referential barrel import (PR #448), and finally a **25-min job timeout** — the api RLS+audit+auth step ran ~21 min under `--coverage` and the job was killed twice before reporting a verdict. The api suites (which US3–US6 depend on) have therefore **never been seen passing on hosted**.
 
@@ -77,8 +85,8 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-ISOLATION-HARNESS | T014, T015 | **merged** (#442 `c863216`) | — |
 | 009-US1-ONHAND 🎯 | T030–T034 | **merged** (#443 `4449f13`) | — (MVP) |
 | 009-US2-MANUAL | T040–T044 | **merged** (#444 `8d3e6d9`) | — |
-| 009-US3-IDEMPOTENCY | T050–T053 | pending | — (next) |
-| 009-US4-SALELINKED | T060–T064 | pending | — (decoupling proof) |
+| 009-US3-IDEMPOTENCY | T050, T051, T053 | **merged** (#451 `1ef6e07`) | — (manual idempotency) |
+| 009-US4-SALELINKED | T052, T060–T064 | **in progress** (`feat/009-us4-salelinked`) | — (decoupling proof) |
 | 009-US5-TRANSFER | T070–T073 | pending | — |
 | 009-US6-COUNT | T080–T083 | pending | — |
 | 009-SIGNAL-NEGBAL | T045 | pending | — (new §VII signal) |

@@ -57,6 +57,7 @@ import {
   seedSalesFixture,
   SALE_A_X,
   LINE_A_X_1,
+  LINE_A_X_2,
 } from '../../catalog/sales/__support__/seed-sales';
 
 import { InventoryController } from '../../../src/inventory/inventory.controller';
@@ -69,6 +70,7 @@ export {
   TENANT_A,
   SALE_A_X,
   LINE_A_X_1,
+  LINE_A_X_2,
   type PgTestEnv,
 };
 
