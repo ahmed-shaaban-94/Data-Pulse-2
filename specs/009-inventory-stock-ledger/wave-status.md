@@ -16,9 +16,9 @@
 
 **T103 — coverage (LOCAL/manual; CI emits no lcov post-009-CI-OPT):** `pnpm --filter @data-pulse-2/api test -- inventory --coverage` over `src/inventory/**` recorded **stmts 87.45% / lines 87.89% / funcs 100% / branch 71.65%** (2026-06-03, WSL Docker). The ≥80% target is met on statements + lines; `inventory.service.ts` itself is 88.4%/88.23%. The lower branch figure is the known Jest pattern (finding: `??` not branch-instrumented + defensive guards) plus `inventory.module.ts` (DI wiring, 0%, not unit-tested) dragging the aggregate — not a logic gap. Full api inventory suite GREEN (22 suites / 106 pass / 1 skip).
 
-**Carried [GATED] deferrals for a future `packages/db` slice** (both touch `packages/db/**`, outside any 009 per-slice allowed_files — see Active findings #6/#7):
-- movement **outbox emit** (new `INVENTORY_MOVEMENT_*` type in `OUTBOX_EVENT_TYPES`);
-- **established-unit concurrency guard** (DB UNIQUE trigger/constraint or per-key advisory lock).
+**Carried [GATED] deferrals for a future `packages/db` slice — durable tracker: [issue #465](https://github.com/ahmed-shaaban-94/Data-Pulse-2/issues/465)** (both touch `packages/db/**`, outside any 009 per-slice allowed_files — see Active findings #6/#7). Owner-ratified 2026-06-03 to close 009 with these deferred OUT (not an unqualified "complete"):
+- **established-unit concurrency guard** — a REAL FR-022 gap (concurrent first-movements in different units can both commit under READ COMMITTED); DB UNIQUE trigger/constraint or per-`(store,product)` advisory lock.
+- movement **outbox emit** (new `INVENTORY_MOVEMENT_*` type in `OUTBOX_EVENT_TYPES`).
 
 ---
 
