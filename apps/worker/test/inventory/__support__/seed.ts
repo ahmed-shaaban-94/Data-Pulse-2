@@ -150,3 +150,29 @@ export async function countMovements(
   );
   return Number(r.rows[0]!.n);
 }
+
+/**
+ * Bulk-append `count` sale_lines to an existing sale (009-POLISH T101 bound
+ * test). One `generate_series` round-trip — used to seed an over-ceiling sale
+ * (>500 lines) cheaply. All lines reference the same product in 'ea'.
+ */
+export async function seedManyLines(
+  admin: Pool,
+  input: {
+    readonly saleId: string;
+    readonly tenantId: string;
+    readonly storeId: string;
+    readonly productId: string;
+    readonly count: number;
+  },
+): Promise<void> {
+  await admin.query(
+    `INSERT INTO sale_lines
+       (id, sale_id, tenant_id, store_id, line_name, unit_price,
+        currency_code, quantity, line_amount, unit, tenant_product_ref)
+     SELECT gen_random_uuid(), $1, $2, $3, 'bulk-' || g, 1::numeric, 'USD',
+            1::numeric, 1::numeric, 'ea', $4
+       FROM generate_series(1, $5) AS g`,
+    [input.saleId, input.tenantId, input.storeId, input.productId, input.count],
+  );
+}
