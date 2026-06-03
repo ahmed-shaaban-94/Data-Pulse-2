@@ -38,6 +38,8 @@ Projected from `Resolved(store) = Tenant Catalog ⊕ Store Override` (003 §6.4)
 
 ## 3. Catalogue Change-Log Entry (R1 — backs deltas; realized by the gated migration)
 
+> **[SIGN-OFF] T001 — read-only population decision (2026-06-03, owner-confirmed).** The change-log is populated by **DB triggers inside the `0015` migration** on `tenant_products` / `store_product_overrides` / `product_aliases` (NEW/OLD read + INSERT into `catalog_change_log` only — additive, no mutation of 003 column semantics). **No 003/005 application write path is instrumented**, so the read-only Non-Goal (§3 of the spec) holds. The **app-level outbox-mirror alternative is REJECTED** for v1 (it would couple to 003/005 write paths and strain the read-only boundary). If implementation discovers a trigger cannot capture a required sellable transition, **STOP and raise a separate `[SIGN-OFF]`/`[GATED]`** — do NOT silently instrument an application write path.
+
 Logical shape the gated migration must provide (outbox-style; mirrors `outbox_events`):
 
 | Field | Type | Notes |

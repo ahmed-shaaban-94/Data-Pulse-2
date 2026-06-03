@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 
 import { AuditModule } from "./audit/audit.module";
 import { AuthModule, PG_POOL } from "./auth/auth.module";
+import { ReadDownModule } from "./catalog/read-down/read-down.module";
 import { ReconciliationModule } from "./catalog/reconciliation/reconciliation.module";
 import { SalesModule } from "./catalog/sales/sales.module";
 import { UnknownItemsModule } from "./catalog/unknown-items/unknown-items.module";
@@ -206,7 +207,7 @@ class ApiDbMigrationStatusGaugeRegistrar implements OnModuleInit, OnModuleDestro
  * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule],
+  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule, ReadDownModule],
   controllers: [],
   providers: [ApiDbPoolGaugeRegistrar, ApiDbMigrationStatusGaugeRegistrar],
 })
