@@ -165,6 +165,13 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // / PII-adjacent and lives on the movement + audit rows, NOT here (the catalog
   // "domain-keyed, not attribute-keyed" precedent). Never a tenant/store label.
   inventory_negative_balance_total: [],
+
+  // 010-US1-SNAPSHOT read-down (R6 / FR-070). Products excluded from the
+  // sellable stream for a price-related reason (missing price / missing
+  // currency / non-representable in the currency minor unit). UNLABELED — the
+  // excluded product is recorded on the reconciliation backlog, NOT here (no
+  // product/price/PII labels; same domain-keyed precedent as the catalog set).
+  catalog_unpriced_issue_rate: [],
 };
 
 /**
