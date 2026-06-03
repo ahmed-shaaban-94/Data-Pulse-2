@@ -26,7 +26,9 @@ const dockerOutboxSuites = includeDbBackedTests
      // 008-WORKER Testcontainers suites — Docker-free fast job excludes them,
      // db-integration job clears the exclusion via WORKER_INCLUDE_DB_TESTS=1.
      "/sales/processing\\.spec\\.ts$",
-     "/sales/idempotent-processing\\.spec\\.ts$"];
+     "/sales/idempotent-processing\\.spec\\.ts$",
+     // 009-US4 inventory-backfill Testcontainers suite (F-04/F-05).
+     "/inventory/backfill-processor\\.spec\\.ts$"];
 
 /** @type {import('jest').Config} */
 module.exports = {

@@ -291,7 +291,8 @@ slices:
   - id: 009-US3-IDEMPOTENCY
     task_ids: [T050, T051, T053]   # F-03: T052 (provenance dedup) MOVED to 009-US4-SALELINKED — see note below
     type: feat
-    status: pending
+    status: merged
+    merged_at_commit: 1ef6e07   # PR #451 — db-integration + fast + CodeRabbit all GREEN
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks: []
@@ -326,7 +327,12 @@ slices:
   - id: 009-US4-SALELINKED
     task_ids: [T052, T060, T061, T062, T063, T063b, T064]   # F-03: T052 (provenance dedup) moved here from US3 — it belongs with the provenance write path this slice owns (T064)
     type: feat
-    status: pending
+    # IMPLEMENTED + verified GREEN on feat/009-us4-salelinked (commits 2fdbc59,
+    # 085cea4, 0aea179, bfe71b6 atop RED-baseline e1f591f). NOT yet merged —
+    # ready for PR. api sale-linked 6/6 + full api inventory regression 84 pass
+    # (1 skip) + worker backfill 8/8, all via WSL Docker. F-06 (FR-022 worker
+    # mirror gap) found by adversarial review + fixed (bfe71b6) — see note below.
+    status: implemented
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks:
@@ -336,15 +342,69 @@ slices:
       - apps/api/src/inventory/inventory.service.ts
       - apps/worker/src/inventory/backfill.processor.ts
       - apps/api/test/inventory/sale-linked/*.spec.ts
+      - apps/worker/test/inventory/*.spec.ts   # F-05: T063b + T064 are worker-source specs (backfill.processor.ts) — they belong in the worker jest project (Testcontainers + WORKER_INCLUDE_DB_TESTS=1), NOT the api harness. The api validation command does not match them. Outside the original allowed_files; owner-approved expansion.
+      - apps/worker/jest.config.cjs   # F-04: new Docker-backed worker spec(s) for the backfill processor must be registered in `dockerOutboxSuites` or the fast CI job (no Docker) goes RED (project_008_worker_ci_jest_exclusion). Outside the original allowed_files; owner-approved expansion.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/sale-linked
-        expected: GREEN — sale-linked outbound carries provenance + decrements on-hand (FR-032); DECOUPLING — all flows pass with the 008 live loop UNWIRED, backfill reads CAPTURED rows not processed_at-stamped (SC-002/R8); backfill re-run idempotent (FR-033); ad-hoc NULL-product no auto-create rolls up to no product on-hand (FR-023/R5).
+        expected: GREEN — sale-linked outbound carries provenance + decrements on-hand (FR-032); DECOUPLING — all flows pass with the 008 live loop UNWIRED, backfill reads CAPTURED rows not processed_at-stamped (SC-002/R8); backfill re-run idempotent (FR-033); ad-hoc NULL-product no auto-create rolls up to no product on-hand (FR-023/R5). Covers the SERVICE-LAYER specs T052/T061/T062/T063 (inventory.service.ts is in the api package).
+        docker_required: true
+      - command: WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker test -- inventory
+        expected: GREEN — backfill.processor.ts establishes tenant context (SET LOCAL app.current_tenant) BEFORE any DB access (§V), reads CAPTURED 008 rows (processed_at IS NULL, R8), never mutates the sale fact, never auto-creates a product; T063b RLS-bypass probe confirms cross-tenant isolation. New spec(s) registered in dockerOutboxSuites so the no-Docker fast job excludes them (F-04/project_008_worker_ci_jest_exclusion).
         docker_required: true
     stop:
       - standing-rules universal stops
       - "stop if any flow subscribes to sale.captured or reads processed_at — v1 is decoupled; the backfill reads CAPTURED sale rows (FR-032/060, R8). Auto-decrement is the deferred follow-up."
       - "stop if the backfill mutates the 008 sale fact — read-only provenance only"
     parallel_safety: serialize   # touches inventory.service.ts shared with US5/US6 — serialize in same repo (parallel-agent worktree contention)
+    # F-04 (2026-06-01): US4 reshaped after RED-baseline probing (WSL Docker).
+    # T060 (API sale-linked outbound REFERENCE) is GREEN-on-arrival — US2's
+    # createStockMovement already accepts saleId/saleLineId, decrements on-hand,
+    # and surfaces the ref on the list (verified: outbound-reference.spec passes
+    # unchanged). So US4's genuine NEW work is the off-request WORKER backfill:
+    #   - service-layer entry accepting sourceSystem/externalId (worker-internal;
+    #     the HTTP DTO stays .strict() + provenance-free) — inventory.service.ts;
+    #   - T052 provenance dedup: catch the (tenant_id,source_system,external_id)
+    #     partial-unique, return the existing movement, do NOT re-apply on-hand;
+    #   - backfill.processor.ts (T064): reads CAPTURED 008 sales/sale_lines,
+    #     establishes tenant context (SET LOCAL app.current_tenant) BEFORE any DB
+    #     access (§V), carries tenantId/storeId/correlationId, dedups, never
+    #     mutates the sale fact, never auto-creates a product, redacts payloads.
+    #   - specs T061 (decoupling) / T062 (backfill idempotent) / T063 (ad-hoc
+    #     null-product) / T063b (worker tenant-context + RLS-bypass probe).
+    # allowed_files expanded to include apps/worker/jest.config.cjs (F-04 above).
+    # F-05 (2026-06-03): OPEN question from F-04 RESOLVED. The discriminating
+    # constraint is the validation command's jest project, not the source under
+    # test. `pnpm --filter @data-pulse-2/api test -- inventory/sale-linked`
+    # matches ONLY apps/api/test/inventory/sale-linked/*.spec.ts. So:
+    #   - T052/T061/T062/T063 test inventory.service.ts (an API-package module) —
+    #     they STAY in the api harness, matched by the api command, already in
+    #     allowed_files. T052 is the true RED (US2 DTO is .strict()+provenance-
+    #     free; no worker-internal dedup entry exists yet) — author it first; it
+    #     needs no scope expansion.
+    #   - T063b + T064 are worker-source (backfill.processor.ts) — they need the
+    #     worker jest project (Testcontainers + WORKER_INCLUDE_DB_TESTS=1) and a
+    #     home under apps/worker/test/inventory/**. Two gaps surfaced + closed:
+    #     (1) apps/worker/test/inventory/*.spec.ts added to allowed_files (was
+    #     absent — only the api glob existed); (2) the worker validation command
+    #     added to the validation block (one api command could not validate the
+    #     slice's "genuine new work"). Register the new worker spec(s) in
+    #     dockerOutboxSuites. R8 boundary confirmed: the backfill row predicate is
+    #     `processed_at IS NULL` (the decoupling filter), NOT a processed_at read/
+    #     wait or a sale.captured subscription — stays on the right side of the
+    #     stop. Advisor-reviewed + owner-approved expansion in-session.
+    # F-06 (2026-06-03): FR-022 MIRROR GAP found by adversarial review + fixed
+    # (commit bfe71b6). InventoryService.backfillSaleLinkedOutbound enforced the
+    # established-unit check; the worker InventoryBackfillProcessor — the
+    # production path — had OMITTED it, silently inserting a cross-unit movement.
+    # All fixtures used 'ea', so the green suite could not see the divergence.
+    # FR-022 is unconditional (MUST reject; no backfill carve-out; no allow-and-
+    # flag escape, unlike FR-024 negative balance), so the api path was right and
+    # the worker was wrong. Added InventoryBackfillCrossUnitError + the per-line
+    # established-unit check + a mixed-unit rejection test (kg vs established ea →
+    # reject, no partial side-effect). LESSON: the same author wrote both the
+    # mirrored write and its tests; a "keep in sync" comment is not a guarantee —
+    # a divergence-proving test (different units, not the happy-path unit) is.
+    # Worker 8/8 green; full api inventory regression 84 pass / 1 skip.
 
   # ===== Phase 7: US5 — Transfers (P2) ========================================
 

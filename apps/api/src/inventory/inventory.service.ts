@@ -93,7 +93,42 @@ export interface CreateStockMovementInput {
   readonly terminalEventRef?: string | null | undefined;
 }
 
+/**
+ * Worker-internal input to backfillSaleLinkedOutbound (009-US4, T052/T064).
+ *
+ * The OFF-REQUEST counterpart to CreateStockMovementInput: it carries the
+ * backfill provenance dedup pair `(sourceSystem, externalId)` that the public
+ * HTTP DTO deliberately does NOT accept (the controller DTO stays `.strict()` +
+ * provenance-free — FR-052/§XII). This entry is reachable only from the worker
+ * backfill processor (T064), never from a request. tenantId / storeId / userId
+ * are resolved by the processor from its job context, never from untrusted body.
+ */
+export interface BackfillSaleLinkedOutboundInput {
+  readonly tenantId: string;
+  readonly storeId: string;
+  /** The backfill actor (a service principal resolved by the processor). */
+  readonly userId: string;
+  /** Backfill origin (e.g. "pos-backfill") — half of the dedup pair (FR-031). */
+  readonly sourceSystem: string;
+  /** External natural key (e.g. the sale-line id) — the other half. */
+  readonly externalId: string;
+  readonly movementType: 'outbound';
+  /** SIGNED exact-decimal quantity string (outbound ⇒ negative). */
+  readonly quantity: string;
+  readonly stockingUnit: string;
+  readonly tenantProductRef?: string | null | undefined;
+  readonly reason?: string | null | undefined;
+  readonly occurredAt?: string | null | undefined;
+  /** CAPTURED 008 sale provenance (R8) — read by value, never an FK. */
+  readonly saleId?: string | null | undefined;
+  readonly saleLineId?: string | null | undefined;
+  readonly terminalEventRef?: string | null | undefined;
+  /** Carried into the audit metadata for traceability across the backfill. */
+  readonly correlationId?: string | null | undefined;
+}
+
 const AUDIT_ACTION_MOVEMENT_CREATE = 'inventory.movement.create';
+const AUDIT_ACTION_MOVEMENT_BACKFILL = 'inventory.movement.backfill';
 const AUDIT_TARGET_TYPE_MOVEMENT = 'stock_movement';
 
 /** Wire projection of a stock_movements row (contract `StockMovement`, §IV). */
@@ -389,6 +424,171 @@ export class InventoryService {
             AUDIT_TARGET_TYPE_MOVEMENT,
             row.id,
             '{}',
+          ],
+        );
+
+        return toMovementBody(row);
+      },
+    );
+  }
+
+  /**
+   * Append a sale-linked OUTBOUND from the off-request backfill (009-US4,
+   * T052/T064). Idempotent on the provenance pair `(tenant_id, source_system,
+   * external_id)` (FR-031/033): a redelivered backfill job for the SAME sale
+   * line appends NO second movement and re-applies NO on-hand — it returns the
+   * already-persisted movement. Dedup is the partial-unique
+   * `uq_stock_movements_tenant_source_external` (migration 0014, R4), NOT a new
+   * primitive; on-hand is compute-on-read, so "applied once" is exactly "at most
+   * one row inserted" — there is no balance to double-decrement.
+   *
+   * This is the WORKER seam: the HTTP createStockMovement DTO stays `.strict()`
+   * + provenance-free (FR-052); only this entry writes `source_system` /
+   * `external_id`. It reuses createStockMovement's validation (outbound sign,
+   * established-unit, append-only INSERT + audit-in-transaction) — the only
+   * additions are the provenance columns and the ON CONFLICT dedup.
+   *
+   * DECOUPLING (R8): the caller (T064) reads CAPTURED 008 rows; this method
+   * never reads `processed_at`, never subscribes to `sale.captured`, and never
+   * mutates the 008 sale fact — the sale ids are recorded by value as provenance.
+   *
+   * CROSS-PACKAGE SYNC POINT: the off-request worker
+   * `apps/worker/src/inventory/backfill.processor.ts` (T064) MIRRORS this
+   * INSERT + ON CONFLICT + audit per sale line — apps must not import each
+   * other, so the write is duplicated there. Keep the two in sync: any change
+   * to the provenance-dedup write semantics MUST be applied to BOTH. A future
+   * `packages/inventory` extraction would consolidate them.
+   */
+  async backfillSaleLinkedOutbound(
+    input: BackfillSaleLinkedOutboundInput,
+  ): Promise<StockMovementBody> {
+    // ---- Pre-DB validation (mirrors the manual outbound rules) -------------
+    if (input.movementType !== 'outbound') {
+      // The backfill of a captured SALE is always an outbound (stock leaves on a
+      // sale). Restocks/voids are a separate deferred flow (009-RESTOCK).
+      throw new BadRequestException('backfill movementType must be outbound');
+    }
+    const qtyRaw = Number(input.quantity);
+    if (!Number.isFinite(qtyRaw)) {
+      throw new BadRequestException('quantity must be a number');
+    }
+    const qty = Math.round(qtyRaw * 1e4) / 1e4;
+    if (qty === 0) {
+      throw new BadRequestException('quantity must be non-zero at numeric(19,4) scale');
+    }
+    if (qty > 0) {
+      throw new BadRequestException('outbound quantity must be negative');
+    }
+    const sourceSystem = input.sourceSystem.trim();
+    const externalId = input.externalId.trim();
+    if (sourceSystem.length === 0 || externalId.length === 0) {
+      // The pair is the dedup key — a blank half cannot dedup (DB CHECK keeps it
+      // all-or-nothing, but reject early with an actionable message).
+      throw new BadRequestException('backfill requires a non-empty sourceSystem and externalId');
+    }
+    const stockingUnit = input.stockingUnit.trim();
+    if (stockingUnit.length === 0) {
+      throw new BadRequestException('stockingUnit is required');
+    }
+    const reason =
+      typeof input.reason === 'string' && input.reason.trim().length > 0
+        ? input.reason.trim()
+        : null;
+
+    const tenantProductRef = input.tenantProductRef ?? null;
+    const movementId = newId();
+    const auditId = newId();
+
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<StockMovementBody> => {
+        // ---- Cross-unit check (FR-022) — same rule as the manual path -----
+        if (tenantProductRef !== null) {
+          await this.assertUnitMatchesEstablished(
+            client,
+            input.storeId,
+            tenantProductRef,
+            stockingUnit,
+          );
+        }
+
+        // ---- Idempotent append on the provenance pair (FR-031/033) --------
+        // ON CONFLICT DO NOTHING against the PARTIAL unique index: the conflict
+        // target must restate the index predicate (source/external NOT NULL) or
+        // Postgres won't match the partial index. On conflict zero rows return.
+        const inserted = await client.query<MovementRow>(
+          `INSERT INTO stock_movements
+             (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
+              tenant_product_ref, reason, occurred_at, source_system, external_id,
+              sale_id, sale_line_id, terminal_event_ref, created_by)
+           VALUES
+             ($1, $2, $3, 'outbound', $4::numeric(19,4), $5, $6, $7,
+              COALESCE($8::timestamptz, now()), $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (tenant_id, source_system, external_id)
+             WHERE source_system IS NOT NULL AND external_id IS NOT NULL
+             DO NOTHING
+           RETURNING ${MOVEMENT_COLUMNS}`,
+          [
+            movementId,
+            input.tenantId,
+            input.storeId,
+            input.quantity,
+            stockingUnit,
+            tenantProductRef,
+            reason,
+            input.occurredAt ?? null,
+            sourceSystem,
+            externalId,
+            input.saleId ?? null,
+            input.saleLineId ?? null,
+            input.terminalEventRef ?? null,
+            input.userId,
+          ],
+        );
+
+        const row = inserted.rows[0];
+        if (!row) {
+          // Conflict: a movement for this provenance pair already exists. Return
+          // it WITHOUT a second INSERT and WITHOUT a second audit/side-effect —
+          // on-hand stays applied exactly once (FR-033).
+          const existing = await client.query<MovementRow>(
+            `SELECT ${MOVEMENT_COLUMNS}
+               FROM stock_movements
+              WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3`,
+            [input.tenantId, sourceSystem, externalId],
+          );
+          const existingRow = existing.rows[0];
+          if (!existingRow) {
+            // Should be unreachable: DO NOTHING fired but no row matches the
+            // pair. Surface loudly rather than silently double-applying.
+            throw new Error(
+              'InventoryService.backfillSaleLinkedOutbound: conflict with no matching provenance row',
+            );
+          }
+          return toMovementBody(existingRow);
+        }
+
+        // ---- Audit event in the SAME transaction (FR-013, SC-007) ---------
+        // Only on a genuine append (the dedup re-run above returns early, so a
+        // redelivered job writes no duplicate audit either). correlationId is
+        // recorded for backfill traceability; no PII/payload is persisted (§XIV).
+        await client.query(
+          `INSERT INTO audit_events
+             (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          [
+            auditId,
+            input.userId,
+            input.tenantId,
+            AUDIT_ACTION_MOVEMENT_BACKFILL,
+            AUDIT_TARGET_TYPE_MOVEMENT,
+            row.id,
+            JSON.stringify({
+              sourceSystem,
+              externalId,
+              correlationId: input.correlationId ?? null,
+            }),
           ],
         );
 
