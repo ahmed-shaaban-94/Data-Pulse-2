@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **IN PROGRESS** — 11 of 15 slices merged (US1–US6): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), US4-SALELINKED (#454 `51b2e80`), **US5-TRANSFER (#455 `08be518`)**, **US6-COUNT (#456)** — all 2026-06-03. The MVP read path (US1), manual write (US2), manual idempotency (US3), the sale-linked outbound + off-request backfill (US4), intra-tenant transfers as linked movements (US5), and physical counts with append-only variance corrections (US6) are live on `main`. Hosted CI green. Created 2026-05-31. **Remaining: 009-SIGNAL-NEGBAL (T045), 009-RESTOCK (T090/T091), 009-LIFECYCLE (T095), 009-POLISH.** A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection — "terminating connection due to administrator command") did NOT reproduce on CI re-run (green) nor in a full-concurrency local run (265 suites / 3170 pass); see finding #11.
+**Status**: **IN PROGRESS** — 11 of 15 slices merged (US1–US6): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), US4-SALELINKED (#454 `51b2e80`), **US5-TRANSFER (#455 `08be518`)**, **US6-COUNT (#456)** — all 2026-06-03. The MVP read path (US1), manual write (US2), manual idempotency (US3), the sale-linked outbound + off-request backfill (US4), intra-tenant transfers as linked movements (US5), and physical counts with append-only variance corrections (US6) are live on `main`. Hosted CI green. Created 2026-05-31. **009-SIGNAL-NEGBAL IMPLEMENTED + GREEN, ready for PR** on `feat/009-signal-negbal` (commit `016f6a2`) — the unlabeled `inventory_negative_balance_total` counter (allow-and-flag, FR-024); signal 2/2 + observability 291 + shared 40, via WSL Docker. **Remaining after SIGNAL: 009-RESTOCK (T090/T091), 009-LIFECYCLE (T095), 009-POLISH.** A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection — "terminating connection due to administrator command") did NOT reproduce on CI re-run (green) nor in a full-concurrency local run (265 suites / 3170 pass); see finding #11.
 
 ---
 
@@ -89,7 +89,7 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-US4-SALELINKED | T052, T060–T064, T063b | **merged** (#454 `51b2e80`) | — (decoupling proof) |
 | 009-US5-TRANSFER | T070–T073 | **merged** (#455 `08be518`) | — |
 | 009-US6-COUNT | T080–T083 | **merged** (#456) | — |
-| 009-SIGNAL-NEGBAL | T045 | pending | — (new §VII signal) |
+| 009-SIGNAL-NEGBAL | T045 | **implemented, ready for PR** (`feat/009-signal-negbal` @ `016f6a2`) | — (new signal; F-09 shared allowlist) |
 | 009-RESTOCK | T090, T091 | pending | — |
 | 009-LIFECYCLE | T095 | pending | — |
 | 009-POLISH | T100–T104 | pending | — |

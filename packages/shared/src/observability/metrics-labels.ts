@@ -156,6 +156,15 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // correlation are high-cardinality / PII-adjacent and forbidden here (FR-B-006).
   // Emission lands in 005-WAVE2-METRICS (T651) at the conflict catch site.
   catalog_duplicate_alias_conflict_total: [],
+  // ---- Inventory domain — 009-SIGNAL-NEGBAL (plan §3.3, FR-024) ----
+  // A NEW signal (consciously introduced; NOT in the constitution §VII named
+  // list — see 009 execution-map header). Increments when an outbound movement
+  // (manual outbound / transfer_out / sale-linked backfill) drives a
+  // (tenant, store, product) on-hand below zero under the allow-and-flag policy.
+  // UNLABELED — the (tenant, store, product) it happened to is high-cardinality
+  // / PII-adjacent and lives on the movement + audit rows, NOT here (the catalog
+  // "domain-keyed, not attribute-keyed" precedent). Never a tenant/store label.
+  inventory_negative_balance_total: [],
 };
 
 /**

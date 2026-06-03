@@ -56,6 +56,7 @@ import { newId } from '@data-pulse-2/shared';
 import type { Pool, PoolClient } from 'pg';
 
 import { PG_POOL } from '../auth/auth.module';
+import { recordInventoryNegativeBalance } from '../observability/metrics/api.metrics';
 
 /** The set of manually-creatable movement types (contract enum, FR-002). */
 export const MANUAL_MOVEMENT_TYPES = ['inbound', 'outbound', 'adjustment'] as const;
@@ -485,6 +486,12 @@ export class InventoryService {
           ],
         );
 
+        // ---- Negative-balance signal (FR-024) ----------------------------
+        // An outbound that drove on-hand below zero is flagged, never rejected.
+        if (input.movementType === 'outbound') {
+          await this.flagIfNegativeOnHand(client, input.storeId, tenantProductRef);
+        }
+
         return toMovementBody(row);
       },
     );
@@ -633,6 +640,10 @@ export class InventoryService {
             }),
           ],
         );
+
+        // ---- Negative-balance signal (FR-024) — the transfer_out leg may
+        // drive the SOURCE on-hand below zero; flagged, never rejected.
+        await this.flagIfNegativeOnHand(client, input.sourceStoreId, input.tenantProductRef);
 
         return {
           transferGroupId,
@@ -935,6 +946,10 @@ export class InventoryService {
           ],
         );
 
+        // ---- Negative-balance signal (FR-024) — a sale-linked backfill
+        // outbound may drive on-hand below zero; flagged, never rejected.
+        await this.flagIfNegativeOnHand(client, input.storeId, tenantProductRef);
+
         return toMovementBody(row);
       },
     );
@@ -971,6 +986,38 @@ export class InventoryService {
     const established = r.rows[0]?.stocking_unit;
     if (established !== undefined && established !== suppliedUnit) {
       throw new CrossUnitError(established, suppliedUnit);
+    }
+  }
+
+  /**
+   * Emit the negative-balance SIGNAL (009-SIGNAL-NEGBAL / FR-024) if the
+   * post-write derived on-hand for a (store, product) is below zero. Called
+   * after an outbound write (manual outbound / transfer_out / sale-linked
+   * backfill) on the SAME RLS-active client, INSIDE the write transaction so the
+   * SUM includes the just-appended row.
+   *
+   * Allow-and-flag: this is a signal, never an error. It NEVER throws — a metric
+   * failure must not roll back or block a legitimate movement. A null
+   * `tenantProductRef` (ad-hoc) has no product on-hand to flag, so it is skipped.
+   */
+  private async flagIfNegativeOnHand(
+    client: PoolClient,
+    storeId: string,
+    tenantProductRef: string | null,
+  ): Promise<void> {
+    if (tenantProductRef === null) return;
+    try {
+      const r = await client.query<{ quantity: string }>(
+        `SELECT COALESCE(SUM(quantity), 0)::numeric(19,4)::text AS quantity
+           FROM stock_movements
+          WHERE store_id = $1 AND tenant_product_ref = $2`,
+        [storeId, tenantProductRef],
+      );
+      if (Number(r.rows[0]?.quantity ?? '0') < 0) {
+        recordInventoryNegativeBalance();
+      }
+    } catch {
+      // Signal-only: never let a metric/probe failure affect the write (FR-024).
     }
   }
 }

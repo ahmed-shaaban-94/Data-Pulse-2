@@ -107,6 +107,8 @@ assertMetricLabels("unknown_item_resolved_total", ["action"]);
 assertMetricLabels("idempotency_token_mismatch_total", []);
 // Catalog domain — 005 Wave 2 (signals.md §1.1; allowlist via 005-WAVE2-METRICS-ALLOWLIST)
 assertMetricLabels("catalog_duplicate_alias_conflict_total", []);
+// Inventory domain — 009-SIGNAL-NEGBAL (plan §3.3, FR-024). UNLABELED.
+assertMetricLabels("inventory_negative_balance_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -183,6 +185,14 @@ const _catalogDuplicateAliasConflict: Counter = meter.createCounter(
   {
     description:
       "Reconciliation rejections caused by an alias unique-index violation (005 FR-043 / 003 §9). Increments on the link and create-new conflict paths. Unlabeled — principal/correlation attribution is on the reconciliation_conflict_rejected audit event, not metric labels.",
+  },
+);
+
+const _inventoryNegativeBalance: Counter = meter.createCounter(
+  "inventory_negative_balance_total",
+  {
+    description:
+      "Outbound movements (manual outbound / transfer_out / sale-linked backfill) that drove a (tenant, store, product) on-hand below zero under the allow-and-flag policy (009 FR-024). Unlabeled — the affected key is high-cardinality / PII-adjacent and lives on the movement + audit rows, not metric labels.",
   },
 );
 
@@ -380,6 +390,19 @@ export function recordDuplicateAliasConflict(): void {
   _catalogDuplicateAliasConflict.add(1);
 }
 
+/**
+ * Increment inventory_negative_balance_total (009 FR-024 / plan §3.3).
+ * Emission site: InventoryService outbound write paths (createStockMovement,
+ * createStockTransfer source leg, backfillSaleLinkedOutbound) when the post-
+ * write derived on-hand for the affected (store, product) is below zero.
+ * Unlabeled — the affected key is high-cardinality / PII-adjacent and lives on
+ * the movement + audit rows, not here. Allow-and-flag: this is a SIGNAL, never
+ * an error — emission MUST NOT alter or block the movement write.
+ */
+export function recordInventoryNegativeBalance(): void {
+  _inventoryNegativeBalance.add(1);
+}
+
 // ---------------------------------------------------------------------------
 // Signal-name registry — used by T460 signal-presence tests
 // ---------------------------------------------------------------------------
@@ -425,3 +448,15 @@ export const CATALOG_METRIC_NAMES = [
 ] as const satisfies readonly string[];
 
 export type CatalogMetricName = (typeof CATALOG_METRIC_NAMES)[number];
+
+/**
+ * Canonical names of inventory-domain signals (009). Sibling registry of
+ * API_METRIC_NAMES / CATALOG_METRIC_NAMES / DB_METRIC_NAMES — the per-track
+ * pattern keeps each spec's drift contract self-contained (adding here does NOT
+ * perturb the locked API_METRIC_NAMES count). Owner: 009-inventory-stock-ledger.
+ */
+export const INVENTORY_METRIC_NAMES = [
+  "inventory_negative_balance_total",
+] as const satisfies readonly string[];
+
+export type InventoryMetricName = (typeof INVENTORY_METRIC_NAMES)[number];

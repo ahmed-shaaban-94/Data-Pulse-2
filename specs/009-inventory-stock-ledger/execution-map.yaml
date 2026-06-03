@@ -466,7 +466,12 @@ slices:
   - id: 009-SIGNAL-NEGBAL
     task_ids: [T045]
     type: feat
-    status: pending
+    # IMPLEMENTED + GREEN on feat/009-signal-negbal (commit 016f6a2 off main).
+    # NOT yet merged — ready for PR. signal 2/2 + observability 13 suites/291 +
+    # shared metrics-labels 40/40, via WSL Docker. F-09 (allowed_files expansion
+    # for the packages/shared allowlist + cardinality drift catalogue) — owner-
+    # approved; see note below. Unlabeled counter (movement-key is PII-adjacent).
+    status: implemented
     approval_required: false
     depends_on: [009-US1-ONHAND, 009-US2-MANUAL]   # US1 explicit: the negative_balance flag lives on the on-hand projection (getOnHand), so the read path must exist; US2 supplies the outbound that drives it negative
     blocks: []
@@ -485,6 +490,22 @@ slices:
       - "metrics module path is apps/api/src/observability/metrics/api.metrics.ts (CONFIRMED at review) — add a NEW meter.createCounter (no such counter exists yet) following the existing registrar + assertMetricLabels pattern"
       - "stop if the counter is given a tenant_id/store_id label — the assertMetricLabels allowlist forbids unregistered labels and per-tenant labels are high-cardinality + PII-adjacent; use a closed low-cardinality reason-style label (precedent: tenant_context_failure_total labels by reason)"
     parallel_safety: serialize   # touches inventory.service.ts + shared metrics module
+    # F-09 (2026-06-03): allowed_files expanded (owner-approved) for two files the
+    # slice's declared globs omitted but the counter genuinely requires:
+    #   - packages/shared/src/observability/metrics-labels.ts — the counter name
+    #     MUST be in ALLOWED_METRIC_LABELS or assertMetricLabels throws
+    #     unknown_metric at module load. packages/shared is NOT a forbidden path
+    #     (only package.json/lockfile/migrations/openapi/.github are); it was just
+    #     outside the slice's allowed_files. Registered unlabeled ([]).
+    #   - apps/api/test/observability/cardinality.spec.ts — the drift-contract
+    #     catalogue asserts Object.keys(ALLOWED_METRIC_LABELS) EXACTLY equals the
+    #     expected list, so a new allowlist entry must be added here too or the
+    #     drift test reds. Added INVENTORY_METRIC_NAMES registry in api.metrics.ts
+    #     (sibling of API_/CATALOG_/DB_, keeping the locked API_METRIC_NAMES count).
+    # DESIGN: counter is UNLABELED (movement-key is high-cardinality/PII-adjacent;
+    # tenant_id/store_id are hard-forbidden), matching the catalog domain-keyed
+    # precedent. Emission via flagIfNegativeOnHand inside the write tx, signal-only
+    # (try/catch swallow — never blocks/rolls back the movement, FR-024).
 
   - id: 009-RESTOCK
     task_ids: [T090, T091]
