@@ -411,7 +411,10 @@ slices:
   - id: 009-US5-TRANSFER
     task_ids: [T070, T071, T072, T073]
     type: feat
-    status: pending
+    # IMPLEMENTED + verified GREEN on feat/009-us5-transfer (commit 4668803 off
+    # main@51b2e80 which includes merged US4). NOT yet merged — ready for PR.
+    # transfer 6/6 + full api inventory regression 90 pass (1 skip), via WSL Docker.
+    status: implemented
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks: []
@@ -420,6 +423,7 @@ slices:
       - apps/api/src/inventory/inventory.service.ts
       - apps/api/src/inventory/inventory.controller.ts
       - apps/api/test/inventory/transfer/*.spec.ts
+      - apps/api/test/inventory/transfer/__transfer-harness.ts   # F-07: the __-prefixed cross-store harness (source A.X / same-tenant dest A.Y / cross-tenant B.X for the FR-051 404 probe) is a support file, not a *.spec.ts — same allowed_files gap the sale-linked slice hit (F-05). Owner-approved expansion.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/transfer
         expected: GREEN — linked transfer_out/transfer_in sharing transfer_group_id, mutually discoverable (FR-020/SC-004); cross-tenant destination safe-404 (FR-051); negative source allow-and-flag (FR-024); same-store/zero-qty 400.
