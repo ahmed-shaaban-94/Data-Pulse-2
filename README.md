@@ -48,6 +48,16 @@ Open the [interactive Three.js architecture map](docs/architecture/retail-tower-
 
 ---
 
+## Repository structure flow
+
+Every layer of the platform — from client ingress to durable state — is laid out in a single animated diagram, framed by contracts & governance on the left and observability & ops on the right.
+
+![Retail Tower OS animated repository structure flow](docs/assets/architecture/retail-tower-os-structure-flowchart.svg)
+
+Open [docs/assets/architecture/retail-tower-os-structure-flowchart.svg](docs/assets/architecture/retail-tower-os-structure-flowchart.svg) for the full-resolution animated view. Tokens trace each authenticated path: dashboard cookies and POS bearer tokens into the NestJS API, through auth → tenant → roles → idempotency guards, into the RLS-bound service layer, into PostgreSQL, with outbox events fanning out via Redis to the worker — and live contract, observability, and audit taps illuminated alongside.
+
+---
+
 ## Current implementation status
 
 No single feature is currently active in this repository. The backend platform has shipped several foundation slices; dashboard UI and POS app implementation remain separate/deferred surfaces.
@@ -261,6 +271,9 @@ flowchart LR
 | `specs/006-unknown-items-review-queue` | Unknown items review queue product brief (docs-only scope complete) |
 | `specs/007-unknown-items-review-queue-api` | Unknown items review queue API execution map and coordination artifacts |
 | `docs` | Architecture · live control map · documentation index · brand · agent-os · presentation assets |
+| `.specify` | Constitution v3.0.0 · architecture impact · redaction matrix · slice templates · integration manifests |
+| `.github` | CI workflows · PR + issue templates |
+| `scripts`, `tools`, `loadtests` | LOC badge automation · custom ESLint rules · k6 perf scenarios |
 
 ### What this repo owns
 Multi-tenant SaaS backend foundation · admin/dashboard backend APIs and shared contracts · worker runtime and queue integration patterns · PostgreSQL schema, migrations, and tenant helpers · shared platform primitives for auth, observability, validation, and errors.

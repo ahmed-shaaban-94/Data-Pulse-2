@@ -1,0 +1,408 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="780" viewBox="0 0 1280 780" role="img" aria-labelledby="title desc">
+  <title id="title">Retail Tower OS · platform structure &amp; request flow</title>
+  <desc id="desc">Animated structure diagram showing dashboard and POS clients travelling through the NestJS API, guard chain (auth → tenant → roles), service layer with RLS-enforced PostgreSQL, BullMQ outbox into Redis, and the worker app. Side rails surface contracts, shared packages, and observability.</desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset="0.55" stop-color="#0b1325"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+    <radialGradient id="bg-glow" cx="0.55" cy="0.45" r="0.6">
+      <stop offset="0" stop-color="#0f766e" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#020617" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rail" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#1e293b" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <linearGradient id="n-teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="0.55" stop-color="#0d9488"/>
+      <stop offset="1" stop-color="#134e4a"/>
+    </linearGradient>
+    <linearGradient id="n-blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="0.55" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <linearGradient id="n-violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c4b5fd"/>
+      <stop offset="0.55" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#4c1d95"/>
+    </linearGradient>
+    <linearGradient id="n-amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fcd34d"/>
+      <stop offset="0.55" stop-color="#d97706"/>
+      <stop offset="1" stop-color="#7c2d12"/>
+    </linearGradient>
+    <linearGradient id="n-rose" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fda4af"/>
+      <stop offset="0.55" stop-color="#e11d48"/>
+      <stop offset="1" stop-color="#881337"/>
+    </linearGradient>
+    <linearGradient id="n-emerald" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#86efac"/>
+      <stop offset="0.55" stop-color="#16a34a"/>
+      <stop offset="1" stop-color="#14532d"/>
+    </linearGradient>
+    <linearGradient id="n-slate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#cbd5e1"/>
+      <stop offset="0.55" stop-color="#475569"/>
+      <stop offset="1" stop-color="#1e293b"/>
+    </linearGradient>
+
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <symbol id="node" overflow="visible">
+      <rect x="-110" y="-44" width="220" height="88" rx="18" fill="#0f172a" opacity="0.92" filter="url(#lift)"/>
+      <rect x="-110" y="-44" width="220" height="88" rx="18" fill="url(#gloss)" opacity="0.35"/>
+      <rect x="-110" y="-44" width="220" height="88" rx="18" fill="none" stroke="#1e293b" stroke-width="1"/>
+    </symbol>
+
+    <symbol id="guard" overflow="visible">
+      <rect x="-72" y="-24" width="144" height="48" rx="10" fill="#0f172a" opacity="0.92" filter="url(#lift)"/>
+      <rect x="-72" y="-24" width="144" height="48" rx="10" fill="url(#gloss)" opacity="0.35"/>
+      <rect x="-72" y="-24" width="144" height="48" rx="10" fill="none" stroke="#1e293b"/>
+    </symbol>
+
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="780" fill="url(#bg)"/>
+  <rect width="1280" height="780" fill="url(#bg-glow)"/>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" fill="#e2e8f0">
+    <text x="40" y="56" font-size="26" font-weight="800" fill="#f8fafc">Retail Tower OS · structure &amp; request flow</text>
+    <text x="40" y="84" font-size="14" fill="#94a3b8">Clients ➜ API ingress ➜ guard chain ➜ service layer + RLS ➜ PostgreSQL · outbox ➜ Redis ➜ worker — governed by contracts, shared, and observability.</text>
+
+    <!-- LEFT RAIL · Contracts & Spec governance -->
+    <g opacity="0.95">
+      <rect x="40" y="120" width="190" height="600" rx="22" fill="url(#rail)"/>
+      <rect x="40" y="120" width="190" height="600" rx="22" fill="none" stroke="#1e293b"/>
+      <text x="135" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#cbd5e1">CONTRACTS · GOVERNANCE</text>
+      <text x="135" y="166" text-anchor="middle" font-size="11" fill="#64748b">.specify / packages/contracts</text>
+      <g font-size="12" fill="#cbd5e1" text-anchor="middle">
+        <text x="135" y="220">OpenAPI 3.1 of record</text>
+        <text x="135" y="242" font-size="11" fill="#94a3b8">packages/contracts/openapi</text>
+        <text x="135" y="288">Zod runtime validation</text>
+        <text x="135" y="310" font-size="11" fill="#94a3b8">packages/contracts/src</text>
+        <text x="135" y="358">Constitution v3.0.0</text>
+        <text x="135" y="380" font-size="11" fill="#94a3b8">14 core principles</text>
+        <text x="135" y="430">Agent OS · Maestro</text>
+        <text x="135" y="452" font-size="11" fill="#94a3b8">slice-governed flow</text>
+        <text x="135" y="500">specs/001 ▸ 010</text>
+        <text x="135" y="522" font-size="11" fill="#94a3b8">auth → inventory ledger</text>
+        <text x="135" y="580">Hard rules</text>
+        <text x="135" y="600" font-size="11" fill="#94a3b8">RLS · contract-first</text>
+        <text x="135" y="618" font-size="11" fill="#94a3b8">audit · provenance</text>
+        <text x="135" y="636" font-size="11" fill="#94a3b8">PII discipline</text>
+      </g>
+    </g>
+
+    <!-- RIGHT RAIL · Observability & ops -->
+    <g opacity="0.95">
+      <rect x="1050" y="120" width="190" height="600" rx="22" fill="url(#rail)"/>
+      <rect x="1050" y="120" width="190" height="600" rx="22" fill="none" stroke="#1e293b"/>
+      <text x="1145" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#cbd5e1">OBSERVABILITY · OPS</text>
+      <text x="1145" y="166" text-anchor="middle" font-size="11" fill="#64748b">pino · OTEL · Prometheus</text>
+      <g font-size="12" fill="#cbd5e1" text-anchor="middle">
+        <text x="1145" y="220">structured logs</text>
+        <text x="1145" y="242" font-size="11" fill="#94a3b8">request_id correlation</text>
+        <text x="1145" y="288">OpenTelemetry</text>
+        <text x="1145" y="310" font-size="11" fill="#94a3b8">HTTP · PG · Redis spans</text>
+        <text x="1145" y="358">Prometheus exporter</text>
+        <text x="1145" y="380" font-size="11" fill="#94a3b8">api :9464 · worker :9091</text>
+        <text x="1145" y="430">Audit pipeline</text>
+        <text x="1145" y="452" font-size="11" fill="#94a3b8">actor · tenant · op · outcome</text>
+        <text x="1145" y="500">Idempotency</text>
+        <text x="1145" y="522" font-size="11" fill="#94a3b8">interceptor + replay</text>
+        <text x="1145" y="580">Test infra</text>
+        <text x="1145" y="600" font-size="11" fill="#94a3b8">jest · testcontainers</text>
+        <text x="1145" y="618" font-size="11" fill="#94a3b8">k6 perf · supertest</text>
+      </g>
+    </g>
+
+    <!-- ============= MAIN PIPELINE ============= -->
+
+    <!-- Clients row (top) -->
+    <g transform="translate(420 175)">
+      <use href="#node"/>
+      <rect x="-90" y="-22" width="36" height="44" rx="6" fill="url(#n-blue)"/>
+      <rect x="-86" y="-18" width="28" height="22" rx="2" fill="#dbeafe"/>
+      <text x="-30" y="-8" font-size="14" font-weight="800" fill="#fafafa">Dashboard clients</text>
+      <text x="-30" y="10" font-size="11" fill="#94a3b8">httpOnly cookies</text>
+      <text x="-30" y="26" font-size="10" fill="#64748b">future admin UI</text>
+    </g>
+
+    <g transform="translate(860 175)">
+      <use href="#node"/>
+      <rect x="-90" y="-20" width="36" height="40" rx="6" fill="url(#n-amber)"/>
+      <rect x="-86" y="-12" width="28" height="22" rx="2" fill="#fef3c7"/>
+      <rect x="-78" y="-2" width="12" height="10" rx="1" fill="#fed7aa"/>
+      <text x="-30" y="-8" font-size="14" font-weight="800" fill="#fafafa">POS clients</text>
+      <text x="-30" y="10" font-size="11" fill="#94a3b8">bearer tokens</text>
+      <text x="-30" y="26" font-size="10" fill="#64748b">separate repo</text>
+    </g>
+
+    <!-- API Gateway (NestJS) -->
+    <g transform="translate(640 295)">
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="#0f172a" opacity="0.95" filter="url(#lift)"/>
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="url(#gloss)" opacity="0.32"/>
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="none" stroke="#0d9488" stroke-width="1.2"/>
+      <rect x="-160" y="-22" width="44" height="44" rx="8" fill="url(#n-teal)"/>
+      <path d="M-148 -8 a8 8 0 1 1 0.1 0 M-148 0 v6" fill="none" stroke="#ccfbf1" stroke-width="3" stroke-linecap="round"/>
+      <text x="-95" y="-8" font-size="16" font-weight="800" fill="#fafafa">apps/api · NestJS 11</text>
+      <text x="-95" y="12" font-size="11" fill="#94a3b8">helmet · cookies · request-id · Zod validation · OpenAPI loader</text>
+      <text x="-95" y="28" font-size="10" fill="#64748b">Express platform · sync HTTP boundary</text>
+    </g>
+
+    <!-- Guard chain (4 mini cards) -->
+    <g transform="translate(640 420)">
+      <text x="-280" y="-32" font-size="11" fill="#64748b" font-weight="700">GUARD CHAIN</text>
+      <g transform="translate(-244 0)">
+        <use href="#guard"/>
+        <circle cx="-46" cy="0" r="14" fill="url(#n-emerald)"/>
+        <path d="M-52 0 l4 4 l8 -8" fill="none" stroke="#dcfce7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="-22" y="-2" font-size="11" font-weight="800" fill="#fafafa">AuthGuard</text>
+        <text x="-22" y="14" font-size="9" fill="#94a3b8">argon2 · token</text>
+      </g>
+      <g transform="translate(-84 0)">
+        <use href="#guard"/>
+        <circle cx="-46" cy="0" r="14" fill="url(#n-teal)"/>
+        <path d="M-52 -4 h12 M-52 0 h12 M-52 4 h12" stroke="#ccfbf1" stroke-width="2.5" stroke-linecap="round"/>
+        <text x="-22" y="-2" font-size="11" font-weight="800" fill="#fafafa">Tenant ctx</text>
+        <text x="-22" y="14" font-size="9" fill="#94a3b8">404 cross-tenant</text>
+      </g>
+      <g transform="translate(80 0)">
+        <use href="#guard"/>
+        <circle cx="-46" cy="0" r="14" fill="url(#n-violet)"/>
+        <path d="M-52 -2 l4 4 l8 -8 M-52 6 h12" stroke="#ede9fe" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+        <text x="-22" y="-2" font-size="11" font-weight="800" fill="#fafafa">RolesGuard</text>
+        <text x="-22" y="14" font-size="9" fill="#94a3b8">default deny</text>
+      </g>
+      <g transform="translate(240 0)">
+        <use href="#guard"/>
+        <circle cx="-46" cy="0" r="14" fill="url(#n-rose)"/>
+        <path d="M-50 -4 h8 M-50 0 h8 M-50 4 h8" stroke="#ffe4e6" stroke-width="2.5" stroke-linecap="round"/>
+        <text x="-22" y="-2" font-size="11" font-weight="800" fill="#fafafa">Idempotency</text>
+        <text x="-22" y="14" font-size="9" fill="#94a3b8">replay-safe</text>
+      </g>
+    </g>
+
+    <!-- Service layer (RLS-enforced) -->
+    <g transform="translate(640 540)">
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="#0f172a" opacity="0.95" filter="url(#lift)"/>
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="url(#gloss)" opacity="0.32"/>
+      <rect x="-180" y="-44" width="360" height="88" rx="18" fill="none" stroke="#7c3aed" stroke-width="1.2"/>
+      <rect x="-160" y="-22" width="44" height="44" rx="8" fill="url(#n-violet)"/>
+      <path d="M-148 -10 v20 M-158 0 h20" stroke="#ede9fe" stroke-width="3" stroke-linecap="round"/>
+      <text x="-95" y="-8" font-size="16" font-weight="800" fill="#fafafa">Service layer · domain modules</text>
+      <text x="-95" y="12" font-size="11" fill="#94a3b8">auth · tenants · catalog · sales · inventory · audit · outbox</text>
+      <text x="-95" y="28" font-size="10" fill="#64748b">tenant-scoped Drizzle · RLS at the database boundary</text>
+    </g>
+
+    <!-- Postgres (left) -->
+    <g transform="translate(380 660)">
+      <use href="#node"/>
+      <ellipse cx="-72" cy="-12" rx="22" ry="8" fill="url(#n-emerald)"/>
+      <path d="M-94 -12 v22 c0 5 10 9 22 9s22-4 22-9 v-22" fill="url(#n-emerald)"/>
+      <path d="M-94 -12 v22 c0 5 10 9 22 9s22-4 22-9 v-22" fill="url(#gloss)" opacity="0.4"/>
+      <path d="M-94 0 c0 5 10 9 22 9s22-4 22-9" fill="none" stroke="#bbf7d0" stroke-width="1.5" opacity="0.8"/>
+      <text x="-30" y="-8" font-size="14" font-weight="800" fill="#fafafa">PostgreSQL 16</text>
+      <text x="-30" y="10" font-size="11" fill="#94a3b8">system of record · RLS</text>
+      <text x="-30" y="26" font-size="10" fill="#64748b">Drizzle · SQL migrations</text>
+    </g>
+
+    <!-- Redis (center) -->
+    <g transform="translate(640 660)">
+      <use href="#node"/>
+      <ellipse cx="-72" cy="-10" rx="22" ry="7" fill="url(#n-rose)"/>
+      <path d="M-94 -10 v8 c0 4 10 8 22 8s22-4 22-8 v-8 M-94 0 v8 c0 4 10 8 22 8s22-4 22-8 v-8 M-94 10 v8 c0 4 10 8 22 8s22-4 22-8 v-8" fill="url(#n-rose)"/>
+      <path d="M-94 -10 v8 c0 4 10 8 22 8s22-4 22-8 v-8" fill="url(#gloss)" opacity="0.4"/>
+      <text x="-30" y="-8" font-size="14" font-weight="800" fill="#fafafa">Redis 7 · BullMQ</text>
+      <text x="-30" y="10" font-size="11" fill="#94a3b8">queues + coordination</text>
+      <text x="-30" y="26" font-size="10" fill="#64748b">disposable state</text>
+    </g>
+
+    <!-- Worker (right) -->
+    <g transform="translate(900 660)">
+      <use href="#node"/>
+      <rect x="-92" y="-22" width="44" height="44" rx="8" fill="url(#n-blue)"/>
+      <circle cx="-70" cy="0" r="9" fill="none" stroke="#dbeafe" stroke-width="3"/>
+      <circle cx="-70" cy="0" r="3" fill="#dbeafe"/>
+      <path d="M-70 -16 v4 M-70 12 v4 M-86 0 h4 M-58 0 h4" stroke="#dbeafe" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="-30" y="-8" font-size="14" font-weight="800" fill="#fafafa">apps/worker</text>
+      <text x="-30" y="10" font-size="11" fill="#94a3b8">BullMQ · NestJS</text>
+      <text x="-30" y="26" font-size="10" fill="#64748b">outbox drainer · async fanout</text>
+    </g>
+
+    <!-- ============= EDGES ============= -->
+    <g fill="none" stroke="#475569" stroke-width="1.5">
+      <!-- Dashboard → API -->
+      <path d="M420 219 Q420 257 480 280" marker-end="url(#arrow)"/>
+      <!-- POS → API -->
+      <path d="M860 219 Q860 257 800 280" marker-end="url(#arrow)" stroke-dasharray="4 4"/>
+      <!-- API → Guards -->
+      <path id="api-to-guards" d="M640 339 L640 396" marker-end="url(#arrow)"/>
+      <!-- Guards → Service -->
+      <path id="guards-to-svc" d="M640 444 L640 496" marker-end="url(#arrow)"/>
+      <!-- Service → PG -->
+      <path id="svc-to-pg" d="M540 568 Q460 600 400 616" marker-end="url(#arrow)"/>
+      <!-- Service → Outbox/Redis -->
+      <path id="svc-to-redis" d="M640 584 L640 616" marker-end="url(#arrow)"/>
+      <!-- Redis → Worker -->
+      <path id="redis-to-worker" d="M740 660 L820 660" marker-end="url(#arrow)"/>
+      <!-- Worker → PG (backfill / read facts) -->
+      <path d="M880 690 Q700 720 480 690" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+    </g>
+
+    <!-- Edge labels -->
+    <g font-size="10" fill="#94a3b8">
+      <text x="332" y="262">cookie auth</text>
+      <text x="804" y="262">bearer auth</text>
+      <text x="652" y="376">authenticated</text>
+      <text x="652" y="488">RLS bound ctx</text>
+      <text x="430" y="592">tenant query</text>
+      <text x="652" y="608">outbox enqueue</text>
+      <text x="752" y="650">consume</text>
+      <text x="600" y="708">backfill / read facts</text>
+    </g>
+
+    <!-- ============= ANIMATED TOKENS ============= -->
+    <!-- main request: dashboard → API → guards → service → PG -->
+    <circle r="6" fill="#60a5fa" filter="url(#glow)">
+      <animateMotion dur="6s" repeatCount="indefinite">
+        <mpath href="#flow-dashboard"/>
+      </animateMotion>
+      <animate attributeName="r" values="6;8;6" dur="1.4s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="5" fill="#34d399" filter="url(#glow)">
+      <animateMotion dur="6s" begin="1.5s" repeatCount="indefinite">
+        <mpath href="#flow-dashboard"/>
+      </animateMotion>
+    </circle>
+    <circle r="5" fill="#a78bfa" filter="url(#glow)">
+      <animateMotion dur="6s" begin="3s" repeatCount="indefinite">
+        <mpath href="#flow-dashboard"/>
+      </animateMotion>
+    </circle>
+
+    <path id="flow-dashboard" d="M420 145 Q420 250 480 280 L640 280 L640 339 L640 396 L640 444 L640 496 L640 540 Q540 580 400 632" fill="none" stroke="none"/>
+
+    <!-- POS flow -->
+    <circle r="5" fill="#fbbf24" filter="url(#glow)">
+      <animateMotion dur="6s" begin="0.7s" repeatCount="indefinite">
+        <mpath href="#flow-pos"/>
+      </animateMotion>
+    </circle>
+    <circle r="4" fill="#fcd34d" filter="url(#glow)">
+      <animateMotion dur="6s" begin="2.5s" repeatCount="indefinite">
+        <mpath href="#flow-pos"/>
+      </animateMotion>
+    </circle>
+    <path id="flow-pos" d="M860 145 Q860 250 800 280 L640 280 L640 396 L640 540 Q700 580 640 616" fill="none" stroke="none"/>
+
+    <!-- Outbox token: Service → Redis → Worker -->
+    <circle r="5" fill="#fb7185" filter="url(#glow)">
+      <animateMotion dur="3.6s" begin="0.4s" repeatCount="indefinite">
+        <mpath href="#flow-outbox"/>
+      </animateMotion>
+      <animate attributeName="opacity" values="0;1;1;0" dur="3.6s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="4" fill="#fda4af" filter="url(#glow)">
+      <animateMotion dur="3.6s" begin="2s" repeatCount="indefinite">
+        <mpath href="#flow-outbox"/>
+      </animateMotion>
+      <animate attributeName="opacity" values="0;1;1;0" dur="3.6s" repeatCount="indefinite"/>
+    </circle>
+    <path id="flow-outbox" d="M640 584 L640 632 L740 660 L820 660" fill="none" stroke="none"/>
+
+    <!-- Worker backfill token -->
+    <circle r="4" fill="#86efac" filter="url(#glow)">
+      <animateMotion dur="4s" repeatCount="indefinite">
+        <mpath href="#flow-backfill"/>
+      </animateMotion>
+      <animate attributeName="opacity" values="0;1;1;0" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <path id="flow-backfill" d="M880 690 Q700 720 480 690" fill="none" stroke="none"/>
+
+    <!-- Governance taps -->
+    <g>
+      <line x1="540" y1="295" x2="230" y2="295" stroke="#334155" stroke-width="1.2" stroke-dasharray="3 4"/>
+      <circle r="4" fill="#a5b4fc" filter="url(#glow)">
+        <animate attributeName="opacity" values="0;1;0" dur="3s" repeatCount="indefinite"/>
+        <animateMotion dur="3s" repeatCount="indefinite">
+          <mpath href="#tap-gov"/>
+        </animateMotion>
+      </circle>
+      <path id="tap-gov" d="M540 295 L230 295" fill="none" stroke="none"/>
+    </g>
+    <text x="330" y="288" font-size="10" fill="#94a3b8">contract-first · Zod validate</text>
+
+    <!-- Obs tap -->
+    <g>
+      <line x1="740" y1="295" x2="1050" y2="295" stroke="#334155" stroke-width="1.2" stroke-dasharray="3 4"/>
+      <circle r="4" fill="#fde68a" filter="url(#glow)">
+        <animate attributeName="opacity" values="0;1;0" dur="3.2s" repeatCount="indefinite"/>
+        <animateMotion dur="3.2s" repeatCount="indefinite">
+          <mpath href="#tap-obs"/>
+        </animateMotion>
+      </circle>
+      <path id="tap-obs" d="M740 295 L1050 295" fill="none" stroke="none"/>
+    </g>
+    <text x="800" y="288" font-size="10" fill="#94a3b8">pino · OTEL span emit</text>
+
+    <!-- Audit tap (service → obs rail) -->
+    <g>
+      <line x1="740" y1="540" x2="1050" y2="540" stroke="#334155" stroke-width="1.2" stroke-dasharray="3 4"/>
+      <circle r="4" fill="#fda4af" filter="url(#glow)">
+        <animate attributeName="opacity" values="0;1;0" dur="3.4s" repeatCount="indefinite"/>
+        <animateMotion dur="3.4s" repeatCount="indefinite">
+          <mpath href="#tap-audit"/>
+        </animateMotion>
+      </circle>
+      <path id="tap-audit" d="M740 540 L1050 540" fill="none" stroke="none"/>
+    </g>
+    <text x="800" y="533" font-size="10" fill="#94a3b8">audit · provenance</text>
+
+    <!-- bottom legend -->
+    <g transform="translate(40 736)" font-size="11">
+      <rect x="0" y="-14" width="1200" height="32" rx="8" fill="#0f172a" opacity="0.7" stroke="#1e293b"/>
+      <circle cx="20" cy="2" r="5" fill="#60a5fa"/>
+      <text x="32" y="6" fill="#cbd5e1">dashboard request</text>
+      <circle cx="170" cy="2" r="5" fill="#fbbf24"/>
+      <text x="182" y="6" fill="#cbd5e1">POS request</text>
+      <circle cx="290" cy="2" r="5" fill="#a78bfa"/>
+      <text x="302" y="6" fill="#cbd5e1">guarded payload</text>
+      <circle cx="430" cy="2" r="5" fill="#34d399"/>
+      <text x="442" y="6" fill="#cbd5e1">tenant query</text>
+      <circle cx="550" cy="2" r="5" fill="#fb7185"/>
+      <text x="562" y="6" fill="#cbd5e1">outbox event</text>
+      <circle cx="680" cy="2" r="5" fill="#86efac"/>
+      <text x="692" y="6" fill="#cbd5e1">worker drain</text>
+      <circle cx="800" cy="2" r="5" fill="#a5b4fc"/>
+      <text x="812" y="6" fill="#cbd5e1">contracts tap</text>
+      <circle cx="920" cy="2" r="5" fill="#fde68a"/>
+      <text x="932" y="6" fill="#cbd5e1">observability emit</text>
+      <text x="1080" y="6" fill="#64748b">SVG · SMIL animations</text>
+    </g>
+  </g>
+</svg>
