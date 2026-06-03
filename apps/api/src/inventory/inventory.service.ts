@@ -133,6 +133,43 @@ export interface BackfillSaleLinkedOutboundInput {
   readonly correlationId?: string | null | undefined;
 }
 
+/**
+ * Worker-internal input to backfillRestockInbound (009-RESTOCK, T090/T091).
+ *
+ * The INBOUND mirror of BackfillSaleLinkedOutboundInput: a void/refund/return →
+ * restock is a manual/backfill inbound movement referencing the originating 008
+ * void/refund terminal event (or a customer return) as provenance, deduped on
+ * `(sourceSystem, externalId)` per FR-031 (FR-025/R6). Automatic restock-on-void
+ * is DEFERRED (FR-060) — this is the manual/backfill entry only, no auto route.
+ */
+export interface BackfillRestockInboundInput {
+  readonly tenantId: string;
+  readonly storeId: string;
+  /** The restock actor (a service principal resolved by the processor). */
+  readonly userId: string;
+  /** Restock origin (e.g. "pos-restock") — half of the dedup pair (FR-031). */
+  readonly sourceSystem: string;
+  /** External natural key (e.g. the void/refund event id) — the other half. */
+  readonly externalId: string;
+  readonly movementType: 'inbound';
+  /** SIGNED exact-decimal quantity string (inbound ⇒ positive). */
+  readonly quantity: string;
+  readonly stockingUnit: string;
+  readonly tenantProductRef?: string | null | undefined;
+  readonly reason?: string | null | undefined;
+  readonly occurredAt?: string | null | undefined;
+  /**
+   * The originating 008 void/refund terminal event (or return) — provenance
+   * only, read by value, never an FK (R8); the ledger never mutates the 008 fact.
+   */
+  readonly terminalEventRef?: string | null | undefined;
+  /** Optional originating sale provenance, if the restock traces to a sale. */
+  readonly saleId?: string | null | undefined;
+  readonly saleLineId?: string | null | undefined;
+  /** Carried into the audit metadata for traceability across the backfill. */
+  readonly correlationId?: string | null | undefined;
+}
+
 /** Server-resolved input to createStockTransfer (009-US5, FR-020). */
 export interface CreateStockTransferInput {
   /** Resolved from the principal — never the body. */
@@ -949,6 +986,152 @@ export class InventoryService {
         // ---- Negative-balance signal (FR-024) — a sale-linked backfill
         // outbound may drive on-hand below zero; flagged, never rejected.
         await this.flagIfNegativeOnHand(client, input.storeId, tenantProductRef);
+
+        return toMovementBody(row);
+      },
+    );
+  }
+
+  /**
+   * Append a void/refund/return → restock INBOUND from the off-request backfill
+   * (009-RESTOCK, T090/T091, FR-025/R6). The INBOUND mirror of
+   * backfillSaleLinkedOutbound: same provenance-dedup machinery
+   * (`uq_stock_movements_tenant_source_external`, idempotent on
+   * `(tenant_id, source_system, external_id)`), opposite sign. References the
+   * originating 008 void/refund terminal event (or a customer return) as
+   * `terminal_event_ref` provenance — read by value, never an FK; the ledger
+   * never mutates the 008 fact (R8). A redelivered restock appends no second
+   * movement and re-applies no on-hand (FR-031).
+   *
+   * SCOPE STOP (FR-025/FR-060): this is the MANUAL/BACKFILL entry only. There is
+   * deliberately NO automatic restock-on-void route — auto restock is deferred
+   * to the same future follow-up as auto-decrement.
+   */
+  async backfillRestockInbound(
+    input: BackfillRestockInboundInput,
+  ): Promise<StockMovementBody> {
+    // ---- Pre-DB validation (mirrors the manual inbound rules) --------------
+    if (input.movementType !== 'inbound') {
+      throw new BadRequestException('restock movementType must be inbound');
+    }
+    const qtyRaw = Number(input.quantity);
+    if (!Number.isFinite(qtyRaw)) {
+      throw new BadRequestException('quantity must be a number');
+    }
+    const qty = Math.round(qtyRaw * 1e4) / 1e4;
+    if (qty === 0) {
+      throw new BadRequestException('quantity must be non-zero at numeric(19,4) scale');
+    }
+    if (qty < 0) {
+      throw new BadRequestException('inbound (restock) quantity must be positive');
+    }
+    const sourceSystem = input.sourceSystem.trim();
+    const externalId = input.externalId.trim();
+    if (sourceSystem.length === 0 || externalId.length === 0) {
+      throw new BadRequestException('restock requires a non-empty sourceSystem and externalId');
+    }
+    const stockingUnit = input.stockingUnit.trim();
+    if (stockingUnit.length === 0) {
+      throw new BadRequestException('stockingUnit is required');
+    }
+    const reason =
+      typeof input.reason === 'string' && input.reason.trim().length > 0
+        ? input.reason.trim()
+        : null;
+
+    const tenantProductRef = input.tenantProductRef ?? null;
+    const movementId = newId();
+    const auditId = newId();
+
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<StockMovementBody> => {
+        // ---- Cross-unit check (FR-022) — same rule as the manual path -----
+        if (tenantProductRef !== null) {
+          await this.assertUnitMatchesEstablished(
+            client,
+            input.storeId,
+            tenantProductRef,
+            stockingUnit,
+          );
+        }
+
+        // ---- Idempotent append on the provenance pair (FR-031) ------------
+        // ON CONFLICT DO NOTHING against the PARTIAL unique index (predicate
+        // restated). On conflict zero rows return → fetch + return existing.
+        const inserted = await client.query<MovementRow>(
+          `INSERT INTO stock_movements
+             (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
+              tenant_product_ref, reason, occurred_at, source_system, external_id,
+              sale_id, sale_line_id, terminal_event_ref, created_by)
+           VALUES
+             ($1, $2, $3, 'inbound', $4::numeric(19,4), $5, $6, $7,
+              COALESCE($8::timestamptz, now()), $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (tenant_id, source_system, external_id)
+             WHERE source_system IS NOT NULL AND external_id IS NOT NULL
+             DO NOTHING
+           RETURNING ${MOVEMENT_COLUMNS}`,
+          [
+            movementId,
+            input.tenantId,
+            input.storeId,
+            input.quantity,
+            stockingUnit,
+            tenantProductRef,
+            reason,
+            input.occurredAt ?? null,
+            sourceSystem,
+            externalId,
+            input.saleId ?? null,
+            input.saleLineId ?? null,
+            input.terminalEventRef ?? null,
+            input.userId,
+          ],
+        );
+
+        const row = inserted.rows[0];
+        if (!row) {
+          // Conflict: a restock for this provenance pair already exists. Return
+          // it with no second INSERT / audit / on-hand application (FR-031).
+          const existing = await client.query<MovementRow>(
+            `SELECT ${MOVEMENT_COLUMNS}
+               FROM stock_movements
+              WHERE tenant_id = $1 AND source_system = $2 AND external_id = $3`,
+            [input.tenantId, sourceSystem, externalId],
+          );
+          const existingRow = existing.rows[0];
+          if (!existingRow) {
+            throw new Error(
+              'InventoryService.backfillRestockInbound: conflict with no matching provenance row',
+            );
+          }
+          return toMovementBody(existingRow);
+        }
+
+        // ---- Audit event in the SAME transaction (FR-013, SC-007) ---------
+        await client.query(
+          `INSERT INTO audit_events
+             (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          [
+            auditId,
+            input.userId,
+            input.tenantId,
+            AUDIT_ACTION_MOVEMENT_BACKFILL,
+            AUDIT_TARGET_TYPE_MOVEMENT,
+            row.id,
+            JSON.stringify({
+              sourceSystem,
+              externalId,
+              terminalEventRef: input.terminalEventRef ?? null,
+              correlationId: input.correlationId ?? null,
+            }),
+          ],
+        );
+
+        // A restock is an INBOUND (positive) — it cannot drive on-hand below
+        // zero, so no negative-balance signal probe is needed here (FR-024).
 
         return toMovementBody(row);
       },
