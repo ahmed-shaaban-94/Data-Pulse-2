@@ -201,6 +201,14 @@ export const stockMovements = pgTable(
     index("idx_stock_movements_transfer_group")
       .on(t.transferGroupId)
       .where(sql`${t.transferGroupId} IS NOT NULL`),
+    // NOTE (issue #465, migration 0016): the established-unit guard
+    // `stock_movements_one_unit_per_product` — an EXCLUDE USING gist constraint
+    // enforcing at most one DISTINCT stocking_unit per (store_id,
+    // tenant_product_ref) — is defined SQL-ONLY in
+    // packages/db/drizzle/0016_inventory_unit_guard.sql. Drizzle's pg-core has
+    // no exclusion-constraint builder, and the explicit SQL migration is the
+    // DDL source of truth (this schema object is for query-builder typing). It
+    // is the path-independent backstop for FR-022 under concurrency.
   ],
 );
 
