@@ -1,0 +1,365 @@
+# 010-pos-catalog-read-down-sync — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 010 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety semantics, and the GATED-first
+# serialization edges.
+#
+# 010 is a READ-ONLY CODE feature (NestJS api only — NO worker). It publishes
+# the Resolved Sellable Store Catalogue (003 §6.4) to device-authenticated POS
+# terminals as snapshot + delta, scoped to (tenant_id, store_id) (wire term
+# branch_id). It REUSES unchanged the POS device-principal auth seam
+# (PosOperatorAuthGuard — the same guard posCaptureItem + the 008 sales POS
+# routes use) and the 003 catalog read path. It adds a new read-only
+# apps/api/src/catalog/read-down/ module mirroring the reconciliation/ triad.
+# The platform stays the catalogue authority (§IX); there is NO write surface.
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3):
+#   - 010-CONTRACT  → new OpenAPI read-down contract under
+#                     packages/contracts/openapi/catalog/read-down.yaml
+#   - 010-SCHEMA    → new catalogue change-log Drizzle schema + the
+#                     0015_pos_catalog_read_down SQL migration under
+#                     packages/db/** (paired *.down.sql, lock-duration review),
+#                     INCLUDING the population triggers on tenant_products /
+#                     store_product_overrides / product_aliases.
+# Both carry `approval_required: true`. 010-SCHEMA is the HARD serialization
+# point for BOTH user stories: the snapshot's opaque cursor (FR-011) IS the
+# change-log sequence value (data-model §2/§3, research R1), so US1 cannot
+# satisfy FR-011 without the change-log. The migration is therefore
+# FOUNDATIONAL, not US2-only.
+#
+# TWO slices are `[SIGN-OFF]` (decision gates, not code gates):
+#   - 010-SIGNOFF-READONLY (T001): the change-log is populated by DB TRIGGERS
+#     inside the 0015 migration — NOT by instrumenting 003/005 app write paths
+#     (owner decision 2026-06-03). The app-level outbox-mirror is the REJECTED
+#     alternative. If triggers cannot capture a required transition, STOP and
+#     raise a separate gate — do NOT silently instrument write paths.
+#   - 010-SIGNOFF-NODEP (T011, folded into 010-CONTRACT): no package.json
+#     dependency is added (cursor codec + DecimalAmount string money use
+#     existing primitives). A new dependency is a SEPARATE [GATED] decision.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/010-pos-catalog-read-down-sync/wave-status.md
+# Brief source:     specs/010-pos-catalog-read-down-sync/tasks.md
+#                   (each slice's full RED/GREEN brief, Predecessors, and
+#                   Acceptance live in tasks.md; this file provides the
+#                   dispatch-time schema fields only.)
+#
+# Slicing convention (008/009-style, NOT 006-style 1:1): each capability slice
+# folds its RED test task(s) + GREEN implementation task(s) into one
+# dispatchable unit, because a worker writes the failing test and makes it
+# pass within one worktree. `task_ids` is therefore list-valued. Every
+# tasks.md ID (T001..T093) is assigned to exactly one slice's `task_ids`.
+#
+# Status: 010 NOT STARTED — planning chain (spec/plan/research/data-model/
+# contracts) on main; tasks.md + this map + wave-status authored on branch
+# 010-pos-catalog-read-down-sync (off origin/main). No slice dispatched yet.
+# MVP = 010-US1-SNAPSHOT + foundational = the POS-Pulse 010 unblock (spec §10).
+#
+# Updated: 2026-06-03 — initial authoring (post /speckit-tasks + /speckit-analyze);
+#          external review + /speckit-clarify resolved R-1 (FR-050 payload revised
+#          to real-schema-backed fields only — Option B). R-3 RESOLVED via research R9:
+#          single per-tenant sequence + tenant-wide (store_id IS NULL) sentinel rows,
+#          dumb one-row-per-change trigger, override-masking handled read-side as an
+#          idempotent re-upsert. Both [GATED] slices unblocked (pending in-session approval).
+
+version: 1
+spec: 010-pos-catalog-read-down-sync
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 010-SIGNOFF-READONLY
+    task_ids: [T001]
+    type: docs
+    # T001 is a [SIGN-OFF] gate: the catalogue change-log is populated by DB
+    # TRIGGERS inside the 0015 migration (on tenant_products /
+    # store_product_overrides / product_aliases), so NO 003/005 application
+    # write path is instrumented and §3 (read-only Non-Goal) holds. The verdict
+    # is RECORDED in data-model.md §3 + wave-status.md. Dependents (010-SCHEMA)
+    # may treat it as satisfied once recorded. The app-level outbox-mirror
+    # alternative is REJECTED for v1.
+    status: not_started
+    approval_required: false   # decision gate, not a code gate
+    depends_on: []
+    blocks:
+      - 010-SCHEMA
+    agent: opus-maestro
+    allowed_files:
+      - specs/010-pos-catalog-read-down-sync/wave-status.md
+      - specs/010-pos-catalog-read-down-sync/data-model.md   # one-line rejected-alternative note (T001)
+    validation:
+      - command: 'grep -nE "trigger|read-only|outbox-mirror|rejected" specs/010-pos-catalog-read-down-sync/data-model.md'
+        expected: One+ match — the DB-trigger population decision (and the rejected app-level outbox-mirror alternative) is recorded in data-model §3.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and raise a SEPARATE [SIGN-OFF]/[GATED] if implementation finds triggers cannot capture a required sellable transition — do NOT instrument 003/005 write paths silently"
+    parallel_safety: safe
+
+  - id: 010-SETUP
+    task_ids: [T002, T003]
+    type: chore
+    status: not_started
+    approval_required: false
+    depends_on: [010-SIGNOFF-READONLY]
+    blocks:
+      - 010-CONTRACT
+      - 010-SCHEMA
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/read-down/read-down.module.ts
+      - apps/api/src/app.module.ts   # register the new read-only module (mirror SalesModule wiring)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — the new empty read-down module compiles and is registered in app.module.ts, mirroring sales.module.ts / reconciliation.module.ts; no routes yet. The catalog {unknown-items,reconciliation,sales} modules still compile (no regression).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 010 branch is not off latest origin/main — rebase first"
+      - "stop if the catalog reconciliation/unknown-items/sales modules do not compile — that is a regression, not a 010 task"
+    parallel_safety: safe   # single new module file + one barrel-style registration line
+
+  # ===== Phase 2: Foundational (blocking prerequisites) =======================
+
+  # ----- 2.1 GATED OpenAPI read-down contract (serialization point) ----------
+
+  - id: 010-CONTRACT
+    task_ids: [T010, T011]
+    type: feat
+    status: not_started
+    approval_required: true   # [GATED] — packages/contracts/openapi/** (Constitution §IV/§VIII) — requires in-session approval
+    depends_on: [010-SETUP]
+    blocks:
+      - 010-US1-SNAPSHOT
+      - 010-US2-DELTA
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/catalog/read-down.yaml
+      # Expected (mirrors 005/007/008): the conformance spec is the real
+      # validation surface — author the contract test alongside the YAML.
+      - apps/api/test/catalog/read-down/contract/read-down.contract.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/read-down/contract contract-conformance
+        expected: GREEN — read-down.contract.spec (posGetCatalogSnapshot + posGetCatalogDeltas present + unique vs shipped operationIds; posDeviceAuth security scheme on both ops; canonical Error envelope + closed error set snapshot_required / non-disclosing-404 / store_context_required / device-auth failures; toBody sellable-row shape with price{amount,currency_code} decimal money; opaque cursor + next_page_token; no raw DB entity) + umbrella conformance (no operationId collision).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — this is a [GATED] forbidden-path slice; do NOT touch packages/contracts/openapi/** until the user approves THIS slice in-session"
+      - "stop if any operationId collides with or renames a shipped 005/007/008 operationId (renames are breaking, §IV)"
+      - "stop and raise a SEPARATE [GATED] package.json approval if the cursor codec or money handling tempts adding a dependency (T011 [SIGN-OFF] = no new dep)"
+    parallel_safety: serialize   # gated contract is a hard ordering point; nothing implementing dispatches before it merges
+
+  # ----- 2.2 GATED change-log schema + migration + triggers (serialization) --
+
+  - id: 010-SCHEMA
+    task_ids: [T012, T013]
+    type: feat
+    status: not_started
+    approval_required: true   # [GATED] — packages/db/** schema + SQL migration + triggers (Constitution §VIII) — requires in-session approval
+    depends_on: [010-SETUP, 010-SIGNOFF-READONLY]
+    blocks:
+      - 010-ISOLATION-HARNESS
+      - 010-US1-SNAPSHOT       # FOUNDATIONAL: the snapshot cursor (FR-011) IS the change-log sequence
+      - 010-US2-DELTA
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/catalog/catalog-change-log.ts
+      - packages/db/drizzle/0015_pos_catalog_read_down.sql
+      - packages/db/drizzle/0015_pos_catalog_read_down.down.sql
+      - packages/db/src/schema/index.ts   # barrel re-export of the new change-log schema
+      - apps/api/test/catalog/read-down/schema/change-log-schema-shape.spec.ts
+      # Expected (mirrors 008 0012 round-trip): real migration round-trip spec
+      - packages/db/__tests__/migration/0015-pos-catalog-read-down.spec.ts
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- --runInBand 0015-pos-catalog-read-down"
+        expected: GREEN — catalog_change_log created with a SINGLE monotonic sequence PER tenant_id (R9 — not per-store), op enum (upsert | remove_from_sellable), NOT-NULL tenant_id, NULLABLE store_id (NULL = tenant-wide event), index (tenant_id, sequence); RLS enable+force+fail-closed (empty-GUC CASE guard, mirror 0010/0014); DUMB population TRIGGERS on tenant_products / store_product_overrides / product_aliases fire (write upsert on sellable-relevant change / sellable-enter, remove_from_sellable on sellable-exit) writing exactly ONE row per raw change — store_id IS NULL for tenant_products/tenant-wide-alias changes, store_id = S for store-override/store-scoped-alias changes — with NO cross-store fan-out and NO store_product_overrides consultation; the alias-table trigger resolves the parent product_id; migration applies + rolls back clean (UP→DOWN→UP); NO change to existing 003 column semantics.
+        docker_required: true   # Testcontainers — WSL only (reference_007_test_env)
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/read-down/schema
+        expected: GREEN — change-log-schema-shape.spec (Drizzle table introspection; Docker-free companion).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** schema + migration + triggers); do NOT author until the user approves THIS slice in-session"
+      - "stop if the migration is not paired with a reviewed *.down.sql, or lock duration on the new table + the three trigger-bearing 003 tables is not assessed"
+      - "stop if a trigger would mutate 003 column semantics — triggers are read-of-NEW/OLD + INSERT into catalog_change_log only (additive)"
+      - "stop if a trigger fans out per-store or consults store_product_overrides — R9 mandates ONE row per raw change (store_id NULL for tenant-wide, =S for store-scoped); override-masking is handled read-side as an idempotent re-upsert, not at write time"
+    parallel_safety: serialize   # hard ordering point; the isolation harness + BOTH user-story GREEN slices consume the change-log + cursor
+
+  # ----- 2.3 Isolation harness (blocking — serves all stories) ---------------
+
+  - id: 010-ISOLATION-HARNESS
+    task_ids: [T014, T015]
+    type: test
+    status: not_started
+    approval_required: false
+    depends_on: [010-SCHEMA]
+    blocks:
+      - 010-US1-SNAPSHOT
+      - 010-US2-DELTA
+      - 010-US3-ISOLATION
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/read-down/__support__/seed-read-down.ts
+      - apps/api/test/catalog/read-down/isolation/read-down-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/read-down/isolation"
+        expected: RED — sweep cases fail on missing snapshot/delta operations (NOT on RLS); fixtures seed across tenants A/B and stores X/Y (sellable store, unpriced/missing-currency/non-representable product, override store, empty-sellable store); raw-SQL RLS-bypass probe on catalog_change_log present.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts you to modify the 003-owned isolation-harness.ts — extend via the new seed-read-down.ts only"
+    parallel_safety: safe   # new test files; shared seed helper authored here (land before US slices consume it)
+
+  # ===== Phase 3: US1 — Snapshot (P1) 🎯 MVP =================================
+
+  - id: 010-US1-SNAPSHOT
+    task_ids: [T030, T031, T032, T033, T034, T035, T036]
+    type: feat
+    status: not_started
+    approval_required: false
+    depends_on: [010-CONTRACT, 010-SCHEMA, 010-ISOLATION-HARNESS]
+    blocks:
+      - 010-US2-DELTA          # US2 shares read-down.controller/service + the toBody() projection
+      - 010-US3-ISOLATION      # the cross-cutting verify runs after the routes exist
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/read-down/read-down.controller.ts
+      - apps/api/src/catalog/read-down/read-down.service.ts
+      - apps/api/src/catalog/read-down/dto/snapshot-query.dto.ts
+      - apps/api/src/catalog/read-down/read-down.toBody.ts        # explicit wire-shape projection (§IV)
+      - apps/api/test/catalog/read-down/snapshot/snapshot-happy.spec.ts
+      - apps/api/test/catalog/read-down/snapshot/sellable-filter.spec.ts
+      - apps/api/test/catalog/read-down/snapshot/resolved-override.spec.ts
+      - apps/api/test/catalog/read-down/snapshot/pagination.spec.ts
+      - apps/api/test/catalog/read-down/snapshot/empty.spec.ts
+      - apps/api/test/catalog/read-down/isolation/read-down-sweep.spec.ts   # T036 extends the sweep (shared with harness)
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/read-down/snapshot catalog/read-down/isolation"
+        expected: GREEN — snapshot returns exactly the N sellable priced resolved rows (toBody shape, decimal money at natural minor precision, server opaque cursor, paginated via next_page_token at one consistent cursor point); unpriced/missing-currency/non-representable products ABSENT + unpriced-issue signal + backlog recorded; store override reflected field-by-field; empty-sellable store returns a valid empty snapshot at a cursor; T036 cross-tenant/cross-store snapshot sweep non-disclosing + RLS-bypass probe zero-rows. posGetCatalogSnapshot conformance passes.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the snapshot would return a raw DB entity — it MUST be the explicit toBody() projection (§IV)"
+      - "stop if any unpriced/missing-currency/non-representable row reaches the sellable stream (FR-041/044) — exclude + record the issue instead"
+      - "stop if scope is taken from the body/query rather than the device principal (FR-002)"
+    parallel_safety: serialize   # creates the shared read-down.controller/service that US2 + US3 build on
+
+  # ===== Phase 4: US2 — Delta (P2) ===========================================
+
+  - id: 010-US2-DELTA
+    task_ids: [T040, T041, T042, T043, T044]
+    type: feat
+    status: not_started
+    approval_required: false
+    depends_on: [010-US1-SNAPSHOT]   # shares read-down.controller/service + toBody()
+    blocks:
+      - 010-US3-ISOLATION
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/read-down/read-down.controller.ts   # SHARED with US1 — serialize
+      - apps/api/src/catalog/read-down/read-down.service.ts       # SHARED with US1 — serialize
+      - apps/api/src/catalog/read-down/dto/delta-query.dto.ts
+      - apps/api/test/catalog/read-down/delta/delta-upsert.spec.ts
+      - apps/api/test/catalog/read-down/delta/removal-tombstone.spec.ts
+      - apps/api/test/catalog/read-down/delta/idempotent-replay.spec.ts
+      - apps/api/test/catalog/read-down/delta/snapshot-required.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/read-down/delta"
+        expected: GREEN — deltas since C return ordered upsert ops + advanced cursor reaching current resolved state; the delta read unions store-scoped (store_id = S) with tenant-wide (store_id IS NULL) events (R9); a tenant-level change to a field store S OVERRIDES yields a harmless idempotent re-upsert of S's unchanged resolved row (R9 override-masking); a retired OR became-unpriced product emits remove_from_sellable (never active with NULL/sentinel price) + records the unpriced-issue for the price case; same since cursor is idempotent; stale cursor → snapshot_required; foreign-scope cursor → non-disclosing rejection. posGetCatalogDeltas conformance passes.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a became-unpriced transition is emitted as an upsert with a sentinel price instead of a remove_from_sellable tombstone (FR-042, Decision #3)"
+      - "stop if the opaque since cursor is decoded without scope-binding it to the device principal (FR-024)"
+    parallel_safety: serialize   # writes the shared read-down.controller/service
+
+  # ===== Phase 5: US3 — Isolation & non-disclosure (P1, cross-cutting) =======
+
+  - id: 010-US3-ISOLATION
+    task_ids: [T050, T051, T052, T053]
+    type: test
+    status: not_started
+    approval_required: false
+    depends_on: [010-US1-SNAPSHOT, 010-US2-DELTA]   # verify runs across both routes
+    blocks:
+      - 010-POLISH
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/read-down/isolation/device-auth-required.spec.ts
+      - apps/api/test/catalog/read-down/isolation/scope-mismatch.spec.ts
+      - apps/api/test/catalog/read-down/isolation/store-context-required.spec.ts
+      - apps/api/test/catalog/read-down/isolation/read-down-sweep.spec.ts   # T053 full sweep (snapshot + delta)
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/read-down/isolation"
+        expected: GREEN — manager Clerk JWT without device principal rejected + unauthenticated 401 (FR-001); branch_id/scope not matching token → non-disclosing 404-class (FR-002/003/004); unresolved store → store_context_required (FR-005); foreign since cursor → non-disclosing (FR-024); full cross-tenant/cross-store sweep across snapshot + delta GREEN; raw-SQL RLS-bypass probe (wrong app.current_tenant ⇒ zero rows) on catalog_change_log + the resolved read path; device principal is the ONLY scope ever served.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if any cross-scope path returns a shape that distinguishes exists vs not-exists (§II/§XII non-disclosure)"
+    parallel_safety: safe   # test-only files (sweep file shared with US1 T036 — land US3 after US1+US2 merge)
+
+  # ===== Phase 6: Polish & cross-cutting =====================================
+
+  - id: 010-POLISH
+    task_ids: [T090, T091, T092]
+    type: chore
+    status: not_started
+    approval_required: false
+    depends_on: [010-US1-SNAPSHOT, 010-US2-DELTA, 010-US3-ISOLATION]
+    blocks:
+      - 010-CLOSEOUT
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/read-down/read-down.metrics.ts        # signal wiring (catalog_unpriced_issue_rate etc.)
+      - apps/api/test/catalog/read-down/observability/signals.spec.ts
+      - loadtests/k6/catalog-read-down.js                          # report-only perf (no perf env — 005/008 precedent)
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/read-down"
+        expected: GREEN — read-down paths emit into catalog_lookup_failure_rate, the reconciliation_mismatch_rate hook (003 §9), and the new catalog_unpriced_issue_rate (no values/PII in labels; no parallel naming); ≥80% coverage on the read-down module; full catalog suite green. Perf p95/p99 recorded report-only against a ~50k-product store.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a new metric category is introduced rather than reusing the named 003 §9 / §VII signal family (FR-070)"
+    parallel_safety: safe   # metrics wiring + a report-only loadtest; no route logic change
+
+  - id: 010-CLOSEOUT
+    task_ids: [T093]
+    type: docs
+    status: not_started
+    approval_required: false
+    depends_on: [010-POLISH]
+    blocks: []
+    agent: opus-maestro
+    allowed_files:
+      - specs/010-pos-catalog-read-down-sync/execution-map.yaml
+      - specs/010-pos-catalog-read-down-sync/wave-status.md
+    validation:
+      - command: 'grep -nE "merged|terminal|CLOSED" specs/010-pos-catalog-read-down-sync/wave-status.md'
+        expected: Map reconciled to terminal status with PR/commit provenance; POS-Pulse 010 unblock recorded (contract pinned + snapshot reachable, spec §10).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+    parallel_safety: safe
+
+# ============================================================================
+# parallel-safe groups (proposed)
+# ============================================================================
+#
+#   GATED-FOUNDATIONAL  : 010-CONTRACT ∥ 010-SCHEMA — distinct surfaces
+#                         (OpenAPI YAML vs packages/db schema+migration+triggers);
+#                         both [GATED], order-independent between themselves;
+#                         010-SCHEMA also waits on 010-SIGNOFF-READONLY.
+#
+#   NOT parallel-safe (serialize): 010-US1-SNAPSHOT → 010-US2-DELTA →
+#                         010-US3-ISOLATION all touch the SAME shared module
+#                         (read-down.controller.ts + read-down.service.ts), so
+#                         they serialize through it — exactly like 008 US1–US6.
+#                         US3 + POLISH are test/metrics-only and land after.
+#
+# No worker slice (010 is read-only — no off-request processing).
