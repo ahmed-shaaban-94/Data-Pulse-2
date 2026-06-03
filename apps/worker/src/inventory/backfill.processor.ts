@@ -93,6 +93,24 @@ export class InventoryBackfillSaleNotFoundError extends Error {
   }
 }
 
+/**
+ * Thrown when a sale line's unit is inconsistent with the product's ESTABLISHED
+ * stocking unit (FR-022 — MUST be rejected, no silent coercion, no conversion
+ * engine). MIRRORS `InventoryService.CrossUnitError` (the api backfill path);
+ * the worker cannot import the api app, so the type is duplicated here.
+ */
+export class InventoryBackfillCrossUnitError extends Error {
+  constructor(
+    public readonly expectedUnit: string,
+    public readonly suppliedUnit: string,
+  ) {
+    super(
+      `sale line unit '${suppliedUnit}' does not match the product's stocking unit '${expectedUnit}'`,
+    );
+    this.name = "InventoryBackfillCrossUnitError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // UUID guard — fail fast on a malformed id before opening a connection.
 // ---------------------------------------------------------------------------
@@ -154,6 +172,26 @@ export class InventoryBackfillProcessor {
           let deduped = 0;
 
           for (const line of lines.rows) {
+            // ---- Cross-unit reject (FR-022) — MIRRORS the api service's
+            // assertUnitMatchesEstablished. A line whose unit is inconsistent
+            // with the product's ESTABLISHED unit MUST be rejected (no silent
+            // coercion, no conversion engine). The established unit is the unit
+            // of the product's existing movements at this store; skip for an
+            // ad-hoc null-product line and for a product's very first movement.
+            if (line.tenant_product_ref !== null) {
+              const established = await client.query<{ stocking_unit: string }>(
+                `SELECT stocking_unit FROM stock_movements
+                  WHERE store_id = $1 AND tenant_product_ref = $2
+                  ORDER BY received_at ASC, id ASC
+                  LIMIT 1`,
+                [job.storeId, line.tenant_product_ref],
+              );
+              const establishedUnit = established.rows[0]?.stocking_unit;
+              if (establishedUnit !== undefined && establishedUnit !== line.unit) {
+                throw new InventoryBackfillCrossUnitError(establishedUnit, line.unit);
+              }
+            }
+
             // Outbound = stock leaves on the sale: negate the sold quantity.
             // The line quantity persists as numeric; negate in SQL (no JS float)
             // by passing the value and a leading '-' via the cast below.

@@ -27,6 +27,7 @@ import {
 import {
   InventoryBackfillProcessor,
   InventoryBackfillSaleNotFoundError,
+  InventoryBackfillCrossUnitError,
 } from "../../src/inventory/backfill.processor";
 import {
   seedCapturedSaleForBackfill,
@@ -41,6 +42,7 @@ const ACTOR_A = "1c0e0000-0000-7000-8000-0000000000c1";
 const PRODUCT_A = "1c0e0000-0000-7000-8000-0000000000e1";
 const SALE_A = "1c0e0000-0000-7000-8000-0000000000d1";
 const SALE_ADHOC = "1c0e0000-0000-7000-8000-0000000000d2";
+const SALE_WRONGUNIT = "1c0e0000-0000-7000-8000-0000000000d4";
 
 const TENANT_B = "1c0e0000-0000-7000-8000-0000000000a2";
 const STORE_B = "1c0e0000-0000-7000-8000-0000000000b2";
@@ -81,6 +83,18 @@ beforeAll(async () => {
       productId: PRODUCT_A, // already seeded; re-seed is idempotent
       slugSuffix: "a",
       lines: [{ quantity: "4.0000", unit: "ea", productRef: null }],
+    });
+
+    // Tenant A: a captured sale whose line references PRODUCT_A but in a
+    // DIFFERENT unit ('kg' vs the 'ea' SALE_A establishes) — FR-022 cross-unit.
+    await seedCapturedSaleForBackfill(env.admin, {
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      saleId: SALE_WRONGUNIT,
+      actorId: ACTOR_A,
+      productId: PRODUCT_A, // already seeded; re-seed idempotent
+      slugSuffix: "a",
+      lines: [{ quantity: "1.0000", unit: "kg", productRef: PRODUCT_A }],
     });
 
     // Tenant B (cross-tenant isolation probe).
@@ -177,6 +191,30 @@ describe("T064: backfill appends one outbound per captured sale line", () => {
     expect(result.applied).toBe(false);
 
     expect(await readOnHand(env!.admin, STORE_A, PRODUCT_A)).toBe(onHandBefore);
+    expect(await countMovements(env!.admin, STORE_A, PRODUCT_A)).toBe(countBefore);
+  });
+
+  it("rejects a sale line whose unit is inconsistent with the product's established unit (FR-022)", async () => {
+    if (maybeSkip()) return;
+
+    // PRODUCT_A's established unit is 'ea' (set by the SALE_A backfill above).
+    // SALE_WRONGUNIT's line references PRODUCT_A in 'kg' — MUST be rejected, no
+    // silent coercion. (The transaction rolls back, so no movement is written.)
+    const countBefore = await countMovements(env!.admin, STORE_A, PRODUCT_A);
+
+    const processor = new InventoryBackfillProcessor(env!.app);
+    await expect(
+      processor.process({
+        saleId: SALE_WRONGUNIT,
+        tenantId: TENANT_A,
+        storeId: STORE_A,
+        actorId: ACTOR_A,
+        sourceSystem: SOURCE_SYSTEM,
+        correlationId: "corr-wrongunit",
+      }),
+    ).rejects.toBeInstanceOf(InventoryBackfillCrossUnitError);
+
+    // No partial side-effect: the rejected line wrote no movement.
     expect(await countMovements(env!.admin, STORE_A, PRODUCT_A)).toBe(countBefore);
   });
 
