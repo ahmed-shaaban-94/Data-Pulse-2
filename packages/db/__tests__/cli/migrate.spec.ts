@@ -126,6 +126,7 @@ describe("data-pulse-migrate CLI", () => {
     "0012_sales",
     "0013_store_timezone",
     "0014_inventory",
+    "0015_pos_catalog_read_down",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
