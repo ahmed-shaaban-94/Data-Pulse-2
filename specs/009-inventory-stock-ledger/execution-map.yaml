@@ -466,12 +466,12 @@ slices:
   - id: 009-SIGNAL-NEGBAL
     task_ids: [T045]
     type: feat
-    # IMPLEMENTED + GREEN on feat/009-signal-negbal (commit 016f6a2 off main).
-    # NOT yet merged — ready for PR. signal 2/2 + observability 13 suites/291 +
-    # shared metrics-labels 40/40, via WSL Docker. F-09 (allowed_files expansion
-    # for the packages/shared allowlist + cardinality drift catalogue) — owner-
-    # approved; see note below. Unlabeled counter (movement-key is PII-adjacent).
-    status: implemented
+    # signal 2/2 + observability 13 suites/291 + shared metrics-labels 40/40.
+    # F-09 (allowed_files expansion for the packages/shared allowlist +
+    # cardinality drift catalogue) — owner-approved; see note below. Unlabeled
+    # counter (movement-key is PII-adjacent).
+    status: merged
+    merged_at_commit: 69bde9e   # PR #458 (squash) — db-integration + fast + CodeRabbit green
     approval_required: false
     depends_on: [009-US1-ONHAND, 009-US2-MANUAL]   # US1 explicit: the negative_balance flag lives on the on-hand projection (getOnHand), so the read path must exist; US2 supplies the outbound that drives it negative
     blocks: []
@@ -510,7 +510,15 @@ slices:
   - id: 009-RESTOCK
     task_ids: [T090, T091]
     type: feat
-    status: pending
+    # IMPLEMENTED + GREEN on feat/009-restock (commit off main). NOT yet merged —
+    # ready for PR. restock 4/4 + full api inventory regression 100 pass (1 skip),
+    # via WSL Docker. backfillRestockInbound = the inbound mirror of US4's
+    # backfillSaleLinkedOutbound (terminal_event_ref provenance, ON CONFLICT
+    # dedup). MANUAL/BACKFILL only — no auto restock-on-void route (stop honored).
+    # The worker backfill.processor.ts restock path is NOT added: the T090/T091
+    # validation command is the api lane, so the service entry is the proof (the
+    # api/worker split F-05 resolved for US4). F-10 below (harness allowed_files).
+    status: implemented
     approval_required: false
     depends_on: [009-US2-MANUAL, 009-US4-SALELINKED]
     blocks: []
@@ -519,6 +527,7 @@ slices:
       - apps/api/src/inventory/inventory.service.ts
       - apps/worker/src/inventory/backfill.processor.ts
       - apps/api/test/inventory/restock/*.spec.ts
+      - apps/api/test/inventory/restock/__restock-harness.ts   # F-10: support harness (not a *.spec.ts) — same allowed_files gap as F-05/F-07/F-08. Owner-approved expansion.
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory/restock
         expected: GREEN — inbound movement referencing an 008 void/refund terminal event (or return) as provenance, idempotent on the provenance (FR-025/R6); NO automatic restock-on-void route exists (deferred with FR-060).
