@@ -47,7 +47,7 @@
  * logged. On failure the processor logs ONLY identifiers + the error class name.
  */
 import type { Pool } from "pg";
-import { runWithTenantContext } from "@data-pulse-2/db";
+import { runWithTenantContext, emit, OUTBOX_EVENT_TYPES } from "@data-pulse-2/db";
 
 // ---------------------------------------------------------------------------
 // Envelope — the off-request job carries the tenant scope + correlation id
@@ -320,6 +320,32 @@ export class InventoryBackfillProcessor {
                 }),
               ],
             );
+
+            // Outbox emit IN-TRANSACTION, on this genuine-append branch only —
+            // MIRRORS InventoryService.emitMovementCreated (apps can't import
+            // each other; keep in sync). The dedup `continue` above skips it, so
+            // a redelivered backfill does NOT double-emit (FR-033). IDs +
+            // provenance only, no PII (§XIV).
+            await emit(client, {
+              eventType: OUTBOX_EVENT_TYPES.INVENTORY_MOVEMENT_CREATED,
+              tenantId: job.tenantId,
+              storeId: job.storeId,
+              payload: {
+                movementIds: [row.id],
+                movementType: "outbound",
+                tenantProductRef: line.tenant_product_ref,
+                sourceSystem: job.sourceSystem,
+                externalId,
+                saleId: job.saleId,
+              },
+              // outbox correlation_id is UUID — only forward a well-formed UUID
+              // (UUID_RE already declared for the job-id guards); a non-UUID tag
+              // must not fail the movement write.
+              correlationId:
+                job.correlationId && UUID_RE.test(job.correlationId)
+                  ? job.correlationId
+                  : null,
+            });
           }
 
           return {
