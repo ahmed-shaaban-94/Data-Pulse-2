@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **CLOSEOUT — 14/15 merged + POLISH ready for PR (the 15th)** — US1–US6 + SIGNAL + RESTOCK + LIFECYCLE merged 2026-06-03 (PRs #438–#444, #451, #454 `51b2e80`, #455 `08be518`, #456 `2f49f08`, #458 `69bde9e`, #459 `8142334`, #461 `579b67a`). The full inventory ledger is live on `main`: compute-on-read on-hand (US1), manual movements (US2), manual idempotency (US3), sale-linked outbound + off-request backfill (US4), intra-tenant transfers (US5), physical counts with append-only corrections (US6), the negative-balance allow-and-flag counter (SIGNAL), void/refund→restock inbound (RESTOCK), and the §XIV data-class guard (LIFECYCLE). **009-POLISH IMPLEMENTED + GREEN, ready for PR** on `feat/009-polish` — k6 report-only perf (T100), the 500/req backfill ceiling (T101), SC-008/SC-009 seam verdicts (T102), recorded coverage (T103), this closeout (T104). On merge, **009 = 15/15 COMPLETE**. Hosted CI green throughout. Created 2026-05-31. A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection) did NOT reproduce on re-run nor full-concurrency local run; see finding #11.
+**Status**: **CLOSED — 15/15 merged 2026-06-03** (PRs #437–#444, #451, #454 `51b2e80`, #455 `08be518`, #456 `2f49f08`, #458 `69bde9e`, #459 `8142334`, #461 `579b67a`, #464 `af4c17d`). The full append-only inventory ledger is live on `main`: compute-on-read on-hand (US1), manual movements (US2), manual idempotency (US3), sale-linked outbound + off-request backfill (US4), intra-tenant transfers (US5), physical counts with append-only corrections (US6), the negative-balance allow-and-flag counter (SIGNAL), void/refund→restock inbound (RESTOCK), the §XIV data-class guard (LIFECYCLE), and closeout (POLISH — k6 report-only perf, 500/req backfill ceiling, SC-008/SC-009 seam PASS, coverage recorded). Hosted CI green throughout. Created 2026-05-31. **Two [GATED] `packages/db` items deferred OUT to a future gated slice — durable tracker [issue #465](https://github.com/ahmed-shaaban-94/Data-Pulse-2/issues/465):** the established-unit concurrency guard (a real FR-022 gap under concurrent first-movements) + the movement outbox emit. A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection) did NOT reproduce on re-run nor full-concurrency local run; see finding #11.
 
 ---
 
@@ -73,7 +73,7 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-SIGNAL-NEGBAL | T045 | **merged** (#458 `69bde9e`) | — (new signal; F-09 shared allowlist) |
 | 009-RESTOCK | T090, T091 | **merged** (#459 `8142334`) | — (F-10 harness) |
 | 009-LIFECYCLE | T095 | **merged** (#461 `579b67a`) | — (§XIV guard, Docker-free) |
-| 009-POLISH | T100–T104 | **implemented, ready for PR** (`feat/009-polish`) | — (k6 report-only; T101 ceiling; F-11) |
+| 009-POLISH | T100–T104 | **merged** (#464 `af4c17d`) | — (k6 report-only; T101 ceiling; F-11) |
 | 009-CI-OPT | — (infra) | **in progress** | **`[GATED]`** `.github/**` (owner-directed) |
 
 **15 feature slices · 45 tasks · 2 `[GATED]` + 1 `[SIGN-OFF]` · 1 new observability signal · +1 infra slice (009-CI-OPT).**
