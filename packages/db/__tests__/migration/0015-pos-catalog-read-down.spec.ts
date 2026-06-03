@@ -423,6 +423,54 @@ describe("0015_pos_catalog_read_down — population triggers fire under tenant G
     expect(last?.op).toBe("upsert");
   });
 
+  it("a store_product_override UPDATE (deactivate) emits ONE store_id = S row (advisory op)", async () => {
+    if (!env) throw new Error("env not initialized");
+    // Override UPDATE setting is_active=false: the trigger emits an `upsert`
+    // HINT (a sellable-relevant field changed). The stored op is advisory — the
+    // delta READ re-resolves and would derive remove_from_sellable (data-model
+    // §3/§4). Here we assert the trigger's ACTUAL contract: exactly ONE
+    // store-scoped row is logged for (product, S).
+    const before = await logRows(env, TENANT_A);
+    const beforeCount = before.length;
+    await withTenantGuc(env, TENANT_A, async (q) => {
+      await q(
+        `UPDATE store_product_overrides SET is_active = false, updated_by = $3
+         WHERE store_id = $1 AND product_id = $2`,
+        [STORE_AX, "66666666-6666-6666-6666-666666666666", ACTOR],
+      );
+    });
+    const after = await logRows(env, TENANT_A);
+    expect(after.length).toBe(beforeCount + 1);
+    const last = after[after.length - 1];
+    expect(last?.store_id).toBe(STORE_AX); // store-scoped, no fan-out
+    expect(last?.product_id).toBe("66666666-6666-6666-6666-666666666666");
+    expect(["upsert", "remove_from_sellable"]).toContain(last?.op);
+  });
+
+  it("a store_product_override DELETE emits ONE store_id = S row (advisory op)", async () => {
+    if (!env) throw new Error("env not initialized");
+    // Override DELETE: the trigger emits a store-scoped removal HINT, but S
+    // reverts to the still-sellable tenant base — the delta READ re-resolves and
+    // would emit upsert(base row) (data-model §3/§4). Assert the contract: ONE
+    // store-scoped row is logged for (product, S) so the read knows to re-resolve.
+    const before = await logRows(env, TENANT_A);
+    const beforeCount = before.length;
+    await withTenantGuc(env, TENANT_A, async (q) => {
+      await q(
+        `DELETE FROM store_product_overrides WHERE store_id = $1 AND product_id = $2`,
+        [STORE_AX, "66666666-6666-6666-6666-666666666666"],
+      );
+    });
+    const after = await logRows(env, TENANT_A);
+    expect(after.length).toBe(beforeCount + 1);
+    const last = after[after.length - 1];
+    expect(last?.store_id).toBe(STORE_AX);
+    expect(last?.product_id).toBe("66666666-6666-6666-6666-666666666666");
+    // The DELETE trigger logs remove_from_sellable as its hint (the read
+    // re-resolves to the tenant base).
+    expect(last?.op).toBe("remove_from_sellable");
+  });
+
   it("an alias change resolves the parent product_id into the row (analyze U2)", async () => {
     if (!env) throw new Error("env not initialized");
     const aliasId = "88888888-8888-8888-8888-888888888888";

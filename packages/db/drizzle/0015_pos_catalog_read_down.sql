@@ -37,9 +37,23 @@
 -- op (TEXT + CHECK, mirroring 0014 — no pgEnum precedent in repo):
 --   'upsert'                — a sellable-relevant field changed OR the row
 --                             crossed INTO sellability.
---   'remove_from_sellable'  — the tombstone for retire / deactivate / price→NULL
---                             / currency dropped (the row crossed OUT). The
---                             consumer drops the product (Decision #3 / FR-042).
+--   'remove_from_sellable'  — retire / deactivate / price→NULL / currency dropped
+--                             (the row crossed OUT) at the RAW table level.
+--
+-- ⚠️ The stored `op` is ADVISORY, not the wire verdict. The trigger fires on a
+--   single raw table and CANNOT resolve a product's sellability for store S
+--   (that needs Tenant ⊕ Override, which the dumb trigger deliberately does not
+--   compute — R9). A change-log row means only "something sellable-relevant
+--   changed at this sequence for this (product_id, scope)". The DELTA READ
+--   (010-US2-DELTA / T044) MUST re-resolve Tenant ⊕ Override per (tenant, store)
+--   for each changed product_id and DERIVE the wire op from the CURRENT resolved
+--   state (upsert+row when sellable for S, remove_from_sellable when not). This
+--   is why the trigger can over-emit harmlessly (the read-side idempotent
+--   re-upsert, R9) — e.g. an override DELETE logs a store-scoped removal hint but
+--   the read re-resolves to the still-sellable tenant base and emits upsert;
+--   an override UPDATE is_active=false logs an upsert hint but the read emits
+--   remove_from_sellable. See data-model.md §3/§4. The trigger's only contract
+--   is: log exactly ONE row for every changed (product_id, scope).
 --
 -- RLS (mirror 0010/0014 — fail-closed empty-GUC CASE guard): ENABLE + FORCE,
 --   SELECT + INSERT policies ONLY (append-only — no UPDATE/DELETE policy). The

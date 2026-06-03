@@ -53,6 +53,12 @@ Logical shape the gated migration must provide (outbox-style; mirrors `outbox_ev
 
 **Delta read**: `WHERE tenant_id = T AND (store_id = S OR store_id IS NULL) AND sequence > C ORDER BY sequence`. The resolved `row` (§1) is computed at read time per `(tenant, store)`.
 
+> **⚠️ The stored `op` is ADVISORY, not authoritative — the delta READ derives the wire op.** A change-log row means only: *"something sellable-relevant changed at this `sequence` for this `(product_id, scope)`."* The trigger fires on a single raw table and **cannot** know a product's resolved sellability for store S (that needs `Tenant ⊕ Override`, which the dumb trigger deliberately does not compute — R9). Therefore the **delta read MUST re-resolve `Tenant ⊕ Override` per `(tenant, store)` for each changed `product_id` and DERIVE the wire op from the *current* resolved state** — emit `upsert` (with the resolved `row`, §1) when the product is currently sellable for S, and `remove_from_sellable` when it is not. The stored `op` is a hint that bounds *which products to re-resolve*, never the final wire verdict. This is what makes R9's "harmless idempotent re-upsert" sound, and it correctly handles the two cases the trigger alone cannot:
+> - **store-override DELETE** — the trigger emits a (store-scoped) `remove_from_sellable` hint, but S reverts to the still-sellable tenant base ⟶ the read re-resolves and emits `upsert(base row)`. The consumer does NOT drop a still-sellable product.
+> - **store-override UPDATE setting `is_active=false`** — the trigger emits an `upsert` hint, but S's resolved row is now not-sellable ⟶ the read re-resolves and emits `remove_from_sellable`. The stream never carries an `upsert` with a non-sellable `row`.
+>
+> US2 (`010-US2-DELTA`, T044) owns this read-side derivation; the `010-SCHEMA` trigger only guarantees a row is logged for every changed `(product_id, scope)`.
+
 **Override-masking (resolves the §3 gap flagged by external-review R-3)**: if a tenant-level field changes but store S overrides that exact field, S still receives the tenant-wide `upsert`; applying it re-writes S's resolved row to the **same** value (the resolver computes Tenant ⊕ Override; the override still wins) — a **harmless idempotent re-upsert** (FR-021). No special-casing in the trigger.
 
 **Idempotent**: replaying a cursor yields the same logical set (FR-021).
@@ -61,9 +67,9 @@ Logical shape the gated migration must provide (outbox-style; mirrors `outbox_ev
 
 | Field | Type | Notes |
 |:--|:--|:--|
-| `op` | `upsert` \| `remove_from_sellable` | |
+| `op` | `upsert` \| `remove_from_sellable` | **Derived by the delta read** from the current resolved sellability of `product_id` for `(tenant, store)` — NOT the change-log's stored `op` (which is an advisory change-signal only; see §3). |
 | `product_id` | uuid | |
-| `row` | Resolved Sellable Catalogue Row \| omitted | present for `upsert`; omitted for `remove_from_sellable` |
+| `row` | Resolved Sellable Catalogue Row \| omitted | present for `upsert` (the freshly re-resolved row); omitted for `remove_from_sellable` |
 | `row_cursor` | opaque string | advanced cursor after this op (canonical per-row token name — locks analyze I2/R-5; the response-level continuation token is `next_page_token`) |
 
 ## 5. Unpriced-Catalogue Issue (derived signal/backlog — not a sellable row)
