@@ -53,6 +53,7 @@ import {
   type OnHandBody,
   type StockMovementBody,
   type StockMovementListBody,
+  type StockTransferBody,
 } from './inventory.service';
 
 const UuidSchema = z.string().uuid();
@@ -92,6 +93,35 @@ const CreateStockMovementSchema = z
   })
   .strict();
 type CreateStockMovementDto = z.infer<typeof CreateStockMovementSchema>;
+
+/**
+ * Strict create-transfer command (contract `CreateStockTransferCommand`,
+ * `additionalProperties: false`). `.strict()` enforces the mass-assignment ban
+ * (FR-052): a body `tenantId` / `createdBy` is an unknown key → 400. Quantity is
+ * a strictly POSITIVE numeric(19,4) magnitude — a zero / negative quantity is a
+ * validation error (the `.refine` catches "0.0000", which the positive regex
+ * alone would otherwise accept).
+ */
+const PositiveDecimalQtySchema = z
+  .string()
+  .regex(
+    /^\d{1,15}(\.\d{1,4})?$/,
+    'quantity must be an unsigned numeric(19,4) decimal string (≤15 integer, ≤4 fraction digits)',
+  )
+  .refine((s) => Math.round(Number(s) * 1e4) > 0, {
+    message: 'transfer quantity must be strictly positive',
+  });
+const CreateStockTransferSchema = z
+  .object({
+    sourceStoreId: z.string().uuid(),
+    destinationStoreId: z.string().uuid(),
+    tenantProductRef: z.string().uuid(),
+    quantity: PositiveDecimalQtySchema,
+    stockingUnit: z.string().min(1).max(32),
+    reason: z.string().max(500).optional(),
+  })
+  .strict();
+type CreateStockTransferDto = z.infer<typeof CreateStockTransferSchema>;
 
 @Controller()
 @UseGuards(DashboardAuthGuard, TenantContextGuard)
@@ -176,6 +206,43 @@ export class InventoryController {
       saleId: body.saleId ?? null,
       saleLineId: body.saleLineId ?? null,
       terminalEventRef: body.terminalEventRef ?? null,
+    });
+  }
+
+  /**
+   * POST /api/inventory/v1/transfers
+   *
+   * Create an intra-tenant transfer as LINKED movements (FR-020): a
+   * `transfer_out` at the source + a `transfer_in` at the destination sharing a
+   * transfer group (SC-004). The SOURCE store is authorized object-level against
+   * the principal's scope (a source outside scope is a non-disclosing 404); the
+   * DESTINATION is a target reference resolved server-side under tenant RLS — a
+   * cross-tenant destination is a non-disclosing 404 (FR-051). Source ≠ dest and
+   * quantity > 0 (else 400). A transfer-out driving source on-hand negative is
+   * still recorded (allow-and-flag, FR-024). Idempotent via `Idempotency-Key`.
+   */
+  @Post('api/inventory/v1/transfers')
+  @HttpCode(HttpStatus.CREATED)
+  @Idempotent('required')
+  async createStockTransfer(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(CreateStockTransferSchema))
+    body: CreateStockTransferDto,
+  ): Promise<StockTransferBody> {
+    const ctx = this.requireContext(request);
+    // The source store is the operator's authorized scope (a store-scoped
+    // principal may only transfer FROM its own store; a foreign source is a
+    // non-disclosing 404). The destination is validated under RLS in the service.
+    this.authorizeStore(ctx, body.sourceStoreId);
+    return this.inventoryService.createStockTransfer({
+      tenantId: ctx.tenantId as string,
+      userId: ctx.userId as string,
+      sourceStoreId: body.sourceStoreId,
+      destinationStoreId: body.destinationStoreId,
+      tenantProductRef: body.tenantProductRef,
+      quantity: body.quantity,
+      stockingUnit: body.stockingUnit,
+      reason: body.reason ?? null,
     });
   }
 

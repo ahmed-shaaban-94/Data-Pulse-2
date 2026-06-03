@@ -45,7 +45,12 @@
  *
  * Transfer / count / backfill writes are authored in 009-US5/US6/US4 — NOT here.
  */
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { runWithTenantContext } from '@data-pulse-2/db';
 import { newId } from '@data-pulse-2/shared';
 import type { Pool, PoolClient } from 'pg';
@@ -127,9 +132,35 @@ export interface BackfillSaleLinkedOutboundInput {
   readonly correlationId?: string | null | undefined;
 }
 
+/** Server-resolved input to createStockTransfer (009-US5, FR-020). */
+export interface CreateStockTransferInput {
+  /** Resolved from the principal — never the body. */
+  readonly tenantId: string;
+  /** Resolved from the principal — never the body. */
+  readonly userId: string;
+  /** Source store; authorized at the controller against the principal's scope. */
+  readonly sourceStoreId: string;
+  /** Destination store; a TARGET ref, resolved within tenant scope (FR-051). */
+  readonly destinationStoreId: string;
+  readonly tenantProductRef: string;
+  /** STRICTLY POSITIVE exact-decimal magnitude string (the transfer amount). */
+  readonly quantity: string;
+  readonly stockingUnit: string;
+  readonly reason?: string | null | undefined;
+}
+
+/** The linked-movement pair a transfer produces (contract `StockTransfer`). */
+export interface StockTransferBody {
+  readonly transferGroupId: string;
+  readonly outbound: StockMovementBody;
+  readonly inbound: StockMovementBody;
+}
+
 const AUDIT_ACTION_MOVEMENT_CREATE = 'inventory.movement.create';
 const AUDIT_ACTION_MOVEMENT_BACKFILL = 'inventory.movement.backfill';
+const AUDIT_ACTION_TRANSFER_CREATE = 'inventory.transfer.create';
 const AUDIT_TARGET_TYPE_MOVEMENT = 'stock_movement';
+const AUDIT_TARGET_TYPE_TRANSFER = 'stock_transfer';
 
 /** Wire projection of a stock_movements row (contract `StockMovement`, §IV). */
 export interface StockMovementBody {
@@ -428,6 +459,159 @@ export class InventoryService {
         );
 
         return toMovementBody(row);
+      },
+    );
+  }
+
+  /**
+   * Create an intra-tenant transfer as LINKED movements (009-US5, FR-020): a
+   * `transfer_out` at the source store and a `transfer_in` at the destination,
+   * sharing one `transfer_group_id` so the legs are mutually discoverable
+   * (SC-004). BOTH inserts + the audit run in ONE `runWithTenantContext`
+   * transaction — a partial transfer (one leg without its counterpart) can never
+   * commit and corrupt the on-hand invariant.
+   *
+   * Validation (server-side):
+   *   - source ≠ destination, quantity strictly positive (else 400);
+   *   - the destination store MUST resolve within the caller's tenant — the
+   *     SELECT runs under RLS, so a cross-tenant destination returns zero rows
+   *     and is a non-disclosing 404 (FR-051). (The source is authorized at the
+   *     controller against the principal's store scope.)
+   *   - each leg's `stockingUnit` MUST match that store's established unit, if
+   *     the product already has movements there (FR-022, per-store).
+   * Allow-and-flag (FR-024): a transfer-out driving the SOURCE on-hand negative
+   * is still recorded — never rejected; the negative balance surfaces on read.
+   */
+  async createStockTransfer(input: CreateStockTransferInput): Promise<StockTransferBody> {
+    // ---- Pre-DB validation -------------------------------------------------
+    if (input.sourceStoreId === input.destinationStoreId) {
+      throw new BadRequestException('source and destination stores must differ');
+    }
+    const qtyRaw = Number(input.quantity);
+    if (!Number.isFinite(qtyRaw)) {
+      throw new BadRequestException('quantity must be a number');
+    }
+    // Evaluate at numeric(19,4) scale so a sub-0.0001 value cannot slip the
+    // positivity rule and persist as a zero-quantity transfer.
+    const qty = Math.round(qtyRaw * 1e4) / 1e4;
+    if (qty <= 0) {
+      throw new BadRequestException('transfer quantity must be strictly positive');
+    }
+    const stockingUnit = input.stockingUnit.trim();
+    if (stockingUnit.length === 0) {
+      throw new BadRequestException('stockingUnit is required');
+    }
+    const reason =
+      typeof input.reason === 'string' && input.reason.trim().length > 0
+        ? input.reason.trim()
+        : null;
+
+    // Signed magnitudes for the two legs (string form for the numeric cast).
+    const outQty = `-${qty.toFixed(4)}`;
+    const inQty = qty.toFixed(4);
+    const transferGroupId = newId();
+    const outId = newId();
+    const inId = newId();
+    const auditId = newId();
+
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<StockTransferBody> => {
+        // ---- Destination store must resolve within the tenant (FR-051) ----
+        // RLS scopes `stores` to the current tenant, so a cross-tenant
+        // destination returns zero rows → non-disclosing 404 (never 403).
+        const dest = await client.query<{ id: string }>(
+          `SELECT id FROM stores WHERE id = $1`,
+          [input.destinationStoreId],
+        );
+        if (!dest.rows[0]) {
+          throw new NotFoundException('Not Found');
+        }
+
+        // ---- Per-store cross-unit checks (FR-022) -------------------------
+        await this.assertUnitMatchesEstablished(
+          client,
+          input.sourceStoreId,
+          input.tenantProductRef,
+          stockingUnit,
+        );
+        await this.assertUnitMatchesEstablished(
+          client,
+          input.destinationStoreId,
+          input.tenantProductRef,
+          stockingUnit,
+        );
+
+        // ---- Two linked INSERTs sharing the transfer group ----------------
+        const out = await client.query<MovementRow>(
+          `INSERT INTO stock_movements
+             (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
+              tenant_product_ref, reason, occurred_at, transfer_group_id, created_by)
+           VALUES
+             ($1, $2, $3, 'transfer_out', $4::numeric(19,4), $5, $6, $7, now(), $8, $9)
+           RETURNING ${MOVEMENT_COLUMNS}`,
+          [
+            outId,
+            input.tenantId,
+            input.sourceStoreId,
+            outQty,
+            stockingUnit,
+            input.tenantProductRef,
+            reason,
+            transferGroupId,
+            input.userId,
+          ],
+        );
+        const inb = await client.query<MovementRow>(
+          `INSERT INTO stock_movements
+             (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
+              tenant_product_ref, reason, occurred_at, transfer_group_id, created_by)
+           VALUES
+             ($1, $2, $3, 'transfer_in', $4::numeric(19,4), $5, $6, $7, now(), $8, $9)
+           RETURNING ${MOVEMENT_COLUMNS}`,
+          [
+            inId,
+            input.tenantId,
+            input.destinationStoreId,
+            inQty,
+            stockingUnit,
+            input.tenantProductRef,
+            reason,
+            transferGroupId,
+            input.userId,
+          ],
+        );
+        const outRow = out.rows[0];
+        const inRow = inb.rows[0];
+        if (!outRow || !inRow) {
+          throw new Error('InventoryService.createStockTransfer: INSERT returned no row');
+        }
+
+        // ---- One audit event for the logical transfer (same transaction) --
+        await client.query(
+          `INSERT INTO audit_events
+             (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+          [
+            auditId,
+            input.userId,
+            input.tenantId,
+            AUDIT_ACTION_TRANSFER_CREATE,
+            AUDIT_TARGET_TYPE_TRANSFER,
+            transferGroupId,
+            JSON.stringify({
+              sourceStoreId: input.sourceStoreId,
+              destinationStoreId: input.destinationStoreId,
+            }),
+          ],
+        );
+
+        return {
+          transferGroupId,
+          outbound: toMovementBody(outRow),
+          inbound: toMovementBody(inRow),
+        };
       },
     );
   }
