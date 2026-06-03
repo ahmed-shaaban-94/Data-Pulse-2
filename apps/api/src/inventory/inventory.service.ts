@@ -78,6 +78,27 @@ export class CrossUnitError extends BadRequestException {
   }
 }
 
+/** The established-unit EXCLUDE constraint added in migration 0016 (issue #465). */
+export const UNIT_GUARD_CONSTRAINT = 'stock_movements_one_unit_per_product';
+
+/**
+ * True when `err` is the established-unit EXCLUDE violation (migration 0016):
+ * SQLSTATE 23P01 on the `stock_movements_one_unit_per_product` constraint.
+ * This fires ONLY under true concurrency — two movements that both passed the
+ * sequential `assertUnitMatchesEstablished` pre-check (saw no established unit)
+ * and both inserted; the DB constraint is the path-independent backstop. The
+ * sequential path throws `CrossUnitError` from the pre-check before any INSERT,
+ * so this predicate is exercised by a direct unit test, not the Docker harness.
+ */
+export function isUnitExclusionViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === '23P01' &&
+    (err as { constraint?: unknown }).constraint === UNIT_GUARD_CONSTRAINT
+  );
+}
+
 /** Server-resolved + body-validated input to createStockMovement (FR-052). */
 export interface CreateStockMovementInput {
   /** Resolved from the principal — never the body. */
@@ -475,7 +496,8 @@ export class InventoryService {
         // tenant_id / store_id / created_by are the server-resolved values
         // (principal + path), never the body. occurred_at defaults to now()
         // when omitted; received_at defaults in the schema (security clock).
-        const inserted = await client.query<MovementRow>(
+        const inserted = await this.insertMovementRow(
+          client,
           `INSERT INTO stock_movements
              (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
               tenant_product_ref, reason, occurred_at, sale_id, sale_line_id,
@@ -499,6 +521,7 @@ export class InventoryService {
             input.terminalEventRef ?? null,
             input.userId,
           ],
+          { storeId: input.storeId, tenantProductRef, suppliedUnit: stockingUnit },
         );
         const row = inserted.rows[0];
         if (!row) {
@@ -615,7 +638,8 @@ export class InventoryService {
         );
 
         // ---- Two linked INSERTs sharing the transfer group ----------------
-        const out = await client.query<MovementRow>(
+        const out = await this.insertMovementRow(
+          client,
           `INSERT INTO stock_movements
              (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
               tenant_product_ref, reason, occurred_at, transfer_group_id, created_by)
@@ -633,8 +657,14 @@ export class InventoryService {
             transferGroupId,
             input.userId,
           ],
+          {
+            storeId: input.sourceStoreId,
+            tenantProductRef: input.tenantProductRef,
+            suppliedUnit: stockingUnit,
+          },
         );
-        const inb = await client.query<MovementRow>(
+        const inb = await this.insertMovementRow(
+          client,
           `INSERT INTO stock_movements
              (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
               tenant_product_ref, reason, occurred_at, transfer_group_id, created_by)
@@ -652,6 +682,11 @@ export class InventoryService {
             transferGroupId,
             input.userId,
           ],
+          {
+            storeId: input.destinationStoreId,
+            tenantProductRef: input.tenantProductRef,
+            suppliedUnit: stockingUnit,
+          },
         );
         const outRow = out.rows[0];
         const inRow = inb.rows[0];
@@ -771,7 +806,8 @@ export class InventoryService {
         // ---- Append the count_correction ONLY for a non-zero variance ----
         let correctionMovement: StockMovementBody | null = null;
         if (variance !== 0) {
-          const corr = await client.query<MovementRow>(
+          const corr = await this.insertMovementRow(
+            client,
             `INSERT INTO stock_movements
                (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
                 tenant_product_ref, stock_count_id, reason, occurred_at, created_by)
@@ -789,6 +825,11 @@ export class InventoryService {
               stockCountId,
               input.userId,
             ],
+            {
+              storeId: input.storeId,
+              tenantProductRef: input.tenantProductRef,
+              suppliedUnit: stockingUnit,
+            },
           );
           const row = corr.rows[0];
           if (!row) {
@@ -908,7 +949,8 @@ export class InventoryService {
         // ON CONFLICT DO NOTHING against the PARTIAL unique index: the conflict
         // target must restate the index predicate (source/external NOT NULL) or
         // Postgres won't match the partial index. On conflict zero rows return.
-        const inserted = await client.query<MovementRow>(
+        const inserted = await this.insertMovementRow(
+          client,
           `INSERT INTO stock_movements
              (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
               tenant_product_ref, reason, occurred_at, source_system, external_id,
@@ -936,6 +978,7 @@ export class InventoryService {
             input.terminalEventRef ?? null,
             input.userId,
           ],
+          { storeId: input.storeId, tenantProductRef, suppliedUnit: stockingUnit },
         );
 
         const row = inserted.rows[0];
@@ -1060,7 +1103,8 @@ export class InventoryService {
         // ---- Idempotent append on the provenance pair (FR-031) ------------
         // ON CONFLICT DO NOTHING against the PARTIAL unique index (predicate
         // restated). On conflict zero rows return → fetch + return existing.
-        const inserted = await client.query<MovementRow>(
+        const inserted = await this.insertMovementRow(
+          client,
           `INSERT INTO stock_movements
              (id, tenant_id, store_id, movement_type, quantity, stocking_unit,
               tenant_product_ref, reason, occurred_at, source_system, external_id,
@@ -1088,6 +1132,7 @@ export class InventoryService {
             input.terminalEventRef ?? null,
             input.userId,
           ],
+          { storeId: input.storeId, tenantProductRef, suppliedUnit: stockingUnit },
         );
 
         const row = inserted.rows[0];
@@ -1169,6 +1214,46 @@ export class InventoryService {
     const established = r.rows[0]?.stocking_unit;
     if (established !== undefined && established !== suppliedUnit) {
       throw new CrossUnitError(established, suppliedUnit);
+    }
+  }
+
+  /**
+   * Run a stock_movements INSERT and translate the established-unit EXCLUDE
+   * violation (migration 0016) into the same `CrossUnitError` (400) the
+   * sequential pre-check throws — so the rare concurrent-race path returns a
+   * clean 400, not a raw 500. `assertUnitMatchesEstablished` remains the
+   * friendly common-path 400; this is the backstop for the true-concurrency
+   * window the pre-check can't close under READ COMMITTED. On the violation we
+   * re-query the now-established unit (one extra SELECT, only when the race
+   * actually fired) so the error carries the same (expected, supplied) shape.
+   */
+  private async insertMovementRow(
+    client: PoolClient,
+    sql: string,
+    params: readonly unknown[],
+    context: {
+      readonly storeId: string;
+      readonly tenantProductRef: string | null;
+      readonly suppliedUnit: string;
+    },
+  ): Promise<{ rows: MovementRow[] }> {
+    try {
+      return await client.query<MovementRow>(sql, params as unknown[]);
+    } catch (err: unknown) {
+      if (isUnitExclusionViolation(err) && context.tenantProductRef !== null) {
+        const established = await client.query<{ stocking_unit: string }>(
+          `SELECT stocking_unit FROM stock_movements
+            WHERE store_id = $1 AND tenant_product_ref = $2
+            ORDER BY received_at ASC, id ASC
+            LIMIT 1`,
+          [context.storeId, context.tenantProductRef],
+        );
+        throw new CrossUnitError(
+          established.rows[0]?.stocking_unit ?? context.suppliedUnit,
+          context.suppliedUnit,
+        );
+      }
+      throw err;
     }
   }
 

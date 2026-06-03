@@ -111,6 +111,27 @@ export class InventoryBackfillCrossUnitError extends Error {
   }
 }
 
+/** The established-unit EXCLUDE constraint added in migration 0016 (issue #465). */
+export const UNIT_GUARD_CONSTRAINT = "stock_movements_one_unit_per_product";
+
+/**
+ * True when `err` is the established-unit EXCLUDE violation (migration 0016):
+ * SQLSTATE 23P01 on `stock_movements_one_unit_per_product`. MIRRORS the api
+ * service's `isUnitExclusionViolation` (apps must not import each other). Fires
+ * only under true concurrency — the pre-loop cross-unit check throws first on
+ * the sequential path; this is the path-independent DB backstop. Off-request, a
+ * 23P01 here is a job failure/retry, so translation only buys a cleaner log
+ * class (no HTTP status to preserve) — no re-query, no separate test beyond this.
+ */
+function isUnitExclusionViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "23P01" &&
+    (err as { constraint?: unknown }).constraint === UNIT_GUARD_CONSTRAINT
+  );
+}
+
 /**
  * The per-request backfill ceiling (009-POLISH / T101, plan §1.5). One backfill
  * job appends ONE movement per captured sale line; a job whose sale has more
@@ -232,31 +253,44 @@ export class InventoryBackfillProcessor {
             // MIRROR of InventoryService.backfillSaleLinkedOutbound — keep in
             // sync. ON CONFLICT against the PARTIAL unique index must restate
             // the index predicate or Postgres won't match it.
-            const inserted = await client.query<{ id: string }>(
-              `INSERT INTO stock_movements
-                 (tenant_id, store_id, movement_type, quantity, stocking_unit,
-                  tenant_product_ref, occurred_at, source_system, external_id,
-                  sale_id, sale_line_id, created_by)
-               VALUES
-                 ($1, $2, 'outbound', (-1) * $3::numeric(19,4), $4, $5, now(),
-                  $6, $7, $8, $9, $10)
-               ON CONFLICT (tenant_id, source_system, external_id)
-                 WHERE source_system IS NOT NULL AND external_id IS NOT NULL
-                 DO NOTHING
-               RETURNING id`,
-              [
-                job.tenantId,
-                job.storeId,
-                line.quantity,
-                line.unit,
-                line.tenant_product_ref, // null stays null — never auto-created.
-                job.sourceSystem,
-                externalId,
-                job.saleId,
-                line.id,
-                job.actorId,
-              ],
-            );
+            let inserted: { rows: Array<{ id: string }> };
+            try {
+              inserted = await client.query<{ id: string }>(
+                `INSERT INTO stock_movements
+                   (tenant_id, store_id, movement_type, quantity, stocking_unit,
+                    tenant_product_ref, occurred_at, source_system, external_id,
+                    sale_id, sale_line_id, created_by)
+                 VALUES
+                   ($1, $2, 'outbound', (-1) * $3::numeric(19,4), $4, $5, now(),
+                    $6, $7, $8, $9, $10)
+                 ON CONFLICT (tenant_id, source_system, external_id)
+                   WHERE source_system IS NOT NULL AND external_id IS NOT NULL
+                   DO NOTHING
+                 RETURNING id`,
+                [
+                  job.tenantId,
+                  job.storeId,
+                  line.quantity,
+                  line.unit,
+                  line.tenant_product_ref, // null stays null — never auto-created.
+                  job.sourceSystem,
+                  externalId,
+                  job.saleId,
+                  line.id,
+                  job.actorId,
+                ],
+              );
+            } catch (err: unknown) {
+              // DB backstop (migration 0016): a concurrent first-movement raced
+              // past the pre-loop unit check. Surface it as the same cross-unit
+              // error class for a clean log; line.unit is the supplied unit (the
+              // established one isn't known on the race path — off-request, the
+              // exact units don't drive a status code).
+              if (isUnitExclusionViolation(err)) {
+                throw new InventoryBackfillCrossUnitError(line.unit, line.unit);
+              }
+              throw err;
+            }
 
             const row = inserted.rows[0];
             if (!row) {
