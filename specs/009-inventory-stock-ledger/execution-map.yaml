@@ -540,13 +540,12 @@ slices:
   - id: 009-LIFECYCLE
     task_ids: [T095]
     type: test
-    # IMPLEMENTED + GREEN on feat/009-lifecycle (commit 0693317, rebased onto
-    # main). NOT yet merged — ready for PR. 6/6, Docker-free introspection guard
-    # (getTableConfig set-equality tripwire on stock_movements + stock_counts +
-    # PII/payment denylist + classification-prose assertions). repoRoot is FIVE
-    # ".." (one fewer than the 008 guard — the PR #430 trap); 0014 header's "001"/
-    # "long-horizon" asserted independently (comment wrapping splits them).
-    status: implemented
+    # 6/6, Docker-free introspection guard (getTableConfig set-equality tripwire
+    # on stock_movements + stock_counts + PII/payment denylist + classification-
+    # prose assertions). repoRoot is FIVE ".." (one fewer than the 008 guard — the
+    # PR #430 trap); 0014 header's "001"/"long-horizon" asserted independently.
+    status: merged
+    merged_at_commit: 579b67a   # PR #461 (squash) — db-integration + fast + CodeRabbit green
     approval_required: false
     depends_on: [009-SCHEMA, 009-US2-MANUAL]
     blocks: []
@@ -568,7 +567,15 @@ slices:
   - id: 009-POLISH
     task_ids: [T100, T101, T102, T103, T104]
     type: chore
-    status: pending
+    # IMPLEMENTED + GREEN on feat/009-polish (rebased onto main with LIFECYCLE).
+    # NOT yet merged — ready for PR; the LAST 009 slice → 15/15 on merge.
+    # T100 k6 report-only (inventory-on-hand.js + inventory-movement.js, never run
+    # in CI/never faked); T101 500/req backfill ceiling (MAX_BACKFILL_MOVEMENTS +
+    # guard before the processor loop; over→reject zero-write, at→succeed; worker
+    # spec 10/10); T102 SC-008/SC-009 verdicts in wave-status (both PASS); T103
+    # coverage recorded local (stmts 87.45/lines 87.89, ≥80 met) + full inventory
+    # suite 22/106 GREEN; T104 this reconciliation. F-11 below.
+    status: implemented
     approval_required: false
     depends_on:
       - 009-US1-ONHAND
@@ -587,17 +594,29 @@ slices:
       - loadtests/k6/inventory-movement.js
       - apps/api/src/inventory/inventory.service.ts
       - apps/worker/src/inventory/backfill.processor.ts   # T101 enforces the 500/req backfill ceiling here (owned by US4; POLISH may extend it for the bound)
+      - apps/worker/test/inventory/backfill-processor.spec.ts   # F-11: the T101 bound test is a WORKER test (the guard is in backfill.processor.ts; the api validation command won't run it). Owner-approved expansion.
+      - apps/worker/test/inventory/__support__/seed.ts          # F-11: seedManyLines bulk helper for the over/at-ceiling fixtures.
       - specs/009-inventory-stock-ledger/wave-status.md
       - specs/009-inventory-stock-ledger/execution-map.yaml
     validation:
       - command: pnpm --filter @data-pulse-2/api test -- inventory
-        expected: GREEN — full inventory suite; ≥80% coverage on the new module (collected MANUALLY/LOCALLY — `--coverage` was removed from the blocking CI api step by 009-CI-OPT; CI no longer emits lcov); backfill 500/req bound enforced (no unbounded path); SC-008/SC-009 seam-design verdicts recorded; perf report-only.
+        expected: GREEN — full inventory suite (22 suites / 106 pass / 1 skip); ≥80% coverage on the new module (collected MANUALLY/LOCALLY — `--coverage` removed from the blocking CI api step by 009-CI-OPT; CI no longer emits lcov; recorded figure in wave-status); SC-008/SC-009 seam-design verdicts recorded; perf report-only.
+        docker_required: true
+      - command: WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker test -- inventory/backfill-processor
+        expected: GREEN — backfill 500/req bound enforced (over-ceiling → InventoryBackfillTooManyLinesError + zero partial writes; at-ceiling 500 succeeds); 10/10. F-11 — the bound test is worker-side, so the worker command is needed (the api command above does not run it).
         docker_required: true
     stop:
       - standing-rules universal stops
       - "stop if perf is treated as a hard gate — report-only in v1 (no perf env, 005/008 precedent)"
       - "note: the ≥80% coverage check is a LOCAL/manual verification — CI does not produce a coverage report (009-CI-OPT deferral); run `pnpm --filter @data-pulse-2/api test -- --coverage` locally and record the figure"
     parallel_safety: serialize   # closeout reconciliation, runs last
+    # F-11 (2026-06-03): allowed_files + validation expanded (owner-approved) for
+    # the T101 bound test. The 500/req guard lives in the WORKER processor, so its
+    # test is a worker spec (apps/worker/test/inventory/backfill-processor.spec.ts,
+    # already in dockerOutboxSuites from F-04) + a seedManyLines helper — and the
+    # api validation command does NOT run worker specs, so the worker command is
+    # added to the validation block. Same api/worker-command split closed for US4
+    # in F-05. Same allowed_files-gap class as F-05/F-07/F-08/F-10.
 
   # ===== Infra: hosted-CI reliability (blocks all remaining Docker-gated work) =
 
