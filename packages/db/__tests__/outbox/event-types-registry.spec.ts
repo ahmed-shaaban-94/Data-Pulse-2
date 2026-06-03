@@ -31,31 +31,42 @@ import {
   type OutboxEventType,
 } from "../../src/outbox/producer";
 
-describe("T599 — outbox event-types registry: only audit.event.created", () => {
-  it("OUTBOX_EVENT_TYPES has exactly one entry", () => {
-    const values = Object.values(OUTBOX_EVENT_TYPES);
-    expect(values).toHaveLength(1);
+describe("outbox event-types registry: audit.event.created + inventory.movement.created", () => {
+  // Originally T599 pinned a single type (audit.event.created). 009 issue #465
+  // part B intentionally registers a SECOND type, inventory.movement.created
+  // (the same shape as the 008 sale.captured deferral) — this drift test is
+  // updated in lockstep with that registration, which is exactly its purpose:
+  // a new outbox type cannot land silently.
+  const EXPECTED_EVENT_TYPES = [
+    "audit.event.created",
+    "inventory.movement.created",
+  ] as const;
+
+  it("OUTBOX_EVENT_TYPES has exactly the expected entries", () => {
+    expect(Object.values(OUTBOX_EVENT_TYPES).sort()).toEqual(
+      [...EXPECTED_EVENT_TYPES].sort(),
+    );
   });
 
-  it("the single registered event type is 'audit.event.created'", () => {
-    expect(Object.values(OUTBOX_EVENT_TYPES)).toEqual(["audit.event.created"]);
-  });
-
-  it("AUDIT_EVENT_CREATED key resolves to the canonical string literal", () => {
+  it("each key resolves to its canonical string literal", () => {
     expect(OUTBOX_EVENT_TYPES.AUDIT_EVENT_CREATED).toBe("audit.event.created");
+    expect(OUTBOX_EVENT_TYPES.INVENTORY_MOVEMENT_CREATED).toBe(
+      "inventory.movement.created",
+    );
   });
 
-  it("the const is shape-frozen — keys are exactly { AUDIT_EVENT_CREATED }", () => {
-    expect(Object.keys(OUTBOX_EVENT_TYPES).sort()).toEqual(["AUDIT_EVENT_CREATED"]);
+  it("the const is shape-frozen — keys are exactly the expected set", () => {
+    expect(Object.keys(OUTBOX_EVENT_TYPES).sort()).toEqual(
+      ["AUDIT_EVENT_CREATED", "INVENTORY_MOVEMENT_CREATED"].sort(),
+    );
   });
 
-  it("OutboxEventType union is satisfied by the canonical literal at compile time", () => {
-    // Compile-time type-narrowing assertion — if a future PR widens
-    // OUTBOX_EVENT_TYPES, this line still compiles, but cases above fail
-    // loudly. The pair (type assertion + value assertion) makes both axes
-    // of T599 explicit.
-    const cases: ReadonlyArray<OutboxEventType> = ["audit.event.created"];
-    expect(cases).toHaveLength(1);
+  it("OutboxEventType union is satisfied by the canonical literals at compile time", () => {
+    const cases: ReadonlyArray<OutboxEventType> = [
+      "audit.event.created",
+      "inventory.movement.created",
+    ];
+    expect(cases).toHaveLength(EXPECTED_EVENT_TYPES.length);
   });
 
   it("no catalog-related event-type strings have been added", () => {

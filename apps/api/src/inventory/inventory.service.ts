@@ -51,7 +51,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { runWithTenantContext } from '@data-pulse-2/db';
+import { runWithTenantContext, emit, OUTBOX_EVENT_TYPES } from '@data-pulse-2/db';
 import { newId } from '@data-pulse-2/shared';
 import type { Pool, PoolClient } from 'pg';
 
@@ -80,6 +80,12 @@ export class CrossUnitError extends BadRequestException {
 
 /** The established-unit EXCLUDE constraint added in migration 0016 (issue #465). */
 export const UNIT_GUARD_CONSTRAINT = 'stock_movements_one_unit_per_product';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** True when `v` is a well-formed UUID string (for the UUID-typed outbox correlation_id). */
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
 
 /**
  * True when `err` is the established-unit EXCLUDE violation (migration 0016):
@@ -530,7 +536,6 @@ export class InventoryService {
 
         // ---- Audit event in the SAME transaction (FR-013, SC-007) --------
         // Atomic with the movement INSERT: a failure on either rolls both back.
-        // No outbox emit here (deferred [GATED] follow-up — see header).
         await client.query(
           `INSERT INTO audit_events
              (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
@@ -545,6 +550,15 @@ export class InventoryService {
             '{}',
           ],
         );
+
+        // Outbox emit IN-TRANSACTION with the movement + audit (issue #465 B).
+        await this.emitMovementCreated(client, {
+          tenantId: input.tenantId,
+          storeId: input.storeId,
+          movementIds: [row.id],
+          movementType: row.movement_type,
+          tenantProductRef,
+        });
 
         // ---- Negative-balance signal (FR-024) ----------------------------
         // An outbound that drove on-hand below zero is flagged, never rejected.
@@ -713,6 +727,22 @@ export class InventoryService {
           ],
         );
 
+        // One outbox event for the logical transfer, naming BOTH linked legs
+        // (one operation = one event, mirroring the single audit row). storeId
+        // is the source; the payload carries both store ids + both movement ids.
+        await this.emitMovementCreated(client, {
+          tenantId: input.tenantId,
+          storeId: input.sourceStoreId,
+          movementIds: [outRow.id, inRow.id],
+          movementType: 'transfer',
+          tenantProductRef: input.tenantProductRef,
+          provenance: {
+            transferGroupId,
+            sourceStoreId: input.sourceStoreId,
+            destinationStoreId: input.destinationStoreId,
+          },
+        });
+
         // ---- Negative-balance signal (FR-024) — the transfer_out leg may
         // drive the SOURCE on-hand below zero; flagged, never rejected.
         await this.flagIfNegativeOnHand(client, input.sourceStoreId, input.tenantProductRef);
@@ -853,6 +883,20 @@ export class InventoryService {
             JSON.stringify({ variance: varianceStr, hasCorrection: variance !== 0 }),
           ],
         );
+
+        // Emit the movement event ONLY when a correction movement was appended
+        // (a zero-variance count records the count + audits it but writes NO
+        // movement — so there is no movement.created to emit).
+        if (correctionMovement !== null) {
+          await this.emitMovementCreated(client, {
+            tenantId: input.tenantId,
+            storeId: input.storeId,
+            movementIds: [correctionMovement.id],
+            movementType: correctionMovement.movementType,
+            tenantProductRef: input.tenantProductRef,
+            provenance: { stockCountId },
+          });
+        }
 
         return {
           stockCountId,
@@ -1026,6 +1070,18 @@ export class InventoryService {
           ],
         );
 
+        // Emit ONLY on this genuine-append branch (the dedup early-return above
+        // skips it) — so a redelivered backfill does NOT double-emit (FR-033).
+        await this.emitMovementCreated(client, {
+          tenantId: input.tenantId,
+          storeId: input.storeId,
+          movementIds: [row.id],
+          movementType: row.movement_type,
+          tenantProductRef,
+          correlationId: input.correlationId ?? null,
+          provenance: { sourceSystem, externalId, saleId: input.saleId ?? null },
+        });
+
         // ---- Negative-balance signal (FR-024) — a sale-linked backfill
         // outbound may drive on-hand below zero; flagged, never rejected.
         await this.flagIfNegativeOnHand(client, input.storeId, tenantProductRef);
@@ -1175,6 +1231,22 @@ export class InventoryService {
           ],
         );
 
+        // Emit ONLY on this genuine-append branch (dedup early-return skips it)
+        // — a redelivered restock does NOT double-emit (FR-033).
+        await this.emitMovementCreated(client, {
+          tenantId: input.tenantId,
+          storeId: input.storeId,
+          movementIds: [row.id],
+          movementType: row.movement_type,
+          tenantProductRef,
+          correlationId: input.correlationId ?? null,
+          provenance: {
+            sourceSystem,
+            externalId,
+            terminalEventRef: input.terminalEventRef ?? null,
+          },
+        });
+
         // A restock is an INBOUND (positive) — it cannot drive on-hand below
         // zero, so no negative-balance signal probe is needed here (FR-024).
 
@@ -1287,5 +1359,45 @@ export class InventoryService {
     } catch {
       // Signal-only: never let a metric/probe failure affect the write (FR-024).
     }
+  }
+
+  /**
+   * Emit the `inventory.movement.created` outbox event (009 / issue #465 part B)
+   * on the CALLER's client, IN-TRANSACTION with the movement append + its audit
+   * row — so the event is committed iff the movement is (atomic; a rollback
+   * drops both). Call this at exactly the same site + under the same guard as
+   * the audit INSERT (the genuine-append branch only — never the backfill dedup
+   * early-return, or a redelivered backfill would double-emit and break FR-033).
+   * Payload carries IDs + provenance ONLY — no money, no PII (§XIV), mirroring
+   * the audit metadata. `movementIds` is an array so the transfer path (two
+   * linked legs, one logical operation) names both legs.
+   */
+  private async emitMovementCreated(
+    client: PoolClient,
+    input: {
+      readonly tenantId: string;
+      readonly storeId: string;
+      readonly movementIds: readonly string[];
+      readonly movementType: string;
+      readonly tenantProductRef?: string | null;
+      readonly correlationId?: string | null;
+      readonly provenance?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    await emit(client, {
+      eventType: OUTBOX_EVENT_TYPES.INVENTORY_MOVEMENT_CREATED,
+      tenantId: input.tenantId,
+      storeId: input.storeId,
+      payload: {
+        movementIds: input.movementIds,
+        movementType: input.movementType,
+        tenantProductRef: input.tenantProductRef ?? null,
+        ...(input.provenance ?? {}),
+      },
+      // outbox_events.correlation_id is UUID — only forward a well-formed UUID;
+      // a non-UUID upstream tag (or the audit-style text correlation) must NOT
+      // fail the movement write. The full value, if any, is on the audit row.
+      correlationId: isUuid(input.correlationId) ? input.correlationId : null,
+    });
   }
 }

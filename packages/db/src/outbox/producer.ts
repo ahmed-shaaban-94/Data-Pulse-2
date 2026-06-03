@@ -46,10 +46,17 @@ import { runWithTenantContext, type TenantContext } from "../middleware/tenant-c
 
 /**
  * Approved outbox event types. Adding a new type requires a separate PR per T541.
- * The first (and currently only) type is `audit.event.created` (FR-C-007).
+ *   - `audit.event.created` (FR-C-007).
+ *   - `inventory.movement.created` (009 / issue #465 part B): emitted in-
+ *     transaction when a stock movement is appended (manual / transfer /
+ *     count-correction / sale-linked backfill / restock), so downstream
+ *     consumers receive movement events. Same registration shape as the 008
+ *     `sale.captured` deferral; the payload carries IDs + provenance only
+ *     (no PII / no money), redacted-by-default like the audit event.
  */
 export const OUTBOX_EVENT_TYPES = {
   AUDIT_EVENT_CREATED: "audit.event.created",
+  INVENTORY_MOVEMENT_CREATED: "inventory.movement.created",
 } as const;
 
 export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
