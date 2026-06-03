@@ -451,6 +451,13 @@ export class InventoryService {
    * DECOUPLING (R8): the caller (T064) reads CAPTURED 008 rows; this method
    * never reads `processed_at`, never subscribes to `sale.captured`, and never
    * mutates the 008 sale fact — the sale ids are recorded by value as provenance.
+   *
+   * CROSS-PACKAGE SYNC POINT: the off-request worker
+   * `apps/worker/src/inventory/backfill.processor.ts` (T064) MIRRORS this
+   * INSERT + ON CONFLICT + audit per sale line — apps must not import each
+   * other, so the write is duplicated there. Keep the two in sync: any change
+   * to the provenance-dedup write semantics MUST be applied to BOTH. A future
+   * `packages/inventory` extraction would consolidate them.
    */
   async backfillSaleLinkedOutbound(
     input: BackfillSaleLinkedOutboundInput,
