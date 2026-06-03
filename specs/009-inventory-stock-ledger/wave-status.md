@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **IN PROGRESS** — 9 of 15 slices merged (US1–US4): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), **US4-SALELINKED merged (#454, `51b2e80`, 2026-06-03)**. The MVP read path (US1), manual write (US2), manual idempotency (US3), and the sale-linked outbound + off-request backfill (US4: service `backfillSaleLinkedOutbound` + worker `InventoryBackfillProcessor`, decoupled from the gated 008 loop) are live on `main`. Hosted CI green. Created 2026-05-31. **US5-TRANSFER IMPLEMENTED + GREEN, ready for PR** on `feat/009-us5-transfer` (commit `4668803`) — NOT yet merged. transfer 6/6 + full api inventory regression 90 pass (1 skip), via WSL Docker. Next after US5: US6-COUNT.
+**Status**: **IN PROGRESS** — 11 of 15 slices merged (US1–US6): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), US4-SALELINKED (#454 `51b2e80`), **US5-TRANSFER (#455 `08be518`)**, **US6-COUNT (#456)** — all 2026-06-03. The MVP read path (US1), manual write (US2), manual idempotency (US3), the sale-linked outbound + off-request backfill (US4), intra-tenant transfers as linked movements (US5), and physical counts with append-only variance corrections (US6) are live on `main`. Hosted CI green. Created 2026-05-31. **Remaining: 009-SIGNAL-NEGBAL (T045), 009-RESTOCK (T090/T091), 009-LIFECYCLE (T095), 009-POLISH.** A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection — "terminating connection due to administrator command") did NOT reproduce on CI re-run (green) nor in a full-concurrency local run (265 suites / 3170 pass); see finding #11.
 
 ---
 
@@ -87,8 +87,8 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-US2-MANUAL | T040–T044 | **merged** (#444 `8d3e6d9`) | — |
 | 009-US3-IDEMPOTENCY | T050, T051, T053 | **merged** (#451 `1ef6e07`) | — (manual idempotency) |
 | 009-US4-SALELINKED | T052, T060–T064, T063b | **merged** (#454 `51b2e80`) | — (decoupling proof) |
-| 009-US5-TRANSFER | T070–T073 | **implemented, ready for PR** (`feat/009-us5-transfer` @ `4668803`) | — |
-| 009-US6-COUNT | T080–T083 | pending | — |
+| 009-US5-TRANSFER | T070–T073 | **merged** (#455 `08be518`) | — |
+| 009-US6-COUNT | T080–T083 | **merged** (#456) | — |
 | 009-SIGNAL-NEGBAL | T045 | pending | — (new §VII signal) |
 | 009-RESTOCK | T090, T091 | pending | — |
 | 009-LIFECYCLE | T095 | pending | — |
