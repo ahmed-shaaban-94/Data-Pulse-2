@@ -327,7 +327,12 @@ slices:
   - id: 009-US4-SALELINKED
     task_ids: [T052, T060, T061, T062, T063, T063b, T064]   # F-03: T052 (provenance dedup) moved here from US3 — it belongs with the provenance write path this slice owns (T064)
     type: feat
-    status: pending
+    # IMPLEMENTED + verified GREEN on feat/009-us4-salelinked (commits 2fdbc59,
+    # 085cea4, 0aea179, bfe71b6 atop RED-baseline e1f591f). NOT yet merged —
+    # ready for PR. api sale-linked 6/6 + full api inventory regression 84 pass
+    # (1 skip) + worker backfill 8/8, all via WSL Docker. F-06 (FR-022 worker
+    # mirror gap) found by adversarial review + fixed (bfe71b6) — see note below.
+    status: implemented
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks:
@@ -387,6 +392,19 @@ slices:
     #     `processed_at IS NULL` (the decoupling filter), NOT a processed_at read/
     #     wait or a sale.captured subscription — stays on the right side of the
     #     stop. Advisor-reviewed + owner-approved expansion in-session.
+    # F-06 (2026-06-03): FR-022 MIRROR GAP found by adversarial review + fixed
+    # (commit bfe71b6). InventoryService.backfillSaleLinkedOutbound enforced the
+    # established-unit check; the worker InventoryBackfillProcessor — the
+    # production path — had OMITTED it, silently inserting a cross-unit movement.
+    # All fixtures used 'ea', so the green suite could not see the divergence.
+    # FR-022 is unconditional (MUST reject; no backfill carve-out; no allow-and-
+    # flag escape, unlike FR-024 negative balance), so the api path was right and
+    # the worker was wrong. Added InventoryBackfillCrossUnitError + the per-line
+    # established-unit check + a mixed-unit rejection test (kg vs established ea →
+    # reject, no partial side-effect). LESSON: the same author wrote both the
+    # mirrored write and its tests; a "keep in sync" comment is not a guarantee —
+    # a divergence-proving test (different units, not the happy-path unit) is.
+    # Worker 8/8 green; full api inventory regression 84 pass / 1 skip.
 
   # ===== Phase 7: US5 — Transfers (P2) ========================================
 

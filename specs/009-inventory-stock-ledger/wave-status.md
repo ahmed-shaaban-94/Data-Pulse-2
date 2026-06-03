@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **IN PROGRESS** — 8 of 15 slices merged through PR #451 (`1ef6e07`, 2026-06-01): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY. Both `[GATED]` slices were approved in-session and merged. The MVP read path (US1: compute-on-read on-hand + movement list), the manual write path (US2: createStockMovement), and manual idempotency (US3: `@Idempotent("required")` on the create route) are live on `main`. Hosted CI is green (`009-CI-OPT` PR #449 + canary). Created 2026-05-31. **US4-SALELINKED in progress** on `feat/009-us4-salelinked` (RED-baseline `e1f591f`).
+**Status**: **IN PROGRESS** — 8 of 15 slices merged through PR #451 (`1ef6e07`, 2026-06-01): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY. Both `[GATED]` slices were approved in-session and merged. The MVP read path (US1: compute-on-read on-hand + movement list), the manual write path (US2: createStockMovement), and manual idempotency (US3: `@Idempotent("required")` on the create route) are live on `main`. Hosted CI is green (`009-CI-OPT` PR #449 + canary). Created 2026-05-31. **US4-SALELINKED IMPLEMENTED + GREEN, ready for PR** on `feat/009-us4-salelinked` (commits `2fdbc59`/`085cea4`/`0aea179`/`bfe71b6` atop RED-baseline `e1f591f`) — NOT yet merged. api sale-linked 6/6 + full api inventory regression 84 pass (1 skip) + worker backfill 8/8, all via WSL Docker. F-06 (FR-022 worker mirror gap) found by adversarial review + fixed.
 
 ---
 
@@ -86,7 +86,7 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-US1-ONHAND 🎯 | T030–T034 | **merged** (#443 `4449f13`) | — (MVP) |
 | 009-US2-MANUAL | T040–T044 | **merged** (#444 `8d3e6d9`) | — |
 | 009-US3-IDEMPOTENCY | T050, T051, T053 | **merged** (#451 `1ef6e07`) | — (manual idempotency) |
-| 009-US4-SALELINKED | T052, T060–T064 | **in progress** (`feat/009-us4-salelinked`) | — (decoupling proof) |
+| 009-US4-SALELINKED | T052, T060–T064, T063b | **implemented, ready for PR** (`feat/009-us4-salelinked` @ `bfe71b6`) | — (decoupling proof) |
 | 009-US5-TRANSFER | T070–T073 | pending | — |
 | 009-US6-COUNT | T080–T083 | pending | — |
 | 009-SIGNAL-NEGBAL | T045 | pending | — (new §VII signal) |
