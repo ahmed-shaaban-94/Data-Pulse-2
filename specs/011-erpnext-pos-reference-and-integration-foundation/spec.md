@@ -59,7 +59,7 @@ It is the architectural "constitution amendment" for the ERPNext arc, expressed 
   - **Retail-Tower-Console remains frontend-only** and consumes **Data-Pulse-generated clients only**.
   - The connector lives in a **separate future Frappe repo** (`Retail-Tower-ERPNext-Connector`), gated by the existing ADR split process.
 - Produce an **ERPNext POS reference map** that translates ERPNext POS concepts into Retail Tower OS terms (and marks what is reference-only vs what DP2 already owns).
-- Stand up four **decision-record placeholders** — posting, stock impact, tax/fiscal (Egypt v1), version pin & upgrade policy — each carrying an explicit **`Status: UNSIGNED — BLOCKS IMPLEMENTATION`** marker.
+- Stand up four **decision records** — posting, stock impact, tax/fiscal (Egypt v1), version pin & upgrade policy — authored as explicit **`Status: UNSIGNED — BLOCKS IMPLEMENTATION`** placeholders and signed by the owner before any downstream implementation (now **SIGNED** 2026-06-03; see §9).
 - Publish a **follow-up spec map** for **012–017** with dependencies and gates, so the integration arc is sequenced before any of it is green-lit.
 - Define **acceptance criteria** that require the four decision records to be **signed** before any 012–017 implementation begins.
 
@@ -155,7 +155,7 @@ These are **proposed, not green-lit.** Each must run its own Spec-Kit planning c
 |---|---|---|---|
 | **012-erpnext-connector-contracts** | The OpenAPI contract surface + connector lifecycle between DP2 and ERPNext | 011 (signed) | Posting + Version-pin |
 | **013-product-master-from-erpnext** | Product/item master sourced from ERPNext (catalog import direction) | 012 | Posting |
-| **014-branch-inventory-from-erpnext** | Branch/warehouse inventory sourced from ERPNext (stock direction) | 012, 013 | Stock-impact |
+| **014-branch-inventory-reconciliation-and-warehouse-mapping** | ERPNext Warehouse ↔ DP2 store/branch mapping + reconciliation/mismatch detection (NOT an ERPNext stock read-down; DP2 stays the operational availability authority) | 012, 013 | Stock-impact |
 | **015-pos-sale-posting-to-erpnext** | Posting DP2 sale facts (008) into ERPNext (Sales Invoice / Payment / Stock Entry) | 012, 013, 014 | Posting + Stock-impact |
 | **016-tax-and-fiscal-egypt-v1** | Egypt tax/fiscal compliance (e-invoice / ETA) over the posting path | 015 | Tax/fiscal |
 | **017-sync-ops-and-repair-api** | Sync operations, reconciliation, retry/DLQ, and repair API for the connector | 012–016 | Posting + Stock-impact + Version-pin |
@@ -171,7 +171,7 @@ This feature is **complete** (mergeable as a docs-only foundation) when **all** 
 1. **AC-1 — Spec exists.** `specs/011-erpnext-pos-reference-and-integration-foundation/spec.md` (this file) is present with Background, Goals, **Non-Goals (§3)**, Actors, Integration boundaries, Numbering decision, Connector decision, Follow-up map, and these acceptance criteria.
 2. **AC-2 — Reference map exists.** `erpnext-pos-reference-map.md` translates ERPNext POS concepts to Retail Tower OS terms and explicitly marks ERPNext POS as **reference-only**.
 3. **AC-3 — Boundaries doc exists.** `integration-boundaries.md` states the trust boundaries (POS-Pulse never calls Frappe; Console consumes DP2 clients only; one path to ERPNext via DP2 + connector).
-4. **AC-4 — Four decision placeholders exist.** `decisions/posting-decision-record.md`, `decisions/stock-impact-decision-record.md`, `decisions/tax-fiscal-egypt-decision-record.md`, and `decisions/version-pin-upgrade-policy.md` each exist and each carries `Status: UNSIGNED — BLOCKS IMPLEMENTATION`.
+4. **AC-4 — Four decision records exist.** `decisions/posting-decision-record.md`, `decisions/stock-impact-decision-record.md`, `decisions/tax-fiscal-egypt-decision-record.md`, and `decisions/version-pin-upgrade-policy.md` each exist. They were authored as `UNSIGNED — BLOCKS IMPLEMENTATION` placeholders and are now **SIGNED** (owner Ahmed Shaaban, 2026-06-03) — see the gate status below.
 5. **AC-5 — Follow-up map exists.** `follow-up-spec-map.md` lists 012–017 with dependencies and the gating decision per spec.
 6. **AC-6 — Docs-only.** The PR changes **no** application code, DB schema/migration, OpenAPI YAML, `package.json`/lockfile, or CI; it adds no connector code and changes no runtime behavior. (The only file touched outside `specs/011-…/` is a one-line erratum pointer in `docs/ROADMAP-ERP.md`.)
 
@@ -181,12 +181,14 @@ This feature is **complete** (mergeable as a docs-only foundation) when **all** 
 
 Each decision record is signed when it carries an explicit owner sign-off (date + signer) and `Status: SIGNED`. A record left `UNSIGNED` is a **hard stop** on the spec(s) it gates per the table in §8. This makes the gate enforceable rather than decorative: an agent dispatched to start 012 MUST verify the gating decision(s) are `SIGNED` first, and STOP-and-report otherwise.
 
-| Decision record | Must be signed before |
-|---|---|
-| `posting-decision-record.md` | 012, 013, 015, 017 |
-| `stock-impact-decision-record.md` | 014, 015, 017 |
-| `tax-fiscal-egypt-decision-record.md` | 016 |
-| `version-pin-upgrade-policy.md` | 012, 017 |
+| Decision record | Status | Must be signed before |
+|---|---|---|
+| `posting-decision-record.md` | ✅ SIGNED 2026-06-03 | 012, 013, 015, 017 |
+| `stock-impact-decision-record.md` | ✅ SIGNED 2026-06-03 | 014, 015, 017 |
+| `tax-fiscal-egypt-decision-record.md` | ✅ SIGNED 2026-06-03 | 016 |
+| `version-pin-upgrade-policy.md` | ✅ SIGNED 2026-06-03 | 012, 017 |
+
+**Gate status: SATISFIED.** All four records are SIGNED (owner Ahmed Shaaban, 2026-06-03). The downstream specs 012–017 are **unblocked** to begin their own Spec-Kit planning chains and Agent OS gates, each consistent with its gating decision(s).
 
 ---
 
@@ -201,4 +203,4 @@ This is a **docs-only** foundation. After this PR:
 - **No runtime behavior changed.** Nothing reads or writes differently; there is no new code path.
 - **No connector exists.** `Retail-Tower-ERPNext-Connector` is named as a future repo, gated by an ADR; it is not created here.
 
-The deliverable is a specification + four decision-record placeholders + a follow-up map. The next step is for the owner to **sign the four decision records**, after which 012 may be planned. See [wave-status.md](./wave-status.md) for the human-readable state.
+The deliverable is a specification + four decision records + a follow-up map. The four decision records — authored as `UNSIGNED` placeholders in the foundation PR (#468, merged) — are now **SIGNED** (owner Ahmed Shaaban, 2026-06-03). The signed-decisions gate is therefore **SATISFIED**, and the next step is to begin planning **012-erpnext-connector-contracts** (consistent with the posting + version-pin decisions). See [wave-status.md](./wave-status.md) for the human-readable state.
