@@ -442,7 +442,7 @@ slices:
     # orphaned the stacked base → CONFLICTING → rebase dropped US5's commits,
     # leaving a clean count-only diff). F-08 below.
     status: merged
-    merged_at_commit: pending-456   # PR #456 (squash) — re-targeted to main + rebased; merging now
+    merged_at_commit: 2f49f08   # PR #456 (squash) — re-targeted to main + rebased after US5 squash
     approval_required: false
     depends_on: [009-US2-MANUAL]
     blocks: []
@@ -510,15 +510,15 @@ slices:
   - id: 009-RESTOCK
     task_ids: [T090, T091]
     type: feat
-    # IMPLEMENTED + GREEN on feat/009-restock (commit off main). NOT yet merged —
-    # ready for PR. restock 4/4 + full api inventory regression 100 pass (1 skip),
-    # via WSL Docker. backfillRestockInbound = the inbound mirror of US4's
+    # restock 4/4 + full api inventory regression 100 pass (1 skip).
+    # backfillRestockInbound = the inbound mirror of US4's
     # backfillSaleLinkedOutbound (terminal_event_ref provenance, ON CONFLICT
     # dedup). MANUAL/BACKFILL only — no auto restock-on-void route (stop honored).
     # The worker backfill.processor.ts restock path is NOT added: the T090/T091
     # validation command is the api lane, so the service entry is the proof (the
     # api/worker split F-05 resolved for US4). F-10 below (harness allowed_files).
-    status: implemented
+    status: merged
+    merged_at_commit: 8142334   # PR #459 (squash) — db-integration + fast + CodeRabbit green
     approval_required: false
     depends_on: [009-US2-MANUAL, 009-US4-SALELINKED]
     blocks: []
@@ -540,7 +540,13 @@ slices:
   - id: 009-LIFECYCLE
     task_ids: [T095]
     type: test
-    status: pending
+    # IMPLEMENTED + GREEN on feat/009-lifecycle (commit 0693317, rebased onto
+    # main). NOT yet merged — ready for PR. 6/6, Docker-free introspection guard
+    # (getTableConfig set-equality tripwire on stock_movements + stock_counts +
+    # PII/payment denylist + classification-prose assertions). repoRoot is FIVE
+    # ".." (one fewer than the 008 guard — the PR #430 trap); 0014 header's "001"/
+    # "long-horizon" asserted independently (comment wrapping splits them).
+    status: implemented
     approval_required: false
     depends_on: [009-SCHEMA, 009-US2-MANUAL]
     blocks: []

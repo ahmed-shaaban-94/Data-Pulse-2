@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Tasks**: [tasks.md](./tasks.md) | **Execution map**: [execution-map.yaml](./execution-map.yaml)
 
-**Status**: **IN PROGRESS** — **12 of 15 slices merged** (US1–US6 + SIGNAL-NEGBAL): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), US4-SALELINKED (#454 `51b2e80`), US5-TRANSFER (#455 `08be518`), US6-COUNT (#456 `2f49f08`), **SIGNAL-NEGBAL (#458 `69bde9e`)** — all 2026-06-03. The MVP read path (US1), manual write (US2), manual idempotency (US3), the sale-linked outbound + off-request backfill (US4), intra-tenant transfers (US5), physical counts with append-only variance corrections (US6), and the negative-balance allow-and-flag counter (SIGNAL) are live on `main`. Hosted CI green. Created 2026-05-31. **009-RESTOCK IMPLEMENTED + GREEN, ready for PR** on `feat/009-restock` — `backfillRestockInbound`, the inbound mirror of US4 (void/refund `terminal_event_ref` provenance, idempotent, manual/backfill only, no auto route); restock 4/4 + full api inventory regression 100 pass (1 skip), via WSL Docker. **Remaining after RESTOCK: 009-LIFECYCLE (T095), 009-POLISH.** A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection — "terminating connection due to administrator command") did NOT reproduce on CI re-run (green) nor in a full-concurrency local run (265 suites / 3170 pass); see finding #11.
+**Status**: **IN PROGRESS** — **13 of 15 slices merged** (US1–US6 + SIGNAL + RESTOCK): SIGNOFF, SETUP, CONTRACT `[GATED]`, SCHEMA `[GATED]`, ISOLATION-HARNESS, US1-ONHAND 🎯, US2-MANUAL, US3-IDEMPOTENCY (#451), US4-SALELINKED (#454), US5-TRANSFER (#455), US6-COUNT (#456 `2f49f08`), SIGNAL-NEGBAL (#458 `69bde9e`), **RESTOCK (#459 `8142334`)** — all 2026-06-03. US1–US6 + the negative-balance counter + the void/refund→restock inbound are live on `main`. Hosted CI green. Created 2026-05-31. **009-LIFECYCLE IMPLEMENTED + GREEN, ready for PR** on `feat/009-lifecycle` (commit `0693317`) — the §XIV data-class guard (6/6, Docker-free). **Remaining after LIFECYCLE: 009-POLISH (closeout — k6 report-only + coverage + the two carried `[GATED]` packages/db deferrals).** A transient CI flake on US5 (`inbound-outbound-adjust.spec` container reaped mid-connection — "terminating connection due to administrator command") did NOT reproduce on CI re-run (green) nor in a full-concurrency local run (265 suites / 3170 pass); see finding #11.
 
 ---
 
@@ -90,8 +90,8 @@ These are **scope decisions, not blockers** — the planned v1 work is complete 
 | 009-US5-TRANSFER | T070–T073 | **merged** (#455 `08be518`) | — |
 | 009-US6-COUNT | T080–T083 | **merged** (#456) | — |
 | 009-SIGNAL-NEGBAL | T045 | **merged** (#458 `69bde9e`) | — (new signal; F-09 shared allowlist) |
-| 009-RESTOCK | T090, T091 | **implemented, ready for PR** (`feat/009-restock`) | — (F-10 harness) |
-| 009-LIFECYCLE | T095 | pending | — |
+| 009-RESTOCK | T090, T091 | **merged** (#459 `8142334`) | — (F-10 harness) |
+| 009-LIFECYCLE | T095 | **implemented, ready for PR** (`feat/009-lifecycle` @ `0693317`) | — (§XIV guard, Docker-free) |
 | 009-POLISH | T100–T104 | pending | — |
 | 009-CI-OPT | — (infra) | **in progress** | **`[GATED]`** `.github/**` (owner-directed) |
 
