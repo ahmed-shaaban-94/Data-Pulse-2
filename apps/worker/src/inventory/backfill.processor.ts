@@ -111,6 +111,30 @@ export class InventoryBackfillCrossUnitError extends Error {
   }
 }
 
+/**
+ * The per-request backfill ceiling (009-POLISH / T101, plan §1.5). One backfill
+ * job appends ONE movement per captured sale line; a job whose sale has more
+ * than MAX_BACKFILL_MOVEMENTS lines is DETERMINISTICALLY REJECTED before any
+ * INSERT — there is no unbounded backfill path (layered on the inherited
+ * 001/004 rate-limit posture). Mirrors the contract's
+ * `SaleLinkedBackfillCommand.maxItems` (500); the contract batch route is not
+ * built in v1, so the per-sale processor loop is the only real path to bound.
+ */
+export const MAX_BACKFILL_MOVEMENTS = 500;
+
+/** Thrown when a single backfill job would append more than the per-request ceiling. */
+export class InventoryBackfillTooManyLinesError extends Error {
+  constructor(
+    public readonly lineCount: number,
+    public readonly ceiling: number = MAX_BACKFILL_MOVEMENTS,
+  ) {
+    super(
+      `backfill job has ${lineCount} sale lines, exceeding the per-request ceiling of ${ceiling}`,
+    );
+    this.name = "InventoryBackfillTooManyLinesError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // UUID guard — fail fast on a malformed id before opening a connection.
 // ---------------------------------------------------------------------------
@@ -167,6 +191,14 @@ export class InventoryBackfillProcessor {
               ORDER BY id ASC`,
             [job.saleId, job.storeId],
           );
+
+          // ---- Per-request backfill ceiling (T101, plan §1.5) ---------------
+          // One movement per line; reject DETERMINISTICALLY before any INSERT if
+          // the job would exceed the ceiling — no unbounded backfill path. The
+          // guard is before the loop, so an over-ceiling job writes nothing.
+          if (lines.rows.length > MAX_BACKFILL_MOVEMENTS) {
+            throw new InventoryBackfillTooManyLinesError(lines.rows.length);
+          }
 
           let appended = 0;
           let deduped = 0;

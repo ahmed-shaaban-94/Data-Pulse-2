@@ -28,9 +28,12 @@ import {
   InventoryBackfillProcessor,
   InventoryBackfillSaleNotFoundError,
   InventoryBackfillCrossUnitError,
+  InventoryBackfillTooManyLinesError,
+  MAX_BACKFILL_MOVEMENTS,
 } from "../../src/inventory/backfill.processor";
 import {
   seedCapturedSaleForBackfill,
+  seedManyLines,
   readOnHand,
   countMovements,
 } from "./__support__/seed";
@@ -43,6 +46,11 @@ const PRODUCT_A = "1c0e0000-0000-7000-8000-0000000000e1";
 const SALE_A = "1c0e0000-0000-7000-8000-0000000000d1";
 const SALE_ADHOC = "1c0e0000-0000-7000-8000-0000000000d2";
 const SALE_WRONGUNIT = "1c0e0000-0000-7000-8000-0000000000d4";
+// 009-POLISH T101 — an over-ceiling sale (>500 lines) + a boundary sale (≤500).
+const SALE_OVER_CEILING = "1c0e0000-0000-7000-8000-0000000000d5";
+const PRODUCT_CEIL = "1c0e0000-0000-7000-8000-0000000000e5";
+const SALE_AT_CEILING = "1c0e0000-0000-7000-8000-0000000000d6";
+const PRODUCT_CEIL2 = "1c0e0000-0000-7000-8000-0000000000e6";
 
 const TENANT_B = "1c0e0000-0000-7000-8000-0000000000a2";
 const STORE_B = "1c0e0000-0000-7000-8000-0000000000b2";
@@ -106,6 +114,42 @@ beforeAll(async () => {
       productId: PRODUCT_B,
       slugSuffix: "b",
       lines: [{ quantity: "1.0000", unit: "ea", productRef: PRODUCT_B }],
+    });
+
+    // 009-POLISH T101 — OVER-ceiling sale: 1 seeded line + 500 bulk = 501 (>500).
+    await seedCapturedSaleForBackfill(env.admin, {
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      saleId: SALE_OVER_CEILING,
+      actorId: ACTOR_A,
+      productId: PRODUCT_CEIL,
+      slugSuffix: "a",
+      lines: [{ quantity: "1.0000", unit: "ea", productRef: PRODUCT_CEIL }],
+    });
+    await seedManyLines(env.admin, {
+      saleId: SALE_OVER_CEILING,
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      productId: PRODUCT_CEIL,
+      count: MAX_BACKFILL_MOVEMENTS, // 1 + 500 = 501 > ceiling
+    });
+
+    // T101 boundary — AT-ceiling sale: 1 seeded line + 499 bulk = 500 (≤500).
+    await seedCapturedSaleForBackfill(env.admin, {
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      saleId: SALE_AT_CEILING,
+      actorId: ACTOR_A,
+      productId: PRODUCT_CEIL2,
+      slugSuffix: "a",
+      lines: [{ quantity: "1.0000", unit: "ea", productRef: PRODUCT_CEIL2 }],
+    });
+    await seedManyLines(env.admin, {
+      saleId: SALE_AT_CEILING,
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      productId: PRODUCT_CEIL2,
+      count: MAX_BACKFILL_MOVEMENTS - 1, // 1 + 499 = 500 == ceiling (allowed)
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -324,6 +368,51 @@ describe("T063b: tenant context + RLS isolation (§V)", () => {
     for (const forbidden of ["quantity", "line_amount", "payload", "payload_hash", "lines"]) {
       expect(entry).not.toHaveProperty(forbidden);
     }
+  });
+});
+
+describe("T101 (009-POLISH) — per-request backfill ceiling (plan §1.5)", () => {
+  it(`rejects a job over the ${MAX_BACKFILL_MOVEMENTS}-movement ceiling with NO partial writes`, async () => {
+    if (maybeSkip()) return;
+
+    // SALE_OVER_CEILING has 501 lines (> ceiling). Reject deterministically and
+    // write ZERO movements (the guard is before the append loop).
+    const before = await countMovements(env!.admin, STORE_A, PRODUCT_CEIL);
+    expect(before).toBe(0);
+
+    const processor = new InventoryBackfillProcessor(env!.app);
+    await expect(
+      processor.process({
+        saleId: SALE_OVER_CEILING,
+        tenantId: TENANT_A,
+        storeId: STORE_A,
+        actorId: ACTOR_A,
+        sourceSystem: SOURCE_SYSTEM,
+        correlationId: "corr-over-ceiling",
+      }),
+    ).rejects.toBeInstanceOf(InventoryBackfillTooManyLinesError);
+
+    // No unbounded path AND no partial application.
+    expect(await countMovements(env!.admin, STORE_A, PRODUCT_CEIL)).toBe(0);
+  });
+
+  it(`accepts a job exactly at the ${MAX_BACKFILL_MOVEMENTS}-movement boundary`, async () => {
+    if (maybeSkip()) return;
+
+    // SALE_AT_CEILING has exactly 500 lines (== ceiling, allowed).
+    const processor = new InventoryBackfillProcessor(env!.app);
+    const result = await processor.process({
+      saleId: SALE_AT_CEILING,
+      tenantId: TENANT_A,
+      storeId: STORE_A,
+      actorId: ACTOR_A,
+      sourceSystem: SOURCE_SYSTEM,
+      correlationId: "corr-at-ceiling",
+    });
+    expect(result.appended).toBe(MAX_BACKFILL_MOVEMENTS);
+    expect(await countMovements(env!.admin, STORE_A, PRODUCT_CEIL2)).toBe(
+      MAX_BACKFILL_MOVEMENTS,
+    );
   });
 });
 
