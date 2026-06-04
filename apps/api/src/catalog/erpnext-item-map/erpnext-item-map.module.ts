@@ -31,15 +31,19 @@ import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
 import { RolesGuard } from "../../auth/roles.guard";
 import { ContextModule } from "../../context/context.module";
+import { ErpnextItemMapController } from "./erpnext-item-map.controller";
+import { ErpnextItemMapService } from "./erpnext-item-map.service";
 
 /**
- * SETUP scaffold: imports + the `RolesGuard` provider are wired now so the
- * 013-CRUD slice adds only its controller/service (no module-graph churn). No
- * controllers or routes ship yet — the surface is empty-but-registered.
+ * Wires the tenant-admin ERPNext Item-mapping suggest/confirm/retire surface.
+ * `RolesGuard` is a plain class provider (Reflector auto-provided by
+ * @nestjs/core; MembershipRepository reachable via ContextModule) — mirrors
+ * reconciliation.module.ts.
  */
 @Module({
   imports: [AuthModule, AuditModule, ContextModule],
-  controllers: [],
-  providers: [RolesGuard],
+  controllers: [ErpnextItemMapController],
+  providers: [ErpnextItemMapService, RolesGuard],
+  exports: [ErpnextItemMapService],
 })
 export class ErpnextItemMapModule {}
