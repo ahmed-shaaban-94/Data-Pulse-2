@@ -7,7 +7,7 @@
 | Execution map | [execution-map.yaml](./execution-map.yaml) |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-06-03 — **NOT STARTED; design complete, no open blockers.** Planning chain on `main`; `tasks.md` + `execution-map.yaml` + this file on branch `010-pos-catalog-read-down-sync` (off `origin/main`) after `/speckit-tasks` + `/speckit-analyze` + external review + `/speckit-clarify` (**R-1 resolved, Option B**) + research R9 (**R-3 resolved** — per-tenant sequence + sentinel + dumb trigger). **Both `[GATED]` slices unblocked and ready for in-session approval.** F1 (Option-B name collision) fixed. No slice dispatched. |
+| Updated | 2026-06-04 — **✅ CLOSED — 10/10 slices merged.** All slices terminal on `main`: SIGNOFF+SETUP (#460 `e280892`), `[GATED]` CONTRACT (#463 `2cf9cf7`) + `[GATED]` SCHEMA (#462 `a882e4e`), ISOLATION-HARNESS (#469 `16304af`), US1-SNAPSHOT 🎯 (#473 `f27d499`), US2-DELTA (#475 `c6114bd`), US3-ISOLATION (#477 `49ccca4`), POLISH (#478), CLOSEOUT (this PR). The read-down snapshot + delta surface ships: device-authed POS terminals get the Resolved Sellable Store Catalogue (Tenant ⊕ Store Override) as snapshot + cursor-advanced delta. **POS-Pulse 010 is UNBLOCKED** (contract `read-down.yaml` pinned + `posGetCatalogSnapshot` reachable on `main`, spec §10). |
 
 ---
 
@@ -88,18 +88,18 @@ The snapshot's opaque cursor (**FR-011**) **IS** the change-log sequence value (
 
 | Slice | Tasks | Type | Gate | Status | PR | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| 010-SIGNOFF-READONLY | T001 | docs | `[SIGN-OFF]` | not_started | — | DB-trigger population, read-only; record decision in data-model §3 |
-| 010-SETUP | T002, T003 | chore | — | not_started | — | empty read-down module + app.module wiring |
-| 010-CONTRACT | T010, T011 | feat | `[GATED]` | not_started | — | `catalog/read-down.yaml` + `posDeviceAuth`; T011 [SIGN-OFF] no-dep. **R-1 RESOLVED (Option B) — payload now real-schema-backed; ready for approval** |
-| 010-SCHEMA | T012, T013 | feat | `[GATED]` | not_started | — | `0015` change-log + triggers; FOUNDATIONAL (cursor=sequence). **R-3 RESOLVED (R9: per-tenant seq + sentinel + dumb trigger) — ready for approval** |
-| 010-ISOLATION-HARNESS | T014, T015 | test | — | not_started | — | seed across A/B × X/Y + sweep RED |
-| 010-US1-SNAPSHOT 🎯 | T030–T036 | feat | — | not_started | — | MVP; first GREEN; POS-Pulse 010 unblock |
-| 010-US2-DELTA | T040–T044 | feat | — | not_started | — | shares controller/service → serialize |
-| 010-US3-ISOLATION | T050–T053 | test | — | not_started | — | device-auth + cross-scope sweep + RLS probe |
-| 010-POLISH | T090–T092 | chore | — | not_started | — | signals + coverage + report-only perf |
-| 010-CLOSEOUT | T093 | docs | — | not_started | — | terminal reconciliation |
+| 010-SIGNOFF-READONLY | T001 | docs | `[SIGN-OFF]` | **merged** | #460 `e280892` | DB-trigger read-only decision recorded in data-model §3 |
+| 010-SETUP | T002, T003 | chore | — | **merged** | #460 `e280892` | empty ReadDownModule + app.module wiring |
+| 010-CONTRACT | T010, T011 | feat | `[GATED]` | **merged** | #463 `2cf9cf7` | `catalog/read-down.yaml`; **clerkJwt** (README's `posDeviceAuth` was a mislabel — owner-confirmed); real-schema payload (R-1); no new dep (T011) |
+| 010-SCHEMA | T012, T013 | feat | `[GATED]` | **merged** | #462 `a882e4e` | `0015` change-log + 3 dumb triggers (R9) + **CASCADE FKs** (derived-projection); FOUNDATIONAL (cursor=sequence); advisory-op read model |
+| 010-ISOLATION-HARNESS | T014, T015 | test | — | **merged** | #469 `16304af` | seed-read-down across A/B × X/Y; sweep §A (change-log RLS) green, §B parked-then-filled by US3 |
+| 010-US1-SNAPSHOT 🎯 | T030–T036 | feat | — | **merged** | #473 `f27d499` | MVP; Tenant ⊕ Override resolver (store-GUC), sellable filter, decimal money (`normalizeAmount`), cursor + pagination. **POS-Pulse 010 unblock** |
+| 010-US2-DELTA | T040–T044 | feat | — | **merged** | #475 `c6114bd` | `posGetCatalogDeltas`; **advisory-op read-side re-resolution** (stored op = hint; derive from current sellability); R9 override-masking |
+| 010-US3-ISOLATION | T050–T053 | test | — | **merged** | #477 `49ccca4` | both-routes device-auth / scope-mismatch / store-context + DB-layer resolved-read-path RLS-bypass |
+| 010-POLISH | T090–T092 | chore | — | **merged** | #478 | `catalog_unpriced_issue_rate` signal verify; report-only k6; module coverage 84.4% (≥80%) |
+| 010-CLOSEOUT | T093 | docs | — | **merged** | (this PR) | terminal reconciliation; POS-Pulse 010 unblock recorded |
 
-**Totals**: 10 slices · 22 tasks (T001–T093) · 2 `[GATED]` (CONTRACT, SCHEMA) · 2 `[SIGN-OFF]` (T001 read-only, T011 no-dep).
+**Totals**: 10/10 slices **merged** · 22 tasks (T001–T093) · 2 `[GATED]` (CONTRACT, SCHEMA) · 2 `[SIGN-OFF]` (T001 read-only, T011 no-dep).
 
 ---
 
@@ -133,15 +133,28 @@ Auth (`PosOperatorAuthGuard` device-principal), `branch_id ≡ store_id` (FK in 
 
 ---
 
-## Next recommended action
+## CLOSED — 2026-06-04
 
-**No open pre-gate blockers.** R-1 ✅ (`/speckit-clarify`, Option B), R-3 ✅ (research R9), F1 ✅ fixed. Recommended: a final `/speckit-analyze` to confirm R-3/R9 propagation is clean (as was done for R-1), then dispatch.
+010 is **fully shipped on `main`** — 10/10 slices merged (PRs #460/#462/#463/#469/#473/#475/#477/#478 + this CLOSEOUT). The read-down snapshot + delta surface serves the Resolved Sellable Store Catalogue to device-authed POS terminals; **POS-Pulse 010 is UNBLOCKED** (`packages/contracts/openapi/catalog/read-down.yaml` pinned + `posGetCatalogSnapshot` / `posGetCatalogDeltas` reachable on `main`, spec §10 — the consumer's v1 MAY be snapshot-only).
 
-**Dispatch the foundational wave once the owner approves the gated slices in-session:**
+### Implementation findings resolved during the build (beyond the pre-dispatch R-1/R-3)
 
-1. **`010-SIGNOFF-READONLY`** (record the DB-trigger decision in data-model §3) — non-code, do first.
-2. **`010-SETUP`** (module skeleton).
-3. **`010-CONTRACT`** `[GATED]` (R-1 resolved — ready) ∥ **`010-SCHEMA`** `[GATED]` (after R-3) — the GATED-FOUNDATIONAL pair; both must merge before any GREEN. **`010-CONTRACT` is the POS-Pulse 010 unblock half** (contract pinned).
-4. Then **`010-ISOLATION-HARNESS`** → **`010-US1-SNAPSHOT`** 🎯 (MVP) → `US2` → `US3` → `POLISH` → `CLOSEOUT`.
+- **`clerkJwt`, not `posDeviceAuth`** (CONTRACT) — the contracts/README mandated a dedicated `posDeviceAuth` scheme, but no such scheme exists: every shipped POS device route uses `clerkJwt` (the manager surface is `cookieAuth`). The README mis-labeled it. Owner-confirmed `clerkJwt` in-session. No orphan scheme, no new dependency.
+- **Change-log FKs are `ON DELETE CASCADE`, not the schema-wide `RESTRICT`** (SCHEMA) — `catalog_change_log` is a trigger-populated **derived projection**; `RESTRICT` deadlocked every real catalog deletion (the auto-logged row vetoed deleting its own product/store/tenant — surfaced as 17 failing 005/007 teardown tests in hosted CI). CASCADE is the correct semantic (a row pointing at a hard-deleted product is unresolvable by the advisory-op read). Fixed + regression-tested.
+- **Stored `op` is ADVISORY, derived at read** (SCHEMA + US2) — the delta read re-resolves Tenant ⊕ Override per `(tenant, store)` and derives the wire op from **current** sellability; the change-log op is only a change-signal. Documented in data-model §3/§4; this is what makes R9 override-masking a harmless idempotent re-upsert and handles override DELETE/deactivate correctly.
+- **Store-axis RLS in the resolver** (US1) — `store_product_overrides` is RLS'd by `tenant_id` AND `store_id`; the resolver sets `app.current_store` inside `runWithTenantContext` (mirroring `StoreOverrideService`), else the override is RLS-hidden and the JOIN silently falls through to the tenant price. NOT a SECURITY-DEFINER bypass.
+- **Money at natural minor precision** (US1) — `numeric(19,4)::text` renders `8.50` as `8.5000`; `isRepresentable` strips trailing zeros and `normalizeAmount` emits at the currency minor exponent (string-only, never a float — gate A.6).
 
-**`main` has NO branch protection — CI is advisory; verify each PR's `db-integration` manually before merge** (per the 009 CI posture).
+### Documented divergences from the original map (non-blocking)
+
+- **No per-feature `read-down.metrics.ts`** — `catalog_unpriced_issue_rate` was registered in the **shared `api.metrics.ts`** (+ `ALLOWED_METRIC_LABELS` + the `cardinality.spec` drift list), the repo's single metrics surface, rather than the per-feature file the map's `allowed_files` named. Better; no redundant file.
+- **`toBody()` is an inline projection module** (`read-down.toBody.ts`) per repo convention (the map listed it; realized as the resolver's projection + `normalizeAmount`/`isRepresentable`).
+- **Perf is report-only** (`loadtests/k6/catalog-read-down.js`) — no perf env (005 T560 / 008 SC-010 / 009 T100 precedent).
+- **Coverage**: read-down module 84.4% stmts / 86.7% lines (≥80% bar met); the repo-wide 96%/90% global threshold is deferred to local/manual per `009-CI-OPT` (CI drops `--coverage`).
+
+### Deferred (not in 010 scope)
+
+- FR-060 ETag / content-hash is `MAY` — **deferred**, not v1 (noted at CONTRACT).
+- Detached snapshot signing (003 PQ-6) — named + deferred with an upgrade path (research R7).
+
+**`main` has NO branch protection — CI was advisory; every `db-integration` was verified green before merge** (per the 009 CI posture). The two full-suite-only failures encountered on the SCHEMA PR (stale invariant guards + the FK-cascade regression) were caught by running the **full** db + api suites locally, not just the targeted spec.
