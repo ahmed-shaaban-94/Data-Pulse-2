@@ -45,10 +45,12 @@ import {
 import { TENANT_A, STORE_A_X } from "../../__support__/isolation-harness";
 import { seedReadDownFixture } from "../__support__/seed-read-down";
 
-const DEVICE_ID = "0d000000-0000-7000-8000-0000000dev01";
+// NOTE: hex-only suffixes — "dev01"/"dev02" would contain a non-hex 'v' and
+// Postgres rejects them as "invalid input syntax for type uuid".
+const DEVICE_ID = "0d000000-0000-7000-8000-00000000de01";
 const ACTIVE_TOKEN = "active-device-pairing-token-aaaaaaaaaaaaaaaaa";
 const REVOKED_TOKEN = "revoked-device-pairing-token-bbbbbbbbbbbbbbbbb";
-const REVOKED_DEVICE_ID = "0d000000-0000-7000-8000-0000000dev02";
+const REVOKED_DEVICE_ID = "0d000000-0000-7000-8000-00000000de02";
 
 let env: PgTestEnv | null = null;
 let app: INestApplication | null = null;
@@ -99,12 +101,22 @@ beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     controllers: [ReadDownController],
     providers: [
+      // The RESOLVER runs under RLS (env.app) so the snapshot read is real
+      // tenant-scoped data.
       { provide: PG_POOL, useFactory: (): Pool => theEnv.app },
       ReadDownService,
+      // DeviceRepository runs on the ADMIN pool: `findActiveByAttestation`
+      // does a NO-GUC lookup, and `devices` is FORCE ROW LEVEL SECURITY, so the
+      // non-superuser app role would see zero rows. This mirrors the proven
+      // device-auth integration pattern in
+      // pos-operators.controller.spec.ts (PG_POOL ← env.adminUri) — the device
+      // is the source of context, so its lookup is not tenant-GUC scoped. In
+      // PRODUCTION `PG_POOL` is the privileged app pool that already performs
+      // this exact lookup at operator sign-in; the test just makes the
+      // privilege explicit.
       {
         provide: DeviceRepository,
-        useFactory: (pool: Pool): DeviceRepository => new DeviceRepository(pool),
-        inject: [PG_POOL],
+        useValue: new DeviceRepository(theEnv.admin),
       },
       PosDeviceAuthGuard,
     ],

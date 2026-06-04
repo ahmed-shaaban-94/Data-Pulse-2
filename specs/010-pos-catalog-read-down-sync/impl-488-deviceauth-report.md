@@ -51,22 +51,35 @@ files are typecheck-clean.
 
 ---
 
-## 3. ⚠ The load-bearing unrun test has an RLS/pool risk — flag prominently
+## 3. The integration test failed on first CI run — two root causes found + fixed (re-validating on CI)
 
-`device-principal-auth.spec.ts` is **first-of-kind**: no existing test exercises a real `devices` lookup
-through the RLS-enforced app pool against a seeded row (`pos-operators.service.spec.ts` **mocks**
-`DeviceRepository`). **CI is its first real execution.**
+`device-principal-auth.spec.ts` is **first-of-kind**: no existing test exercised a real `devices` lookup
+against a seeded row (`pos-operators.service.spec.ts` **mocks** `DeviceRepository`). Its first real execution
+was PR #490's CI `db-integration` job (Docker unavailable locally) — and it **FAILED**, surfacing two
+test-setup bugs (NOT production-auth defects). Both are now corrected; the next CI run is the re-validation.
 
-The specific exposure: the test seeds the `devices` row via `env.admin` but looks it up via `DeviceRepository`
-on `PG_POOL` (= `env.app`). The `devices` RLS policy (`0001_pos_operator_identity.sql`) is
-`ENABLE … FORCE ROW LEVEL SECURITY` with:
+**Root cause 1 — malformed fixture UUIDs (the actual crash).** CI error:
+`invalid input syntax for type uuid: "0d000000-0000-7000-8000-0000000dev01"`. The device-id constants
+contained a non-hex `v` (`…dev01`/`…dev02`), so the seed `INSERT INTO devices` aborted `beforeAll` and every
+case errored in setup. Fixed → hex-only `…de01`/`…de02`. (The unit test never hit a DB, so it didn't catch
+this.)
+
+**Root cause 2 — the FORCE-RLS device lookup must use the privileged pool (pre-empted; would have been the
+*next* red).** `devices` is `FORCE ROW LEVEL SECURITY` (`0001_pos_operator_identity.sql`):
 ```
 USING ( tenant_id = current_setting('app.current_tenant', true)::uuid
         OR current_setting('app.is_platform_admin', true) = 'true' )
 ```
-`findActiveByAttestation` sets **no GUC** (by design — the device is the source of context). So **if CI's
-`env.app` is the FORCE-RLS role, the test's no-GUC lookup could return zero rows and the test would fail** —
-needing the lookup on `env.admin`, or a platform-admin GUC wrapper, in a test-setup follow-up.
+`findActiveByAttestation` sets **no GUC** (by design — the device IS the source of context). The original
+harness wired `DeviceRepository` to `env.app` (the non-superuser `app_test` role), so the unset GUC → row
+invisible → lookup null → guard 401 → the happy-path `200` would have failed. Fixed → `DeviceRepository` now
+runs on `env.admin`, matching the **proven** device-auth integration pattern in
+`pos-operators.controller.spec.ts` (`PG_POOL ← env.adminUri`). The resolver (`ReadDownService`) stays on
+`env.app` so the snapshot read is still real RLS-scoped data.
+
+**This is production-faithful, not a test-only hack:** in PRODUCTION `PG_POOL` is the privileged app pool that
+already performs this exact no-GUC device lookup at operator sign-in and ships working. The test now makes that
+privilege explicit for the device-lookup dependency.
 
 **Crucial distinction (keeps the report honest both ways):**
 - **PRODUCTION read-down auth is SOUND** and mirrors a *proven, shipped* path: `PosOperatorsModule` resolves
