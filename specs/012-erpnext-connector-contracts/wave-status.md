@@ -40,7 +40,16 @@ change.
 | `wave-status.md` | This file | Authored |
 | `.specify/memory/decisions/0008-retail-tower-erpnext-connector-repo-split.md` | Connector split ADR | **Accepted 2026-06-04** |
 
-> **Update 2026-06-04:** the 012 planning spec merged (PR #476), and **ADR 0008 is now Accepted** — the `Retail-Tower-ERP-Next-Connector` repo split is authorized. Next: the `[GATED]` 012-CONTRACT OpenAPI slice + ERPNext-major staging validation, then build the connector repo against the contract.
+> **Update 2026-06-04:** the 012 planning spec merged (PR #476), and **ADR 0008 is now Accepted** — the `Retail-Tower-ERP-Next-Connector` repo split is authorized.
+
+### `[GATED]` 012-CONTRACT slice — authored (this PR)
+
+| File | Purpose | State |
+|---|---|---|
+| `packages/contracts/openapi/erpnext-connector/posting-feed.yaml` | The DP2 ↔ connector OpenAPI contract: `connectorPullPostings` (GET cursor feed) + `connectorAckOutcome` (POST outcome ack); `connectorBearer` machine scheme; mirrored 008 sale payload; satisfies O-1..O-7 | **Authored** `[GATED]` |
+| `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts` | Structural load-only conformance spec (28 assertions: operationId presence + global uniqueness, machine-bearer-not-clerkJwt, cursor/pagination, bidirectional GET+POST, idempotency, decimal money, strict DTOs, closed error set) | **Authored — 28/28 PASS** |
+
+> The contract spec is load-only (no Docker/HTTP) and **passes 28/28**. Next: ERPNext-major staging validation, then build the connector repo against this contract.
 
 ---
 
@@ -67,10 +76,9 @@ client dependency (`[GATED]` `package.json`).
 
 ## Proposed (awaiting approval)
 
-- The `[GATED]` **012-CONTRACT** slice — authors the OpenAPI YAML for the pull/feed contract.
 - **013–017** — the rest of the ERPNext arc (each its own Spec-Kit chain).
 
-_(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04; no longer awaiting approval.)_
+_(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04. The `[GATED]` **012-CONTRACT** OpenAPI slice is **authored** in this PR — no longer awaiting approval.)_
 
 ---
 

@@ -1,0 +1,480 @@
+/**
+ * apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts
+ *
+ * Slice 012-CONTRACT — OpenAPI conformance test for
+ * `packages/contracts/openapi/erpnext-connector/posting-feed.yaml`.
+ *
+ * Mirrors `apps/api/test/catalog/read-down/contract/read-down.contract.spec.ts`
+ * and `.../catalog/sales/contract/sales.contract.spec.ts`:
+ *
+ *   * Loads the new contract via the production `loadOpenApiContracts` helper
+ *     with an explicit `dir`, because the helper's directory scan is
+ *     non-recursive (`apps/api/src/openapi/loader.ts` — `readdirSync(dir)` with
+ *     no recursive flag). The nested `erpnext-connector/` sub-directory is NOT
+ *     picked up by the umbrella `loadOpenApiContracts()` call, so it loads here
+ *     explicitly (same pattern as catalog/ + pos-sales/).
+ *
+ *   * Asserts presence of the two 012 operationIds (`connectorPullPostings`,
+ *     `connectorAckOutcome`) and their UNIQUENESS against every shipped
+ *     operationId — the top-level contracts PLUS every nested sub-dir
+ *     (catalog/, pos-sales/, inventory/, pos-payments/), because the umbrella
+ *     `loadOpenApiContracts()` is non-recursive and misses ALL of them (the
+ *     slice's stop condition is "if any operationId collides with or renames a
+ *     shipped operationId").
+ *
+ *   * Verifies the 012-specific contract conventions: OpenAPI 3.1 of record; the
+ *     `connectorBearer` MACHINE security scheme defined + referenced on both ops
+ *     (NOT the POS `clerkJwt` — this is a service principal, 011 version-pin /
+ *     connector-lifecycle §2); the pull/feed cursor + `next_page_token`; the
+ *     bidirectional shape (GET pull + POST ack, NOT read-only); the mirrored 008
+ *     decimal-money `DecimalAmount`/`CurrencyCode` (no float); the strict
+ *     `additionalProperties: false` projections (§XII); the REQUIRED
+ *     `Idempotency-Key` on the ack (O-3); and the closed error set incl.
+ *     `snapshot_required` riding the canonical `Error` envelope.
+ *
+ * The spec is structural / load-only (no app boot, no HTTP requests, no Docker).
+ * The DP2-side feed/ack endpoints are authored in a future slice (015 +
+ * connector-feed); the connector itself lives in the Retail-Tower-ERP-Next-Connector
+ * repo (ADR 0008).
+ */
+import "reflect-metadata";
+
+import { resolve } from "node:path";
+
+import { loadOpenApiContracts } from "../../../src/openapi/loader";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const NEW_CONTRACT_ID = "posting-feed";
+
+const OPERATION_IDS = ["connectorPullPostings", "connectorAckOutcome"] as const;
+
+const PULL_PATH = "/api/connector/v1/erpnext/postings";
+const ACK_PATH = "/api/connector/v1/erpnext/postings/{workItemRef}/outcome";
+
+/**
+ * Resolve a `packages/contracts/openapi/<sub>` directory from this spec's
+ * location:
+ *   apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts
+ *   →  ../../../../..   = <repo root>
+ *   (contract → erpnext-connector → test → api → apps → <root>)
+ */
+function openapiSubDir(sub: string): string {
+  return resolve(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "..",
+    "..",
+    "packages",
+    "contracts",
+    "openapi",
+    sub,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared types — keep narrow; the loader returns `unknown` documents.
+// ---------------------------------------------------------------------------
+
+interface OperationObject {
+  operationId?: string;
+  security?: Array<Record<string, unknown>>;
+  requestBody?: unknown;
+  parameters?: Array<{
+    $ref?: string;
+    in?: string;
+    name?: string;
+    required?: boolean;
+    schema?: Record<string, unknown>;
+  }>;
+  responses?: Record<string, unknown>;
+}
+
+type PathItem = Record<string, OperationObject>;
+
+interface SchemaObject {
+  type?: string | string[];
+  additionalProperties?: boolean | Record<string, unknown>;
+  required?: string[];
+  properties?: Record<string, unknown>;
+}
+
+interface OpenApiDocument {
+  openapi?: string;
+  info?: { title?: string; version?: string };
+  paths?: Record<string, PathItem>;
+  components?: {
+    schemas?: Record<string, SchemaObject>;
+    securitySchemes?: Record<string, Record<string, unknown>>;
+    parameters?: Record<string, Record<string, unknown>>;
+    responses?: Record<string, Record<string, unknown>>;
+  };
+  security?: Array<Record<string, unknown>>;
+  tags?: Array<{ name?: string }>;
+}
+
+let feedDoc: OpenApiDocument;
+let shippedOperationIds: Set<string>;
+
+function collectOperationIds(docs: OpenApiDocument[], into: Set<string>): void {
+  for (const doc of docs) {
+    if (!doc.paths) continue;
+    for (const path of Object.values(doc.paths)) {
+      for (const op of Object.values(path)) {
+        if (op && typeof op.operationId === "string") into.add(op.operationId);
+      }
+    }
+  }
+}
+
+beforeAll(() => {
+  const connectorContracts = loadOpenApiContracts({
+    dir: openapiSubDir("erpnext-connector"),
+  });
+  const newContract = connectorContracts.find((c) => c.id === NEW_CONTRACT_ID);
+  if (!newContract) {
+    const ids = connectorContracts.map((c) => c.id).join(", ");
+    throw new Error(
+      `${NEW_CONTRACT_ID} contract not found under ${openapiSubDir("erpnext-connector")}; loaded ids: [${ids}]`,
+    );
+  }
+  feedDoc = newContract.document as OpenApiDocument;
+
+  // Build the set of SHIPPED operationIds the new ops must not collide with:
+  // the top-level contracts PLUS the nested catalog/ + pos-sales/ siblings
+  // (the umbrella loader is non-recursive). Exclude the new contract itself.
+  shippedOperationIds = new Set<string>();
+  collectOperationIds(
+    loadOpenApiContracts().map((c) => c.document as OpenApiDocument),
+    shippedOperationIds,
+  );
+  // Every nested contract dir — the non-recursive umbrella loader misses ALL of
+  // them, so each must be loaded explicitly for a TRUE global-uniqueness guard.
+  for (const sub of ["catalog", "pos-sales", "inventory", "pos-payments"]) {
+    collectOperationIds(
+      loadOpenApiContracts({ dir: openapiSubDir(sub) }).map(
+        (c) => c.document as OpenApiDocument,
+      ),
+      shippedOperationIds,
+    );
+  }
+});
+
+function feedOperations(): Array<{
+  path: string;
+  method: string;
+  op: OperationObject;
+}> {
+  const out: Array<{ path: string; method: string; op: OperationObject }> = [];
+  for (const [path, item] of Object.entries(feedDoc.paths ?? {})) {
+    for (const [method, op] of Object.entries(item)) {
+      out.push({ path, method, op });
+    }
+  }
+  return out;
+}
+
+function findOp(operationId: string): OperationObject | undefined {
+  return feedOperations().find((o) => o.op.operationId === operationId)?.op;
+}
+
+// ===========================================================================
+// 1. Loadability + document-level conventions
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — loadability", () => {
+  it("is parseable by the production OpenAPI loader", () => {
+    expect(feedDoc).toBeDefined();
+    expect(typeof feedDoc).toBe("object");
+  });
+
+  it("declares OpenAPI 3.1 of record", () => {
+    expect(feedDoc.openapi).toBe("3.1.0");
+  });
+
+  it("declares an info block with title and a *-draft version", () => {
+    expect(feedDoc.info?.title).toEqual(expect.any(String));
+    expect(feedDoc.info?.version).toEqual(expect.stringMatching(/-draft$/));
+  });
+
+  it("declares the connectorBearer MACHINE scheme — NOT the POS clerkJwt", () => {
+    const schemes = feedDoc.components?.securitySchemes ?? {};
+    expect(schemes["connectorBearer"]).toBeDefined();
+    // The connector is a service principal, not a POS device — clerkJwt MUST NOT
+    // appear on this surface (advisor design sign-off).
+    expect(schemes["clerkJwt"]).toBeUndefined();
+    const cb = schemes["connectorBearer"] as { type?: string; scheme?: string };
+    expect(cb.type).toBe("http");
+    expect(cb.scheme).toBe("bearer");
+  });
+});
+
+// ===========================================================================
+// 2. Operations present, uniquely named, machine-secured, bidirectional
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — operations", () => {
+  it("declares exactly the two 012 operationIds", () => {
+    const ids = feedOperations()
+      .map((o) => o.op.operationId)
+      .filter((id): id is string => typeof id === "string")
+      .sort();
+    expect(ids).toEqual([...OPERATION_IDS].sort());
+  });
+
+  it("maps the pull to GET and the ack to POST (bidirectional, NOT read-only)", () => {
+    expect(feedDoc.paths?.[PULL_PATH]?.["get"]?.operationId).toBe(
+      "connectorPullPostings",
+    );
+    expect(feedDoc.paths?.[ACK_PATH]?.["post"]?.operationId).toBe(
+      "connectorAckOutcome",
+    );
+  });
+
+  it("does NOT collide with or rename any shipped operationId (top-level + catalog/ + pos-sales/)", () => {
+    for (const id of OPERATION_IDS) {
+      expect(shippedOperationIds.has(id)).toBe(false);
+    }
+  });
+
+  it("uses a connector (machine) path namespace, NOT the POS namespace", () => {
+    for (const { path } of feedOperations()) {
+      expect(path.startsWith("/api/connector/v1/erpnext/")).toBe(true);
+      expect(path.startsWith("/api/pos/")).toBe(false);
+    }
+  });
+
+  it("secures every operation with connectorBearer (machine principal)", () => {
+    for (const { op } of feedOperations()) {
+      expect(op.security).toContainEqual({ connectorBearer: [] });
+      expect(op.security).not.toContainEqual({ clerkJwt: [] });
+    }
+  });
+});
+
+// ===========================================================================
+// 3. Pull feed — cursor + pagination (mirrors 010 delta)
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — pull feed cursor", () => {
+  it("the pull accepts an OPTIONAL opaque `since` cursor (omit = re-baseline)", () => {
+    const params = findOp("connectorPullPostings")?.parameters ?? [];
+    expect(params.some((p) => p.$ref === "#/components/parameters/Since")).toBe(
+      true,
+    );
+    const since = feedDoc.components?.parameters?.["Since"] as
+      | { name?: string; in?: string; required?: boolean }
+      | undefined;
+    expect(since?.name).toBe("since");
+    expect(since?.in).toBe("query");
+    // OPTIONAL — unlike 010's required `since`, omitting it pulls from the start.
+    expect(since?.required).not.toBe(true);
+  });
+
+  it("the feed page carries `next_page_token` + advanced `cursor` (opaque)", () => {
+    const page = feedDoc.components?.schemas?.["PostingFeedPage"];
+    expect(page?.properties).toHaveProperty("next_page_token");
+    expect(page?.required).toContain("next_page_token");
+    expect(page?.properties).toHaveProperty("cursor");
+    expect(page?.required).toContain("cursor");
+  });
+
+  it("the work-item carries the opaque per-item `itemCursor`", () => {
+    const item = feedDoc.components?.schemas?.["PostingWorkItem"];
+    expect(item?.properties).toHaveProperty("itemCursor");
+    expect(item?.required).toContain("itemCursor");
+  });
+});
+
+// ===========================================================================
+// 4. Work-item payload — O-1 (mirrors 008 sale) + O-4 reversal
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — work-item payload (O-1/O-4)", () => {
+  it("the work-item carries provenance + businessDate (O-1)", () => {
+    const item = feedDoc.components?.schemas?.["PostingWorkItem"];
+    expect(item?.additionalProperties).toBe(false);
+    expect(item?.required).toEqual(
+      expect.arrayContaining([
+        "workItemRef",
+        "kind",
+        "sourceSystem",
+        "externalId",
+        "payloadHash",
+        "businessDate",
+        "sale",
+      ]),
+    );
+  });
+
+  it("kind enumerates sale_post | reversal (O-4 reversal as a work-item)", () => {
+    const kind = (feedDoc.components?.schemas?.["PostingWorkItem"]?.properties ??
+      {})["kind"] as { enum?: string[] } | undefined;
+    expect(kind?.enum?.sort()).toEqual(["reversal", "sale_post"].sort());
+  });
+
+  it("mirrors the 008 Sale projection with decimal money (no float)", () => {
+    const sale = feedDoc.components?.schemas?.["Sale"];
+    expect(sale?.additionalProperties).toBe(false);
+    expect(sale?.required).toEqual(
+      expect.arrayContaining([
+        "saleRef",
+        "storeId",
+        "currencyCode",
+        "posTotal",
+        "businessDate",
+        "lines",
+      ]),
+    );
+    const amount = feedDoc.components?.schemas?.["DecimalAmount"] as
+      | { type?: string; pattern?: string }
+      | undefined;
+    expect(amount?.type).toBe("string");
+    expect(amount?.pattern).toBeDefined();
+  });
+});
+
+// ===========================================================================
+// 5. Outcome ack — O-2 (return path) + O-3 (idempotency)
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — outcome ack (O-2/O-3)", () => {
+  it("the ack REQUIRES the Idempotency-Key header (O-3)", () => {
+    const params = findOp("connectorAckOutcome")?.parameters ?? [];
+    expect(
+      params.some((p) => p.$ref === "#/components/parameters/IdempotencyKey"),
+    ).toBe(true);
+    const key = feedDoc.components?.parameters?.["IdempotencyKey"] as
+      | { name?: string; in?: string; required?: boolean }
+      | undefined;
+    expect(key?.name).toBe("Idempotency-Key");
+    expect(key?.in).toBe("header");
+    expect(key?.required).toBe(true);
+  });
+
+  it("the ack carries a request body (write surface, unlike 010)", () => {
+    expect(findOp("connectorAckOutcome")).toHaveProperty("requestBody");
+    // The pull is read-only (no body).
+    expect(findOp("connectorPullPostings")).not.toHaveProperty("requestBody");
+  });
+
+  it("the outcome enumerates posted | failed_transient | permanently_rejected (O-2)", () => {
+    const outcome = (feedDoc.components?.schemas?.["OutcomeAckRequest"]
+      ?.properties ?? {})["outcome"] as { enum?: string[] } | undefined;
+    expect(outcome?.enum?.sort()).toEqual(
+      ["failed_transient", "permanently_rejected", "posted"].sort(),
+    );
+  });
+
+  it("the ack request + recorded outcome are strict projections (§XII)", () => {
+    const req = feedDoc.components?.schemas?.["OutcomeAckRequest"];
+    const res = feedDoc.components?.schemas?.["RecordedOutcome"];
+    expect(req?.additionalProperties).toBe(false);
+    expect(res?.additionalProperties).toBe(false);
+  });
+
+  it("carries the ETA status passthrough (016, nullable until live) — O-2", () => {
+    const props =
+      feedDoc.components?.schemas?.["OutcomeAckRequest"]?.properties ?? {};
+    expect(props).toHaveProperty("etaStatus");
+  });
+
+  it("speaks generic ERPNext doc addressing (doctype+name), NOT field internals (O-6)", () => {
+    const ref = feedDoc.components?.schemas?.["ErpnextDocumentRef"];
+    expect(ref?.required).toEqual(expect.arrayContaining(["doctype", "name"]));
+  });
+});
+
+// ===========================================================================
+// 6. Error envelope + closed error set
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — error vocabulary", () => {
+  it("defines the canonical Error envelope { error: { code, message } } (no details)", () => {
+    const errorSchema = feedDoc.components?.schemas?.["Error"] as
+      | {
+          required?: string[];
+          properties?: { error?: { properties?: Record<string, unknown> } };
+        }
+      | undefined;
+    expect(errorSchema?.required).toContain("error");
+    const inner = errorSchema?.properties?.error?.properties ?? {};
+    expect(Object.keys(inner).sort()).toEqual(
+      ["code", "message", "request_id"].sort(),
+    );
+    expect(inner).not.toHaveProperty("details");
+  });
+
+  it("declares the closed error-response set incl. snapshot_required + conflict", () => {
+    const responses = feedDoc.components?.responses ?? {};
+    for (const name of [
+      "ValidationFailure",
+      "Unauthorized",
+      "NotFound",
+      "Conflict",
+      "SnapshotRequired",
+      "SystemFailure",
+    ]) {
+      expect(responses[name]).toBeDefined();
+    }
+  });
+
+  it("maps pull to 200/400/401/404/409/500 and ack to 200/201/400/401/404/409/500", () => {
+    const pull = feedDoc.paths?.[PULL_PATH]?.["get"]?.responses ?? {};
+    expect(Object.keys(pull)).toEqual(
+      expect.arrayContaining(["200", "400", "401", "404", "409", "500"]),
+    );
+    const ack = feedDoc.paths?.[ACK_PATH]?.["post"]?.responses ?? {};
+    expect(Object.keys(ack)).toEqual(
+      expect.arrayContaining(["200", "201", "400", "401", "404", "409", "500"]),
+    );
+  });
+
+  it("the 409 on the pull is snapshot_required (stale cursor re-baseline)", () => {
+    const pull = feedDoc.paths?.[PULL_PATH]?.["get"]?.responses ?? {};
+    const conflict = pull["409"] as { $ref?: string } | undefined;
+    expect(conflict?.$ref).toBe("#/components/responses/SnapshotRequired");
+  });
+
+  it("the 409 on the ack is the idempotency-key conflict", () => {
+    const ack = feedDoc.paths?.[ACK_PATH]?.["post"]?.responses ?? {};
+    const conflict = ack["409"] as { $ref?: string } | undefined;
+    expect(conflict?.$ref).toBe("#/components/responses/Conflict");
+  });
+});
+
+// ===========================================================================
+// 7. Object-safety invariants (§XII / §IV)
+// ===========================================================================
+describe("erpnext-connector/posting-feed.yaml — object safety", () => {
+  it("all payload schemas are strict (additionalProperties: false)", () => {
+    const schemas = feedDoc.components?.schemas ?? {};
+    for (const name of [
+      "PostingWorkItem",
+      "ReversalRef",
+      "Sale",
+      "SaleLine",
+      "PostingFeedPage",
+      "OutcomeAckRequest",
+      "ErpnextDocumentRef",
+      "EtaStatus",
+      "RejectionReason",
+      "RecordedOutcome",
+    ]) {
+      expect(schemas[name]?.additionalProperties).toBe(false);
+    }
+  });
+
+  it("the sale projection leaks no raw DB column / credential / tenant_id (§IV)", () => {
+    const props = feedDoc.components?.schemas?.["Sale"]?.properties ?? {};
+    for (const leak of [
+      "tenant_id",
+      "tenantId",
+      "payload_hash",
+      "payloadHash",
+      "created_by",
+      "createdBy",
+      "processed_at",
+    ]) {
+      expect(props).not.toHaveProperty(leak);
+    }
+  });
+});
