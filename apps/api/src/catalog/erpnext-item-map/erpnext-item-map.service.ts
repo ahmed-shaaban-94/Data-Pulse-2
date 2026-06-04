@@ -163,7 +163,17 @@ export class ErpnextItemMapService {
               input.actorUserId,
             ],
           );
-          return { kind: "ok", row: toRow(inserted.rows[0]!) };
+          const row = toRow(inserted.rows[0]!);
+          this.logger?.info(
+            {
+              tenant_id: input.tenantId,
+              mapping_id: row.id,
+              tenant_product_id: row.tenantProductId,
+              action: "erpnext_item_map.suggested",
+            },
+            "erpnext-item-map: suggested",
+          );
+          return { kind: "ok", row };
         } catch (err: unknown) {
           // 23505 = active partial-unique (a 2nd active mapping for the product).
           if (isPgCode(err, "23505")) {
@@ -206,7 +216,16 @@ export class ErpnextItemMapService {
           [input.id, input.version, input.actorUserId],
         );
         if (updated.rows[0]) {
-          return { kind: "ok", row: toRow(updated.rows[0]) };
+          const row = toRow(updated.rows[0]);
+          this.logger?.info(
+            {
+              tenant_id: input.tenantId,
+              mapping_id: row.id,
+              action: "erpnext_item_map.confirmed",
+            },
+            "erpnext-item-map: confirmed",
+          );
+          return { kind: "ok", row };
         }
         // Disambiguate conflict (row exists but wrong version/state) from
         // not_found (no such row in this tenant — RLS-filtered / fabricated id).
@@ -248,7 +267,16 @@ export class ErpnextItemMapService {
           [input.id, input.version],
         );
         if (updated.rows[0]) {
-          return { kind: "ok", row: toRow(updated.rows[0]) };
+          const row = toRow(updated.rows[0]);
+          this.logger?.info(
+            {
+              tenant_id: input.tenantId,
+              mapping_id: row.id,
+              action: "erpnext_item_map.retired",
+            },
+            "erpnext-item-map: retired",
+          );
+          return { kind: "ok", row };
         }
         const exists = await client.query<{ id: string }>(
           `SELECT id FROM erpnext_item_map WHERE id = $1 LIMIT 1`,
