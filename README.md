@@ -40,6 +40,29 @@ See [`docs/brand/retail-tower-os.md`](docs/brand/retail-tower-os.md) for the ful
 
 ---
 
+## 🔗 Synchronization — Data-Pulse-2 at the Core
+
+Data-Pulse-2 is the **single contract boundary** of Retail Tower OS. Every edge (POS-Pulse,
+Console) syncs through it; only the ERPNext Connector ever reaches ERPNext. Resolved catalog
+flows **down** to the edges; sales & inventory rise **up** toward ERPNext via the connector
+posting feed.
+
+<p align="center">
+  <img src="docs/assets/architecture/retail-tower-sync-flow.svg" alt="Animated Retail Tower OS synchronization diagram, Data-Pulse-2 at the core" width="100%"/>
+</p>
+
+```text
+POS-Pulse ─┐
+           ├─▶  Data-Pulse-2  ─▶  ERPNext Connector  ─▶  ERPNext / Frappe
+Console  ──┘        ▲ the only contract boundary
+```
+
+Full detail (flow + sequence + boundary guarantees):
+[docs/architecture/synchronization.md](docs/architecture/synchronization.md) ·
+Program control plane: [Retail-Tower-Orchestrator](https://github.com/ahmed-shaaban-94/Retail-Tower-Orchestrator).
+
+---
+
 ## Live architecture control map
 
 [![Retail Tower OS live architecture control map preview](docs/assets/architecture/retail-tower-live-map-preview.svg)](docs/architecture/retail-tower-live-map.html)
