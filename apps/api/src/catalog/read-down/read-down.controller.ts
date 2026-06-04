@@ -6,12 +6,16 @@
  *   GET /api/pos/v1/catalog/snapshot → the Resolved Sellable Store Catalogue
  *   for the device principal's (tenant_id, store_id), cursor-paginated.
  *
- * Auth / context: mirrors `posCaptureItem` / `readSale` —
- * `@UseGuards(PosOperatorAuthGuard, TenantContextGuard)` resolve the POS device
- * principal onto `req.context`; tenant/store come from there and are NEVER read
- * from the body/query as authority (FR-002/061). A supplied `branch_id` is
- * validated against the token's store scope; a mismatch is a NON-DISCLOSING 404
- * (FR-002/003/004), never an explicit "wrong store".
+ * Auth / context: `@UseGuards(PosDeviceAuthGuard)` authenticates the POS
+ * terminal by its `devices` PAIRING TOKEN alone — no operator session (issue
+ * #488, Option B-prime) — and resolves the device principal's
+ * `(tenant_id, store_id)` from the store-bound device row onto `req.context`.
+ * Tenant/store come from there and are NEVER read from the body/query as
+ * authority (FR-002/061). A supplied `branch_id` is validated against the
+ * device's store scope; a mismatch is a NON-DISCLOSING 404 (FR-002/003/004),
+ * never an explicit "wrong store". (The shared `PosOperatorAuthGuard` is NOT
+ * used here: it requires an operator-session `pos_operator` scope the
+ * background read-down has no way to present.)
  *
  * Audit: `@Auditable("catalog.snapshot.read")` is passive metadata read by the
  * global AuditEmitterInterceptor (FR-080 read-access audit).
@@ -30,9 +34,8 @@ import {
 } from "@nestjs/common";
 
 import { Auditable } from "../../audit/auditable.decorator";
-import { PosOperatorAuthGuard } from "../../auth/pos-operator-auth.guard";
+import { PosDeviceAuthGuard } from "../../auth/pos-device-auth.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
-import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
 import {
   BranchIdSchema,
@@ -59,7 +62,7 @@ export class ReadDownController {
   constructor(private readonly readDown: ReadDownService) {}
 
   @Get("api/pos/v1/catalog/snapshot")
-  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  @UseGuards(PosDeviceAuthGuard)
   @Auditable("catalog.snapshot.read")
   async getSnapshot(
     @Req() request: TenantContextRequest,
@@ -101,7 +104,7 @@ export class ReadDownController {
   }
 
   @Get("api/pos/v1/catalog/deltas")
-  @UseGuards(PosOperatorAuthGuard, TenantContextGuard)
+  @UseGuards(PosDeviceAuthGuard)
   @Auditable("catalog.deltas.read")
   async getDeltas(
     @Req() request: TenantContextRequest,
