@@ -1,0 +1,735 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — ERPNext Connector Posting-Feed API
+  version: "1.0.0-draft"
+  description: >
+    Spec 012 ERPNext Connector Contracts surface — the DP2 ↔ connector boundary
+    that realises the signed 011 posting + version-pin decisions over a
+    **pull/feed, bidirectional** transport (011 owner decision 2026-06-04). This
+    is the platform-side contract the future `Retail-Tower-ERP-Next-Connector`
+    repo (a custom Frappe app, authorized by ADR 0008) consumes. The connector is
+    the ONLY component that talks to ERPNext; DP2 stays the source of truth (§IX)
+    and makes NO outbound HTTP calls — it EXPOSES these endpoints, the connector
+    CALLS them.
+
+    Two operations, both machine-connector-facing (`/api/connector/v1/erpnext/...`),
+    authenticated via an OPAQUE REVOCABLE SERVICE BEARER token (component
+    `connectorBearer`) — NOT the POS `clerkJwt` device scheme and NOT a human
+    cookie session. The connector authenticates as a dedicated, tenant-scoped,
+    revocable machine principal (011 version-pin / connector-lifecycle):
+
+      1. `connectorPullPostings` — the connector PULLS a cursor-paginated, ordered,
+         idempotent, gap-detectable feed of pending posting work-items (sale
+         posts + void/refund reversals) after an opaque `since` cursor, scoped to
+         the principal's tenant(s). Mirrors the 010 read-down delta cursor
+         semantics. A stale/unservable cursor returns `snapshot_required`
+         (re-baseline directive). (O-1, O-4.)
+      2. `connectorAckOutcome` — the connector reports the OUTCOME of posting a
+         work-item back to DP2 (ERPNext document reference, ETA status/UUID
+         passthrough, and a discrete `posted | failed_transient |
+         permanently_rejected` outcome with a structured reason on permanent
+         rejection). DP2 owns the resulting DLQ + reconciliation state (017
+         surfaces it). The ACK is idempotent — re-acking the same work-item with
+         the same outcome replays deterministically and never double-applies; a
+         duplicate `posted` echoes the existing ERPNext document reference (O-2,
+         O-3). The DP2 sale fact is NEVER mutated by a posting outcome.
+
+    Work-item payload (O-1): each pending posting carries the 008 sale projection
+    (header + frozen lines, mirroring `pos-sales/sales.yaml`'s `Sale`/`SaleLine`),
+    its `sourceSystem` + `externalId` + canonical `payloadHash` provenance, and
+    `businessDate` (which drives the ERPNext `posting_date`, per the posting
+    decision — a delayed/offline sale lands in the correct fiscal period). A
+    reversal work-item additionally references the original sale's provenance so
+    the connector posts a NEW reversing document (credit note / return invoice),
+    never an edit of the original (O-4).
+
+    PAYMENT ENTRY DEFERRAL: the posting decision pairs the Sales Invoice with "its
+    associated Payment Entry", but 008 models NO tender (gate A.5 — payments
+    deferred). The work-item therefore carries the sale only and CANNOT carry
+    tender; the connector posts the Sales Invoice (+ stock impact per 014) — the
+    Payment Entry is deferred until a DP2 payments model lands, at which point the
+    work-item payload + this contract gain the tender fields (a versioned,
+    backward-compatible extension). `posTotal` is the sale total, not tender.
+
+    SALE PROJECTION IS A CURATED SUBSET (by design): this contract's `Sale`
+    mirrors 008's `Sale` minus request-only / advisory fields the connector does
+    NOT post — `receivedAt`, `processedAt`, `mismatchFlag`, `sourceClockAt`. This
+    is intentional (the connector posts the immutable fact, not DP2's advisory
+    bookkeeping), not an accidental divergence from the 008 wire shape.
+
+    Version-independence (O-6): this contract speaks in Retail-Tower terms (sale,
+    line, businessDate, outcome, documentRef) — NEVER ERPNext doctype field names.
+    An ERPNext v15→v16 change alters the connector's internal mapping, not this
+    DP2-facing contract.
+
+    Money: every monetary field is an exact-decimal string (`numeric(19,4)` at
+    rest) paired with an ISO-4217 `currency_code` (gate A.1/A.6) — NEVER a float,
+    verbatim from `pos-sales/sales.yaml`. Timestamps are RFC 3339 / `date-time` in
+    UTC; `businessDate` is a `date`. Request/response bodies are explicit wire
+    projections (§IV) — no raw DB shape, no credentials, no `tenant_id` (implicit
+    in the authenticated principal scope), no `payloadHash` echoed back.
+
+    Failure vocabulary: a single canonical `Error` envelope matching
+    `auth.openapi.yaml` / `outbox.openapi.yaml` / `pos-sales/sales.yaml`. The
+    closed `error.code` set on this surface is `validation_failure`,
+    `snapshot_required` (stale/unservable pull cursor, 409),
+    `idempotency_key_conflict` (ack key reused with a different outcome, 409),
+    `not_found` (non-disclosing 404-class for a cross-tenant / out-of-scope
+    work-item ref or foreign-scope cursor — no existence leak, §II/§XII), the
+    generic bearer-auth refusal (401), and `system_failure` (500).
+
+    This contract is consumed by
+    `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts`,
+    which loads it with an explicit `dir` because the production
+    `loadOpenApiContracts` helper is non-recursive (`apps/api/src/openapi/loader.ts`
+    — `readdirSync` with no recursive flag), exactly as `catalog/read-down.yaml`
+    and `pos-sales/sales.yaml` are loaded.
+
+    SCOPE (012-CONTRACT): this slice authors ONLY the contract YAML + its
+    structural conformance spec. It does NOT build the connector, implement the
+    feed/ack endpoints (DP2-side: a future 015 + connector-feed slice), register
+    the `erpnext.posting.requested` outbox event type (its own approval PR), or
+    add any ERPNext/Frappe client dependency (separate `[GATED]` `package.json`).
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: erpnext-connector
+    description: >
+      ERPNext connector posting feed (pull) + outcome ack. Spec 012 — the
+      DP2 ↔ connector contract boundary; pull/feed bidirectional transport.
+
+paths:
+  /api/connector/v1/erpnext/postings:
+    get:
+      summary: Pull a page of pending ERPNext posting work-items after a cursor.
+      operationId: connectorPullPostings
+      tags: [erpnext-connector]
+      security:
+        - connectorBearer: []
+      description: >
+        Return ordered, idempotent, gap-detectable pending posting work-items
+        (sale posts + void/refund reversals) after the supplied opaque `since`
+        cursor, for the authenticated connector principal's tenant scope, with an
+        advanced cursor reaching the current pending state. Mirrors the 010
+        read-down delta semantics: completeness is server-guaranteed, NOT
+        consumer-verified by contiguity. Re-requesting the same `since` cursor
+        yields the same logical work set (idempotent replay). A cursor older than
+        the retained horizon (or otherwise unservable) returns `snapshot_required`
+        — the connector MUST re-baseline by pulling from the start. A cursor
+        presented under a foreign scope is refused non-disclosingly. Scope is
+        taken from the connector principal ONLY; query scope is never trusted.
+      parameters:
+        - $ref: "#/components/parameters/Since"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: >
+            A page of pending posting work-items after `since`, with the advanced
+            opaque server cursor. Cursor-paginated via `next_page_token`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostingFeedPage"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SnapshotRequired"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/connector/v1/erpnext/postings/{workItemRef}/outcome:
+    post:
+      summary: Report the outcome of posting a work-item back to DP2.
+      operationId: connectorAckOutcome
+      x-idempotency: required
+      tags: [erpnext-connector]
+      security:
+        - connectorBearer: []
+      description: >
+        Report the outcome of posting one work-item to ERPNext. DP2 records the
+        outcome and owns the resulting DLQ + reconciliation state (017). A
+        `posted` outcome carries the ERPNext `documentRef` and the (nullable until
+        016) ETA status/UUID passthrough. A `permanently_rejected` outcome carries
+        a structured `reason` so the reconciliation flag is actionable. The DP2
+        sale fact is NEVER mutated by an outcome — only its posting status
+        advances. Scope/tenant resolve from the connector principal; body-supplied
+        scope is rejected (§XII strict boundary).
+
+        Idempotency: the `Idempotency-Key` header is REQUIRED, reusing the existing
+        `IdempotencyInterceptor` — re-acking the same work-item with the SAME
+        logical outcome replays deterministically (a duplicate `posted` echoes the
+        existing `documentRef`, never creating a second). Re-acking with a
+        DIFFERENT logical outcome returns 409 `idempotency_key_conflict`. No new
+        idempotency primitive is introduced (O-3).
+      parameters:
+        - $ref: "#/components/parameters/WorkItemRef"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutcomeAckRequest"
+      responses:
+        "200":
+          description: >
+            Idempotent replay — this work-item outcome was already recorded (same
+            `Idempotency-Key` or same logical outcome). Returns the identical
+            recorded-outcome projection with `Idempotent-Replayed: true`; no
+            double-apply.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedOutcome"
+        "201":
+          description: Outcome recorded for the first time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedOutcome"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+components:
+  securitySchemes:
+    connectorBearer:
+      type: http
+      scheme: bearer
+      description: >
+        OPAQUE, REVOCABLE service bearer token presented as
+        `Authorization: Bearer <token>` — the platform's "opaque revocable bearer
+        tokens (API)" baseline (the generic `bearerAuth` in `auth.openapi.yaml`),
+        NOT a Clerk JWT (`clerkJwt`) and NOT a human cookie session. The connector
+        authenticates as a dedicated, tenant-scoped, revocable MACHINE principal
+        (011 version-pin / connector-lifecycle §2). Verified at the API edge;
+        fail-closed; the token is not propagated past the verifier. The exact
+        principal-provisioning mechanism is a DP2 implementation concern, not part
+        of this wire contract — the contract pins only that auth is an opaque
+        revocable tenant-scoped service bearer.
+
+  parameters:
+    Since:
+      name: since
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+      description: >
+        The opaque `cursor` returned by a prior pull page. Treated as opaque —
+        clients MUST NOT decode or construct it. Omit (or send empty) to pull from
+        the start (re-baseline). Scope-bound: a cursor presented under a foreign
+        scope is refused non-disclosingly; a cursor older than the retained
+        horizon returns `snapshot_required`.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+      description: >
+        Maximum work-items per page. The server MAY return fewer. Bounds memory on
+        both ends; aligns with the 500/request backfill ceiling established in 009.
+    WorkItemRef:
+      name: workItemRef
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        The opaque, server-issued work-item reference from a pulled
+        `PostingWorkItem.workItemRef`. Resolves only within the connector
+        principal's tenant scope — out-of-scope refs are non-disclosing 404s
+        (§II/§XII).
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      description: >
+        REQUIRED on the outcome ack. Reuses the existing `IdempotencyInterceptor`
+        — keyed on `(method, route, clientId = connector principal, key)`.
+        Identical retry replays the stored response; key-reuse with a different
+        logical outcome returns 409 `idempotency_key_conflict`. No new idempotency
+        primitive is introduced.
+
+  headers:
+    IdempotentReplayed:
+      description: >
+        Present and `true` on a 200 idempotent-replay response (mirrors the
+        `pos-sales` / `posCaptureItem` convention). Absent on a fresh 201 record.
+      schema:
+        type: boolean
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # Money — exact-decimal string + ISO-4217 currency (gate A.1/A.6, no float)
+    # Verbatim from pos-sales/sales.yaml (shared discipline; no new primitive).
+    # -----------------------------------------------------------------------
+    DecimalAmount:
+      type: string
+      pattern: '^-?[0-9]{1,15}(\.[0-9]{1,4})?$'
+      description: >
+        Exact-decimal monetary amount as a string (gate A.6 — never a float).
+        Up to 4 fractional digits, stored as `numeric(19,4)`. Always paired
+        with a `currency_code`.
+    CurrencyCode:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: ISO-4217 alphabetic currency code. Preserved as received.
+
+    # -----------------------------------------------------------------------
+    # Pulled work-item — the sale projection to post (O-1), mirrors 008 Sale.
+    # Self-contained per-file (the 010/008 convention copies, not cross-$refs).
+    # -----------------------------------------------------------------------
+    PostingWorkItem:
+      type: object
+      additionalProperties: false
+      required:
+        - workItemRef
+        - kind
+        - sourceSystem
+        - externalId
+        - payloadHash
+        - businessDate
+        - sale
+        - itemCursor
+      description: >
+        One pending posting the connector must post to ERPNext. `kind`
+        distinguishes a fresh sale post from a reversal. Carries the full 008 sale
+        projection so the connector posts WITHOUT reaching back into DP2 (O-1).
+        No `tenant_id` (implicit in the authenticated scope), no credentials.
+      properties:
+        workItemRef:
+          type: string
+          format: uuid
+          description: >
+            Stable, opaque, scope-bound work-item reference. Echoed back on the
+            outcome ack to identify which posting this outcome resolves.
+        kind:
+          type: string
+          enum: [sale_post, reversal]
+          description: >
+            `sale_post` — post the sale as a submitted ERPNext Sales Invoice
+            (+ Payment Entry). `reversal` — post a NEW reversing document (credit
+            note / return invoice) for the referenced original sale (O-4);
+            `reversalOf` is then present.
+        sourceSystem:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Provenance + dedup key (mirrors 008). The wire idempotency anchor (O-3).
+        externalId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >
+            POS-side sale identifier. With `sourceSystem` it forms the stable key
+            the connector maps to a deterministic ERPNext document (O-3) — the
+            same pair resolves to the same document on retry.
+        payloadHash:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: >
+            SHA-256 of the canonical sale payload (gate C provenance), so the
+            connector and DP2 can reconcile a posting to the exact source payload.
+        businessDate:
+          type: string
+          format: date
+          description: >
+            The sale's business date (008) — drives the ERPNext `posting_date`
+            (posting decision §2), so a delayed/offline sale lands in the correct
+            fiscal period. NEVER the connector's post-time.
+        reversalOf:
+          description: >
+            Present only when `kind = reversal` — the provenance of the original
+            sale this work-item reverses, so the connector locates the document to
+            reverse (O-4). Null/absent for `sale_post`.
+          anyOf:
+            - $ref: "#/components/schemas/ReversalRef"
+            - type: "null"
+        sale:
+          $ref: "#/components/schemas/Sale"
+        itemCursor:
+          type: string
+          minLength: 1
+          description: >
+            Opaque advanced cursor after this work-item (≤ the page cursor).
+            Clients MUST treat as opaque.
+
+    ReversalRef:
+      type: object
+      additionalProperties: false
+      required: [sourceSystem, externalId, reversalKind]
+      description: Provenance of the original sale a reversal work-item targets (O-4).
+      properties:
+        sourceSystem:
+          type: string
+          minLength: 1
+          maxLength: 100
+        externalId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        reversalKind:
+          type: string
+          enum: [void, refund]
+          description: Whether the reversal stems from a void or a refund terminal event (008).
+
+    # -----------------------------------------------------------------------
+    # Sale projection — mirrors pos-sales/sales.yaml `Sale` / `SaleLine` (§IV).
+    # The connector posts FROM this; it is the 008 wire shape, not a DB row.
+    # -----------------------------------------------------------------------
+    Sale:
+      type: object
+      additionalProperties: false
+      required:
+        - saleRef
+        - storeId
+        - currencyCode
+        - posTotal
+        - occurredAt
+        - businessDate
+        - sourceSystem
+        - externalId
+        - lines
+      description: >
+        Wire projection of a captured 008 sale (decoupled from the `sales` /
+        `sale_lines` DB schema, §IV). Mirrors `pos-sales/sales.yaml` `Sale`,
+        minus request-only / advisory fields the connector does not need to post.
+      properties:
+        saleRef:
+          type: string
+          format: uuid
+          description: Stable 008 sale reference (= `sales.id`).
+        storeId:
+          type: string
+          format: uuid
+          description: >
+            DP2 store id — the connector maps it to an ERPNext company/warehouse
+            (013/014), behind this contract.
+        currencyCode:
+          $ref: "#/components/schemas/CurrencyCode"
+        posTotal:
+          $ref: "#/components/schemas/DecimalAmount"
+        occurredAt:
+          type: string
+          format: date-time
+          description: Business-event time at the POS (008).
+        businessDate:
+          type: string
+          format: date
+          description: Derived from the store timezone (008 FR-023); drives ERPNext posting_date.
+        sourceSystem:
+          type: string
+        externalId:
+          type: string
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/SaleLine"
+    SaleLine:
+      type: object
+      additionalProperties: false
+      required: [lineName, unitPrice, currencyCode, quantity, lineAmount, unit]
+      description: Wire projection of a frozen 008 sale-line snapshot (mirrors sales.yaml).
+      properties:
+        lineName:
+          type: string
+        unitPrice:
+          $ref: "#/components/schemas/DecimalAmount"
+        currencyCode:
+          $ref: "#/components/schemas/CurrencyCode"
+        quantity:
+          type: string
+          pattern: '^[0-9]{1,15}(\.[0-9]{1,6})?$'
+          description: Line quantity as reported (exact-decimal string, no float).
+        lineAmount:
+          $ref: "#/components/schemas/DecimalAmount"
+        taxAmount:
+          description: Per-line snapshot tax amount; null when not reported.
+          anyOf:
+            - $ref: "#/components/schemas/DecimalAmount"
+            - type: "null"
+        unit:
+          type: string
+        tenantProductRef:
+          description: >
+            Optional lineage to a tenant product; null for ad-hoc lines. The
+            connector maps it to an ERPNext Item (013) behind this contract.
+          anyOf:
+            - type: string
+              format: uuid
+            - type: "null"
+
+    # -----------------------------------------------------------------------
+    # Feed page — cursor-paginated (mirrors 010 delta page)
+    # -----------------------------------------------------------------------
+    PostingFeedPage:
+      type: object
+      additionalProperties: false
+      required: [items, cursor, next_page_token]
+      description: >
+        A page of pending posting work-items after the supplied `since` cursor,
+        with the advanced server cursor.
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/PostingWorkItem"
+        cursor:
+          type: string
+          minLength: 1
+          description: >
+            The advanced opaque server cursor — pass as `since` next time. Opaque;
+            do not decode.
+        next_page_token:
+          type: [string, "null"]
+          description: >
+            Opaque continuation token for the next page; null on the last page.
+            Opaque; do not decode.
+
+    # -----------------------------------------------------------------------
+    # Outcome ack request (connector → DP2) — strict (O-2)
+    # -----------------------------------------------------------------------
+    OutcomeAckRequest:
+      type: object
+      additionalProperties: false
+      required: [outcome]
+      description: >
+        The outcome of posting the `{workItemRef}` work-item. Tenant/store/actor
+        resolve from the connector principal and are rejected if body-supplied
+        (§XII strict boundary). `documentRef` is required when `outcome = posted`;
+        `reason` is required when `outcome = permanently_rejected`.
+      properties:
+        outcome:
+          type: string
+          enum: [posted, failed_transient, permanently_rejected]
+          description: >
+            `posted` — submitted to ERPNext (carries `documentRef`).
+            `failed_transient` — a retryable failure; DP2 re-offers the work-item
+            on the next pull (bounded by a retry budget).
+            `permanently_rejected` — non-retryable (carries `reason`); DP2
+            dead-letters it and raises a reconciliation flag (017).
+        documentRef:
+          description: >
+            The ERPNext document reference (submitted Sales Invoice / Payment
+            Entry / reversing-document id) — required on `posted`, echoed back
+            unchanged on an idempotent duplicate `posted` (O-3). Null otherwise.
+          anyOf:
+            - $ref: "#/components/schemas/ErpnextDocumentRef"
+            - type: "null"
+        etaStatus:
+          description: >
+            Egyptian Tax Authority status / UUID passthrough — populated only when
+            016 ETA is live (the connector's custom Frappe app owns ETA
+            submission). Null until then.
+          anyOf:
+            - $ref: "#/components/schemas/EtaStatus"
+            - type: "null"
+        reason:
+          description: >
+            Structured rejection reason — required when `outcome =
+            permanently_rejected`, so the 017 reconciliation flag is actionable.
+            Null otherwise.
+          anyOf:
+            - $ref: "#/components/schemas/RejectionReason"
+            - type: "null"
+
+    ErpnextDocumentRef:
+      type: object
+      additionalProperties: false
+      required: [doctype, name]
+      description: >
+        A reference to a submitted ERPNext document. Speaks the minimal generic
+        ERPNext addressing (doctype + name) — NOT field-level doctype internals
+        (O-6 version-independence).
+      properties:
+        doctype:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: ERPNext doctype (e.g. "Sales Invoice", "Payment Entry").
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: ERPNext document name/id (its primary key).
+
+    EtaStatus:
+      type: object
+      additionalProperties: false
+      required: [state]
+      description: ETA submission status passthrough (016). Opaque to DP2 beyond `state`.
+      properties:
+        state:
+          type: string
+          enum: [submitted, accepted, rejected, pending]
+        uuid:
+          description: ETA-assigned long-id / UUID, when available.
+          anyOf:
+            - type: string
+              minLength: 1
+            - type: "null"
+
+    RejectionReason:
+      type: object
+      additionalProperties: false
+      required: [category, message]
+      description: Structured permanent-rejection reason (drives the 017 reconciliation flag).
+      properties:
+        category:
+          type: string
+          enum: [validation, closed_period, unmapped_item, unmapped_account, other]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Human-readable detail. No credentials, no sensitive ERPNext internals.
+
+    # -----------------------------------------------------------------------
+    # Recorded-outcome response projection (DP2 → connector) — toBody (§IV)
+    # -----------------------------------------------------------------------
+    RecordedOutcome:
+      type: object
+      additionalProperties: false
+      required: [workItemRef, outcome, recordedAt]
+      description: >
+        Wire projection of the recorded outcome. Confirms what DP2 stored; the
+        connector treats it as the authoritative posting-status acknowledgement.
+      properties:
+        workItemRef:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [posted, failed_transient, permanently_rejected]
+        documentRef:
+          anyOf:
+            - $ref: "#/components/schemas/ErpnextDocumentRef"
+            - type: "null"
+        recordedAt:
+          type: string
+          format: date-time
+          description: Server-clock stamp when DP2 recorded the outcome (the security clock).
+        dlqueued:
+          type: boolean
+          description: >
+            True when a `permanently_rejected` outcome moved the work-item to the
+            DP2 dead-letter state + raised a reconciliation flag (017). Absent/false
+            otherwise.
+
+    # -----------------------------------------------------------------------
+    # Canonical Error envelope (mirrors auth/outbox/pos-sales — verbatim shape)
+    # -----------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `outbox.openapi.yaml` / `pos-sales/sales.yaml`
+        (used verbatim — no extra fields, no `details`). Cross-tenant /
+        out-of-scope refusals are non-disclosing (§II/§XII) — they never enumerate
+        the underlying cause.
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | snapshot_required | idempotency_key_conflict |
+                not_found | system_failure (plus the generic 401 refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: >
+        `validation_failure` — malformed query / body, unknown key (strict
+        boundary), bad cursor format, a body-supplied server-owned field, or a
+        missing conditional field (e.g. `documentRef` absent on a `posted`
+        outcome). Deterministic; no record created.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Generic refusal (401). The body does not distinguish a missing / invalid /
+        revoked connector bearer token from a missing tenant binding or an
+        in-scope-but-not-permitted principal. Non-disclosing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        `not_found` — non-disclosing 404-class for a cross-tenant / out-of-scope
+        `workItemRef` or a foreign-scope cursor. Identical for cross-tenant,
+        out-of-scope, and genuinely-absent refs, with NO existence leak via any
+        response or error shape (§II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: >
+        `idempotency_key_conflict` (409) — the same `Idempotency-Key` reused on the
+        outcome ack with a DIFFERENT logical outcome. Deterministic, no side
+        effects. (A duplicate ack with the SAME outcome is an idempotent 200
+        replay, not a conflict.)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SnapshotRequired:
+      description: >
+        `snapshot_required` (409) — the supplied pull `since` cursor is older than
+        the retained horizon (or otherwise unservable). The connector MUST
+        re-baseline by pulling from the start (omit `since`). Deterministic.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: >
+        `system_failure` (500) — an unexpected server error. The cause is recorded
+        server-side keyed by `request_id` and is never returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
