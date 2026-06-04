@@ -22,7 +22,7 @@
                   │  the ONLY edge that touches ERPNext,
                   │  mediated by the future connector
                   ▼
-   Retail-Tower-ERPNext-Connector  ──▶  ERPNext / Frappe
+   Retail-Tower-ERP-Next-Connector  ──▶  ERPNext / Frappe
         (future separate repo,            reference ERP /
          gated by ADR)                    accounting / inventory;
                                           POS surface = reference-only
@@ -55,7 +55,7 @@
 - **Unaware of Frappe.** No ERPNext SDK, no Frappe URLs, no direct ERP queries. ERP-backed admin data arrives as DP2 API responses.
 - Any ERP-derived screen is unblocked **only** once the matching `[GATED]` DP2 OpenAPI contract is merged (Constitution §IV contract-first coupling).
 
-### Retail-Tower-ERPNext-Connector (future repo — does not exist yet)
+### Retail-Tower-ERP-Next-Connector (future repo — does not exist yet)
 
 - The **only** component that holds ERPNext credentials and speaks the Frappe API.
 - A **concrete instance** of the `Retail-Tower-Integrations` split candidate ([future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md)).

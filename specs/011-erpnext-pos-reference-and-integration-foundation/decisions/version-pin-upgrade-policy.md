@@ -98,7 +98,7 @@ numbered item answers the correspondingly-numbered sub-question above.
 
 - **012** (connector contracts): records the exact v15 point-release pin + the
   relied-upon doctype/API surface; defines the DP2 ↔ connector OpenAPI contract
-  insulated from ERPNext churn; proposes the `Retail-Tower-ERPNext-Connector`
+  insulated from ERPNext churn; proposes the `Retail-Tower-ERP-Next-Connector`
   split ADR; any new dependency is a separate `[GATED]` decision.
 - **017** (sync-ops/repair): its repair/reconciliation surface assumes the pinned
   v15 API surface; a pin advance re-runs the contract tests before 017 relies on
