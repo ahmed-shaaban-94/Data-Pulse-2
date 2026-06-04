@@ -84,7 +84,7 @@ slices:
     # is RECORDED in data-model.md §3 + wave-status.md. Dependents (010-SCHEMA)
     # may treat it as satisfied once recorded. The app-level outbox-mirror
     # alternative is REJECTED for v1.
-    status: not_started
+    status: merged   # #460 e280892 — SIGNOFF+SETUP shipped together
     approval_required: false   # decision gate, not a code gate
     depends_on: []
     blocks:
@@ -105,7 +105,7 @@ slices:
   - id: 010-SETUP
     task_ids: [T002, T003]
     type: chore
-    status: not_started
+    status: merged   # #460 e280892
     approval_required: false
     depends_on: [010-SIGNOFF-READONLY]
     blocks:
@@ -132,7 +132,7 @@ slices:
   - id: 010-CONTRACT
     task_ids: [T010, T011]
     type: feat
-    status: not_started
+    status: merged   # #463 2cf9cf7 — [GATED] approved in-session; clerkJwt (README posDeviceAuth was a mislabel)
     approval_required: true   # [GATED] — packages/contracts/openapi/** (Constitution §IV/§VIII) — requires in-session approval
     depends_on: [010-SETUP]
     blocks:
@@ -160,7 +160,7 @@ slices:
   - id: 010-SCHEMA
     task_ids: [T012, T013]
     type: feat
-    status: not_started
+    status: merged   # #462 a882e4e — [GATED] approved in-session; 0015 + dumb triggers + CASCADE FKs (advisory-op read model)
     approval_required: true   # [GATED] — packages/db/** schema + SQL migration + triggers (Constitution §VIII) — requires in-session approval
     depends_on: [010-SETUP, 010-SIGNOFF-READONLY]
     blocks:
@@ -196,7 +196,7 @@ slices:
   - id: 010-ISOLATION-HARNESS
     task_ids: [T014, T015]
     type: test
-    status: not_started
+    status: merged   # #469 16304af
     approval_required: false
     depends_on: [010-SCHEMA]
     blocks:
@@ -221,7 +221,7 @@ slices:
   - id: 010-US1-SNAPSHOT
     task_ids: [T030, T031, T032, T033, T034, T035, T036]
     type: feat
-    status: not_started
+    status: merged   # #473 f27d499 — MVP + POS-Pulse 010 unblock; Tenant⊕Override resolver w/ store-GUC; money normalizeAmount
     approval_required: false
     depends_on: [010-CONTRACT, 010-SCHEMA, 010-ISOLATION-HARNESS]
     blocks:
@@ -255,7 +255,7 @@ slices:
   - id: 010-US2-DELTA
     task_ids: [T040, T041, T042, T043, T044]
     type: feat
-    status: not_started
+    status: merged   # #475 c6114bd — advisory-op read-side re-resolution; R9 override-masking
     approval_required: false
     depends_on: [010-US1-SNAPSHOT]   # shares read-down.controller/service + toBody()
     blocks:
@@ -284,7 +284,7 @@ slices:
   - id: 010-US3-ISOLATION
     task_ids: [T050, T051, T052, T053]
     type: test
-    status: not_started
+    status: merged   # #477 49ccca4 — both-routes isolation + DB-layer resolved-read-path RLS-bypass
     approval_required: false
     depends_on: [010-US1-SNAPSHOT, 010-US2-DELTA]   # verify runs across both routes
     blocks:
@@ -309,7 +309,7 @@ slices:
   - id: 010-POLISH
     task_ids: [T090, T091, T092]
     type: chore
-    status: not_started
+    status: merged   # #478 PENDING — signals + report-only k6 + coverage; metric in shared api.metrics.ts (not a per-feature file)
     approval_required: false
     depends_on: [010-US1-SNAPSHOT, 010-US2-DELTA, 010-US3-ISOLATION]
     blocks:
@@ -331,7 +331,7 @@ slices:
   - id: 010-CLOSEOUT
     task_ids: [T093]
     type: docs
-    status: not_started
+    status: merged   # THIS-PR PENDING — this slice — map/wave-status reconciled to terminal
     approval_required: false
     depends_on: [010-POLISH]
     blocks: []
