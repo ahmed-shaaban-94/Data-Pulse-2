@@ -22,3 +22,11 @@ export const PageTokenSchema = z.string().min(1).optional();
 
 /** limit — coerced 1..1000 (contract Limit: minimum 1, maximum 1000). */
 export const LimitSchema = z.coerce.number().int().min(1).max(1000).optional();
+
+/**
+ * since — REQUIRED opaque cursor on the delta endpoint (contract Since). A
+ * non-empty string; the service decodes + scope-validates it. Missing/empty →
+ * 400 validation (a delta with no cursor is meaningless; the consumer must
+ * snapshot first).
+ */
+export const SinceSchema = z.string().min(1);
