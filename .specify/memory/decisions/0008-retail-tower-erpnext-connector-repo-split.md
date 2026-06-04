@@ -1,7 +1,8 @@
 # ADR 0008 — Split Retail-Tower-ERP-Next-Connector from Data-Pulse-2
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-06-04
+**Accepted**: 2026-06-04 by Ahmed Shaaban (owner) — after 012 (PR #476) merged
 **Owner**: Ahmed Shaaban
 **Constitution version**: v3.0.1
 **Feature / Ref**: [specs/012-erpnext-connector-contracts](../../../specs/012-erpnext-connector-contracts/spec.md); realises the [011 signed decisions](../../../specs/011-erpnext-pos-reference-and-integration-foundation/spec.md); frames the connector as the **concrete ERPNext instance** of the `Retail-Tower-Integrations` candidate in [docs/architecture/future-repo-split-criteria.md](../../../docs/architecture/future-repo-split-criteria.md) (additive — the umbrella candidate is preserved, not superseded)
@@ -67,10 +68,13 @@ not ERPNext doctype fields).
 
 ### D5. Process — accept before create
 
-Per the split-criteria "process for a split": this ADR is **Proposed**. On
-**acceptance**, the `Retail-Tower-ERP-Next-Connector` repo is created and built
-against the 012 contract, preserving the OpenAPI contract boundary with DP2.
-Until accepted, any DP2-side prototyping stays a backend module (never direct
+Per the split-criteria "process for a split": this ADR is **Accepted**
+(2026-06-04, after 012 / PR #476 merged). The `Retail-Tower-ERP-Next-Connector`
+repo is therefore authorized to be created and built against the 012 contract,
+preserving the OpenAPI contract boundary with DP2. The repo is **not created by
+this ADR** — acceptance authorizes the creation; the actual build proceeds via
+the `[GATED]` 012-CONTRACT OpenAPI slice + the connector repo work. Any DP2-side
+prototyping before the contract lands stays a backend module (never direct
 ERPNext calls from POS-Pulse or Console).
 
 ---

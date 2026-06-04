@@ -38,7 +38,9 @@ change.
 | `connector-lifecycle.md` | Auth, credential ownership, pull/ACK loop, DLQ ownership, version-independence | Authored |
 | `follow-up-notes.md` | Named (not registered) outbox event type + 013–017 feed map | Authored |
 | `wave-status.md` | This file | Authored |
-| `.specify/memory/decisions/0008-retail-tower-erpnext-connector-repo-split.md` | Proposed connector split ADR | **Proposed** |
+| `.specify/memory/decisions/0008-retail-tower-erpnext-connector-repo-split.md` | Connector split ADR | **Accepted 2026-06-04** |
+
+> **Update 2026-06-04:** the 012 planning spec merged (PR #476), and **ADR 0008 is now Accepted** — the `Retail-Tower-ERP-Next-Connector` repo split is authorized. Next: the `[GATED]` 012-CONTRACT OpenAPI slice + ERPNext-major staging validation, then build the connector repo against the contract.
 
 ---
 
@@ -65,21 +67,22 @@ client dependency (`[GATED]` `package.json`).
 
 ## Proposed (awaiting approval)
 
-- **ADR 0008** — split the `Retail-Tower-ERP-Next-Connector` repo (owner acceptance).
 - The `[GATED]` **012-CONTRACT** slice — authors the OpenAPI YAML for the pull/feed contract.
 - **013–017** — the rest of the ERPNext arc (each its own Spec-Kit chain).
+
+_(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04; no longer awaiting approval.)_
 
 ---
 
 ## Next recommended action
 
-After review/merge of this planning spec: **(a)** owner accepts **ADR 0008**;
-**(b)** dispatch the `[GATED]` **012-CONTRACT** slice to author the OpenAPI YAML
+The 012 planning spec merged (PR #476) and **ADR 0008 is Accepted**. Remaining:
+**(a)** dispatch the `[GATED]` **012-CONTRACT** slice to author the OpenAPI YAML
 for the DP2 ↔ connector pull/feed contract (the 008-CONTRACT / 010-CONTRACT
-analogue); **(c)** confirm the final ERPNext major via staging-install validation
-of the contract obligations (the version-pin gate deferred to 012); **(d)** create
-the connector repo and build it against the contract. Then 013 (product master)
-can begin.
+analogue); **(b)** confirm the final ERPNext major via staging-install validation
+of the contract obligations (the version-pin gate deferred to 012); **(c)** create
+the `Retail-Tower-ERP-Next-Connector` repo and build it against the contract. Then
+013 (product master) can begin.
 
 ---
 
