@@ -298,36 +298,35 @@ The **structure-gating** questions are **LOCKED** (owner, 2026-06-04); the
 | **OQ-2** cardinality | ✅ **LOCKED — 1:1** | unique `(tenant_id, tenant_product_id)` |
 | **OQ-7** lifecycle | ✅ **LOCKED — suggest-then-confirm** | requires a DP2 table + `[GATED]` 013-CONTRACT review surface |
 | **OQ-8** direction | ✅ **LOCKED — lazy resolution, no import worker** | no worker; posting-time read |
-| **OQ-3** UOM | ⏳ open | data-model slice (quantity exactness, §III) |
-| **OQ-4** price-list vs explicit amounts | ⏳ open | data-model slice (§IX-safe default = explicit DP2 amounts) |
-| **OQ-5** sellable-state divergence | ⏳ open | resolution slice |
+| **OQ-3** UOM | ✅ **resolved — no column** | connector/015 handles UOM vs the ERPNext Item UOM; stays a 015 behavioral decision (§III exactness enforced there) |
+| **OQ-4** price-list vs explicit amounts | ✅ **resolved — no column** | §IX-forced: DP2 amounts authoritative (posting decision §4); no pricing on the identity table; 015 behavioral detail |
+| **OQ-5** sellable-state divergence | ⏳ open | resolution slice (does a disabled Item block resolution?) |
 | **OQ-6** unknown-items relationship | ⏳ open | resolution slice |
 
-The plan may now proceed to **`data-model.md`** for the new `[GATED]` mapping
-table. OQ-3/4/5/6 are **posting-detail**, not table-structure — they can lock
-during the data-model/resolution slices; they do **not** block authoring the
-mapping table's core grain (which OQ-1/2/7/8 already determine).
+**`data-model.md` is now authored** ([data-model.md](./data-model.md)) — the
+`[GATED]` `erpnext_item_map` identity table (1:1, suggest/confirm state +
+confirmed-only invariant, optimistic `version` concurrency, RLS). Locking OQ-3/4
+meant deciding **they need no column** (UOM → connector/015; pricing → §IX-forced
+off-table); they remain 015 posting-behavior decisions. OQ-5/6 stay open for the
+resolution slice.
 
 ---
 
 ## Next step
 
-The structure-gating questions are answered and the plan is complete. The next
-move is the **`[GATED]` 013-MAPPING-MODEL** slice — author `data-model.md` for the
-new mapping table (grain, columns, RLS, provenance, the unique 1:1 constraint),
-locking OQ-3/4 (UOM, pricing) as part of it:
+`spec.md` + `plan.md` + `data-model.md` are authored. The data-model designs a
+**`[GATED]`** surface (new table + migration), so the next moves are the actual
+gated approval slices, sequenced by `tasks.md` / `execution-map.yaml`:
+
+- **013-MAPPING-SCHEMA** `[GATED]` — author the Drizzle schema
+  `packages/db/src/schema/catalog/erpnext-item-map.ts` + the migration (next
+  available number, `0017` indicatively) with paired `*.down.sql` + RLS policies.
+- **013-CONTRACT** `[GATED]` — the suggest/confirm review OpenAPI surface (§IV).
+- **013-RESOLVE** — posting-time resolution (confirmed-only; unmapped → DLQ),
+  sequenced with 015; locks OQ-5/OQ-6 (and OQ-3 behavior).
 
 ```text
-Use Agent OS. Author 013 data-model.md — the [GATED] erpnext-item-map mapping
-table (1:1 tenant_product↔Item, suggest/confirm state, provenance, RLS), and
-lock OQ-3/OQ-4. Docs-only ([GATED] schema design, no migration authored yet).
-Stop before commit.
+Use Agent OS. Author 013 tasks.md + execution-map.yaml — sequence the [GATED]
+schema slice, the [GATED] 013-CONTRACT, and the resolution slice from the
+authored data-model. Docs-only. Stop before commit.
 ```
-
-> Note: `data-model.md` is a design doc (docs-only), but it designs a `[GATED]`
-> surface (new table + migration), so it carries the `[GATED]` marker and the
-> actual migration/schema lands in its own approval slice after the design is
-> accepted.
-
-Only after that does a `data-model.md` / `[GATED]` schema slice (013-MAPPING-MODEL)
-become dispatchable.
