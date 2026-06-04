@@ -7,7 +7,7 @@
 **Status**: Draft — **docs/spec only** (no code, no schema, no contract YAML)
 **Owner**: Ahmed Shaaban
 **Depends on**: [docs/architecture/repo-boundaries.md](../../docs/architecture/repo-boundaries.md), [docs/architecture/future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md), [docs/architecture/feature-placement-rules.md](../../docs/architecture/feature-placement-rules.md), [docs/ROADMAP-ERP.md](../../docs/ROADMAP-ERP.md)
-**Consumed by**: A future custom Frappe app/repo, **Retail-Tower-ERPNext-Connector** (separate repository — does not exist yet; see §7)
+**Consumed by**: A future custom Frappe app/repo, **Retail-Tower-ERP-Next-Connector** (separate repository — does not exist yet; see §7)
 **Constitution version**: 3.0.1 — primary touchpoints §IV (Contract-First Integration / trust boundary), §IX (Source-of-Truth Model), §III (Backend Authority), §XII (Object Safety), §XIV (PII / data-class discipline)
 
 **Input**: User description — create a docs-only Spec Kit foundation feature that establishes ERPNext/Frappe as the reference ERP/accounting/inventory system for Retail Tower OS, fixes the integration boundaries (POS-Pulse never calls Frappe directly; Retail-Tower-Console consumes Data-Pulse generated clients only; ERPNext POS is reference-only, never the production cashier terminal), and records the decisions that MUST be signed before any ERPNext integration code is written.
@@ -22,7 +22,7 @@
 - Q: Is ERPNext the production POS / cashier terminal? → A: **No.** ERPNext/Frappe is the **ERP/accounting/inventory reference system**. **ERPNext POS behavior is reference-only** — it informs how Retail Tower OS thinks about posting, stock, and tax, but the production cashier terminal remains **POS-Pulse**. (Role locked.)
 - Q: May POS-Pulse call Frappe/ERPNext directly? → A: **Never.** All POS↔ERP communication flows through Data-Pulse-2's versioned OpenAPI contracts and (eventually) the connector. Data-Pulse-2 remains the backend contract and orchestration boundary; ERPNext is reachable only via that boundary. (Trust boundary locked, consistent with Constitution §IV and [repo-boundaries.md](../../docs/architecture/repo-boundaries.md).)
 - Q: Does Retail-Tower-Console talk to ERPNext? → A: **No.** Retail-Tower-Console remains **frontend-only** and consumes **Data-Pulse-generated clients only**. It has no awareness of Frappe. (Console boundary locked.)
-- Q: Where does the connector live? → A: A **separate future custom Frappe app/repo**, **Retail-Tower-ERPNext-Connector**. It is framed as a **concrete instance of the already-named `Retail-Tower-Integrations` candidate** in [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md), and its creation is gated behind that document's **ADR-required split process** — no connector repo is created by this spec. (Connector home locked — Decision context, see §7.)
+- Q: Where does the connector live? → A: A **separate future custom Frappe app/repo**, **Retail-Tower-ERP-Next-Connector**. It is framed as a **concrete instance of the already-named `Retail-Tower-Integrations` candidate** in [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md), and its creation is gated behind that document's **ADR-required split process** — no connector repo is created by this spec. (Connector home locked — Decision context, see §7.)
 - Q: The 011–017 numbers conflict with `docs/ROADMAP-ERP.md` (which proposed 011=Purchasing, 012=Reporting). Which numbering wins? → A: **011–017 are claimed for the ERPNext integration arc.** `ROADMAP-ERP.md` is **stale** — its header explicitly states the numbers `008`–`012` are "proposed identifiers, not reserved," and the repo actually shipped 008=Sales, 009=Inventory, 010=POS catalogue read-down. This spec records the supersession; a one-line erratum pointer is added to `ROADMAP-ERP.md` (the brief permits roadmap updates where conventions require). (Numbering locked — Decision context, see §6.)
 - Q: Does 011 implement catalog import, inventory sync, sale posting, or tax logic? → A: **No.** Those are the downstream specs 012–017 (§8). 011 only fixes the foundation and the **signed-decision gate** that precedes them. (Implementation deferral locked.)
 
@@ -57,7 +57,7 @@ It is the architectural "constitution amendment" for the ERPNext arc, expressed 
   - Data-Pulse-2 remains the **backend contract and orchestration boundary**.
   - **POS-Pulse never calls Frappe/ERPNext directly.**
   - **Retail-Tower-Console remains frontend-only** and consumes **Data-Pulse-generated clients only**.
-  - The connector lives in a **separate future Frappe repo** (`Retail-Tower-ERPNext-Connector`), gated by the existing ADR split process.
+  - The connector lives in a **separate future Frappe repo** (`Retail-Tower-ERP-Next-Connector`), gated by the existing ADR split process.
 - Produce an **ERPNext POS reference map** that translates ERPNext POS concepts into Retail Tower OS terms (and marks what is reference-only vs what DP2 already owns).
 - Stand up four **decision records** — posting, stock impact, tax/fiscal (Egypt v1), version pin & upgrade policy — authored as explicit **`Status: UNSIGNED — BLOCKS IMPLEMENTATION`** placeholders and signed by the owner before any downstream implementation (now **SIGNED** 2026-06-03; see §9).
 - Publish a **follow-up spec map** for **012–017** with dependencies and gates, so the integration arc is sequenced before any of it is green-lit.
@@ -76,7 +76,7 @@ This feature is **docs/spec only**. It explicitly does **not**:
 - Add any **connector client code**, ERPNext SDK, Frappe API client, or HTTP wiring.
 - Touch **POS, Console, billing, reporting, analytics, ClickHouse, Dagster, dbt, or CI** (`.github/**`).
 - **Implement** catalog import, inventory sync, sale posting, or tax logic — those are 013/014/015/016 (§8).
-- Create the **`Retail-Tower-ERPNext-Connector` repository** — that requires an accepted ADR per [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md).
+- Create the **`Retail-Tower-ERP-Next-Connector` repository** — that requires an accepted ADR per [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md).
 - **Sign** any of the four decision records — 011 stands up the *placeholders*; signing is a separate owner act (the acceptance gate, §9).
 - Author `plan.md`, `tasks.md`, `execution-map.yaml`, `data-model.md`, `research.md`, or contract YAML — a foundation spec PR is docs-only, consistent with the 010 spec's own §3 Non-Goals. These artefacts (if needed) belong to the downstream 012–017 specs.
 - Add or change **runtime behavior** of any kind. No code path changes; nothing reads or writes differently after this PR.
@@ -89,7 +89,7 @@ This feature is **docs/spec only**. It explicitly does **not**:
 |---|---|
 | **Data-Pulse-2 (backend)** | The **source of truth** and the **only** system permitted to talk to ERPNext (via the future connector). Owns the OpenAPI contracts every other repo consumes. Remains the orchestration boundary for all ERP interactions. |
 | **ERPNext / Frappe** | The **reference ERP/accounting/inventory system**. Reachable only through Data-Pulse-2 + the connector. Its **POS surface is reference-only** — studied, never adopted as the cashier terminal. |
-| **Retail-Tower-ERPNext-Connector** *(future repo, does not exist yet)* | A separate custom Frappe app/repo that will mediate Data-Pulse-2 ↔ ERPNext. A concrete instance of the `Retail-Tower-Integrations` split candidate. Created only after an accepted ADR. |
+| **Retail-Tower-ERP-Next-Connector** *(future repo, does not exist yet)* | A separate custom Frappe app/repo that will mediate Data-Pulse-2 ↔ ERPNext. A concrete instance of the `Retail-Tower-Integrations` split candidate. Created only after an accepted ADR. |
 | **POS-Pulse (cashier terminal)** | The production cashier. **Never calls Frappe/ERPNext directly.** Continues to integrate exclusively via Data-Pulse-2's POS contracts (`/api/pos/v1/...`). Unaware of ERPNext. |
 | **Retail-Tower-Console (admin UI)** | **Frontend-only.** Consumes **Data-Pulse-generated clients only**. Unaware of Frappe. ERP-backed data reaches it as ordinary Data-Pulse API responses. |
 | **Owner / Architect** | The signer of the four decision records (§9). No 012–017 implementation begins until they sign. |
@@ -112,7 +112,7 @@ The full statement lives in [integration-boundaries.md](./integration-boundaries
                   │ (the ONLY arrow that touches ERPNext;
                   │  mediated by the future connector)
                   ▼
-   Retail-Tower-ERPNext-Connector  ──▶  ERPNext / Frappe
+   Retail-Tower-ERP-Next-Connector  ──▶  ERPNext / Frappe
         (future separate repo)            (reference ERP;
                                             POS surface = reference-only)
 ```
@@ -137,12 +137,12 @@ A one-line erratum pointer is added to `ROADMAP-ERP.md` directing readers here. 
 
 ## 7. Connector repo: relationship to `Retail-Tower-Integrations`
 
-**Decision (recorded here):** the future **`Retail-Tower-ERPNext-Connector`** is the **concrete instance** of the already-named **`Retail-Tower-Integrations`** split candidate in [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md) ("Create only when … ERP/accounting connectors … become substantial. Triggering boundary: security (external credentials, blast radius) and team ownership (connector roadmap)").
+**Decision (recorded here):** the future **`Retail-Tower-ERP-Next-Connector`** is the **concrete instance** of the already-named **`Retail-Tower-Integrations`** split candidate in [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md) ("Create only when … ERP/accounting connectors … become substantial. Triggering boundary: security (external credentials, blast radius) and team ownership (connector roadmap)").
 
 Consequences:
 
 - The connector is **not created by this spec.** Its creation follows the existing **process for a split**: confirm a boundary test is met → open an ADR under `.specify/memory/decisions/` proposing the split, its contract surface, and its data ownership → get the decision accepted → only then create the repo, preserving the OpenAPI contract boundary with Data-Pulse-2.
-- This avoids inventing a second, overlapping "connector repo" concept. There is one candidate (`Retail-Tower-Integrations`); `Retail-Tower-ERPNext-Connector` is its ERPNext realization (the repo name MAY be finalized in the split ADR).
+- This avoids inventing a second, overlapping "connector repo" concept. There is one candidate (`Retail-Tower-Integrations`); `Retail-Tower-ERP-Next-Connector` is its ERPNext realization (the repo name MAY be finalized in the split ADR).
 - Until that ADR is accepted, ERPNext integration logic, if any prototyping is approved, would start as a **backend module** in Data-Pulse-2 (per feature-placement-rules.md), never as direct calls from POS-Pulse or Console.
 
 ---
@@ -201,6 +201,6 @@ This is a **docs-only** foundation. After this PR:
 - **No OpenAPI changed.** `packages/contracts/openapi/**` is untouched.
 - **No `package.json` / lockfile / CI changed.**
 - **No runtime behavior changed.** Nothing reads or writes differently; there is no new code path.
-- **No connector exists.** `Retail-Tower-ERPNext-Connector` is named as a future repo, gated by an ADR; it is not created here.
+- **No connector exists.** `Retail-Tower-ERP-Next-Connector` is named as a future repo, gated by an ADR; it is not created here.
 
 The deliverable is a specification + four decision records + a follow-up map. The four decision records — authored as `UNSIGNED` placeholders in the foundation PR (#468, merged) — are now **SIGNED** (owner Ahmed Shaaban, 2026-06-03). The signed-decisions gate is therefore **SATISFIED**, and the next step is to begin planning **012-erpnext-connector-contracts** (consistent with the posting + version-pin decisions). See [wave-status.md](./wave-status.md) for the human-readable state.

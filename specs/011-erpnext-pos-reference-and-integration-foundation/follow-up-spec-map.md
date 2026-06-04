@@ -45,7 +45,7 @@
 - **Domain**: The OpenAPI contract surface + connector lifecycle between Data-Pulse-2 and ERPNext (the DP2 ↔ connector boundary; not ERPNext-internal APIs).
 - **Depends on**: 011 signed.
 - **Gated by**: `posting-decision-record` (shape of what crosses) + `version-pin-upgrade-policy` (which ERPNext surface).
-- **Why first**: nothing can be posted, imported, or synced until the connector contract and lifecycle exist. This is also where the **`Retail-Tower-ERPNext-Connector` split ADR** (per [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md)) is proposed/accepted.
+- **Why first**: nothing can be posted, imported, or synced until the connector contract and lifecycle exist. This is also where the **`Retail-Tower-ERP-Next-Connector` split ADR** (per [future-repo-split-criteria.md](../../docs/architecture/future-repo-split-criteria.md)) is proposed/accepted.
 
 ### 013 — `product-master-from-erpnext`
 - **Domain**: Product/item master sourced from ERPNext (catalog import direction over the 003 catalog).

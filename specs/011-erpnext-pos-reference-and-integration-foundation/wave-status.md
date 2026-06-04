@@ -79,7 +79,7 @@ The 012–017 ERPNext integration arc (see [follow-up-spec-map.md](./follow-up-s
 
 ## Next recommended action
 
-The four decision records are **SIGNED** (2026-06-03) — the gate is **SATISFIED**. The next move is to **plan `012-erpnext-connector-contracts`**: begin its Spec-Kit planning chain (`spec.md` → `plan.md` → Constitution Check → `[GATED]` OpenAPI contract → `tasks.md` → `execution-map.yaml`) and, within it, propose the `Retail-Tower-ERPNext-Connector` split ADR per `future-repo-split-criteria.md`. 012 must respect the **posting** decision (async outbox posting; one submitted Sales Invoice per sale; reversing documents) and the **version-pin** decision (ERPNext v15 self-hosted; DP2↔connector contract insulated from ERPNext churn; any new dependency a separate `[GATED]` call).
+The four decision records are **SIGNED** (2026-06-03) — the gate is **SATISFIED**. The next move is to **plan `012-erpnext-connector-contracts`**: begin its Spec-Kit planning chain (`spec.md` → `plan.md` → Constitution Check → `[GATED]` OpenAPI contract → `tasks.md` → `execution-map.yaml`) and, within it, propose the `Retail-Tower-ERP-Next-Connector` split ADR per `future-repo-split-criteria.md`. 012 must respect the **posting** decision (async outbox posting; one submitted Sales Invoice per sale; reversing documents) and the **version-pin** decision (ERPNext v15 self-hosted; DP2↔connector contract insulated from ERPNext churn; any new dependency a separate `[GATED]` call).
 
 ---
 

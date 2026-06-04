@@ -66,4 +66,4 @@ Each of these feeds exactly one decision placeholder in [decisions/](./decisions
 
 ## 5. Boundary reminder
 
-This map does not create any integration. POS-Pulse and Retail-Tower-Console gain **no** ERPNext awareness from this document. The only system that will ever reach ERPNext is **Data-Pulse-2 via the future `Retail-Tower-ERPNext-Connector`** (see [integration-boundaries.md](./integration-boundaries.md) and spec §5/§7).
+This map does not create any integration. POS-Pulse and Retail-Tower-Console gain **no** ERPNext awareness from this document. The only system that will ever reach ERPNext is **Data-Pulse-2 via the future `Retail-Tower-ERP-Next-Connector`** (see [integration-boundaries.md](./integration-boundaries.md) and spec §5/§7).
