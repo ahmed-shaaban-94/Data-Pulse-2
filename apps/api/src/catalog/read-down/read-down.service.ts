@@ -29,7 +29,7 @@
  * store_id predicate enforces the store boundary.
  */
 import { Inject, Injectable } from "@nestjs/common";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { PG_POOL } from "../../auth/auth.module";
 import { runWithTenantContext } from "@data-pulse-2/db";
@@ -55,6 +55,28 @@ export interface CatalogSnapshotPage {
   /** Opaque next-page token; null on the last page. */
   readonly next_page_token: string | null;
 }
+
+/** One ordered delta op (contract CatalogDeltaOp). */
+export interface CatalogDeltaOp {
+  readonly op: "upsert" | "remove_from_sellable";
+  readonly product_id: string;
+  /** Present for `upsert`; omitted for `remove_from_sellable`. */
+  readonly row?: SellableCatalogRow;
+  readonly row_cursor: string;
+}
+
+/** One page of ordered sellable-stream changes (contract CatalogDeltaPage). */
+export interface CatalogDeltaPage {
+  readonly ops: ReadonlyArray<CatalogDeltaOp>;
+  /** The advanced opaque server cursor — pass as `since` next time. */
+  readonly cursor: string;
+  readonly next_page_token: string | null;
+}
+
+/** Outcome wrapper so the controller can map `snapshot_required` to a 409. */
+export type DeltaResult =
+  | { kind: "ok"; page: CatalogDeltaPage }
+  | { kind: "snapshot_required" };
 
 /** Default + max page size (contract Limit: 1..1000, default 500). */
 const DEFAULT_LIMIT = 500;
@@ -133,57 +155,17 @@ export class ReadDownService {
           ? decodePageToken(opts.pageToken, tenantId, storeId)
           : null;
 
-        // Resolved(store) = Tenant ⊕ Store Override (003 §6.4). LEFT JOIN the
-        // active (non-retired) override for this store and COALESCE each
-        // overrideable field. sku + aliases resolve from product_aliases.
-        // Over-fetch by 1 to detect a next page.
-        const resolved = await client.query<ResolvedRow>(
-          `
-          SELECT
-            tp.id AS product_id,
-            tp.name AS name,
-            COALESCE(spo.price, tp.default_price)::text AS resolved_price,
-            COALESCE(spo.currency_code, tp.default_currency_code) AS resolved_currency,
-            COALESCE(spo.tax_category, tp.tax_category) AS resolved_tax_category,
-            COALESCE(spo.is_active, tp.is_active) AS resolved_active,
-            tp.retired_at AS retired_at,
-            (
-              SELECT pa.value FROM product_aliases pa
-              WHERE pa.tenant_id = tp.tenant_id AND pa.product_id = tp.id
-                AND pa.identifier_type = 'sku' AND pa.retired_at IS NULL
-                AND (pa.store_id IS NULL OR pa.store_id = $2)
-              ORDER BY pa.store_id NULLS LAST LIMIT 1
-            ) AS sku,
-            (
-              SELECT array_agg(pa.value ORDER BY pa.value) FROM product_aliases pa
-              WHERE pa.tenant_id = tp.tenant_id AND pa.product_id = tp.id
-                AND pa.identifier_type <> 'sku' AND pa.retired_at IS NULL
-                AND (pa.store_id IS NULL OR pa.store_id = $2)
-            ) AS aliases,
-            (
-              SELECT max(ccl.sequence)::text FROM catalog_change_log ccl
-              WHERE ccl.tenant_id = tp.tenant_id AND ccl.product_id = tp.id
-                AND (ccl.store_id = $2 OR ccl.store_id IS NULL)
-                AND ccl.sequence <= $3::bigint
-            ) AS row_sequence
-          FROM tenant_products tp
-          LEFT JOIN store_product_overrides spo
-            ON spo.tenant_id = tp.tenant_id
-           AND spo.store_id = $2
-           AND spo.product_id = tp.id
-           AND spo.retired_at IS NULL
-          WHERE tp.tenant_id = $1
-            AND ($4::uuid IS NULL OR tp.id > $4::uuid)
-          ORDER BY tp.id
-          LIMIT $5
-          `,
-          [tenantId, storeId, head.sequence, afterProductId, limit + 1],
-        );
+        // Resolved(store) = Tenant ⊕ Store Override (003 §6.4), paginated by
+        // product_id. Over-fetch by 1 to detect a next page.
+        const resolved = await this.resolveProducts(client, tenantId, storeId, head.sequence, {
+          afterProductId,
+          limit: limit + 1,
+        });
 
         const items: SellableCatalogRow[] = [];
         let emitted = 0;
         let lastProductId: string | null = null;
-        for (const row of resolved.rows) {
+        for (const row of resolved) {
           if (emitted >= limit) break; // the +1 over-fetch row signals next page
           const sellable = this.classifySellable(row);
           if (sellable.kind === "excluded") {
@@ -197,11 +179,12 @@ export class ReadDownService {
           emitted += 1;
         }
 
-        // A next page exists iff the over-fetch returned more than we emitted
-        // AND there is a remaining row beyond the last emitted product.
-        const hasMore = resolved.rows.length > emitted && lastProductId !== null
-          ? resolved.rows.some((r) => r.product_id > (lastProductId as string))
-          : resolved.rows.length > limit;
+        // A next page exists iff the over-fetch returned a row beyond the last
+        // one we emitted.
+        const hasMore =
+          lastProductId !== null
+            ? resolved.some((r) => r.product_id > (lastProductId as string))
+            : resolved.length > limit;
         const next_page_token =
           hasMore && lastProductId
             ? encodePageToken({ tenantId, storeId, afterProductId: lastProductId })
@@ -210,6 +193,211 @@ export class ReadDownService {
         return { items, cursor, next_page_token };
       },
     );
+  }
+
+  /**
+   * Advance a terminal's replica from the opaque `since` cursor (US2 / T044).
+   *
+   * Reads `catalog_change_log` with the R9 union filter
+   *   `tenant_id = T AND (store_id = S OR store_id IS NULL) AND sequence > C`
+   * to get the changed product_ids after C (the stored `op` is ADVISORY — a
+   * change-signal, NOT the wire verdict — data-model §3/§4). For each changed
+   * product it RE-RESOLVES Tenant ⊕ Override at read time and DERIVES the wire
+   * op from CURRENT sellability: sellable → `upsert` + the resolved row, not →
+   * `remove_from_sellable`. This is what makes override-masking a harmless
+   * idempotent re-upsert (FR-021) and correctly handles override DELETE (reverts
+   * to a still-sellable tenant base → upsert) / override deactivate (→ remove).
+   *
+   * Idempotent replay (FR-021): the same `since` yields the same logical set.
+   * `snapshot_required` (FR-023): `since` older than the retained change-log
+   * horizon (the min retained sequence) → re-baseline directive. Foreign-scope
+   * cursor → ReadDownCursorError (the controller maps it to a non-disclosing
+   * 404, FR-024).
+   */
+  async getDeltas(
+    tenantId: string,
+    storeId: string,
+    sinceToken: string,
+    opts: { limit?: number | undefined } = {},
+  ): Promise<DeltaResult> {
+    const limit = clampLimit(opts.limit);
+    // Decode + scope-validate the opaque since cursor (throws on foreign scope).
+    const since = decodeCursor(sinceToken, tenantId, storeId);
+
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client): Promise<DeltaResult> => {
+        await client.query("SELECT set_config('app.current_store', $1, true)", [
+          storeId,
+        ]);
+
+        // snapshot_required: a `since` strictly below the retained horizon (the
+        // min sequence still in the log) cannot be served — the consumer missed
+        // events that were pruned. With no pruning yet, min is the earliest row;
+        // a since of "0" (snapshot of an empty log) is always servable.
+        const horizon = await client.query<{ min: string | null }>(
+          `SELECT min(sequence)::text AS min FROM catalog_change_log
+             WHERE tenant_id = $1`,
+          [tenantId],
+        );
+        const minSeq = horizon.rows[0]?.min;
+        if (minSeq !== null && minSeq !== undefined) {
+          // since must be >= minSeq - 1 (a cursor at minSeq-1 can still see the
+          // first retained row). If since < minSeq - 1, events were pruned.
+          if (BigInt(since.sequence) < BigInt(minSeq) - 1n) {
+            return { kind: "snapshot_required" };
+          }
+        }
+
+        // The advanced head + the page's response cursor.
+        const headRes = await client.query<{ head: string | null }>(
+          `SELECT max(sequence)::text AS head FROM catalog_change_log
+             WHERE tenant_id = $1`,
+          [tenantId],
+        );
+        const head = headRes.rows[0]?.head ?? since.sequence;
+
+        // R9 union: distinct product_ids changed after C, in sequence order,
+        // bounded to one page. The stored op is ignored — we re-resolve below.
+        const changed = await client.query<{ product_id: string; max_seq: string }>(
+          `SELECT product_id, max(sequence)::text AS max_seq
+             FROM catalog_change_log
+            WHERE tenant_id = $1
+              AND (store_id = $2 OR store_id IS NULL)
+              AND sequence > $3::bigint
+            GROUP BY product_id
+            ORDER BY max(sequence)
+            LIMIT $4`,
+          [tenantId, storeId, since.sequence, limit + 1],
+        );
+
+        const pageRows = changed.rows.slice(0, limit);
+        const hasMore = changed.rows.length > limit;
+
+        // Re-resolve the changed products IDENTICALLY to the snapshot.
+        const resolved = await this.resolveProducts(client, tenantId, storeId, head, {
+          productIds: pageRows.map((r) => r.product_id),
+        });
+        const byId = new Map(resolved.map((r) => [r.product_id, r]));
+
+        const ops: CatalogDeltaOp[] = [];
+        let lastSeq = since.sequence;
+        for (const ch of pageRows) {
+          lastSeq = ch.max_seq;
+          const rowCursor = encodeCursor({ tenantId, storeId, sequence: ch.max_seq });
+          const resolvedRow = byId.get(ch.product_id);
+          const sellable = resolvedRow
+            ? this.classifySellable(resolvedRow)
+            : ({ kind: "excluded", priceRelated: false } as const);
+          if (sellable.kind === "sellable") {
+            ops.push({
+              op: "upsert",
+              product_id: ch.product_id,
+              row: toSellableRow(sellable.row, rowCursor),
+              row_cursor: rowCursor,
+            });
+          } else {
+            // Not currently sellable → tombstone (retired / deactivated /
+            // unpriced / hard-deleted). The row is omitted; the consumer drops
+            // it by product_id. (A product deleted entirely won't be in `byId`.)
+            if (sellable.kind === "excluded" && sellable.priceRelated) {
+              recordCatalogUnpricedIssue();
+            }
+            ops.push({
+              op: "remove_from_sellable",
+              product_id: ch.product_id,
+              row_cursor: rowCursor,
+            });
+          }
+        }
+
+        // Advance the cursor: the last emitted sequence (so the next `since`
+        // resumes exactly after this page), or the head if nothing changed.
+        const advanced = pageRows.length > 0 ? lastSeq : head;
+        const cursor = encodeCursor({ tenantId, storeId, sequence: advanced });
+        const next_page_token = hasMore
+          ? encodeCursor({ tenantId, storeId, sequence: lastSeq })
+          : null;
+
+        return { kind: "ok", page: { ops, cursor, next_page_token } };
+      },
+    );
+  }
+
+  /**
+   * Resolve `Tenant ⊕ Store Override` (003 §6.4) for products under the current
+   * tenant + store GUC. Two modes (mutually exclusive):
+   *   - paginated: `{ afterProductId, limit }` — products ordered by id (snapshot);
+   *   - targeted:  `{ productIds }` — exactly these products (delta re-resolution).
+   * `headSeq` bounds the per-row `row_sequence` (≤ the response cursor). Returns
+   * the raw resolved rows; the caller classifies sellability + projects toBody.
+   *
+   * Shared by getSnapshot (US1) and getDeltas (US2) — single source of the
+   * resolution SQL so the delta op derivation re-resolves IDENTICALLY to the
+   * snapshot (the advisory-op model in data-model §3/§4 depends on this).
+   */
+  private async resolveProducts(
+    client: PoolClient,
+    tenantId: string,
+    storeId: string,
+    headSeq: string,
+    mode:
+      | { afterProductId: string | null; limit: number; productIds?: undefined }
+      | { productIds: string[]; afterProductId?: undefined; limit?: undefined },
+  ): Promise<ResolvedRow[]> {
+    const targeted = mode.productIds !== undefined;
+    if (targeted && mode.productIds.length === 0) return [];
+    const r = await client.query<ResolvedRow>(
+      `
+      SELECT
+        tp.id AS product_id,
+        tp.name AS name,
+        COALESCE(spo.price, tp.default_price)::text AS resolved_price,
+        COALESCE(spo.currency_code, tp.default_currency_code) AS resolved_currency,
+        COALESCE(spo.tax_category, tp.tax_category) AS resolved_tax_category,
+        COALESCE(spo.is_active, tp.is_active) AS resolved_active,
+        tp.retired_at AS retired_at,
+        (
+          SELECT pa.value FROM product_aliases pa
+          WHERE pa.tenant_id = tp.tenant_id AND pa.product_id = tp.id
+            AND pa.identifier_type = 'sku' AND pa.retired_at IS NULL
+            AND (pa.store_id IS NULL OR pa.store_id = $2)
+          ORDER BY pa.store_id NULLS LAST LIMIT 1
+        ) AS sku,
+        (
+          SELECT array_agg(pa.value ORDER BY pa.value) FROM product_aliases pa
+          WHERE pa.tenant_id = tp.tenant_id AND pa.product_id = tp.id
+            AND pa.identifier_type <> 'sku' AND pa.retired_at IS NULL
+            AND (pa.store_id IS NULL OR pa.store_id = $2)
+        ) AS aliases,
+        (
+          SELECT max(ccl.sequence)::text FROM catalog_change_log ccl
+          WHERE ccl.tenant_id = tp.tenant_id AND ccl.product_id = tp.id
+            AND (ccl.store_id = $2 OR ccl.store_id IS NULL)
+            AND ccl.sequence <= $3::bigint
+        ) AS row_sequence
+      FROM tenant_products tp
+      LEFT JOIN store_product_overrides spo
+        ON spo.tenant_id = tp.tenant_id
+       AND spo.store_id = $2
+       AND spo.product_id = tp.id
+       AND spo.retired_at IS NULL
+      WHERE tp.tenant_id = $1
+        AND (
+          ($4::uuid[] IS NOT NULL AND tp.id = ANY($4::uuid[]))         -- targeted
+          OR ($4::uuid[] IS NULL AND ($5::uuid IS NULL OR tp.id > $5::uuid)) -- paginated
+        )
+      ORDER BY tp.id
+      ${targeted ? "" : "LIMIT $6"}
+      `,
+      targeted
+        ? // targeted mode omits `LIMIT $6` → the statement references $1–$5
+          // only; supplying a 6th param makes Postgres reject the Bind (→ 500).
+          [tenantId, storeId, headSeq, mode.productIds, null]
+        : [tenantId, storeId, headSeq, null, mode.afterProductId, mode.limit],
+    );
+    return r.rows;
   }
 
   /**
