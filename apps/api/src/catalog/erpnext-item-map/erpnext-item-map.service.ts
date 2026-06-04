@@ -219,6 +219,46 @@ export class ErpnextItemMapService {
     );
   }
 
+  /**
+   * Retire an active mapping (soft-delete: set retired_at). Append-only —
+   * a re-point is a retire here followed by a fresh `suggest` (never an
+   * in-place identity rewrite; data-model §6). Optimistic concurrency:
+   * `WHERE id = $1 AND version = $2 AND retired_at IS NULL`, version++. A
+   * 0-row result is a conflict (stale version / already retired) or
+   * not_found (RLS-filtered / fabricated id).
+   */
+  async retire(input: {
+    readonly tenantId: string;
+    readonly id: string;
+    readonly version: number;
+  }): Promise<RetireResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<RetireResult> => {
+        const updated = await client.query<DbRow>(
+          `UPDATE erpnext_item_map
+              SET retired_at = now(),
+                  version    = version + 1,
+                  updated_at = now()
+            WHERE id          = $1
+              AND version     = $2
+              AND retired_at IS NULL
+           RETURNING ${SELECT_COLS}`,
+          [input.id, input.version],
+        );
+        if (updated.rows[0]) {
+          return { kind: "ok", row: toRow(updated.rows[0]) };
+        }
+        const exists = await client.query<{ id: string }>(
+          `SELECT id FROM erpnext_item_map WHERE id = $1 LIMIT 1`,
+          [input.id],
+        );
+        return exists.rows[0] ? { kind: "conflict" } : { kind: "not_found" };
+      },
+    );
+  }
+
   /** List the tenant's ACTIVE mappings, optionally filtered by lifecycle state. */
   async list(input: {
     readonly tenantId: string;

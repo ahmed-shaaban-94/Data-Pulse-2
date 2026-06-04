@@ -162,4 +162,40 @@ export class ErpnextItemMapController {
     }
     throw new NotFoundException("Not Found");
   }
+
+  /**
+   * POST :id/retire — retire a mapping (append-only soft-delete; optimistic
+   * version). A re-point is this retire followed by a fresh suggest — never an
+   * in-place identity rewrite (data-model §6).
+   */
+  @Post("api/v1/catalog/erpnext-item-mappings/:id/retire")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Auditable("erpnext_item_map.retired")
+  async retire(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+    @Body(new ZodValidationPipe(VersionedMutationRequestSchema))
+    body: VersionedMutationRequestDto,
+  ): Promise<ErpnextItemMappingBody> {
+    const { tenantId } = this.requireContext(request);
+    const result = await this.service.retire({
+      tenantId,
+      id,
+      version: body.version,
+    });
+    if (result.kind === "ok") {
+      return toErpnextItemMapping(result.row);
+    }
+    if (result.kind === "conflict") {
+      throw new ConflictException({
+        code: "conflict",
+        message:
+          "Optimistic-concurrency conflict (stale version) or the mapping is " +
+          "already retired (§III).",
+      });
+    }
+    throw new NotFoundException("Not Found");
+  }
 }
