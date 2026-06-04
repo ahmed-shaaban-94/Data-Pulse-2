@@ -1,0 +1,429 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Catalog — ERPNext Item Mapping API
+  version: "1.0.0-draft"
+  description: >
+    Spec 013 (product-master-from-erpnext) — the tenant-admin suggest/confirm
+    review surface for the `erpnext_item_map` identity mapping
+    (`packages/db/.../catalog/erpnext-item-map.ts`, migration 0017). It lets a
+    Tenant Admin map a DP2 `tenant_products` row to an ERPNext **Item**
+    reference so a future sale posting (015) can resolve each sale line to a
+    real Item (posting decision §1; "fails-to-DLQ if not").
+
+    013 is a MAPPING/RECONCILIATION layer, NOT a catalog-authority handover
+    (OQ-1, §IX): the 003 Tenant Catalog stays authoritative for the retail
+    product; ERPNext owns accounting Item identity only. This contract carries
+    NO price, UOM, or store field — identity only (OQ-3/OQ-4 resolved as
+    no-column; data-model §2).
+
+    Four operations:
+
+      1. `tenantAdminListErpnextItemMappings` — list a tenant's mappings,
+         optionally filtered to the unconfirmed review queue (`state=suggested`).
+      2. `tenantAdminSuggestErpnextItemMapping` — record a MANUAL suggested
+         mapping (`tenant_product_id` + `erpnext_item_ref`). v1 is manual-only
+         (finding AUTO_MATCH_NO_SOURCE: no ERPNext item-search op exists in the
+         012 connector contract, and OQ-8 forbids an import worker, so
+         barcode/item_code auto-match has no wired source). Creates a row in
+         `state = 'suggested'` — INERT until confirmed (OQ-7).
+      3. `tenantAdminConfirmErpnextItemMapping` — a Tenant Admin confirms a
+         suggested mapping, transitioning it to `state = 'confirmed'`. Carries
+         the expected `version` for optimistic concurrency (§III); a stale
+         version is `409 conflict`. Only confirmed mappings are resolvable at
+         posting time (the confirmed-only invariant, data-model §3).
+      4. `tenantAdminRetireErpnextItemMapping` — retire / re-point a mapping.
+         Append-only: retiring sets `retired_at`; a re-point is a retire of the
+         old row + a fresh suggested row (never an in-place identity rewrite).
+         Carries the expected `version`.
+
+    Authentication boundary:
+
+      * ALL operations are dashboard-session-authenticated via `cookieAuth`
+        (the httpOnly `dp2_session` cookie — the human Tenant-Admin scheme,
+        mirroring the `tenantAdmin*` operations in `catalog/unknown-items.yaml`
+        and `memberships.openapi.yaml`). This is deliberately NOT the 012
+        `connectorBearer` machine scheme and NOT the POS `clerkJwt` device
+        scheme — the suggest/confirm review is a human action from
+        Retail-Tower-Console, which talks only to DP2 (011 boundaries).
+      * `tenant_id` and the acting principal are resolved server-side from the
+        session, NEVER from the request body (§XII). Cross-tenant / out-of-scope
+        addresses are non-disclosing 404s (§II/§XII).
+
+    Conventions shared with the other catalog contracts: OpenAPI 3.1 of record;
+    a `toBody()` projection (no raw DB entity, §IV); the canonical `Error`
+    envelope with a closed error set incl. `409 conflict` (version mismatch) and
+    the non-disclosing `404`. Consumed by
+    `apps/api/test/catalog/erpnext-item-map/contract/erpnext-item-map.contract.spec.ts`.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: catalog-erpnext-item-map
+    description: >
+      ERPNext product-master identity mapping — tenant-admin suggest/confirm
+      review surface. Spec 013.
+
+paths:
+  /api/v1/catalog/erpnext-item-mappings:
+    get:
+      summary: List a tenant's ERPNext Item mappings (optionally the review queue).
+      operationId: tenantAdminListErpnextItemMappings
+      tags: [catalog-erpnext-item-map]
+      description: >
+        Returns the tenant's active mappings as `ErpnextItemMapping` projections.
+        Filter to the unconfirmed review queue with `state=suggested`. Scoped to
+        the session tenant (RLS); cross-tenant rows are never disclosed.
+      parameters:
+        - in: query
+          name: state
+          required: false
+          schema:
+            type: string
+            enum: [suggested, confirmed]
+          description: Optional lifecycle filter. Omit for all active mappings.
+      responses:
+        "200":
+          description: The tenant's active mappings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ErpnextItemMapping"
+        "400":
+          description: Bad request (invalid query param).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      summary: Record a manual suggested mapping (tenant_product → ERPNext Item).
+      operationId: tenantAdminSuggestErpnextItemMapping
+      tags: [catalog-erpnext-item-map]
+      description: >
+        Creates a MANUAL suggested mapping in `state = 'suggested'` (OQ-7;
+        v1 manual-only per finding AUTO_MATCH_NO_SOURCE). The row is INERT until
+        confirmed — posting-time resolution never resolves a suggested row
+        (confirmed-only invariant). At most ONE active mapping per
+        `tenant_product_id` (OQ-2 1:1); a second active suggestion for the same
+        product is `409 conflict`. `tenant_id` + actor are server-resolved
+        (§XII); they MUST NOT appear in the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuggestErpnextItemMappingRequest"
+      responses:
+        "201":
+          description: Suggested mapping created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpnextItemMapping"
+        "400":
+          description: Bad request (validation failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            The addressed `tenant_product_id` is not found OR not in the
+            session tenant's scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            An active mapping already exists for this `tenant_product_id`
+            (OQ-2 1:1). `error.code = "conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-item-mappings/{id}/confirm:
+    post:
+      summary: Confirm a suggested mapping (Tenant Admin).
+      operationId: tenantAdminConfirmErpnextItemMapping
+      tags: [catalog-erpnext-item-map]
+      description: >
+        Transitions the addressed mapping from `suggested` to `confirmed`,
+        recording the confirming actor + timestamp server-side. Carries the
+        expected `version` for optimistic concurrency (§III): the update is
+        `WHERE id = :id AND version = :version`; a mismatch is `409 conflict`.
+        Only confirmed mappings are resolvable at posting time (confirmed-only
+        invariant). Cross-tenant / out-of-scope ids are non-disclosing 404s.
+      parameters:
+        - $ref: "#/components/parameters/MappingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionedMutationRequest"
+      responses:
+        "200":
+          description: Mapping confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpnextItemMapping"
+        "400":
+          description: Bad request (invalid path UUID or body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Optimistic-concurrency conflict (stale `version`) OR the mapping is
+            not in a confirmable state. `error.code = "conflict"` (§III).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-item-mappings/{id}/retire:
+    post:
+      summary: Retire (or re-point) a mapping — append-only.
+      operationId: tenantAdminRetireErpnextItemMapping
+      tags: [catalog-erpnext-item-map]
+      description: >
+        Sets `retired_at` on the addressed active mapping (append-only: the row
+        is preserved as history; a re-point is a retire here followed by a fresh
+        `tenantAdminSuggestErpnextItemMapping`, never an in-place identity
+        rewrite). Carries the expected `version` (§III optimistic concurrency);
+        a mismatch is `409 conflict`. Cross-tenant / out-of-scope ids are
+        non-disclosing 404s.
+      parameters:
+        - $ref: "#/components/parameters/MappingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionedMutationRequest"
+      responses:
+        "200":
+          description: Mapping retired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpnextItemMapping"
+        "400":
+          description: Bad request (invalid path UUID or body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Optimistic-concurrency conflict (stale `version`) OR already retired.
+            `error.code = "conflict"` (§III).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# All operations require a dashboard session (httpOnly cookie) — the human
+# Tenant-Admin scheme. NOT connectorBearer (012 machine), NOT clerkJwt (POS).
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  parameters:
+    MappingId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUIDv7 primary key of the `erpnext_item_map` row.
+
+  schemas:
+
+    SuggestErpnextItemMappingRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Manual suggest command. Strict (`additionalProperties: false`, §XII):
+        `tenant_id`, `state`, `version`, `suggested_by`/`confirmed_by` are
+        server-resolved and MUST NOT appear here. v1 has no
+        `suggestion_source` field — it is always recorded server-side as
+        `manual` (AUTO_MATCH_NO_SOURCE).
+      required:
+        - tenant_product_id
+        - erpnext_item_ref
+      properties:
+        tenant_product_id:
+          type: string
+          format: uuid
+          description: The DP2 tenant product to map (003 Tenant Catalog). Scope-checked server-side.
+        erpnext_item_ref:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: >
+            The ERPNext Item reference in DP2 terms (e.g. the Item code/name).
+            Opaque string — no FK, version-independent (012 O-6).
+
+    VersionedMutationRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Confirm / retire command. Carries ONLY the expected `version` for
+        optimistic concurrency (§III). All identity + actor fields are
+        server-resolved (§XII).
+      required:
+        - version
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: >
+            The version the caller last observed. The update is
+            `WHERE id = :id AND version = :version`; a mismatch is 409.
+
+    ErpnextItemMapping:
+      type: object
+      additionalProperties: false
+      description: >
+        The `toBody()` projection of an `erpnext_item_map` row (no raw DB
+        entity, §IV). Identity + lifecycle only — no price, UOM, or store field.
+      required:
+        - id
+        - tenant_product_id
+        - erpnext_item_ref
+        - state
+        - suggestion_source
+        - version
+        - suggested_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_product_id:
+          type: string
+          format: uuid
+        erpnext_item_ref:
+          type: string
+        state:
+          type: string
+          enum: [suggested, confirmed]
+          description: Lifecycle state. Only `confirmed` mappings are resolvable at posting time.
+        suggestion_source:
+          type: string
+          enum: [barcode, item_code, manual]
+          description: How the candidate was found. v1 always `manual` (AUTO_MATCH_NO_SOURCE).
+        version:
+          type: integer
+          minimum: 1
+          description: Optimistic-concurrency token (§III).
+        suggested_by:
+          type: [string, "null"]
+          format: uuid
+          description: Actor that suggested (null when system-suggested — future).
+        suggested_at:
+          type: string
+          format: date-time
+        confirmed_by:
+          type: [string, "null"]
+          format: uuid
+          description: Tenant Admin that confirmed. Non-null exactly when state = confirmed.
+        confirmed_at:
+          type: [string, "null"]
+          format: date-time
+        retired_at:
+          type: [string, "null"]
+          format: date-time
+          description: Soft-delete timestamp. Null = active.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `catalog/unknown-items.yaml` (used verbatim).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII) —
+        they never enumerate the underlying cause.
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | conflict | system_failure
+                (plus the generic 401 refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
