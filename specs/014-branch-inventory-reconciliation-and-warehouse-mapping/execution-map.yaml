@@ -1,0 +1,343 @@
+# 014-branch-inventory-reconciliation-and-warehouse-mapping — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 014 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety, and the GATED-first serialization.
+#
+# 014 is an api-only mapping module (NO worker — the reconciliation run is 017).
+# It links a DP2 stores row to an ERPNext Warehouse reference so ERPNext can
+# value the same physical stock, and DEFINES the reconciliation (009 on-hand vs
+# ERPNext Bin) — it does NOT run it. The authority question is CLOSED by the
+# SIGNED stock-impact decision (011-DR-STOCK-IMPACT): DP2 is the operational
+# on-hand authority; ERPNext owns valuation; read-down is REJECTED. 014 builds
+# NO Bin mirror (OQ-1). Mapping is manual admin-set (OQ-3), 1:1 for v1 with a
+# forward-compatible `purpose` grain (OQ-2).
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3):
+#   - 014-CONTRACT → new manual set/list/retire review OpenAPI under
+#                    packages/contracts/openapi/** (cookieAuth HUMAN auth — NOT
+#                    012 connectorBearer, NOT 010 clerkJwt).
+#   - 014-SCHEMA   → new erpnext_warehouse_map Drizzle schema + migration under
+#                    packages/db/** (next number, 0018 indicative; paired
+#                    *.down.sql, lock-duration review; purpose-grain partial-
+#                    unique + fail-closed RLS; NO Bin-quantity column).
+# Both carry `approval_required: true` and `status: proposed`. They touch
+# DISJOINT surfaces (openapi vs db) so they are parallel_safety: safe with each
+# other, even though both block 014-CRUD.
+#
+# IMPORTANT: authoring this map does NOT authorize the first dispatch. The first
+# slice touching packages/db / packages/contracts/openapi / apps/api is a new
+# threshold the owner crosses explicitly.
+#
+# The reconciliation RUN (014-RECON-RUN) belongs to 017, which has NO spec yet.
+# It is listed `status: proposed`, depends_on a future 017 slice, and is NOT
+# dispatchable from this map.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/014-branch-inventory-reconciliation-and-warehouse-mapping/wave-status.md
+# Brief source:     specs/014-branch-inventory-reconciliation-and-warehouse-mapping/tasks.md
+#
+# Predecessor docs on main: 012 MERGED (#476/#479/#481/#482); 013 CLOSED (#489);
+# 009 CLOSED. gated_by the SIGNED stock-impact decision (011-DR-STOCK-IMPACT).
+#
+# Status: 014 implementation NOT STARTED — planning chain (spec/plan/data-model)
+# + this map authored on branch docs/014-spec (off origin/main). No slice
+# dispatched yet. MVP = 014-CRUD (manual set → list → retire) once both [GATED]
+# slices land.
+#
+# Updated: 2026-06-04 — initial authoring (post /speckit-tasks). Owner locked
+#          OQ-1 (no mirror) + OQ-2 (1:1 forward-compat purpose) + OQ-3 (manual
+#          admin-set) at plan time; OQ-4 (mismatch vocabulary) locked at
+#          data-model time. No findings.
+
+version: 1
+spec: 014-branch-inventory-reconciliation-and-warehouse-mapping
+base: origin/main
+
+# ============================================================================
+# findings
+# ============================================================================
+
+findings: []   # none — manual admin-set has no missing-candidate-source problem
+               # (cf. 013 AUTO_MATCH_NO_SOURCE); OQ-1 removed the Bin-mirror
+               # complexity. Deferrals: the `returns` warehouse purpose (reserved
+               # in the grain, future widening) + per-tenant tolerance (exact for v1).
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 014-SIGNOFF
+    task_ids: [T001, T002]
+    type: docs
+    # [SIGN-OFF] gates: (T001) authority/direction is CLOSED by the signed
+    # stock-impact decision (DP2 operational on-hand; ERPNext valuation;
+    # read-down REJECTED); 014 builds NO Bin mirror (OQ-1). (T002) 014 adds no
+    # worker / no outbox event / no reconciliation run — those are 017 (§8 carve).
+    status: ready
+    approval_required: false   # decision gates, not code gates
+    depends_on: []
+    blocks:
+      - 014-SETUP
+    agent: opus-maestro
+    allowed_files:
+      - specs/014-branch-inventory-reconciliation-and-warehouse-mapping/wave-status.md
+    validation:
+      - command: 'grep -niE "read-down|no Bin mirror|no mirror|017|reconciliation run|stock-impact" specs/014-branch-inventory-reconciliation-and-warehouse-mapping/wave-status.md'
+        expected: One+ match — the read-down-rejected + no-Bin-mirror (OQ-1) + no-worker/no-run (017 carve) decisions are recorded.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and re-open the SIGNED stock-impact decision if any read-down / ERPNext-as-on-hand-master intent surfaces — do NOT build a Bin-quantity mirror or make ERPNext the operational source (§5.4 STOP-and-raise)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  - id: 014-SETUP
+    task_ids: [T003]
+    type: chore
+    status: ready
+    approval_required: false
+    depends_on: [014-SIGNOFF]
+    blocks:
+      - 014-CRUD
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-warehouse-map/erpnext-warehouse-map.module.ts
+      - apps/api/src/app.module.ts   # register the new module (mirror erpnext-item-map wiring)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — the new empty erpnext-warehouse-map module compiles and is registered in app.module.ts (mirrors erpnext-item-map.module.ts); no routes yet. Existing catalog modules still compile (no regression).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 014 branch is not off latest origin/main — rebase first"
+      - "stop if any existing catalog module fails to compile — that is a regression, not a 014 task"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # single new module file + one registration line
+
+  # ===== Phase 2: Foundational (GATED; block all capability slices) ==========
+
+  # ----- 2.1 GATED manual set/list/retire review OpenAPI contract -------------
+
+  - id: 014-CONTRACT
+    task_ids: [T010, T011]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/contracts/openapi/** (Constitution §IV/§VIII)
+    depends_on: [014-SETUP]
+    blocks:
+      - 014-CRUD
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/catalog/erpnext-warehouse-map.yaml
+      - apps/api/test/catalog/erpnext-warehouse-map/contract/erpnext-warehouse-map.contract.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map/contract contract-conformance
+        expected: >
+          GREEN — contract spec: set/list/retire operationIds present + globally unique vs shipped ops;
+          the cookieAuth (dp2_session) security scheme on every op — NOT connectorBearer, NOT clerkJwt;
+          set body carries store_id + erpnext_warehouse_ref ONLY (NO tenant_id/purpose/version/set_by — §XII;
+          purpose defaults server-side to 'stock' in v1); retire takes the expected version (optimistic concurrency);
+          canonical Error envelope with 409 (version mismatch) + non-disclosing 404 in the closed error set;
+          toBody projection (no raw DB entity, §IV); and NO Bin-quantity/valuation/on-hand field anywhere (OQ-1).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/contracts/openapi/**); do NOT author until the owner approves THIS slice in-session"
+      - "stop if the security scheme is connectorBearer (012 machine) or clerkJwt (010 device) — this is a HUMAN Tenant-Admin surface (cookieAuth / dp2_session)"
+      - "stop if any operationId collides with or renames a shipped operationId (renames are breaking, §IV)"
+      - "stop if the contract adds ANY ERPNext Bin/quantity/valuation field — 014 stores no mirror (OQ-1); that is the rejected read-down look-alike"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint surface from 014-SCHEMA (openapi vs db); both block 014-CRUD
+
+  # ----- 2.2 GATED erpnext_warehouse_map schema + migration -------------------
+
+  - id: 014-SCHEMA
+    task_ids: [T012a, T012]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/db/** schema + SQL migration (Constitution §VIII)
+    depends_on: [014-SETUP]
+    blocks:
+      - 014-ISOLATION-HARNESS
+      - 014-CRUD
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/catalog/erpnext-warehouse-map.ts
+      - packages/db/src/schema/index.ts   # barrel re-export
+      - packages/db/drizzle/0018_erpnext_warehouse_map.sql            # next number indicative — confirm at authoring
+      - packages/db/drizzle/0018_erpnext_warehouse_map.down.sql
+      - apps/api/test/catalog/erpnext-warehouse-map/schema/erpnext-warehouse-map-schema-shape.spec.ts
+      - packages/db/__tests__/migration/0018-erpnext-warehouse-map.spec.ts
+      - packages/db/__tests__/cli/migrate.spec.ts                     # APPEND 0018 to EXPECTED_MIGRATIONS (regression)
+      - packages/db/__tests__/schema/catalog/barrel.spec.ts           # APPEND erpnext-warehouse-map to EXPECTED_CATALOG_MODULES (regression)
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- --runInBand 0018-erpnext-warehouse-map"
+        expected: >
+          GREEN — erpnext_warehouse_map created per data-model.md §2: tenant_id NOT NULL FK, store_id NOT NULL FK
+          (ON DELETE restrict), purpose enum (stock|returns, default stock), erpnext_warehouse_ref text (NO FK),
+          version int >=1, set provenance, retired_at soft-delete; partial-unique (tenant_id, store_id, purpose)
+          WHERE retired_at IS NULL (OQ-2 forward-compat 1:1 — a 2nd active 'stock' per store rejected, a 'returns'
+          row coexists); fail-closed RLS (SELECT + INSERT + UPDATE on app.current_tenant, empty-GUC CASE guard,
+          NO DELETE policy, mirror 0017); NO Bin-quantity/valuation/on-hand column; migration applies + rolls back
+          clean (UP→DOWN→UP).
+        docker_required: true   # Testcontainers — WSL only (reference_007_test_env)
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map/schema
+        expected: GREEN — schema-shape spec (Drizzle introspection; Docker-free companion).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** schema + migration); do NOT author until the owner approves THIS slice in-session"
+      - "stop if the migration is not paired with a reviewed *.down.sql, or lock duration on the new table is not assessed"
+      - "stop if a Bin-quantity, valuation, cost, or on-hand column appears — OQ-1 builds NO mirror (the rejected read-down look-alike)"
+      - "stop if the partial-unique is bare (tenant_id, store_id) instead of (tenant_id, store_id, purpose) — the purpose grain is the OQ-2 forward-compat invariant"
+      - "stop if the chosen migration number is already taken on origin/main — use the next free number"
+      - "REMEMBER the two-allowlist regression: append 0018 to cli/migrate.spec EXPECTED_MIGRATIONS AND erpnext-warehouse-map to schema/catalog/barrel.spec EXPECTED_CATALOG_MODULES (the #487-class hosted-CI break)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint surface from 014-CONTRACT (db vs openapi)
+
+  # ----- 2.3 Isolation harness (blocking — serves the capability slices) ------
+
+  - id: 014-ISOLATION-HARNESS
+    task_ids: [T020]
+    type: test
+    status: blocked   # waits on 014-SCHEMA
+    approval_required: false
+    depends_on: [014-SCHEMA]
+    blocks:
+      - 014-CRUD
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/erpnext-warehouse-map/__support__/seed-warehouse-map.ts
+      - apps/api/test/catalog/erpnext-warehouse-map/isolation/warehouse-map-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map/isolation"
+        expected: GREEN (DB-layer, characterises the shipped 0018 RLS — mirrors 013-ISOLATION-HARNESS) — RLS-bypass probe (wrong app.current_tenant → 0 rows; unset GUC → fail-closed + INSERT denied); cross-tenant read/retire → 0 rows / non-disclosing; the purpose-grain partial-unique (2nd active 'stock' per store → 23505, a 'returns' row coexists); NO store-axis sweep (tenant-only table). seed-warehouse-map.ts mirrors seed-item-map.ts; does NOT touch the 003-owned isolation-harness.ts.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts modifying the 003-owned isolation-harness.ts — extend via the new seed-warehouse-map.ts only"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # new test files + new seed helper
+
+  # ===== Phase 3: US1 (P1) 🎯 MVP — manual map (set → list → retire) =========
+
+  - id: 014-CRUD
+    task_ids: [T030, T031, T032, T033, T034]
+    type: feat
+    status: blocked   # waits on both [GATED] slices + harness
+    approval_required: false   # the gated surfaces are CONTRACT + SCHEMA; the service/controller is not itself gated
+    depends_on: [014-CONTRACT, 014-SCHEMA, 014-ISOLATION-HARNESS]
+    blocks:
+      - 014-RECON-DEF
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-warehouse-map/erpnext-warehouse-map.service.ts
+      - apps/api/src/catalog/erpnext-warehouse-map/erpnext-warehouse-map.controller.ts
+      - apps/api/src/catalog/erpnext-warehouse-map/dto/*.ts
+      - apps/api/test/catalog/erpnext-warehouse-map/**   # US1 RED/GREEN specs
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map"
+        expected: >
+          GREEN — manual set lands purpose='stock', version=1; scope-checks store (non-disclosing 404 cross-tenant);
+          2nd active 'stock' set for the same store → 409 (1:1); list returns tenant's active mappings only; retire
+          sets retired_at + version++ with optimistic-version 409 on stale; re-point = retire old + fresh set
+          (append-only); tenant_id/purpose/version/set_by NOT body-assignable (strict DTO, §XII); audit-in-transaction.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if retire/update does not enforce optimistic concurrency (stale version must 409) — §III, consistent with 013"
+      - "stop if any security-sensitive field is body-assignable — §XII strict command DTO"
+      - "stop if the service writes any purpose other than 'stock' — v1 is stock-only (the 'returns' purpose is a future widening)"
+      - "stop if any ERPNext Bin/quantity is fetched or stored — 014 is mapping only (OQ-1); the reconciliation run is 017"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Phase 4: US2 (P2) — reconciliation DEFINITION (vocabulary, no run) ===
+
+  - id: 014-RECON-DEF
+    task_ids: [T040, T041]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [014-CRUD]
+    blocks:
+      - 014-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-warehouse-map/reconciliation-vocabulary.ts   # shared enum + comparison definition
+      - apps/api/test/catalog/erpnext-warehouse-map/**
+      - specs/014-branch-inventory-reconciliation-and-warehouse-mapping/wave-status.md   # T041 carve sign-off
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map/reconciliation
+        expected: GREEN — the mismatch-class vocabulary (data-model §6.2) expressed as a closed, exhaustively-tested enum (match | quantity_divergence | unmapped_store | unmapped_item | dp2_only | erpnext_only | negative_balance_flagged) + the comparison definition (009 on-hand vs ERPNext Bin for the mapped warehouse + 013-mapped item); exact-match default + negative-balance-first ordering (§6.3) asserted. NO run, NO ERPNext-Bin fetch, NO scheduled job, NO stored mismatch rows (those are 017).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if this slice fetches ERPNext Bin, schedules a job, persists mismatch rows, or builds a repair path — those are 017 (the §8 carve). 014 ships only the vocabulary + comparison definition."
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # touches the warehouse-map module tests alongside 014-CRUD — serialize after it
+
+  # ===== Phase 5: Polish =====================================================
+
+  - id: 014-POLISH
+    task_ids: [T090, T091]
+    type: chore
+    status: blocked
+    approval_required: false
+    depends_on: [014-RECON-DEF]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-warehouse-map/**
+      - apps/api/test/catalog/erpnext-warehouse-map/**
+      - specs/014-branch-inventory-reconciliation-and-warehouse-mapping/execution-map.yaml
+      - specs/014-branch-inventory-reconciliation-and-warehouse-mapping/wave-status.md
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-warehouse-map --coverage"
+        expected: GREEN — ≥80% coverage for the new module; structured logs carry tenant_id/correlation_id on set/retire; no new metric category; map + wave-status reconciled to terminal.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Consumer (NOT a 014 slice) — belongs to 017 =========================
+
+  - id: 014-RECON-RUN
+    task_ids: [T050]
+    type: feat
+    # The reconciliation RUN: 017 reads 014's active 'stock' mapping + the
+    # mismatch-class vocabulary, FETCHES ERPNext Bin on-demand via the connector,
+    # compares against 009 on-hand, persists mismatch reports, and exposes the
+    # repair workflows (stock-impact §5). NOT dispatchable from this map — 017 has
+    # NO spec yet. Listed for traceability only.
+    status: proposed
+    approval_required: false
+    depends_on: [014-CRUD, "017-<future-recon-slice>"]   # 017 does not exist yet — hard non-dispatchable
+    blocks: []
+    agent: sonnet-api
+    allowed_files: []   # authored under 017, not 014
+    validation:
+      - command: "(deferred — authored under the future 017 spec)"
+        expected: 017 runs reconciliation over 014's mapping + vocabulary, fetches ERPNext Bin via the connector, persists mismatch reports, exposes repair; never stores a Bin mirror in 014.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop — NOT a 014 slice. Do NOT dispatch from the 014 map; this belongs to the future 017 spec (which must run its own Spec-Kit chain first)."
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unknown
+
+# ============================================================================
+# groups — proposed parallel sets (awaiting approval)
+# ============================================================================
+
+groups:
+  - id: 014-FOUNDATIONAL-GATED
+    members: [014-CONTRACT, 014-SCHEMA]
+    parallel_safety: safe   # disjoint surfaces (packages/contracts/openapi vs packages/db)
+    proposed: true   # both are [GATED]; running them as a pair needs explicit owner approval of BOTH
