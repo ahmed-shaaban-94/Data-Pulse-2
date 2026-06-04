@@ -171,17 +171,32 @@ paths:
 
 components:
   securitySchemes:
+    # `clerkJwt` is the shared POS-bearer scheme KEY used across every POS
+    # contract (pos-sales, pos-audit-events, pos-operators, unknown-items). The
+    # KEY name is a cross-contract convention and is retained here unchanged.
+    # The read-down surface, however, authenticates the terminal by its DEVICE
+    # PAIRING TOKEN alone — there is NO operator Clerk JWT and NO operator
+    # session involved (issue #488; the device read-down is a background sync,
+    # so no cashier is signed in). The description below states that accurately;
+    # `bearerFormat: JWT` is intentionally OMITTED because the credential is an
+    # opaque device token, not a JWT. (Renaming the scheme key POS-wide to
+    # something like `posDeviceAuth` is a separate cross-contract decision for
+    # the owner/backend, out of #488 scope.)
     clerkJwt:
       type: http
       scheme: bearer
-      bearerFormat: JWT
       description: >
-        Clerk-issued JWT presented as `Authorization: Bearer <jwt>`, paired with
-        the platform device-token header per the 001/002 baseline — the same
-        scheme used by `pos-shifts.openapi.yaml`, `pos-audit-events`, and
-        `posCaptureItem`. The device principal supplies `(tenant_id, store_id)`;
-        body/query scope is never trusted. Verified at the API edge; fail-closed
-        on signature / JWKS error. The token is not propagated past the verifier.
+        Device-principal authentication for the read-down surface. The POS
+        terminal presents its `devices` PAIRING TOKEN as
+        `Authorization: Bearer <device_token>` — an opaque token (NOT a JWT),
+        with NO operator Clerk JWT and NO `X-Terminal-Token` header. The token
+        is hashed and matched against an active (non-revoked) `devices` row; the
+        device row supplies the authoritative `(tenant_id, store_id)` scope.
+        Body/query scope is never trusted (FR-002). Verified at the API edge;
+        fail-closed (any missing / malformed / unknown / revoked token, or a
+        non-device credential, returns a generic 401 — non-disclosing, FR-001).
+        A manager Clerk JWT or dashboard session does NOT authenticate this
+        surface. The token is not propagated past the verifier.
 
   parameters:
     BranchId:

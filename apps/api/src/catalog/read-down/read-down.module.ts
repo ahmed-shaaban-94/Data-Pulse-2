@@ -37,16 +37,33 @@
  */
 import { Module } from "@nestjs/common";
 
+import type { Pool } from "pg";
+
 import { AuditModule } from "../../audit/audit.module";
-import { AuthModule } from "../../auth/auth.module";
+import { AuthModule, PG_POOL } from "../../auth/auth.module";
+import { PosDeviceAuthGuard } from "../../auth/pos-device-auth.guard";
 import { ContextModule } from "../../context/context.module";
+import { DeviceRepository } from "../../pos-operators/device.repository";
 import { ReadDownController } from "./read-down.controller";
 import { ReadDownService } from "./read-down.service";
 
 @Module({
   imports: [AuthModule, ContextModule, AuditModule],
   controllers: [ReadDownController],
-  providers: [ReadDownService],
+  providers: [
+    ReadDownService,
+    // 010 read-down authenticates a POS terminal by its `devices` pairing
+    // token alone (no operator session) — issue #488, Option B-prime. The
+    // guard resolves `(tenant_id, store_id)` from the store-bound device row
+    // via DeviceRepository, which only needs the shared admin pool (PG_POOL,
+    // provided by AuthModule). Mirrors PosOperatorsModule's provider shape.
+    {
+      provide: DeviceRepository,
+      useFactory: (pool: Pool): DeviceRepository => new DeviceRepository(pool),
+      inject: [PG_POOL],
+    },
+    PosDeviceAuthGuard,
+  ],
   exports: [ReadDownService],
 })
 export class ReadDownModule {}

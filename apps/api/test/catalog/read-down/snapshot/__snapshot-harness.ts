@@ -25,8 +25,7 @@ import request from "supertest";
 
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import { PG_POOL } from "../../../../src/auth/auth.module";
-import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
-import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
+import { PosDeviceAuthGuard } from "../../../../src/auth/pos-device-auth.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
 
 import {
@@ -132,9 +131,13 @@ export async function startSnapshotHarness(): Promise<HarnessHandle> {
       controllers: [ReadDownController],
       providers,
     })
-      .overrideGuard(PosOperatorAuthGuard)
-      .useValue({ canActivate: () => true })
-      .overrideGuard(TenantContextGuard)
+      // The read-down routes now guard with PosDeviceAuthGuard (issue #488,
+      // Option B-prime). These resolver/projection specs are NOT about auth —
+      // the global ConfigurableContextGuard below injects req.context — so the
+      // route guard is stubbed to allow. Device-principal auth itself is
+      // covered by pos-device-auth.guard.unit.spec.ts + the real-guard
+      // integration spec device-auth-required.spec.ts.
+      .overrideGuard(PosDeviceAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
