@@ -1,0 +1,361 @@
+# 013-product-master-from-erpnext — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 013 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety, and the GATED-first serialization.
+#
+# 013 is an api-only mapping module (NO worker — OQ-8). It links a DP2
+# tenant_products row to an ERPNext Item reference so a future sale posting
+# (015) can resolve each sale line to a real Item (posting decision §1;
+# "fails-to-DLQ if not"). It is a MAPPING/RECONCILIATION layer, NOT a
+# catalog-authority handover (OQ-1, §IX): the 003 Tenant Catalog stays
+# authoritative; ERPNext owns accounting Item identity only. Mapping is 1:1
+# (OQ-2), suggest-then-confirm by a Tenant Admin (OQ-7, no silent auto-trust),
+# lazy posting-time read with NO import worker (OQ-8).
+#
+# v1 suggest is MANUAL-ONLY (owner decision 2026-06-04): a Tenant Admin enters
+# the ERPNext Item ref. barcode/item_code auto-match is DEFERRED — finding
+# AUTO_MATCH_NO_SOURCE (no ERPNext item-search op in 012 posting-feed.yaml;
+# OQ-8 forbids an import worker).
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3):
+#   - 013-CONTRACT → new suggest/confirm review OpenAPI under
+#                    packages/contracts/openapi/** (Clerk-JWT HUMAN auth — NOT
+#                    012 connectorBearer, NOT 010 posDeviceAuth).
+#   - 013-SCHEMA   → new erpnext_item_map Drizzle schema + migration under
+#                    packages/db/** (next number, 0017 indicative; paired
+#                    *.down.sql, lock-duration review; 1:1 partial-unique +
+#                    confirmed-only CHECK + fail-closed RLS).
+# Both carry `approval_required: true` and `status: proposed`. They touch
+# DISJOINT surfaces (openapi vs db) so they are parallel_safety: safe with each
+# other, even though both block 013-CRUD.
+#
+# IMPORTANT: authoring this map does NOT authorize the first dispatch. The
+# first slice touching packages/db / packages/contracts/openapi / apps/api is a
+# new threshold the owner crosses explicitly. SETUP + ISOLATION-HARNESS can be
+# `ready` by dependency, but the owner has not said "begin 013 implementation".
+#
+# 013-RESOLVE (posting-time read) belongs to 015, which has NO spec yet. It is
+# listed `status: proposed`, depends_on a future 015 slice, and is NOT
+# dispatchable from this map. OQ-5/OQ-6 lock there, not here.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/013-product-master-from-erpnext/wave-status.md
+# Brief source:     specs/013-product-master-from-erpnext/tasks.md
+#                   (each slice's full RED/GREEN brief lives in tasks.md;
+#                    this file provides the dispatch-time schema fields only.)
+#
+# Predecessor docs MERGED on main: spec+plan #484 (afd3da2), data-model #485
+# (b989b18). gated_by posting decision 011-DR-POSTING (SIGNED); depends_on 012
+# (MERGED). §IX resolved (OQ-1 mapping/reconciliation).
+#
+# Status: 013 implementation NOT STARTED — planning chain (spec/plan/
+# data-model) on main; tasks.md + this map + wave-status authored on branch
+# docs/013-tasks-execmap (off origin/main). No slice dispatched yet.
+# MVP = 013-CRUD (manual suggest → confirm) once both [GATED] slices land.
+#
+# Updated: 2026-06-04 — initial authoring (post /speckit-tasks). Owner locked
+#          OQ-1/2/7/8 (#484) and OQ-3/4-as-no-column (#485, data-model). Suggest
+#          scoped manual-only; AUTO_MATCH_NO_SOURCE recorded.
+
+version: 1
+spec: 013-product-master-from-erpnext
+base: origin/main
+
+# ============================================================================
+# findings
+# ============================================================================
+
+findings:
+  - id: AUTO_MATCH_NO_SOURCE
+    summary: >
+      The data-model's suggestion_source enum includes barcode/item_code, but
+      the 012 posting-feed.yaml exposes only connectorPullPostings /
+      connectorAckOutcome — there is NO ERPNext item-search op DP2→ERPNext, and
+      OQ-8 forbids an import worker. So automated barcode/item_code candidate
+      matching has no wired source. v1 is MANUAL-ONLY; auto-match deferred until
+      a future [GATED] 012 item-search contract extension (or a re-opened OQ-8).
+    affected:
+      - erpnext_item_map (suggestion_source)
+      - 013-CONTRACT
+      - 013-CRUD
+    severity: medium
+    proof: packages/contracts/openapi/erpnext-connector/posting-feed.yaml (only 2 operationIds; no item search)
+    blocks: []   # v1 manual path is complete on its own; this does not block dispatch
+    resolved_by: ~   # a future 012 item-search extension, out of 013 scope
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 013-SIGNOFF-MANUAL
+    task_ids: [T001, T002]
+    type: docs
+    # [SIGN-OFF] gates: (T001) v1 suggest is manual-only, barcode/item_code
+    # auto-match deferred (finding AUTO_MATCH_NO_SOURCE); (T002) 013 adds no
+    # worker / no outbox event — erpnext.posting.requested stays unregistered
+    # (015's concern). Verdicts recorded in wave-status.md.
+    status: ready
+    approval_required: false   # decision gates, not code gates
+    depends_on: []
+    blocks:
+      - 013-SETUP
+    agent: opus-maestro
+    allowed_files:
+      - specs/013-product-master-from-erpnext/wave-status.md
+    validation:
+      - command: 'grep -niE "manual-only|AUTO_MATCH_NO_SOURCE|no worker|unregistered" specs/013-product-master-from-erpnext/wave-status.md'
+        expected: One+ match — the manual-only-suggest decision + the AUTO_MATCH_NO_SOURCE finding + the no-worker/no-event posture are recorded.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and raise the 012 item-search extension separately if implementation needs barcode/item_code auto-match — do NOT add an import worker (OQ-8) or instrument a feed silently"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  - id: 013-SETUP
+    task_ids: [T003]
+    type: chore
+    status: ready
+    approval_required: false
+    depends_on: [013-SIGNOFF-MANUAL]
+    blocks:
+      - 013-CRUD
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-item-map/erpnext-item-map.module.ts
+      - apps/api/src/app.module.ts   # register the new module (mirror reconciliation/read-down wiring)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — the new empty erpnext-item-map module compiles and is registered in app.module.ts (mirrors reconciliation.module.ts / read-down.module.ts); no routes yet. Existing catalog modules still compile (no regression).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 013 branch is not off latest origin/main — rebase first"
+      - "stop if any existing catalog module fails to compile — that is a regression, not a 013 task"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # single new module file + one registration line
+
+  # ===== Phase 2: Foundational (GATED; block all capability slices) ==========
+
+  # ----- 2.1 GATED suggest/confirm review OpenAPI contract --------------------
+
+  - id: 013-CONTRACT
+    task_ids: [T010, T011]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/contracts/openapi/** (Constitution §IV/§VIII)
+    depends_on: [013-SETUP]
+    blocks:
+      - 013-CRUD
+    agent: sonnet-api
+    allowed_files:
+      - packages/contracts/openapi/erpnext-connector/erpnext-item-map.yaml   # OR a catalog/ namespace — settle at authoring
+      - apps/api/test/catalog/erpnext-item-map/contract/erpnext-item-map.contract.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map/contract contract-conformance
+        expected: >
+          GREEN — contract spec: list/suggest/confirm/retire operationIds present + globally unique vs shipped ops;
+          the manager/dashboard Clerk-JWT (session) security scheme on every op — NOT connectorBearer, NOT posDeviceAuth;
+          suggest body carries tenant_product_id + erpnext_item_ref ONLY (NO tenant_id/state/confirmed_by — §XII);
+          confirm takes the expected version (optimistic concurrency); canonical Error envelope with 409 (version mismatch)
+          + non-disclosing 404 in the closed error set; toBody projection (no raw DB entity, §IV); manual-only suggest
+          (no barcode/item_code auto-match op — finding AUTO_MATCH_NO_SOURCE).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/contracts/openapi/**); do NOT author until the owner approves THIS slice in-session"
+      - "stop if the security scheme is connectorBearer (012 machine) or posDeviceAuth (010 device) — this is a HUMAN Tenant-Admin surface (Clerk-JWT / session)"
+      - "stop if any operationId collides with or renames a shipped operationId (renames are breaking, §IV)"
+      - "stop if the contract adds a barcode/item_code auto-match/search op — v1 is manual-only (AUTO_MATCH_NO_SOURCE); that is a future 012 extension"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint surface from 013-SCHEMA (openapi vs db); both block 013-CRUD
+
+  # ----- 2.2 GATED erpnext_item_map schema + migration ------------------------
+
+  - id: 013-SCHEMA
+    task_ids: [T012a, T012]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/db/** schema + SQL migration (Constitution §VIII)
+    depends_on: [013-SETUP]
+    blocks:
+      - 013-ISOLATION-HARNESS
+      - 013-CRUD
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/catalog/erpnext-item-map.ts
+      - packages/db/src/schema/index.ts   # barrel re-export
+      - packages/db/drizzle/0017_erpnext_item_map.sql            # next number indicative — confirm at authoring
+      - packages/db/drizzle/0017_erpnext_item_map.down.sql
+      - apps/api/test/catalog/erpnext-item-map/schema/erpnext-item-map-schema-shape.spec.ts
+      - packages/db/__tests__/migration/0017-erpnext-item-map.spec.ts
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- --runInBand 0017-erpnext-item-map"
+        expected: >
+          GREEN — erpnext_item_map created per data-model.md §2: tenant_id NOT NULL FK, tenant_product_id NOT NULL FK
+          (ON DELETE restrict), erpnext_item_ref text (NO FK), state enum (suggested|confirmed), suggestion_source enum
+          (barcode|item_code|manual), version int >=1, suggest/confirm provenance, retired_at soft-delete;
+          partial-unique (tenant_id, tenant_product_id) WHERE retired_at IS NULL (1:1 — OQ-2);
+          CHECK pairing state='confirmed' with confirmed_by/confirmed_at NOT NULL and state='suggested' with both NULL
+          (confirmed-only invariant); fail-closed RLS (SELECT + write on app.current_tenant, empty-GUC CASE guard,
+          mirror 0010/0014); NO UOM/price/store column; migration applies + rolls back clean (UP→DOWN→UP).
+        docker_required: true   # Testcontainers — WSL only (reference_007_test_env)
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map/schema
+        expected: GREEN — schema-shape spec (Drizzle introspection; Docker-free companion).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** schema + migration); do NOT author until the owner approves THIS slice in-session"
+      - "stop if the migration is not paired with a reviewed *.down.sql, or lock duration on the new table is not assessed"
+      - "stop if a UOM, price, price-list, or store_id column appears — OQ-3/OQ-4 resolved as NO column; store axis is out (data-model §6)"
+      - "stop if the confirmed-only CHECK or the 1:1 partial-unique is missing — both are load-bearing invariants (data-model §2/§3)"
+      - "stop if the chosen migration number is already taken on origin/main — use the next free number"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint surface from 013-CONTRACT (db vs openapi)
+
+  # ----- 2.3 Isolation harness (blocking — serves the capability slices) ------
+
+  - id: 013-ISOLATION-HARNESS
+    task_ids: [T020]
+    type: test
+    status: blocked   # waits on 013-SCHEMA
+    approval_required: false
+    depends_on: [013-SCHEMA]
+    blocks:
+      - 013-CRUD
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/erpnext-item-map/__support__/seed-item-map.ts
+      - apps/api/test/catalog/erpnext-item-map/isolation/item-map-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map/isolation"
+        expected: RED — sweep fails on missing suggest/confirm operations (NOT on RLS); fixtures seed mappings across tenants A/B; raw-SQL RLS-bypass probe on erpnext_item_map present (wrong app.current_tenant → 0 rows); cross-tenant read/confirm → non-disclosing 404; cross-store assertion is vacuous (table is tenant-only, no store axis).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts modifying the 003-owned isolation-harness.ts — extend via the new seed-item-map.ts only"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # new test files + new seed helper
+
+  # ===== Phase 3: US1 (P1) 🎯 MVP — manual map (suggest → confirm) ===========
+
+  - id: 013-CRUD
+    task_ids: [T030, T031, T032, T033, T034, T035]
+    type: feat
+    status: blocked   # waits on both [GATED] slices + harness
+    approval_required: false   # the gated surfaces are CONTRACT + SCHEMA; the service/controller is not itself gated
+    depends_on: [013-CONTRACT, 013-SCHEMA, 013-ISOLATION-HARNESS]
+    blocks:
+      - 013-REPOINT
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-item-map/erpnext-item-map.service.ts
+      - apps/api/src/catalog/erpnext-item-map/erpnext-item-map.controller.ts
+      - apps/api/src/catalog/erpnext-item-map/dto/*.ts
+      - apps/api/test/catalog/erpnext-item-map/**   # US1 RED/GREEN specs
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map"
+        expected: >
+          GREEN — manual suggest lands state='suggested' (confirmed_* NULL); confirm sets state='confirmed' + provenance;
+          stale version → 409 (§III optimistic concurrency); a suggested row is NOT resolvable (confirmed-only invariant);
+          tenant_id/state/confirmed_by/version NOT body-assignable (strict DTO, §XII); audit-in-transaction; idempotent
+          suggest on the active (tenant_id, tenant_product_id).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if confirm does not enforce optimistic concurrency (stale version must 409) — §III, the justified divergence from 003 LWW"
+      - "stop if a suggested (unconfirmed) row is treated as resolvable — confirmed-only invariant (no silent auto-trust, OQ-7)"
+      - "stop if any security-sensitive field is body-assignable — §XII strict command DTO"
+      - "stop if a barcode/item_code auto-match path is added — v1 is manual-only (AUTO_MATCH_NO_SOURCE)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Phase 4: US2 (P2) — re-point / retire (append-only) =================
+
+  - id: 013-REPOINT
+    task_ids: [T040, T041, T042]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [013-CRUD]
+    blocks:
+      - 013-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-item-map/erpnext-item-map.service.ts
+      - apps/api/src/catalog/erpnext-item-map/erpnext-item-map.controller.ts
+      - apps/api/test/catalog/erpnext-item-map/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map"
+        expected: GREEN — re-point retires the old active row + inserts a NEW row in one transaction (no in-place identity rewrite; history preserved); the 1:1 partial-unique holds across the transition; retiring the underlying tenant_products row does not cascade/orphan (FK restrict); reconciliation surfaces the dangling case.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a re-point rewrites the identity in place — must be append-only (retire old + new row), mirroring DP2's immutable-history posture"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # same service/controller files as 013-CRUD — serialize after it
+
+  # ===== Phase 5: Polish =====================================================
+
+  - id: 013-POLISH
+    task_ids: [T090, T091]
+    type: chore
+    status: blocked
+    approval_required: false
+    depends_on: [013-REPOINT]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-item-map/**
+      - apps/api/test/catalog/erpnext-item-map/**
+      - specs/013-product-master-from-erpnext/execution-map.yaml
+      - specs/013-product-master-from-erpnext/wave-status.md
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-item-map --coverage"
+        expected: GREEN — ≥80% coverage for the new module; structured logs carry tenant_id/correlation_id on suggest/confirm/re-point; no new metric category; map + wave-status reconciled to terminal.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Consumer (NOT a 013 slice) — belongs to 015 =========================
+
+  - id: 013-RESOLVE
+    task_ids: [T050]
+    type: feat
+    # Posting-time resolution: 015 reads the CONFIRMED erpnext_item_map row
+    # lazily when posting a sale line; unmapped/unconfirmed → fails-to-DLQ
+    # (posting decision §5). NOT dispatchable from this map — 015 has NO spec
+    # yet. OQ-5 (sellable-state divergence) + OQ-6 (unknown-items relationship)
+    # lock HERE, with 015. Listed for traceability only.
+    status: proposed
+    approval_required: false
+    depends_on: [013-CRUD, "015-<future-posting-slice>"]   # 015 does not exist yet — hard non-dispatchable
+    blocks: []
+    agent: sonnet-api
+    allowed_files: []   # authored under 015, not 013
+    validation:
+      - command: "(deferred — authored under the future 015 spec)"
+        expected: 015 resolves a sale line to the confirmed ERPNext Item via erpnext_item_map; unmapped/unconfirmed → DLQ; never resolves a suggested row.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop — NOT a 013 slice. Do NOT dispatch from the 013 map; this belongs to the future 015 spec (which must run its own Spec-Kit chain first)."
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unknown
+
+# ============================================================================
+# groups — proposed parallel sets (awaiting approval)
+# ============================================================================
+
+groups:
+  - id: 013-FOUNDATIONAL-GATED
+    members: [013-CONTRACT, 013-SCHEMA]
+    parallel_safety: safe   # disjoint surfaces (packages/contracts/openapi vs packages/db)
+    proposed: true   # both are [GATED]; running them as a pair needs explicit owner approval of BOTH

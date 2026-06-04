@@ -1,17 +1,17 @@
 # Wave Status — `013-product-master-from-erpnext`
 
-> Human-readable summary of where the spec stands. **013 is a docs-only
-> planning spec** — it has **no `execution-map.yaml` and no dispatchable code
-> slices** (same shape as 011 and 012). Its deliverable is a spec + a
-> mapping-concepts catalogue. The "next move" is owner review of the spec +
-> the open questions, then 013's own planning chain (`plan.md` → …) — not a
-> slice dispatch.
+> Human-readable summary of where the spec stands. The 013 **planning chain is
+> complete** (spec → plan → data-model → tasks → **execution-map**). The map now
+> defines dispatchable slices, but **authoring it does NOT authorize the first
+> dispatch** — the first slice touching `packages/db` / `packages/contracts/openapi`
+> / `apps/api` is a threshold the owner crosses explicitly. The two foundational
+> slices (CONTRACT, SCHEMA) are `[GATED]` + `proposed`.
 
 **Last updated:** 2026-06-04 by Ahmed Shaaban
 **Spec:** `013-product-master-from-erpnext` (`specs/013-product-master-from-erpnext/`)
-**Base:** `origin/main` at `20e4817` (spec+plan merged via #484)
-**Status:** spec+plan **MERGED** (#484); `data-model.md` authored on `docs/013-data-model` — **not committed/pushed** (stop-before-commit)
-**Active finding(s):** 0
+**Base:** `origin/main` at `76d2768` (spec+plan #484, data-model #485 both merged)
+**Status:** spec+plan+data-model **MERGED** (#484/#485); `tasks.md` + `execution-map.yaml` authored on `docs/013-tasks-execmap` — **not committed/pushed** (stop-before-commit)
+**Active finding(s):** 1 — `AUTO_MATCH_NO_SOURCE` (medium; non-blocking — v1 manual-only)
 
 ---
 
@@ -43,16 +43,17 @@ runtime behavior changes.
 | `spec.md` | Planning spec: purpose, boundaries, the §IX mapping/reconciliation split, the seven mapping concepts, unknown-items distinction, dependencies/gates, explicit assumptions, open questions, Constitution Check, follow-up proposals, acceptance criteria | Authored |
 | `mapping-concepts.md` | Concept catalogue: what each of the seven concepts links, which side is authoritative, what stays open | Authored |
 | `plan.md` | **Plan** (OQ-1/2/7/8 locked): Constitution Check (§IX **RESOLVED**) + Architecture Impact Map + Technical Context / Storage / concrete Project Structure. Committed design: new `[GATED]` DP2 mapping table + `[GATED]` 013-CONTRACT review surface, lazy posting-time resolution, **no worker** | **Merged** (#484) |
-| `data-model.md` | **`[GATED]` design** of the new `erpnext_item_map` identity table: 1:1 `(tenant_id, tenant_product_id)` → `erpnext_item_ref` (no FK, version-independent); `state` suggested\|confirmed + **confirmed-only resolution invariant**; **optimistic `version`** concurrency (§III, deliberate divergence from 003 LWW, justified); RLS by `app.current_tenant`; **no UOM / no price column** (OQ-3/OQ-4 resolved as no-column) | **Authored (this slice)** |
+| `data-model.md` | **`[GATED]` design** of `erpnext_item_map`: 1:1, no-FK version-independent ref, **confirmed-only invariant**, **optimistic `version`** (§III), RLS, no UOM/price/store column | **Merged** (#485) |
+| `tasks.md` | Ordered task list (T001–T091 + T050-as-015): SIGN-OFF → `[GATED]` CONTRACT + SCHEMA → ISOLATION → US1 manual map → US2 re-point → polish. Manual-only suggest; AUTO_MATCH_NO_SOURCE finding | **Authored (this slice)** |
+| `execution-map.yaml` | Dispatch map: 8 slices + the `AUTO_MATCH_NO_SOURCE` finding + a proposed `013-FOUNDATIONAL-GATED` parallel group. Conforms to `slice-schema.yaml` | **Authored (this slice)** |
 | `wave-status.md` | This file | Authored |
 
-> `spec.md` / `mapping-concepts.md` / `plan.md` are **merged on `main`** (PR #484,
-> `afd3da2`). This slice (`docs/013-data-model`) adds **`data-model.md`** only.
-> Still **NOT** created (later gated steps): `tasks.md`, `execution-map.yaml`, any
-> OpenAPI YAML, any Drizzle schema / SQL migration. The data-model carries the
-> `[GATED]` marker because it designs a new table + migration — those land in
-> their own approval slice after this design is accepted. `research.md` is not
-> needed (design resolved as owner decisions, mirroring 011/012's signed records).
+> `spec.md` / `mapping-concepts.md` / `plan.md` (#484) + `data-model.md` (#485) are
+> **merged on `main`**. This slice (`docs/013-tasks-execmap`) adds **`tasks.md` +
+> `execution-map.yaml`** — the 013 planning chain is now **complete**. Still **NOT**
+> created (the actual `[GATED]` surfaces): any OpenAPI YAML, any Drizzle schema /
+> SQL migration, any app code. Those are the dispatchable slices the map defines —
+> each its own approval slice, none authorized by this docs PR.
 
 ---
 
@@ -61,6 +62,7 @@ runtime behavior changes.
 | Slice | Files | PR / commit | Merged |
 |---|---|---|---|
 | `013-SETUP` (docs) | `spec.md`, `mapping-concepts.md`, `plan.md`, `wave-status.md` | **#484** (`afd3da2`) | 2026-06-04 |
+| `013-MAPPING-MODEL` (docs) | `data-model.md` (+ sync edits) | **#485** (`b989b18`) | 2026-06-04 |
 
 ---
 
@@ -68,13 +70,15 @@ runtime behavior changes.
 
 | Slice ID | Branch | Commit | Notes |
 |---|---|---|---|
-| `013-MAPPING-MODEL` (docs, `[GATED]` design) | `docs/013-data-model` | _(uncommitted)_ | `data-model.md` authored off `origin/main@20e4817`; designs the new `erpnext_item_map` table (no schema/migration authored). No commit (stop-before-commit). |
+| `013-TASKS-MAP` (docs) | `docs/013-tasks-execmap` | _(uncommitted)_ | `tasks.md` + `execution-map.yaml` authored off `origin/main@76d2768`; completes the 013 planning chain. No code/schema/contract authored. No commit (stop-before-commit). |
 
 ---
 
 ## Active findings
 
-_None._
+| ID | Severity | Summary | Blocks |
+|---|---|---|---|
+| `AUTO_MATCH_NO_SOURCE` | medium | The data-model's `suggestion_source` includes `barcode`/`item_code`, but 012 `posting-feed.yaml` has only the posting ops — **no ERPNext item-search op** DP2→ERPNext, and OQ-8 forbids an import worker. **v1 is manual-only** (`suggestion_source='manual'`); auto-match deferred to a future `[GATED]` 012 item-search extension. | _Nothing in v1_ — the manual path is complete on its own. |
 
 ---
 
@@ -82,7 +86,7 @@ _None._
 
 | What | Blocked by | Notes |
 |---|---|---|
-| 013 implementation (schema, contract, resolution code) | `tasks.md` → `execution-map.yaml` not authored yet | `spec.md` + `plan.md` (merged #484) + `data-model.md` (this slice) are done. depends_on (012) and gated_by (posting decision) are **satisfied**; §IX **resolved**. Remaining block: `tasks.md` → `execution-map.yaml`, then the `[GATED]` schema slice + `[GATED]` 013-CONTRACT + resolution slice. |
+| 013 implementation slices (CONTRACT, SCHEMA, CRUD, …) | owner has not authorized the first dispatch | The planning chain is **complete** (spec→plan→data-model→tasks→map, all docs). depends_on (012) + gated_by (posting decision) **satisfied**; §IX **resolved**. The map's `013-CONTRACT` + `013-SCHEMA` are `[GATED]` + `proposed` — **authoring the map does not authorize them**; the owner crosses that threshold explicitly per slice. `013-SETUP`/`013-SIGNOFF-MANUAL` are `ready` by dependency. `013-RESOLVE` is `proposed` and **not dispatchable** (belongs to the future 015 spec). |
 
 ---
 
@@ -104,20 +108,26 @@ _None._
 
 ## Ready / approved — next to dispatch
 
-_None (docs-only planning; no code slices)._
+Per the [execution-map](./execution-map.yaml) — `ready` by dependency, but the
+owner has **not** authorized the first dispatch:
+
+- **013-SIGNOFF-MANUAL** (T001/T002, `ready`) — record the manual-only + no-worker decisions (docs).
+- **013-SETUP** (T003, `ready` after SIGNOFF) — scaffold the empty `apps/api` module.
+
+The first **`[GATED]`** slices (`013-CONTRACT`, `013-SCHEMA`) are `proposed` — they
+need explicit in-session approval before any dispatch.
 
 ---
 
 ## Proposed (awaiting approval)
 
-The 013 follow-up slices (see [spec.md §13](./spec.md)) — all proposals, none
-green-lit, each runs its own planning chain:
+Per the [execution-map](./execution-map.yaml):
 
-- **013-PLAN** — ✅ **merged** (`plan.md`, #484).
-- **013-MAPPING-MODEL** — ✅ **authored** (`data-model.md`, this slice; OQ-3/4 resolved as no-column).
-- **013-MAPPING-SCHEMA** — **NEXT `[GATED]`.** Drizzle schema + migration for `erpnext_item_map` (its own approval slice).
-- **013-CONTRACT** — **required** (OQ-7 suggest/confirm review surface; `[GATED]` OpenAPI, §IV).
-- **013-RESOLVE** — posting-time resolution (confirmed-only; unmapped → DLQ), sequenced with 015; locks OQ-5/6 (+ OQ-3 behavior).
+- **013-CONTRACT** `[GATED]` `proposed` — suggest/confirm review OpenAPI (**Clerk-JWT human auth**, NOT connectorBearer/posDeviceAuth); manual-only.
+- **013-SCHEMA** `[GATED]` `proposed` — `erpnext_item_map` Drizzle + migration (`0017` indicative; 1:1 partial-unique + confirmed-only CHECK + RLS).
+- **013-FOUNDATIONAL-GATED** (group, `proposed`) — CONTRACT + SCHEMA may run in parallel (disjoint surfaces); needs approval of **both**.
+- **013-ISOLATION-HARNESS / 013-CRUD / 013-REPOINT / 013-POLISH** — `blocked` on their predecessors.
+- **013-RESOLVE** — `proposed`, depends on a **future 015 slice**; **not dispatchable** from this map (posting-time read belongs to 015; OQ-5/6 lock there).
 
 Downstream arc unchanged: 013 → 014 (warehouse) → 015 (sale posting) → 016 (tax) → 017 (sync-ops).
 
@@ -125,25 +135,25 @@ Downstream arc unchanged: 013 → 014 (warehouse) → 015 (sale posting) → 016
 
 ## Next recommended action
 
-`spec.md` + `plan.md` are **merged** (#484); **`data-model.md` is now authored**
-(this slice) — the `[GATED]` `erpnext_item_map` identity table: 1:1
-`(tenant_id, tenant_product_id)` → `erpnext_item_ref` (no FK, version-independent);
-`state` suggested\|confirmed with the **confirmed-only resolution invariant**;
-**optimistic `version`** concurrency (§III); RLS by `app.current_tenant`; **no
-UOM / no price column** (OQ-3/OQ-4 resolved as no-column).
+The **013 planning chain is complete** — `spec.md` + `plan.md` (#484) +
+`data-model.md` (#485) are merged; `tasks.md` + `execution-map.yaml` are authored
+(this slice). Once they merge, 013 has a full dispatchable map.
 
-Once `data-model.md` is reviewed/merged, the next step is to **sequence the
-gated slices** — `tasks.md` + `execution-map.yaml`:
+The next move is the **owner's call to begin implementation** — the first real
+code/schema/contract threshold. The recommended first dispatch is the two
+foundational `[GATED]` slices (after the trivial SIGNOFF + SETUP):
 
 ```text
-Use Agent OS. Author 013 tasks.md + execution-map.yaml — sequence the [GATED]
-schema slice (erpnext-item-map), the [GATED] 013-CONTRACT, and the resolution
-slice from the authored data-model. Docs-only. Stop before commit.
+Use Agent OS. Execute slice 013-SCHEMA. Stop before commit.
+```
+```text
+Use Agent OS. Execute slice 013-CONTRACT. Stop before commit.
 ```
 
-Then the `[GATED]` Drizzle schema + migration and the `[GATED]` 013-CONTRACT
-become dispatchable approval slices. OQ-5/6 (and OQ-3 behavior) lock with the
-resolution slice alongside 015.
+Each is `[GATED]` — dispatching it is an explicit in-session approval of that
+forbidden surface (`packages/db/**` / `packages/contracts/openapi/**`). They are
+parallel-safe (disjoint surfaces) but each needs its own approval. `013-CRUD`
+(the manual suggest→confirm MVP) unblocks once both + the isolation harness land.
 
 ---
 
@@ -151,9 +161,9 @@ resolution slice alongside 015.
 
 No application code, DB schema/migration, OpenAPI YAML, `package.json`/lockfile,
 CI, connector, POS, or Console file changed. **No runtime behavior changed.**
-This slice (when committed) adds **`data-model.md`** and updates this
-`wave-status.md` (plus a sync note in `spec.md` §11 and `plan.md`'s open-question
-table / next-step) under `specs/013-product-master-from-erpnext/` — nothing else.
-The `data-model.md` carries the `[GATED]` marker because it **designs** a new
-table + migration, but **authors no schema or migration file**; those land in a
-separate `[GATED]` approval slice after this design is accepted.
+This slice (when committed) adds **`tasks.md` + `execution-map.yaml`** and updates
+this `wave-status.md` under `specs/013-product-master-from-erpnext/` — nothing
+else. The `execution-map.yaml` **defines** dispatchable slices (including the two
+`[GATED]` ones) but **authorizes none of them** — the actual schema, migration,
+OpenAPI YAML, and app code are authored only when the owner dispatches each
+`[GATED]`/ready slice explicitly.
