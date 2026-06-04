@@ -42,20 +42,24 @@ change.
 
 > **Update 2026-06-04:** the 012 planning spec merged (PR #476), and **ADR 0008 is now Accepted** — the `Retail-Tower-ERP-Next-Connector` repo split is authorized.
 
-### `[GATED]` 012-CONTRACT slice — authored (this PR)
+### `[GATED]` 012-CONTRACT slice — MERGED (PR #481, `aad0cf9`)
 
 | File | Purpose | State |
 |---|---|---|
-| `packages/contracts/openapi/erpnext-connector/posting-feed.yaml` | The DP2 ↔ connector OpenAPI contract: `connectorPullPostings` (GET cursor feed) + `connectorAckOutcome` (POST outcome ack); `connectorBearer` machine scheme; mirrored 008 sale payload; satisfies O-1..O-7 | **Authored** `[GATED]` |
-| `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts` | Structural load-only conformance spec (28 assertions: operationId presence + global uniqueness, machine-bearer-not-clerkJwt, cursor/pagination, bidirectional GET+POST, idempotency, decimal money, strict DTOs, closed error set) | **Authored — 28/28 PASS** |
+| `packages/contracts/openapi/erpnext-connector/posting-feed.yaml` | The DP2 ↔ connector OpenAPI contract: `connectorPullPostings` (GET cursor feed) + `connectorAckOutcome` (POST outcome ack); `connectorBearer` machine scheme; mirrored 008 sale payload; satisfies O-1..O-7 | **Merged** `[GATED]` |
+| `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts` | Structural load-only conformance spec (28 assertions: operationId presence + global uniqueness, machine-bearer-not-clerkJwt, cursor/pagination, bidirectional GET+POST, idempotency, decimal money, strict DTOs, closed error set) | **Merged — 28/28 PASS** |
 
-> The contract spec is load-only (no Docker/HTTP) and **passes 28/28**. Next: ERPNext-major staging validation, then build the connector repo against this contract.
+> The contract spec is load-only (no Docker/HTTP) and **passes 28/28**. Payment Entry tender is DEFERRED (008 carries no tender, gate A.5) — the work-item posts the Sales Invoice only until a DP2 payments model lands. Next: ERPNext-major staging validation, then build the connector repo against this contract.
 
 ---
 
 ## Merged on `main`
 
-_None._ (Awaiting review; nothing committed/pushed yet.)
+| Slice | Subject | PR / commit |
+|---|---|---|
+| 012 planning spec | spec + contract-obligations + connector-lifecycle + follow-up + wave-status | #476 |
+| ADR 0008 | connector repo split — Accepted | #479 (`3dc56ff`) |
+| `[GATED]` 012-CONTRACT | `posting-feed.yaml` OpenAPI contract + conformance spec (28/28) | **#481 (`aad0cf9`)** |
 
 ---
 
@@ -67,10 +71,11 @@ _None._
 
 ## Blocked
 
-_None._ 012 planning is unblocked (011 gate SATISFIED). Downstream **gated/separate**
-follow-ups (not blockers on this PR): the `[GATED]` 012-CONTRACT OpenAPI slice; ADR
-0008 acceptance; the `erpnext.posting.requested` registration PR; any new ERPNext
-client dependency (`[GATED]` `package.json`).
+_None._ 012 planning, ADR 0008 acceptance, and the `[GATED]` 012-CONTRACT slice are
+all **merged**. Downstream **gated/separate** follow-ups remain (not blockers): the
+`erpnext.posting.requested` outbox event-type registration PR; any new ERPNext client
+dependency (`[GATED]` `package.json`); the DP2-side feed/ack endpoint implementation
+(015 + connector-feed).
 
 ---
 
@@ -84,13 +89,16 @@ _(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04. The `[
 
 ## Next recommended action
 
-The 012 planning spec merged (PR #476) and **ADR 0008 is Accepted**. Remaining:
-**(a)** dispatch the `[GATED]` **012-CONTRACT** slice to author the OpenAPI YAML
-for the DP2 ↔ connector pull/feed contract (the 008-CONTRACT / 010-CONTRACT
-analogue); **(b)** confirm the final ERPNext major via staging-install validation
-of the contract obligations (the version-pin gate deferred to 012); **(c)** create
-the `Retail-Tower-ERP-Next-Connector` repo and build it against the contract. Then
-013 (product master) can begin.
+012 planning (#476), ADR 0008 (#479), and the `[GATED]` 012-CONTRACT contract
+(#481) are all **merged on `main`**. Remaining:
+**(a)** confirm the final ERPNext major via staging-install validation of the
+contract obligations (the version-pin gate deferred to 012);
+**(b)** build the `Retail-Tower-ERP-Next-Connector` repo against the merged
+`posting-feed.yaml` contract (+ add its upstream-decision-index pointer back to
+the DP2 011/012 decisions);
+**(c)** register the `erpnext.posting.requested` outbox event type (its own
+approval PR) and implement the DP2-side feed/ack endpoints (015 + connector-feed).
+Then **013 (product master)** can begin its own Spec-Kit chain.
 
 ---
 
