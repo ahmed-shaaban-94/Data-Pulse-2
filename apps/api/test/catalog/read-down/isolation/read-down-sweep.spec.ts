@@ -236,10 +236,54 @@ describe("read-down-sweep §A.4 — in-scope baseline (anchors the sweep, preven
 //   - foreign `since` cursor → non-disclosing rejection;
 //   - unresolved store context → store_context_required;
 //   - the device principal is the ONLY scope ever served.
-describe.skip("read-down-sweep §B — snapshot/delta operation (HTTP) [RED until 010-US1-SNAPSHOT]", () => {
-  it("cross-scope snapshot/delta is non-disclosing; device principal is the only scope served", () => {
-    // Authored in 010-US1-SNAPSHOT (T036) + 010-US3-ISOLATION (T053) once the
-    // ReadDownController exists.
-    expect(true).toBe(true);
+// 010-US3-ISOLATION (T053) — the HTTP cross-scope sweep (unauth → 401; manager
+// JWT w/o device principal → 401; branch_id mismatch → non-disclosing 404;
+// foreign `since` → non-disclosing; unresolved store → store_context_required)
+// is authored against the booted Nest app in the sibling isolation specs
+// (device-auth-required / scope-mismatch / store-context-required) + the snapshot
+// spec's T036, because that surface needs the real controller + guards. THIS
+// file's unique contribution is the DB-LAYER proof: the RESOLVED READ PATH
+// (tenant_products ⊕ store_product_overrides — the tables US1's resolver joins)
+// is tenant+store isolated under RLS, NOT just the change-log (§A above). A
+// raw-SQL RLS-bypass on those source tables proves the device principal's scope
+// is the ONLY data the resolver could ever surface, even if a route forgot a
+// predicate (defense beneath the controller).
+describe("read-down-sweep §B — resolved read path RLS-bypass (T053, DB-layer)", () => {
+  it.each(["tenant_products", "store_product_overrides"] as const)(
+    "%s: a non-existent app.current_tenant returns zero rows (resolver source isolated)",
+    async (table) => {
+      if (maybeSkip()) return;
+      const count = await withRawClient(async (client) => {
+        await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [
+          NON_EXISTENT_TENANT,
+        ]);
+        const r = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM ${table}`,
+        );
+        return r.rows[0]?.count;
+      });
+      expect(count).toBe("0");
+    },
+  );
+
+  it("store_product_overrides: TENANT_A + a wrong store GUC hides another store's overrides (store-axis RLS)", async () => {
+    if (maybeSkip()) return;
+    // The resolver sets app.current_store to the device's store; the override
+    // join is store-axis RLS'd (0008/0009/0011). Under TENANT_A + a non-existent
+    // store, the seeded A-X override is invisible — proving a wrong/forged store
+    // scope cannot surface another store's overrides.
+    const rows = await withRawClient(async (client) => {
+      await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [
+        TENANT_A,
+      ]);
+      await client.query(`SELECT set_config('app.current_store', $1, true)`, [
+        "0f000000-0000-7000-8000-0000000000ff",
+      ]);
+      const r = await client.query<{ id: string }>(
+        `SELECT id FROM store_product_overrides WHERE store_id <> current_setting('app.current_store', true)::uuid`,
+      );
+      return r.rows;
+    });
+    expect(rows).toEqual([]);
   });
 });
