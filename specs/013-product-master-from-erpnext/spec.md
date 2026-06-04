@@ -325,6 +325,16 @@ connector repo, not DP2.
 
 ## 11. Open questions (must be locked before implementation)
 
+> **Status (updated 2026-06-04):** the **structure-gating** questions are
+> **LOCKED** — **OQ-1** = mapping/reconciliation (§IX-clean, no ADR), **OQ-2** =
+> 1:1, **OQ-7** = suggest-then-confirm, **OQ-8** = lazy / no import worker (see
+> [plan.md](./plan.md)). **OQ-3** and **OQ-4** were resolved at data-model time
+> as **"no column needed"** (UOM is connector/015; pricing is §IX-forced —
+> DP2 amounts authoritative), so they stay open as **015 posting-behavior**
+> decisions, not table structure (see [data-model.md §7](./data-model.md#7-open-questions-still-deferred)).
+> **OQ-5/OQ-6** remain open for the resolution slice. The table below is the
+> original planning enumeration.
+
 | ID | Question | Why it blocks |
 |---|---|---|
 | **OQ-1** | Does ERPNext Item identity ever **override** the §IX Tenant Catalog, or is 013 strictly a mapping/reconciliation layer (the §5 reading)? | If override is intended, it is a §IX amendment / ADR (STOP-and-raise, §5.3) — it cannot be assumed. The §5 reading (mapping only) is the working assumption pending owner confirmation. |
