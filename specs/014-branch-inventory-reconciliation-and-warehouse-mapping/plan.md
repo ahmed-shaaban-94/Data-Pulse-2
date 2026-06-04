@@ -100,7 +100,8 @@ provenance (set/updated by-whom/when, §XIII). **v1 cardinality 1:1 but
 forward-compatible** — see the OQ-2 forward-compat note. **No ERPNext-quantity
 mirror table** (OQ-1). Reads existing `stores` (001) + the 009 on-hand
 (compute-on-read) + 013's `erpnext_item_map` (item correspondence) read-only.
-**Authored in a future `[GATED]` 014-WAREHOUSE-MODEL slice, not here.**
+**Designed in [data-model.md](./data-model.md); the schema + migration are
+authored in the future `[GATED]` `014-SCHEMA` slice, not here.**
 
 **Testing**: Jest + Supertest + Testcontainers (repo standard). For the new
 mapping table: **RLS-bypass probe + cross-tenant sweep mandatory** (§VI;
@@ -219,8 +220,8 @@ Per Constitution Working Agreement
 ### Triggered Review Gates — *firm forward reference (decided; triggered by the future `[GATED]` slices, NOT this docs PR)*
 
 - [x] **DB read/write → RLS / tenant-context strategy** — **YES.** A new
-      tenant-scoped DP2 mapping table (§II). Pointer (future, 014-WAREHOUSE-MODEL):
-      RLS-bypass probe + cross-tenant sweep per the new table.
+      tenant-scoped DP2 mapping table (§II). Pointer (future, 014-SCHEMA +
+      014-ISOLATION-HARNESS): RLS-bypass probe + cross-tenant sweep per the new table.
 - [x] **OpenAPI / API contract change** — **YES** (manual-set review, §IV).
       Pointer (future, 014-CONTRACT): a `[GATED]` YAML under
       `packages/contracts/openapi/catalog/` (or a 014 namespace) + conformance spec.
@@ -332,21 +333,26 @@ The **structure-gating** questions are **LOCKED** (owner, 2026-06-04); the
 
 ## Next step
 
-`spec.md` + `plan.md` are authored; the OQs are locked. The next move is the
-`data-model.md` (designs a **`[GATED]`** surface — new table + migration + the
-mismatch vocabulary), then `/speckit-tasks` → `execution-map.yaml`:
+`spec.md` + `plan.md` + [`data-model.md`](./data-model.md) + [`tasks.md`](./tasks.md)
++ [`execution-map.yaml`](./execution-map.yaml) are authored; the OQs are locked
+(OQ-4 the mismatch vocabulary in data-model §6). The planning chain is
+**complete**. The authoritative slice IDs + statuses live in the execution-map;
+the next move is the **owner's call to begin implementation** — the two
+foundational `[GATED]` slices (after the trivial SIGNOFF + SETUP):
 
-- **014-WAREHOUSE-MODEL** — `data-model.md` for `erpnext_warehouse_map`
-  (partial-unique `(tenant_id, store_id, purpose)`, no-FK ref, optimistic
-  `version`, RLS, **no Bin mirror**) + the **mismatch-class vocabulary** (OQ-4),
-  the contract 017 reconciliation consumes.
-- **014-WAREHOUSE-SCHEMA** `[GATED]` — the Drizzle schema + migration (next
-  number, paired `*.down.sql`, RLS).
+- **014-SCHEMA** `[GATED]` — the Drizzle schema `erpnext_warehouse_map` +
+  migration (`0018` indicative, paired `*.down.sql`, RLS, `purpose`-grain
+  partial-unique, **no Bin mirror**), per [data-model.md](./data-model.md).
 - **014-CONTRACT** `[GATED]` — the manual set/list/retire review OpenAPI (§IV,
-  cookieAuth).
+  `cookieAuth`).
+
+They are parallel-safe (disjoint surfaces) but each needs its own approval.
+`014-CRUD` (the manual set→list→retire MVP) unblocks once both + the isolation
+harness land. The reconciliation *run* (`014-RECON-RUN`) belongs to **017**.
 
 ```text
-Use Agent OS. Author 014 data-model.md — the erpnext_warehouse_map table
-(forward-compatible purpose grain, no Bin mirror) + the mismatch-class
-vocabulary. Docs-only. Stop before commit.
+Use Agent OS. Execute slice 014-SCHEMA. Stop before commit.
+```
+```text
+Use Agent OS. Execute slice 014-CONTRACT. Stop before commit.
 ```

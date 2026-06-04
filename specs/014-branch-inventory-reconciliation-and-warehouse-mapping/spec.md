@@ -425,21 +425,34 @@ it, not re-deciding it.
 
 ## 13. Follow-up slices (proposals only — NOT executable yet)
 
-These are **proposed**, not green-lit. Each requires 014's own Spec-Kit chain
-and Agent OS gates before any code:
+> **Status (updated 2026-06-04):** the planning chain is now **complete** —
+> `plan.md` + `data-model.md` + `tasks.md` + `execution-map.yaml` are authored
+> (`014-PLAN` and the data-model that this section originally called
+> `014-WAREHOUSE-MODEL` are **done**). The authoritative slice IDs + statuses live
+> in [execution-map.yaml](./execution-map.yaml); the list below is aligned to
+> those IDs. The two `[GATED]` slices remain `proposed` (owner approval per slice).
 
-- **014-PLAN** — author `plan.md` + Constitution Check + Architecture Impact Map;
-  lock OQ-1..OQ-5.
-- **014-WAREHOUSE-MODEL** — `data-model.md` for the `erpnext_warehouse_map`
-  record(s) (+ a Bin-mirror table iff OQ-1 = mirror), once OQ-1/2/3 are locked.
-  Any schema is a separate `[GATED]` slice.
-- **014-CONTRACT** *(if needed)* — any ERP-backed DP2 OpenAPI surface for
-  warehouse-mapping review/repair (`[GATED]`, §IV) — only if an admin/console
-  surface is required.
-- **014-RECON-DEF** — the reconciliation *definition* (comparison + mismatch
-  classes) that 017's jobs consume; sequenced with 017's planning.
+The execution-map's dispatchable slices (each requires Agent OS gates; the two
+`[GATED]` ones require explicit per-slice owner approval before any code):
 
-Numbering and scope are advisory until each runs its planning chain.
+- **014-SIGNOFF / 014-SETUP** — record the read-down-rejected + no-mirror +
+  no-run decisions (docs); scaffold the empty `apps/api` warehouse-map module.
+  (`ready`.)
+- **014-SCHEMA** `[GATED]` — the Drizzle schema `erpnext_warehouse_map` +
+  migration (`0018` indicative, paired `*.down.sql`, RLS, `purpose`-grain
+  partial-unique, **no Bin mirror**). Designed in [data-model.md](./data-model.md);
+  authored in its own approval slice. (`proposed`.)
+- **014-CONTRACT** `[GATED]` — the manual set/list/retire review OpenAPI
+  (`cookieAuth`, §IV). (`proposed`.)
+- **014-ISOLATION-HARNESS → 014-CRUD 🎯 → 014-RECON-DEF → 014-POLISH** — the
+  capability slices (`blocked` on their predecessors). `014-RECON-DEF` ships the
+  reconciliation *definition* (comparison + the OQ-4 mismatch-class vocabulary)
+  that **017's** jobs consume — sequenced with 017's planning.
+- **014-RECON-RUN** — the reconciliation *run* + reports + repair belongs to
+  **017** (no spec yet); listed `proposed`, **not dispatchable** from this map.
+
+Numbering and scope are advisory in this section; [execution-map.yaml](./execution-map.yaml)
+is the authoritative dispatch source.
 
 ---
 
