@@ -94,6 +94,14 @@ shipped artifacts are authoritative (same posture as the auth-scheme note in 010
   tenant_products(id) ON DELETE RESTRICT`. 0014 added a composite
   `(tenant_id, …)` FK as defense-in-depth; faithful-to-spec for 013 = not added.
   A follow-up `[GATED]` schema slice could add it if wanted.
+- **`tenantAdminListErpnextItemMappings` is unbounded** (no LIMIT / pagination).
+  This is faithful to the shipped `[GATED]` contract, whose list op defines NO
+  pagination params and a bare `{items}` envelope — adding a service-layer LIMIT
+  would be a **silent truncation** (returns *some* rows with no "more" signal),
+  which the standing rules forbid. The honest fix, if it ever matters, is
+  pagination params in the OpenAPI — a future `[GATED]` contract change. (The 007
+  unknown-items list paginates because *its* contract defines limit/cursor; 013's
+  review-queue contract deliberately does not.)
 
 ---
 

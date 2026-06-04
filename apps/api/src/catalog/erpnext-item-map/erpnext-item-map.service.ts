@@ -179,6 +179,13 @@ export class ErpnextItemMapService {
           if (isPgCode(err, "23505")) {
             return { kind: "conflict" };
           }
+          // 23503 = FK violation: the tenant product was deleted between the
+          // scope-check SELECT and this INSERT (a narrow TOCTOU window under
+          // READ COMMITTED). A vanished parent is correctly a non-disclosing
+          // not_found, not a 500 — mirrors the 23505 handling.
+          if (isPgCode(err, "23503")) {
+            return { kind: "not_found" };
+          }
           throw err;
         }
       },
