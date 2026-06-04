@@ -49,12 +49,24 @@
 # (b989b18). gated_by posting decision 011-DR-POSTING (SIGNED); depends_on 012
 # (MERGED). §IX resolved (OQ-1 mapping/reconciliation).
 #
-# Status: 013 implementation NOT STARTED — planning chain (spec/plan/
-# data-model) on main; tasks.md + this map + wave-status authored on branch
-# docs/013-tasks-execmap (off origin/main). No slice dispatched yet.
-# MVP = 013-CRUD (manual suggest → confirm) once both [GATED] slices land.
+# Status: 013 implementation COMPLETE — all 7 dispatchable slices merged.
+# Planning chain (spec/plan/data-model/tasks/map) on main; the two [GATED]
+# foundational slices (013-SCHEMA + 013-CONTRACT) shipped via PR #487; the
+# remaining api-only slices (SETUP, ISOLATION-HARNESS, CRUD, REPOINT, POLISH)
+# shipped via the feat/013-crud-impl branch. MVP = 013-CRUD (manual suggest →
+# confirm) GREEN. 013-RESOLVE remains proposed (belongs to 015).
 #
-# Updated: 2026-06-04 — initial authoring (post /speckit-tasks). Owner locked
+# Updated: 2026-06-04 — CLOSEOUT (013-POLISH). All slices reconciled to terminal
+#          status; the stale `proposed`/`blocked` markers from initial authoring
+#          are updated. Two map-text reconciliations recorded (see wave-status):
+#          (1) CONTRACT auth scheme is cookieAuth (httpOnly dp2_session →
+#          DashboardAuthGuard), NOT "Clerk-JWT" — the shipped contract is
+#          authoritative; (2) the ISOLATION-HARNESS landed DB-layer GREEN (it
+#          characterises the shipped 0017 RLS), NOT "RED on missing ops" — the
+#          operations-level cross-tenant 404 lives in 013-CRUD where the
+#          controller exists (a missing-controller route-404 tests nothing).
+#
+# Earlier: 2026-06-04 — initial authoring (post /speckit-tasks). Owner locked
 #          OQ-1/2/7/8 (#484) and OQ-3/4-as-no-column (#485, data-model). Suggest
 #          scoped manual-only; AUTO_MATCH_NO_SOURCE recorded.
 
@@ -99,7 +111,7 @@ slices:
     # auto-match deferred (finding AUTO_MATCH_NO_SOURCE); (T002) 013 adds no
     # worker / no outbox event — erpnext.posting.requested stays unregistered
     # (015's concern). Verdicts recorded in wave-status.md.
-    status: ready
+    status: done   # manual-only + no-worker decisions recorded in wave-status
     approval_required: false   # decision gates, not code gates
     depends_on: []
     blocks:
@@ -120,7 +132,7 @@ slices:
   - id: 013-SETUP
     task_ids: [T003]
     type: chore
-    status: ready
+    status: merged   # scaffold shipped (feat/013-crud-impl); module registered in app.module.ts
     approval_required: false
     depends_on: [013-SIGNOFF-MANUAL]
     blocks:
@@ -147,7 +159,7 @@ slices:
   - id: 013-CONTRACT
     task_ids: [T010, T011]
     type: feat
-    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    status: merged   # [GATED] shipped via PR #487 (cookieAuth — see closeout note, NOT Clerk-JWT)
     approval_required: true   # packages/contracts/openapi/** (Constitution §IV/§VIII)
     depends_on: [013-SETUP]
     blocks:
@@ -180,7 +192,7 @@ slices:
   - id: 013-SCHEMA
     task_ids: [T012a, T012]
     type: feat
-    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    status: merged   # [GATED] shipped via PR #487 (0017_erpnext_item_map + barrel + RLS)
     approval_required: true   # packages/db/** schema + SQL migration (Constitution §VIII)
     depends_on: [013-SETUP]
     blocks:
@@ -223,7 +235,7 @@ slices:
   - id: 013-ISOLATION-HARNESS
     task_ids: [T020]
     type: test
-    status: blocked   # waits on 013-SCHEMA
+    status: merged   # shipped (feat/013-crud-impl) — DB-layer RLS sweep, GREEN 8/8 (see closeout note)
     approval_required: false
     depends_on: [013-SCHEMA]
     blocks:
@@ -247,7 +259,7 @@ slices:
   - id: 013-CRUD
     task_ids: [T030, T031, T032, T033, T034, T035]
     type: feat
-    status: blocked   # waits on both [GATED] slices + harness
+    status: merged   # 🎯 MVP shipped (feat/013-crud-impl) — suggest/confirm/list, GREEN 16/16
     approval_required: false   # the gated surfaces are CONTRACT + SCHEMA; the service/controller is not itself gated
     depends_on: [013-CONTRACT, 013-SCHEMA, 013-ISOLATION-HARNESS]
     blocks:
@@ -280,7 +292,7 @@ slices:
   - id: 013-REPOINT
     task_ids: [T040, T041, T042]
     type: feat
-    status: blocked
+    status: merged   # shipped (feat/013-crud-impl) — retire + append-only re-point, GREEN 6/6
     approval_required: false
     depends_on: [013-CRUD]
     blocks:
@@ -305,7 +317,7 @@ slices:
   - id: 013-POLISH
     task_ids: [T090, T091]
     type: chore
-    status: blocked
+    status: merged   # CLOSEOUT (feat/013-crud-impl) — structured logs + coverage (impl 97-100%) + this reconcile
     approval_required: false
     depends_on: [013-REPOINT]
     blocks: []
@@ -358,4 +370,4 @@ groups:
   - id: 013-FOUNDATIONAL-GATED
     members: [013-CONTRACT, 013-SCHEMA]
     parallel_safety: safe   # disjoint surfaces (packages/contracts/openapi vs packages/db)
-    proposed: true   # both are [GATED]; running them as a pair needs explicit owner approval of BOTH
+    proposed: false   # MERGED — both [GATED] slices shipped together via PR #487 (owner-approved)
