@@ -47,8 +47,9 @@ const CATALOG_TABLE_EXPORTS: ReadonlyArray<readonly [string, string]> = [
 // The catalog modules sanctioned for re-export from
 // `packages/db/src/schema/index.ts`. The original seven are data-model.md §1–§8
 // (003); `catalog-change-log` is the 010 read-down change-log (spec 010
-// data-model §3). Any extra `./catalog/<module>` line in the barrel signals an
-// unsanctioned table leaking through the public API.
+// data-model §3); `erpnext-item-map` is the 013 product-master identity mapping
+// (spec 013 data-model §2). Any extra `./catalog/<module>` line in the barrel
+// signals an unsanctioned table leaking through the public API.
 const EXPECTED_CATALOG_MODULES: readonly string[] = [
   "global-products",
   "tenant-products",
@@ -58,6 +59,7 @@ const EXPECTED_CATALOG_MODULES: readonly string[] = [
   "price-history",
   "unknown-items",
   "catalog-change-log",
+  "erpnext-item-map",
 ];
 
 const SCHEMA_BARREL_PATH = resolve(
