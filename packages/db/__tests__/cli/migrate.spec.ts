@@ -129,6 +129,7 @@ describe("data-pulse-migrate CLI", () => {
     "0015_pos_catalog_read_down",
     "0016_inventory_unit_guard",
     "0017_erpnext_item_map",
+    "0018_erpnext_warehouse_map",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
