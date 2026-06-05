@@ -1,0 +1,349 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Catalog — ERPNext Warehouse Mapping API
+  version: "1.0.0-draft"
+  description: >
+    Spec 014 (branch-inventory-reconciliation-and-warehouse-mapping) — the
+    tenant-admin set/list/retire review surface for the `erpnext_warehouse_map`
+    store↔warehouse mapping
+    (`packages/db/.../catalog/erpnext-warehouse-map.ts`, migration 0018). It
+    lets a Tenant Admin map a DP2 `stores` row to an ERPNext **Warehouse**
+    reference so ERPNext can VALUE the same physical stock the store holds, and
+    so the reconciliation (017) + future posting (015) target the right
+    warehouse.
+
+    014 is a PURE MAPPING / RECONCILIATION layer, NOT a stock-authority handover
+    (OQ-1, §IX, the SIGNED stock-impact decision): DP2's 009 ledger stays the
+    OPERATIONAL on-hand authority; ERPNext owns VALUATION; read-down is
+    rejected. This contract carries NO Bin-quantity, valuation, cost, or on-hand
+    field — mapping only (OQ-1; the rejected read-down look-alike is explicitly
+    not built).
+
+    Three operations:
+
+      1. `tenantAdminListErpnextWarehouseMappings` — list a tenant's active
+         mappings.
+      2. `tenantAdminSetErpnextWarehouseMapping` — set a MANUAL mapping
+         (`store_id` + `erpnext_warehouse_ref`). `purpose` defaults server-side
+         to `stock` in v1 (OQ-2 forward-compat; the `returns`/expired warehouse
+         is a future widening). At most ONE active mapping per
+         `(store_id, purpose)` (OQ-2 1:1 in v1); a second active set for the
+         same store is `409 conflict`. `tenant_id` + actor are server-resolved
+         (§XII); they MUST NOT appear in the body.
+      3. `tenantAdminRetireErpnextWarehouseMapping` — retire / re-point a
+         mapping. Append-only: retiring sets `retired_at`; a re-point is a
+         retire of the old row + a fresh set (never an in-place identity
+         rewrite). Carries the expected `version` for optimistic concurrency
+         (§III); a stale version is `409 conflict`.
+
+    Authentication boundary:
+
+      * ALL operations are dashboard-session-authenticated via `cookieAuth`
+        (the httpOnly `dp2_session` cookie — the human Tenant-Admin scheme,
+        mirroring the `tenantAdmin*` operations in
+        `catalog/erpnext-item-map.yaml` and `catalog/unknown-items.yaml`). This
+        is deliberately NOT the 012 `connectorBearer` machine scheme and NOT the
+        POS `clerkJwt` device scheme — the set/retire review is a human action
+        from Retail-Tower-Console, which talks only to DP2 (011 boundaries).
+      * `tenant_id` and the acting principal are resolved server-side from the
+        session, NEVER from the request body (§XII). Cross-tenant /
+        out-of-scope addresses are non-disclosing 404s (§II/§XII).
+
+    Conventions shared with the other catalog contracts: OpenAPI 3.1 of record;
+    a `toBody()` projection (no raw DB entity, §IV); the canonical `Error`
+    envelope with a closed error set incl. `409 conflict` (version mismatch /
+    1:1) and the non-disclosing `404`. Consumed by
+    `apps/api/test/catalog/erpnext-warehouse-map/contract/erpnext-warehouse-map.contract.spec.ts`.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: catalog-erpnext-warehouse-map
+    description: >
+      ERPNext store↔warehouse identity mapping — tenant-admin set/list/retire
+      review surface. Spec 014.
+
+paths:
+  /api/v1/catalog/erpnext-warehouse-mappings:
+    get:
+      summary: List a tenant's ERPNext Warehouse mappings.
+      operationId: tenantAdminListErpnextWarehouseMappings
+      tags: [catalog-erpnext-warehouse-map]
+      description: >
+        Returns the tenant's active mappings as `ErpnextWarehouseMapping`
+        projections. Scoped to the session tenant (RLS); cross-tenant rows are
+        never disclosed.
+      responses:
+        "200":
+          description: The tenant's active mappings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ErpnextWarehouseMapping"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      summary: Set a manual mapping (store → ERPNext Warehouse).
+      operationId: tenantAdminSetErpnextWarehouseMapping
+      tags: [catalog-erpnext-warehouse-map]
+      description: >
+        Creates a MANUAL mapping (OQ-3 manual admin-set; no suggest-engine, no
+        import worker). `purpose` defaults server-side to `stock` in v1 (OQ-2
+        forward-compat). At most ONE active mapping per `(store_id, purpose)`
+        (OQ-2 1:1 in v1); a second active set for the same store is
+        `409 conflict`. `tenant_id` + actor are server-resolved (§XII); they
+        MUST NOT appear in the body.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetErpnextWarehouseMappingRequest"
+      responses:
+        "201":
+          description: Mapping set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpnextWarehouseMapping"
+        "400":
+          description: Bad request (validation failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            The addressed `store_id` is not found OR not in the session
+            tenant's scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            An active mapping already exists for this `(store_id, purpose)`
+            (OQ-2 1:1). `error.code = "conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-warehouse-mappings/{id}/retire:
+    post:
+      summary: Retire (or re-point) a mapping — append-only.
+      operationId: tenantAdminRetireErpnextWarehouseMapping
+      tags: [catalog-erpnext-warehouse-map]
+      description: >
+        Sets `retired_at` on the addressed active mapping (append-only: the row
+        is preserved as history; a re-point is a retire here followed by a fresh
+        `tenantAdminSetErpnextWarehouseMapping`, never an in-place identity
+        rewrite). Carries the expected `version` (§III optimistic concurrency);
+        a mismatch is `409 conflict`. Cross-tenant / out-of-scope ids are
+        non-disclosing 404s.
+      parameters:
+        - $ref: "#/components/parameters/MappingId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VersionedMutationRequest"
+      responses:
+        "200":
+          description: Mapping retired.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErpnextWarehouseMapping"
+        "400":
+          description: Bad request (invalid path UUID or body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Optimistic-concurrency conflict (stale `version`) OR already retired.
+            `error.code = "conflict"` (§III).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# All operations require a dashboard session (httpOnly cookie) — the human
+# Tenant-Admin scheme. NOT connectorBearer (012 machine), NOT clerkJwt (POS).
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  parameters:
+    MappingId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUIDv7 primary key of the `erpnext_warehouse_map` row.
+
+  schemas:
+
+    SetErpnextWarehouseMappingRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Manual set command. Strict (`additionalProperties: false`, §XII):
+        `tenant_id`, `purpose`, `version`, `set_by` are server-resolved and MUST
+        NOT appear here. v1 has no `purpose` field — it is always recorded
+        server-side as `stock` (OQ-2; the `returns` purpose is a future
+        widening).
+      required:
+        - store_id
+        - erpnext_warehouse_ref
+      properties:
+        store_id:
+          type: string
+          format: uuid
+          description: The DP2 store to map (001 stores). Scope-checked server-side.
+        erpnext_warehouse_ref:
+          type: string
+          minLength: 1
+          maxLength: 180
+          description: >
+            The ERPNext Warehouse reference in DP2 terms (e.g. the Warehouse
+            name). Opaque string — no FK, version-independent (012 O-6).
+
+    VersionedMutationRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Retire command. Carries ONLY the expected `version` for optimistic
+        concurrency (§III). All identity + actor fields are server-resolved
+        (§XII).
+      required:
+        - version
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: >
+            The version the caller last observed. The update is
+            `WHERE id = :id AND version = :version`; a mismatch is 409.
+
+    ErpnextWarehouseMapping:
+      type: object
+      additionalProperties: false
+      description: >
+        The `toBody()` projection of an `erpnext_warehouse_map` row (no raw DB
+        entity, §IV). Identity + lifecycle only — NO Bin-quantity, valuation,
+        cost, or on-hand field (OQ-1; the rejected read-down look-alike).
+      required:
+        - id
+        - store_id
+        - purpose
+        - erpnext_warehouse_ref
+        - version
+        - set_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+        purpose:
+          type: string
+          enum: [stock, returns]
+          description: Warehouse role. v1 always `stock` (the `returns` purpose is a future widening).
+        erpnext_warehouse_ref:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+          description: Optimistic-concurrency token (§III).
+        set_by:
+          type: [string, "null"]
+          format: uuid
+          description: Tenant Admin that set/last-updated the mapping.
+        set_at:
+          type: string
+          format: date-time
+        retired_at:
+          type: [string, "null"]
+          format: date-time
+          description: Soft-delete timestamp. Null = active.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `catalog/erpnext-item-map.yaml` (used verbatim).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII) —
+        they never enumerate the underlying cause.
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | conflict | system_failure
+                (plus the generic 401 refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
