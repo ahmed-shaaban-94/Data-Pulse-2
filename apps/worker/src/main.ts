@@ -43,6 +43,7 @@ import { shutdownOtel } from "@data-pulse-2/shared";
 
 import { EmailWorker } from "./email/email.worker";
 import { AuditWorker } from "./audit/audit.worker";
+import { SaleWorker } from "./sales/sale.worker";
 import { WorkerModule } from "./worker.module";
 
 /**
@@ -80,11 +81,11 @@ const logger = new Logger("worker.bootstrap");
 
 /**
  * Bootstraps the worker. Returns the Nest context plus the workers it
- * resolved (`emailWorker`, `auditWorker`), and a `triggerShutdown`
- * callable that tests can call to simulate a signal without actually
- * emitting one.
+ * resolved (`emailWorker`, `auditWorker`, `saleWorker`), and a
+ * `triggerShutdown` callable that tests can call to simulate a signal
+ * without actually emitting one.
  *
- * Both workers are started by this function. Their shutdown is owned
+ * All three workers are started by this function. Their shutdown is owned
  * by Nest's lifecycle: `app.close()` (called inside `shutdown()` below)
  * fires `onModuleDestroy` on every provider, which calls `close()` on
  * each worker.
@@ -95,6 +96,7 @@ export async function bootstrap(
   app: INestApplicationContext;
   emailWorker: EmailWorker;
   auditWorker: AuditWorker;
+  saleWorker: SaleWorker;
   /** Test hook: invoke the registered shutdown sequence. */
   triggerShutdown: (signal: "SIGTERM" | "SIGINT") => Promise<void>;
 }> {
@@ -121,8 +123,13 @@ export async function bootstrap(
   const app = await createContext();
   const emailWorker = app.get(EmailWorker);
   const auditWorker = app.get(AuditWorker);
+  // SaleWorker consumes the "sale-processing" BullMQ queue (the live half of
+  // DP-008-LIVELOOP). It is registered in WorkerModule but NOT self-starting,
+  // so it must be started imperatively here alongside email/audit.
+  const saleWorker = app.get(SaleWorker);
   emailWorker.start();
   auditWorker.start();
+  saleWorker.start();
 
   writeLine(stderr, {
     level: "info",
@@ -163,7 +170,7 @@ export async function bootstrap(
     void shutdown(s);
   });
 
-  return { app, emailWorker, auditWorker, triggerShutdown: shutdown };
+  return { app, emailWorker, auditWorker, saleWorker, triggerShutdown: shutdown };
 }
 
 function writeLine(

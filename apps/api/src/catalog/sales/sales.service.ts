@@ -33,7 +33,7 @@
 import { createHash } from "node:crypto";
 
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import { runWithTenantContext } from "@data-pulse-2/db";
+import { runWithTenantContext, emit, OUTBOX_EVENT_TYPES } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 import type { Pool } from "pg";
 
@@ -42,7 +42,15 @@ import type { CaptureSaleRequestDto } from "./dto/capture-sale-request.dto";
 import type { RecordVoidRequestDto } from "./dto/record-void-request.dto";
 import type { RecordRefundRequestDto } from "./dto/record-refund-request.dto";
 
-/** Optional outbox producer seam (kept optional for PG_POOL-only test wiring). */
+/**
+ * Optional outbox producer seam — OBSOLETE DEAD CODE.
+ *
+ * Superseded by the IN-TRANSACTION `emit(client, ...)` call in `captureSale`
+ * (the inventory-service precedent), which writes the `sale.captured` outbox
+ * row atomically with the sale + sale_lines inserts. This post-tx enqueue seam
+ * is intentionally LEFT in place (unbound — never provided in `SalesModule`)
+ * only to avoid broadening this slice's scope; it is never invoked at runtime.
+ */
 export interface SalesOutboxProducer {
   enqueue(event: {
     tenantId: string;
@@ -181,6 +189,10 @@ function sha256CanonicalHex(value: unknown): string {
 export class SalesService {
   constructor(
     @Inject(PG_POOL) private readonly pool: Pool,
+    // OBSOLETE: the outbox event is now emitted IN-TRANSACTION via `emit(client,
+    // ...)` inside `captureSale`. This @Optional inject is dead — `SalesModule`
+    // never binds `SALES_OUTBOX_PRODUCER`, so it is always `undefined`. Kept to
+    // avoid broadening this slice's scope (see `SalesOutboxProducer` docstring).
     @Optional()
     @Inject(SALES_OUTBOX_PRODUCER)
     private readonly outbox?: SalesOutboxProducer,
@@ -305,19 +317,33 @@ export class SalesService {
           );
         }
 
+        // Emit the `sale.captured` outbox event IN-TRANSACTION, atomic with the
+        // sale + sale_lines inserts (the inventory-service precedent). The
+        // worker-side `SaleCapturedConsumer` bridges this row to the
+        // "sale-processing" BullMQ queue. ONLY the created path emits — the
+        // dedup-replay branch above already returned `created: false` without
+        // reaching here, so a re-delivery does NOT double-emit.
+        //
+        // Payload is IDs-only (`sale_id` / `store_id`, both uuid) — NO money,
+        // line amounts, or PII (FR-042 / FR-092), matching the consumer's Zod
+        // schema. The emit runs under the same tenant GUC as the inserts (this
+        // callback is inside `runWithTenantContext` with `tenantId`), so the
+        // outbox RLS WITH CHECK passes. A failing emit ROLLS BACK the whole
+        // capture — the sale and its event commit together or not at all.
+        //
+        // `correlationId` is null: `CaptureSaleInput` carries no correlation id
+        // (unlike the inventory movement path), so there is none to forward.
+        await emit(client, {
+          eventType: OUTBOX_EVENT_TYPES.SALE_CAPTURED,
+          tenantId,
+          storeId,
+          payload: { sale_id: saleId, store_id: storeId },
+          correlationId: null,
+        });
+
         return { saleId, created: true };
       },
     );
-
-    if (result.created && this.outbox) {
-      await this.outbox
-        .enqueue({
-          tenantId,
-          type: "sale.captured",
-          payload: { saleId: result.saleId },
-        })
-        .catch(() => undefined);
-    }
 
     const projection = await this.readSaleProjection(
       tenantId,

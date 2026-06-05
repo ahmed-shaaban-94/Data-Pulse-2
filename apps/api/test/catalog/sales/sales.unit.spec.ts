@@ -4,9 +4,10 @@
  *
  * The HTTP/RLS behavior is proven by the Testcontainers capture + sweep suites;
  * this spec exercises the in-process branches those suites can't drive
- * deterministically (the ON CONFLICT loser + defensive throw, the optional
- * outbox enqueue, the read-projection nullish fallbacks, and the controller's
- * guard / rethrow paths) by mocking the pg client and the tenant-context runner.
+ * deterministically (the ON CONFLICT loser + defensive throw, the IN-TRANSACTION
+ * `sale.captured` outbox emit, the read-projection nullish fallbacks, and the
+ * controller's guard / rethrow paths) by mocking the pg client and the
+ * tenant-context runner.
  */
 import {
   ConflictException,
@@ -16,6 +17,14 @@ import {
 
 // runWithTenantContext is mocked to invoke its callback with a scripted client,
 // so the service runs entirely in-process with no database.
+//
+// `emit` + `OUTBOX_EVENT_TYPES` are also mocked: the service now imports both
+// (the IN-TRANSACTION `sale.captured` emit), so the mock module MUST export
+// them or every fresh-capture test throws `Cannot read SALE_CAPTURED of
+// undefined`. The fake `emit` issues the real `INSERT INTO outbox_events`
+// query against the SAME scripted client, so the scripted INSERT branch fires
+// and the in-tx emit is exercised exactly as production runs it (inside the
+// transaction callback — a thrown INSERT therefore aborts capture).
 let clientQuery: jest.Mock;
 jest.mock("@data-pulse-2/db", () => ({
   runWithTenantContext: (
@@ -23,13 +32,23 @@ jest.mock("@data-pulse-2/db", () => ({
     _ctx: unknown,
     fn: (c: { query: jest.Mock }) => unknown,
   ) => fn({ query: clientQuery }),
+  OUTBOX_EVENT_TYPES: { SALE_CAPTURED: "sale.captured" },
+  emit: async (
+    client: { query: jest.Mock },
+    input: { eventType: string; payload: Record<string, unknown> },
+  ): Promise<string> => {
+    await client.query(
+      `INSERT INTO outbox_events (event_id, event_type, payload) VALUES ($1, $2, $3::jsonb)`,
+      ["evt-1", input.eventType, JSON.stringify(input.payload)],
+    );
+    return "evt-1";
+  },
 }));
 
 import {
   SalesService,
   SaleNotFoundError,
   TerminalEventProvenanceConflictError,
-  type SalesOutboxProducer,
 } from "../../../src/catalog/sales/sales.service";
 import { SalesController } from "../../../src/catalog/sales/sales.controller";
 
@@ -92,10 +111,16 @@ function scriptClient(opts: {
   saleRows?: Array<Record<string, unknown>>;
   lineRows?: Array<Record<string, unknown>>;
   storeRows?: Array<{ timezone: string }>;
+  /** When set, the IN-TRANSACTION outbox INSERT throws this (rollback path). */
+  outboxError?: Error;
 }): jest.Mock {
   return jest.fn(async (sql: string) => {
     if (/FROM stores WHERE id/.test(sql)) return { rows: opts.storeRows ?? [{ timezone: "UTC" }] };
     if (/SUM\(amt\)/.test(sql)) return { rows: opts.mismatchRows ?? [{ mismatch: false }] };
+    if (/INSERT INTO outbox_events/.test(sql)) {
+      if (opts.outboxError) throw opts.outboxError;
+      return { rows: [] };
+    }
     if (/INSERT INTO sales/.test(sql)) return { rows: opts.insertedRows ?? [{ id: VALID_REF }] };
     if (/SELECT id FROM sales/.test(sql)) return { rows: opts.winnerRows ?? [] };
     if (/INSERT INTO sale_lines/.test(sql)) return { rows: [] };
@@ -106,47 +131,60 @@ function scriptClient(opts: {
 }
 
 describe("SalesService — capture branches (unit)", () => {
-  it("fresh capture inserts, enqueues the outbox event, returns created=true", async () => {
+  /** True iff the scripted client received the in-tx `sale.captured` INSERT. */
+  function emittedOutbox(q: jest.Mock): boolean {
+    return q.mock.calls.some(
+      (c) =>
+        /INSERT INTO outbox_events/.test(String(c[0])) &&
+        JSON.stringify(c[1]).includes("sale.captured"),
+    );
+  }
+
+  it("fresh capture inserts and emits the sale.captured outbox row IN-TRANSACTION, created=true", async () => {
     clientQuery = scriptClient({ insertedRows: [{ id: VALID_REF }] });
-    const outbox: SalesOutboxProducer = { enqueue: jest.fn().mockResolvedValue(undefined) };
-    const svc = new SalesService({} as never, outbox);
+    const svc = new SalesService({} as never);
 
     const res = await svc.captureSale({ ...CAPTURE, body: body() });
 
     expect(res.created).toBe(true);
     expect(res.projection.saleRef).toBe(VALID_REF);
-    expect(outbox.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "sale.captured" }),
+    // The outbox emit runs inside the SAME scripted client (same transaction) —
+    // IDs-only payload (sale_id / store_id), no money / line amounts (FR-042/092).
+    expect(emittedOutbox(clientQuery)).toBe(true);
+    const outboxCall = clientQuery.mock.calls.find((c) =>
+      /INSERT INTO outbox_events/.test(String(c[0])),
+    );
+    const payload = JSON.parse(String(outboxCall![1][2]));
+    // sale_id is the freshly generated id (newId()), store_id is the caller's
+    // store. The payload is EXACTLY these two keys — IDs only, no money / lines.
+    expect(Object.keys(payload).sort()).toEqual(["sale_id", "store_id"]);
+    expect(typeof payload.sale_id).toBe("string");
+    expect(payload.store_id).toBe(CAPTURE.storeId);
+    expect(JSON.stringify(payload)).not.toMatch(/posTotal|pos_total|line_amount|lineAmount/);
+  });
+
+  it("a failing in-tx outbox INSERT aborts the capture (atomic — rolls back)", async () => {
+    // The emit is now INSIDE the transaction (replacing the old swallowed,
+    // best-effort post-tx enqueue). A failing outbox INSERT must propagate so
+    // the surrounding transaction rolls back — the sale and its event commit
+    // together or not at all. The old "swallowed failure" semantics are gone.
+    clientQuery = scriptClient({ outboxError: new Error("outbox insert failed") });
+    const svc = new SalesService({} as never);
+    await expect(svc.captureSale({ ...CAPTURE, body: body() })).rejects.toThrow(
+      /outbox insert failed/,
     );
   });
 
-  it("created=true without an outbox producer does not throw (optional seam)", async () => {
-    clientQuery = scriptClient({});
-    const svc = new SalesService({} as never); // no outbox
-    const res = await svc.captureSale({ ...CAPTURE, body: body() });
-    expect(res.created).toBe(true);
-  });
-
-  it("a swallowed outbox failure still returns the created sale", async () => {
-    clientQuery = scriptClient({});
-    const outbox: SalesOutboxProducer = {
-      enqueue: jest.fn().mockRejectedValue(new Error("queue down")),
-    };
-    const svc = new SalesService({} as never, outbox);
-    const res = await svc.captureSale({ ...CAPTURE, body: body() });
-    expect(res.created).toBe(true);
-  });
-
-  it("ON CONFLICT (zero rows) resolves to the existing row, created=false", async () => {
+  it("ON CONFLICT (zero rows) resolves to the existing row, created=false, does NOT emit", async () => {
     clientQuery = scriptClient({ insertedRows: [], winnerRows: [{ id: VALID_REF }] });
-    const outbox: SalesOutboxProducer = { enqueue: jest.fn() };
-    const svc = new SalesService({} as never, outbox);
+    const svc = new SalesService({} as never);
 
     const res = await svc.captureSale({ ...CAPTURE, body: body() });
 
     expect(res.created).toBe(false);
     expect(res.projection.saleRef).toBe(VALID_REF);
-    expect(outbox.enqueue).not.toHaveBeenCalled();
+    // A dedup re-delivery must NOT emit a second outbox event (no double-emit).
+    expect(emittedOutbox(clientQuery)).toBe(false);
   });
 
   it("ON CONFLICT but the winner row cannot be re-read → throws (defensive)", async () => {

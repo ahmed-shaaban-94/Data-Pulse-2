@@ -17,6 +17,7 @@ import {
 import type { INestApplicationContext } from "@nestjs/common";
 import { EmailWorker } from "../src/email/email.worker";
 import { AuditWorker } from "../src/audit/audit.worker";
+import { SaleWorker } from "../src/sales/sale.worker";
 
 class FakeEmailWorker {
   starts = 0;
@@ -45,24 +46,41 @@ class FakeAuditWorker {
   }
 }
 
+class FakeSaleWorker {
+  starts = 0;
+  start(): void {
+    this.starts += 1;
+  }
+  async close(): Promise<void> {
+    // see FakeEmailWorker
+  }
+  async onModuleDestroy(): Promise<void> {
+    // not exercised in these tests
+  }
+}
+
 class FakeAppContext implements Partial<INestApplicationContext> {
   closed = 0;
   closeReject?: Error;
   constructor(
     private readonly emailWorker: FakeEmailWorker,
     private readonly auditWorker: FakeAuditWorker,
+    private readonly saleWorker: FakeSaleWorker,
   ) {}
 
   // Only `get` and `close` are used by `bootstrap`. `get` dispatches by
-  // token: `EmailWorker` → fake email; `AuditWorker` → fake audit.
-  // Anything else throws so a future bootstrap addition surfaces here
-  // instead of silently returning the wrong fake.
+  // token: `EmailWorker` → fake email; `AuditWorker` → fake audit;
+  // `SaleWorker` → fake sale. Anything else throws so a future bootstrap
+  // addition surfaces here instead of silently returning the wrong fake.
   get<TInput = unknown, TResult = TInput>(token: TInput): TResult {
     if ((token as unknown) === EmailWorker) {
       return this.emailWorker as unknown as TResult;
     }
     if ((token as unknown) === AuditWorker) {
       return this.auditWorker as unknown as TResult;
+    }
+    if ((token as unknown) === SaleWorker) {
+      return this.saleWorker as unknown as TResult;
     }
     throw new Error(
       `FakeAppContext.get: unknown token ${String(token)} — extend the fake.`,
@@ -109,6 +127,7 @@ class FakeStderr implements StderrLike {
 async function setup(): Promise<{
   emailWorker: FakeEmailWorker;
   auditWorker: FakeAuditWorker;
+  saleWorker: FakeSaleWorker;
   ctx: FakeAppContext;
   proc: FakeProcess;
   stderr: FakeStderr;
@@ -116,7 +135,8 @@ async function setup(): Promise<{
 }> {
   const emailWorker = new FakeEmailWorker();
   const auditWorker = new FakeAuditWorker();
-  const ctx = new FakeAppContext(emailWorker, auditWorker);
+  const saleWorker = new FakeSaleWorker();
+  const ctx = new FakeAppContext(emailWorker, auditWorker, saleWorker);
   const proc = new FakeProcess();
   const stderr = new FakeStderr();
   const result = await bootstrap({
@@ -128,6 +148,7 @@ async function setup(): Promise<{
   return {
     emailWorker,
     auditWorker,
+    saleWorker,
     ctx,
     proc,
     stderr,
@@ -146,10 +167,16 @@ describe("bootstrap — happy path", () => {
     expect(auditWorker.starts).toBe(1);
   });
 
-  it("starts both workers exactly once each", async () => {
-    const { emailWorker, auditWorker } = await setup();
+  it("creates the context, resolves SaleWorker, calls start()", async () => {
+    const { saleWorker } = await setup();
+    expect(saleWorker.starts).toBe(1);
+  });
+
+  it("starts all three workers exactly once each", async () => {
+    const { emailWorker, auditWorker, saleWorker } = await setup();
     expect(emailWorker.starts).toBe(1);
     expect(auditWorker.starts).toBe(1);
+    expect(saleWorker.starts).toBe(1);
   });
 
   it("registers SIGTERM and SIGINT handlers exactly once", async () => {
@@ -167,10 +194,11 @@ describe("bootstrap — happy path", () => {
     expect(parsed["component"]).toBe("worker.bootstrap");
   });
 
-  it("returns both worker references for callers", async () => {
+  it("returns all three worker references for callers", async () => {
     const emailWorker = new FakeEmailWorker();
     const auditWorker = new FakeAuditWorker();
-    const ctx = new FakeAppContext(emailWorker, auditWorker);
+    const saleWorker = new FakeSaleWorker();
+    const ctx = new FakeAppContext(emailWorker, auditWorker, saleWorker);
     const proc = new FakeProcess();
     const stderr = new FakeStderr();
     const result = await bootstrap({
@@ -184,6 +212,9 @@ describe("bootstrap — happy path", () => {
     );
     expect(result.auditWorker).toBe(
       auditWorker as unknown as AuditWorker,
+    );
+    expect(result.saleWorker).toBe(
+      saleWorker as unknown as SaleWorker,
     );
   });
 });
@@ -220,7 +251,8 @@ describe("bootstrap — shutdown sequence", () => {
   it("logs and still exits if app.close() throws", async () => {
     const emailWorker = new FakeEmailWorker();
     const auditWorker = new FakeAuditWorker();
-    const ctx = new FakeAppContext(emailWorker, auditWorker);
+    const saleWorker = new FakeSaleWorker();
+    const ctx = new FakeAppContext(emailWorker, auditWorker, saleWorker);
     ctx.closeReject = new Error("redis disconnect failed");
     const proc = new FakeProcess();
     const stderr = new FakeStderr();

@@ -27,6 +27,8 @@ const dockerOutboxSuites = includeDbBackedTests
      // db-integration job clears the exclusion via WORKER_INCLUDE_DB_TESTS=1.
      "/sales/processing\\.spec\\.ts$",
      "/sales/idempotent-processing\\.spec\\.ts$",
+     // DP-008-LIVELOOP Slice 2 end-to-end (capture → drain → consume → process).
+     "/sales/dp-008-liveloop\\.e2e\\.spec\\.ts$",
      // 009-US4 inventory-backfill Testcontainers suite (F-04/F-05).
      "/inventory/backfill-processor\\.spec\\.ts$"];
 
