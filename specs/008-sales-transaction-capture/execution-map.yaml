@@ -53,17 +53,22 @@
 #     - 008-CLOSEOUT         → this doc PR — terminal reconciliation
 #   008-SIGNOFF-MONEY-LIB resolved (PR #419). Money + Temporal Gate RESOLVED.
 #
-#   DOCUMENTED DEFERRALS (see wave-status Active findings — NOT blockers, the
-#   merged work is correct + tested, but the live loop is not yet exercised):
-#     1. Live capture→process loop is GATED: needs producer binding in
-#        SalesModule + `sale.captured` added to OUTBOX_EVENT_TYPES (gated
-#        packages/db, T541-style approval) + imperative SaleWorker.start() in
-#        main.ts. WIRING registered the consumer only; processed_at stays NULL
-#        until that slice ships (inert today — nothing reads it yet).
-#     2. reconciliation-mismatch-rate signal emit — FR-031 MAY (optional). The
-#        §VII counter is unregistered in api/worker metrics; emitting is the
-#        remaining T092 work. NOT a new event type (§6.9).
-#     3. SC-010 perf — report-only (no perf env; 005 T560 precedent).
+#   CLOSEOUT DEFERRALS (see wave-status Active findings):
+#     1. Live capture→process loop — RESOLVED 2026-06-05 by the DP-008-LIVELOOP
+#        follow-up (merged to main): slice 1 PR #496 (6dd1e84) added
+#        `sale.captured` to OUTBOX_EVENT_TYPES (the gated packages/db half) +
+#        the SaleCapturedConsumer bridging the outbox row onto the
+#        sale-processing BullMQ queue; slice 2 PR #497 (12013cc) made captureSale
+#        emit sale.captured IN-TRANSACTION (created path only, atomic with the
+#        insert; SALES_OUTBOX_PRODUCER now dead seam code) + the imperative
+#        SaleWorker.start() in apps/worker/src/main.ts. A Docker-gated e2e proves
+#        capture→outbox→drain→consume→processed_at + idempotent re-run.
+#        processed_at is now set off-request (no longer NULL).
+#     2. reconciliation-mismatch-rate signal emit — OPEN. FR-031 MAY (optional).
+#        The §VII counter is unregistered in api/worker metrics; emitting is the
+#        remaining T092 work. NOT a new event type (§6.9). Part of the
+#        sale-processing metrics/DLQ/G7 follow-up #497 deferred.
+#     3. SC-010 perf — OPEN. Report-only (no perf env; 005 T560 precedent).
 #
 # Updated: 2026-05-31 — POLISH (#433) + WIRING (#434) merged; 008 CLOSED via this CLOSEOUT. All slices terminal.
 
@@ -436,12 +441,14 @@ slices:
 
   # 008-WIRING was NOT in the original map — added post-hoc when POLISH's
   # T091/T092 verification revealed the worker processor (merged in #431) was
-  # never registered into the BullMQ bootstrap. Closes the consumer-registration
-  # half only; the live capture→process loop remains gated (see Active findings).
+  # never registered into the BullMQ bootstrap. Closed the consumer-registration
+  # half only; the live capture→process loop was then completed by the
+  # DP-008-LIVELOOP follow-up (PRs #496 + #497, merged 2026-06-05 — see Active
+  # findings #1, now RESOLVED).
   - id: 008-WIRING
     task_ids: []             # no original task id; emerged from POLISH verification
     type: feat
-    status: merged           # PR #434 (e412e7a). Registers SaleProcessingProcessor + SaleWorker in worker.module.ts; queue name "sale-processing"; reuses AuditDbPool (no 2nd pool). Registered-but-NOT-self-started (AuditRetentionWorker precedent — review caught a self-start that would idle-poll an unfed queue in prod). WSL TC worker sales GREEN; Docker-free sale specs 24 + no-unbounded-path 7 GREEN. CodeRabbit: ._def→.keyof() applied; Supertest-HTTP suggestion declined (can't HTTP-test a non-existent bulk endpoint). DEFERRED (gated): producer binding + sale.captured in OUTBOX_EVENT_TYPES + main.ts start() — see Active findings.
+    status: merged           # PR #434 (e412e7a). Registers SaleProcessingProcessor + SaleWorker in worker.module.ts; queue name "sale-processing"; reuses AuditDbPool (no 2nd pool). Registered-but-NOT-self-started (AuditRetentionWorker precedent — review caught a self-start that would idle-poll an unfed queue in prod). WSL TC worker sales GREEN; Docker-free sale specs 24 + no-unbounded-path 7 GREEN. CodeRabbit: ._def→.keyof() applied; Supertest-HTTP suggestion declined (can't HTTP-test a non-existent bulk endpoint). Producer binding + sale.captured in OUTBOX_EVENT_TYPES + main.ts start() were DEFERRED here but subsequently SHIPPED by DP-008-LIVELOOP (#496 + #497, 2026-06-05) — see Active findings #1 (RESOLVED).
     approval_required: false
     depends_on: [008-WORKER]
     blocks: []
@@ -477,7 +484,7 @@ slices:
   - id: 008-CLOSEOUT
     task_ids: [T094]
     type: docs
-    status: merged           # T094 — this reconciliation. All 008 slices terminal: SETUP/SIGNOFF/CONTRACT/SCHEMA/ISOLATION-HARNESS/US1–US6/LIFECYCLE/WORKER/WIRING/POLISH/CLOSEOUT merged. 008 is CLOSED with documented deferrals (see wave-status Active findings): live capture→process loop gated (producer binding + sale.captured OUTBOX_EVENT_TYPES + main.ts start); reconciliation-mismatch-rate emit (FR-031 MAY).
+    status: merged           # T094 — this reconciliation. All 008 slices terminal: SETUP/SIGNOFF/CONTRACT/SCHEMA/ISOLATION-HARNESS/US1–US6/LIFECYCLE/WORKER/WIRING/POLISH/CLOSEOUT merged. 008 is CLOSED. POST-CLOSEOUT: the DP-008-LIVELOOP follow-up (PRs #496 + #497, merged 2026-06-05) RESOLVED deferral #1 — the live capture→process loop is now functional (sale.captured registered in OUTBOX_EVENT_TYPES + in-transaction emit + SaleWorker.start(); processed_at set off-request, Docker-gated e2e). Two deferrals remain OPEN (see wave-status Active findings): reconciliation-mismatch-rate emit (FR-031 MAY) + SC-010 perf report-only, plus a new sale-processing metrics/DLQ/G7 follow-up.
     approval_required: false
     depends_on: [008-POLISH]
     blocks: []

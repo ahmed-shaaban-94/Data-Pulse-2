@@ -7,7 +7,7 @@
 | Gate | [gate-money-temporal.md](./gate-money-temporal.md) — **RESOLVED 2026-05-30** |
 | Constitution | v3.0.1 |
 | Owner | Ahmed Shaaban |
-| Updated | 2026-05-31 — **008 CLOSED.** POLISH (split, #433 `381b717`) + WIRING (#434 `e412e7a`) merged; every slice terminal. Three documented deferrals remain (Active findings): live capture→process loop is gated (producer binding + `sale.captured` event type + `main.ts` start), reconciliation-mismatch-rate emit (FR-031 MAY), SC-010 perf report-only. |
+| Updated | 2026-06-05 — **008 CLOSED + LIVE LOOP NOW LIVE.** The `DP-008-LIVELOOP` follow-up shipped in two slices, both merged to `main`: slice 1 (#496 `6dd1e84` — `sale.captured` consumer + at-least-once hardening) + slice 2 (#497 `12013cc` — capture-side in-transaction emit + `SaleWorker.start()` + Docker-gated e2e). The first of the three closeout deferrals (the gated live capture→process loop) is **RESOLVED**; `processed_at` is now set off-request. Two deferrals remain open: reconciliation-mismatch-rate emit (FR-031 MAY) + SC-010 perf report-only, plus a new sale-processing metrics/DLQ/G7 follow-up. |
 
 ---
 
@@ -17,7 +17,14 @@
 
 **Phase 1 + both `[GATED]` Phase-2 slices MERGED to `main`**: `008-SETUP` (#420, `6d01512`), `008-SCHEMA` (#421, `560d16c`), `008-CONTRACT` (#422, `7459ea5`); planning chain + coordination on main via #414/#418/#419. CodeRabbit review on all three addressed before merge.
 
-**008 is CLOSED — every slice merged to `main`.** The full capture + terminal-event (void/refund) + idempotency + safety-hardening runtime is live, plus the off-request worker processor (`processedAt` + advisory mismatch flag), the SI-012 data-class/retention guard, the consumer-side BullMQ registration, the no-unbounded-path guard, and a report-only k6 perf scenario. The post-MVP tail was dispatched as isolated-worktree agents → separate PRs (WORKER #431, LIFECYCLE #430 in parallel; POLISH #433; WIRING #434), each validated GREEN before merge. **Three deferrals are documented (Active findings), none a blocker:** the live capture→process loop is gated (producer binding + `sale.captured` event type + `main.ts` start), the reconciliation-mismatch-rate emit is FR-031 *MAY*, and SC-010 perf is report-only. These are the natural scope of a future "008-followup / live-loop" slice (the producer half is `[GATED]`).
+**008 is CLOSED — every slice merged to `main`.** The full capture + terminal-event (void/refund) + idempotency + safety-hardening runtime is live, plus the off-request worker processor (`processedAt` + advisory mismatch flag), the SI-012 data-class/retention guard, the consumer-side BullMQ registration, the no-unbounded-path guard, and a report-only k6 perf scenario. The post-MVP tail was dispatched as isolated-worktree agents → separate PRs (WORKER #431, LIFECYCLE #430 in parallel; POLISH #433; WIRING #434), each validated GREEN before merge.
+
+**`DP-008-LIVELOOP` follow-up — SHIPPED 2026-06-05 (live capture→process loop now functional).** The first of the three closeout deferrals is RESOLVED across two merged slices:
+
+- **Slice 1 — PR #496 (`6dd1e84`):** registers `sale.captured` in `OUTBOX_EVENT_TYPES` (the gated `packages/db` half) + adds the worker-side `SaleCapturedConsumer` that bridges the outbox row onto the existing `sale-processing` BullMQ queue. At-least-once hardening: a deterministic BullMQ `jobId` (`<consumerId>:<event_id>`) dedupes re-delivered outbox rows (deliberate deviation from the audit consumer); `NoOpSaleProcessingQueue` warns on a dropped enqueue when `REDIS_URL` is unset.
+- **Slice 2 — PR #497 (`12013cc`):** `captureSale` now emits `sale.captured` **in-transaction** (created path only, IDs-only payload), atomic with the sale insert — replacing the post-tx best-effort enqueue (`SALES_OUTBOX_PRODUCER` is now dead seam code, left in place to avoid scope creep). `SaleWorker.start()` is called in the worker bootstrap (`apps/worker/src/main.ts`) so the `sale-processing` queue is consumed. A Docker-gated e2e (`apps/worker/test/sales/dp-008-liveloop.e2e.spec.ts`) proves capture→outbox→drain→consume→`processed_at` + idempotent re-run.
+
+**Result:** `processed_at` is now set off-request end-to-end. **Two deferrals remain open** (the slice-2 commit explicitly scopes them as a follow-up): the reconciliation-mismatch-rate emit (FR-031 *MAY*), SC-010 perf (report-only), plus sale-processing metrics / DLQ / G7.
 
 **MVP** = `008-US1-CAPTURE` + its foundational prerequisites — **DELIVERED**. It delivers a durable, isolated, idempotent, provenance-preserving sale fact — the keystone the rest of the ERP loop (009 inventory, 010 payments, 012 reporting) reads from.
 
@@ -100,13 +107,13 @@
 
 ## Active findings
 
-**008 is CLOSED. Three documented deferrals remain — none is a blocker; the merged work is correct and tested, but the live capture→process loop is not yet exercised end-to-end.**
+**008 is CLOSED and the live loop is now LIVE (`DP-008-LIVELOOP`, PRs #496 + #497, 2026-06-05). One closeout deferral resolved; two remain open — neither a blocker.**
 
 > **Correction (2026-05-31):** an earlier version of this section claimed the unregistered worker followed an "`AuditFanoutProcessor` KNOWN-GAP precedent." **That was false** — `AuditFanoutProcessor` IS registered in `worker.module.ts` `providers:` and runs. So the sale processor being unregistered was a **real functional gap**, not a sanctioned pattern. `008-WIRING` (#434) closed the consumer-registration half of it.
 
-1. **Live capture→process loop is GATED (not yet functional).** `008-WIRING` (#434) registered `SaleProcessingProcessor` + `SaleWorker` (consumer half), **registered-but-not-self-started** (review caught a self-start that would idle-poll an unfed queue in prod; `AuditRetentionWorker` is the correct precedent). The producer half is gated and unbuilt: `SalesService` emits `sale.captured` but `SALES_OUTBOX_PRODUCER` is unbound AND `sale.captured` is not in `OUTBOX_EVENT_TYPES` (gated `packages/db`, T541-style approval). The remaining slice = bind producer + add the event type + imperative `SaleWorker.start()` in `main.ts`. Until it ships, `processed_at` stays NULL on every sale (inert today — nothing reads it yet).
-2. **reconciliation-mismatch-rate signal emit (T092)** — **FR-031 *MAY*** (optional). The §VII counter is not registered in `api.metrics.ts` / `worker.metrics.ts`; the request path emits a `sale.captured` outbox event but no mismatch-rate metric. Emitting into the existing signal is the remaining work — NOT a new event type (§6.9).
-3. **SC-010 perf** — report-only (no perf env; 005 T560 precedent). `loadtests/k6/sales-capture.js` carries the thresholds, runs when a perf env + POS-auth seam exist.
+1. **Live capture→process loop — RESOLVED 2026-06-05 (`DP-008-LIVELOOP`).** Previously gated/not-functional; now live end-to-end. Slice 1 (#496) added `sale.captured` to `OUTBOX_EVENT_TYPES` (the gated `packages/db` half) + the `SaleCapturedConsumer` that bridges the outbox row onto the `sale-processing` BullMQ queue (deterministic `jobId` dedupe for at-least-once re-delivery). Slice 2 (#497) replaced the post-tx best-effort enqueue with an **in-transaction** `emit(client, sale.captured)` in `captureSale` (created path only, atomic with the insert; `SALES_OUTBOX_PRODUCER` is now dead seam code) + the imperative `SaleWorker.start()` in `apps/worker/src/main.ts`. A Docker-gated e2e proves capture→outbox→drain→consume→`processed_at` + idempotent re-run. **`processed_at` is now set off-request** (no longer NULL on every sale).
+2. **reconciliation-mismatch-rate signal emit (T092)** — **OPEN. FR-031 *MAY*** (optional). The §VII counter is not registered in `api.metrics.ts` / `worker.metrics.ts`; the path emits the `sale.captured` outbox event but no mismatch-rate metric. Emitting into the existing signal is the remaining work — NOT a new event type (§6.9). Part of the sale-processing metrics / DLQ / G7 follow-up the slice-2 commit (#497) explicitly deferred.
+3. **SC-010 perf** — **OPEN.** Report-only (no perf env; 005 T560 precedent). `loadtests/k6/sales-capture.js` carries the thresholds, runs when a perf env + POS-auth seam exist.
 
 Planning chain otherwise internally consistent (`/speckit-analyze`: 0 CRITICAL, 0 constitution violations, 100% behavioral coverage after the T075/SI-012 remediation).
 
@@ -132,10 +139,11 @@ Planning chain otherwise internally consistent (`/speckit-analyze`: 0 CRITICAL, 
 
 ## Next recommended action
 
-**008 is closed.** No further 008 slice is in development. The remaining value is a **future "008-live-loop" follow-up** that makes the merged capture→process pipeline actually run end-to-end — it is partly `[GATED]`, so it should be scoped as its own slice (likely its own spec section), not silently folded:
+**008 is closed and the live loop now runs end-to-end (`DP-008-LIVELOOP`, PRs #496 + #497).** No 008 slice is in development. The remaining value is the observability/resilience tail that the slice-2 commit (#497) explicitly scoped as a follow-up:
 
-1. **Live-loop wiring** — bind `SALES_OUTBOX_PRODUCER` in `SalesModule`; add `sale.captured` to `OUTBOX_EVENT_TYPES` (**`[GATED]` `packages/db`**, T541-style approval); route the outbox event onto the `sale-processing` queue; add the imperative `SaleWorker.start()` in `apps/worker/src/main.ts` (mirrors Email/Audit). After this, `processed_at` is actually set off-request.
+1. ~~**Live-loop wiring**~~ — **DONE 2026-06-05.** `sale.captured` registered in `OUTBOX_EVENT_TYPES` (#496, the gated `packages/db` half), in-transaction emit + `SaleWorker.start()` (#497). `processed_at` is now set off-request, proven by a Docker-gated e2e.
 2. **reconciliation-mismatch-rate signal (T092 completion)** — register the §VII counter in `api.metrics.ts` (+ worker equiv) and emit from the mismatch path. FR-031 *MAY*; do it when observability for the mismatch flag is wanted.
 3. **SC-010 perf** — run `loadtests/k6/sales-capture.js` once a perf env + POS-device-auth seam exist; promote from report-only to a release gate then.
+4. **sale-processing metrics / DLQ / G7** — the resilience surface the live loop now warrants (dead-letter queue for poison sale-processing jobs, processing-rate/lag metrics). New follow-up flagged by #497; not yet specced.
 
 None blocks downstream features that only *read* the immutable sale fact (009 inventory, 012 reporting) — those depend on the capture rows, which are live.
