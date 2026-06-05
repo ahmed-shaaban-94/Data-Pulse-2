@@ -332,6 +332,41 @@ describe("erpnext-connector/posting-feed.yaml — work-item payload (O-1/O-4)", 
     expect(amount?.type).toBe("string");
     expect(amount?.pattern).toBeDefined();
   });
+
+  // 012-EXT: DP2-resolved ERPNext Item identity per line (011 posting rider R2/R3/R4).
+  it("requires a DP2-resolved erpnextItemRef on every offered SaleLine (R2)", () => {
+    const line = feedDoc.components?.schemas?.["SaleLine"];
+    expect(line?.additionalProperties).toBe(false);
+    expect(line?.required).toEqual(expect.arrayContaining(["erpnextItemRef"]));
+    const ref = (line?.properties ?? {})["erpnextItemRef"] as
+      | { $ref?: string }
+      | undefined;
+    expect(ref?.$ref).toBe("#/components/schemas/ErpnextItemRef");
+  });
+
+  it("erpnextItemRef is generic {doctype:'Item', name} addressing (O-6), NOT a connector lookup", () => {
+    const itemRef = feedDoc.components?.schemas?.["ErpnextItemRef"];
+    expect(itemRef?.additionalProperties).toBe(false);
+    expect(itemRef?.required?.sort()).toEqual(["doctype", "name"].sort());
+    const props = itemRef?.properties ?? {};
+    expect((props["doctype"] as { const?: string })?.const).toBe("Item");
+    // name = the 013 erpnext_item_ref opaque string (maxLength 140).
+    expect((props["name"] as { maxLength?: number })?.maxLength).toBe(140);
+  });
+
+  it("keeps tenantProductRef nullable lineage only — NO Misc fallback, NO lineType (R3/R4)", () => {
+    const props = feedDoc.components?.schemas?.["SaleLine"]?.properties ?? {};
+    // tenantProductRef stays nullable (008 FR-004 ad-hoc lineage), not required.
+    const tpr = props["tenantProductRef"] as { anyOf?: Array<{ type?: string }> };
+    expect(tpr?.anyOf).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "null" })]),
+    );
+    expect(feedDoc.components?.schemas?.["SaleLine"]?.required).not.toEqual(
+      expect.arrayContaining(["tenantProductRef"]),
+    );
+    // An ad-hoc line DLQs before offer (R2); no substitute item (R3) -> no lineType discriminator.
+    expect(props).not.toHaveProperty("lineType");
+  });
 });
 
 // ===========================================================================

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Data-Pulse-2 — ERPNext Connector Posting-Feed API
-  version: "1.0.0-draft"
+  version: "1.1.0-draft"
   description: >
     Spec 012 ERPNext Connector Contracts surface — the DP2 ↔ connector boundary
     that realises the signed 011 posting + version-pin decisions over a
@@ -456,8 +456,14 @@ components:
     SaleLine:
       type: object
       additionalProperties: false
-      required: [lineName, unitPrice, currencyCode, quantity, lineAmount, unit]
-      description: Wire projection of a frozen 008 sale-line snapshot (mirrors sales.yaml).
+      required: [lineName, unitPrice, currencyCode, quantity, lineAmount, unit, erpnextItemRef]
+      description: >
+        Wire projection of a frozen 008 sale-line snapshot (mirrors sales.yaml),
+        carrying the DP2-resolved ERPNext Item identity. Every line OFFERED on
+        this feed has `erpnextItemRef` resolved: a line that cannot resolve to a
+        confirmed 013 `erpnext_item_map` Item fails-to-DLQ in DP2 BEFORE the
+        work-item is offered (012 contract correction; 011 posting rider R2/R3/R4
+        — DP2-side resolution, no connector lookup, no substitute item).
       properties:
         lineName:
           type: string
@@ -478,10 +484,23 @@ components:
             - type: "null"
         unit:
           type: string
+        erpnextItemRef:
+          $ref: "#/components/schemas/ErpnextItemRef"
+          description: >
+            The DP2-resolved ERPNext Item identity for this line (REQUIRED).
+            Resolved by Data-Pulse-2 at work-item projection from the confirmed
+            013 `erpnext_item_map`; the connector APPLIES this pre-resolved
+            reference and never looks up, infers, or stores item mappings
+            (011 posting rider R2). If a line cannot resolve to a confirmed
+            mapping it fails-to-DLQ before offer (R2) — there is no "Misc"/
+            substitute item (R3) and an unmapped line still requires a confirmed
+            013 mapping before it can post (R4) — so every offered line carries it.
         tenantProductRef:
           description: >
-            Optional lineage to a tenant product; null for ad-hoc lines. The
-            connector maps it to an ERPNext Item (013) behind this contract.
+            Optional lineage to a tenant product (008 FR-004 — null for ad-hoc
+            lines). Lineage only; item identity for posting is carried by the
+            DP2-resolved `erpnextItemRef`. The connector does NOT resolve this to
+            an ERPNext Item — resolution is DP2-side (013), behind this contract.
           anyOf:
             - type: string
               format: uuid
@@ -581,6 +600,31 @@ components:
           minLength: 1
           maxLength: 200
           description: ERPNext document name/id (its primary key).
+
+    ErpnextItemRef:
+      type: object
+      additionalProperties: false
+      required: [doctype, name]
+      description: >
+        A DP2-resolved reference to an ERPNext **Item** for posting. Mirrors
+        `ErpnextDocumentRef`'s generic doctype+name addressing (O-6
+        version-independence) with `doctype` fixed to "Item". `name` is the
+        ERPNext Item code/name — the same opaque string stored in the 013
+        `erpnext_item_map.erpnext_item_ref` (maxLength 140). Resolved DP2-side
+        at projection; the connector applies it and never performs the lookup
+        (011 posting rider R2).
+      properties:
+        doctype:
+          type: string
+          const: "Item"
+          description: Always "Item" — this ref addresses an ERPNext Item only.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: >
+            ERPNext Item code/name (the 013 `erpnext_item_ref` string). Opaque —
+            no FK, version-independent (O-6).
 
     EtaStatus:
       type: object
