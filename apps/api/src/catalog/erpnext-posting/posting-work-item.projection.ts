@@ -1,87 +1,27 @@
 /**
- * posting-work-item.projection.ts — 015-RESOLVE + the 012 work-item wire shape.
+ * posting-work-item.projection.ts — the 012 work-item WIRE SHAPE (PULL side).
  *
- * TWO resolution moments, deliberately split (the contract's idempotent-replay
- * obligation forbids a write side-effect on the GET feed):
+ * The DP2 posting pipeline resolves item/warehouse identity at TWO moments,
+ * deliberately split (the 012 contract's idempotent-replay obligation forbids a
+ * write side-effect on the GET feed):
  *
- *   1. ELIGIBILITY — at row CREATION (the `erpnext.posting.requested` consumer).
- *      `resolveEligibility()` joins each `sale_lines.tenant_product_ref` →
- *      a CONFIRMED `erpnext_item_map` row and the sale's store →
- *      `erpnext_warehouse_map`. Resolvable → the row is `pending` (postable);
- *      unresolvable → `permanently_rejected` BEFORE the work-item is ever offered
- *      (rider R2: "DP2 resolves at projection, fails-to-DLQ before offered").
+ *   1. ELIGIBILITY — at row CREATION. Owned by the worker
+ *      `PostingRequestedConsumer.resolveEligibility` (apps/worker): it joins each
+ *      line → a CONFIRMED `erpnext_item_map` + the store → `erpnext_warehouse_map`
+ *      and inserts a `pending` (resolvable) or `permanently_rejected` row BEFORE
+ *      the work-item is offered (rider R2). That logic lives THERE, not here — the
+ *      worker cannot import api code, and only one live copy must exist.
  *
- *   2. WIRE ASSEMBLY — at PULL (the `connectorPullPostings` feed). `buildWorkItem()`
- *      is a pure read: it re-joins the (already-`pending`) row's sale + lines +
- *      confirmed item-map + warehouse to populate the 012 `PostingWorkItem`
- *      (each line's `erpnextItemRef` resolved). NO status mutation → re-pulling
- *      the same cursor yields the same logical set (012 idempotent replay).
- *
- * The resolution rules (data-model §4, rider R3/R4/R5):
- *   - a line resolves only against a CONFIRMED map (`state='confirmed' AND
- *     retired_at IS NULL`); a `suggested` map counts as unmapped;
- *   - an ad-hoc line (null `tenant_product_ref`, FR-004) is unresolvable;
- *   - an unmapped line → `unmapped_item`; no substitute item (R3);
- *   - no warehouse for the store → `unmapped_store`; never guess (R5);
- *   - a resolution failure NEVER mutates the 008 sale fact and is NEVER routed
- *     into the unknown-items queue (R4) — it is a reconciliation case (017).
+ *   2. WIRE ASSEMBLY — at PULL (this file, `buildWorkItem()`). A pure read: it
+ *      re-joins an already-`pending` row's sale + frozen lines + confirmed
+ *      item-map to populate the 012 `PostingWorkItem` (each line's
+ *      `erpnextItemRef`). NO status mutation → re-pulling the same cursor yields
+ *      the same logical set (012 idempotent replay).
  *
  * All queries run under the caller's tenant GUC (the caller wraps in
  * `runWithTenantContext`); RLS does the tenant scoping.
  */
 import type { PoolClient } from "pg";
-
-/** The 012 RejectionReason.category values 015 produces. */
-export type RejectionCategory = "unmapped_item" | "unmapped_store";
-
-/** Outcome of the creation-time eligibility resolution. */
-export type EligibilityResult =
-  | { readonly status: "pending" }
-  | {
-      readonly status: "permanently_rejected";
-      readonly rejectionCategory: RejectionCategory;
-    };
-
-/**
- * Resolve whether a sale is postable, at row-creation time. Joins each line to a
- * confirmed item-map and the store to a warehouse map. Returns `pending` when
- * every line resolves AND the store maps; otherwise `permanently_rejected` with
- * the nearest 012 category. Read-only — the CALLER persists the verdict.
- */
-export async function resolveEligibility(
-  client: PoolClient,
-  input: { readonly saleId: string; readonly storeId: string },
-): Promise<EligibilityResult> {
-  // (a) store → an active warehouse mapping (rider R5: never guess).
-  const wh = await client.query<{ count: string }>(
-    `SELECT count(*)::text AS count
-       FROM erpnext_warehouse_map
-      WHERE store_id = $1 AND retired_at IS NULL`,
-    [input.storeId],
-  );
-  if (Number(wh.rows[0]?.count ?? "0") === 0) {
-    return { status: "permanently_rejected", rejectionCategory: "unmapped_store" };
-  }
-
-  // (b) every line → a CONFIRMED, non-retired item map. A null tenant_product_ref
-  // (ad-hoc, FR-004) or only a `suggested` map counts as unmapped (R3).
-  const unmapped = await client.query<{ count: string }>(
-    `SELECT count(*)::text AS count
-       FROM sale_lines sl
-       LEFT JOIN erpnext_item_map m
-         ON m.tenant_product_id = sl.tenant_product_ref
-        AND m.state = 'confirmed'
-        AND m.retired_at IS NULL
-      WHERE sl.sale_id = $1
-        AND (sl.tenant_product_ref IS NULL OR m.id IS NULL)`,
-    [input.saleId],
-  );
-  if (Number(unmapped.rows[0]?.count ?? "0") > 0) {
-    return { status: "permanently_rejected", rejectionCategory: "unmapped_item" };
-  }
-
-  return { status: "pending" };
-}
 
 // ---------------------------------------------------------------------------
 // Wire shape — the 012 PostingWorkItem (subset 015 populates in the interim mode)
@@ -186,20 +126,38 @@ export async function buildWorkItem(
     [row.saleId],
   );
 
-  const wireLines: WorkItemLine[] = lines.rows.map((l) => ({
-    lineName: l.line_name,
-    unitPrice: l.unit_price,
-    currencyCode: l.currency_code,
-    quantity: l.quantity,
-    lineAmount: l.line_amount,
-    taxAmount: l.tax_amount,
-    unit: l.unit,
-    // A `pending` row is only created when eligibility resolved, so every line
-    // has a confirmed map — but stay defensive: an empty ref would be a bug, not
-    // a silently-shipped null.
-    erpnextItemRef: l.erpnext_item_ref ?? "",
-    tenantProductRef: l.tenant_product_ref,
-  }));
+  // A `pending` row was only created when eligibility resolved at CREATION, so
+  // every line normally re-resolves here. EDGE CASE: a confirmed item-map can be
+  // retired (013 REPOINT) BETWEEN creation and this pull, leaving a line's
+  // `erpnext_item_ref` NULL. We MUST NOT ship an empty/contract-violating
+  // `erpnextItemRef` (012 O-1 self-sufficiency). Returning null here makes the
+  // feed OMIT the whole work-item (the service's `if (item)` filter), so the
+  // connector never receives a malformed item.
+  //
+  // KNOWN LIMITATION (MVP): the omitted row stays `pending` in the DB but the
+  // pull cursor advances past its `sequence`, so it is not re-offered until a
+  // re-resolution pass flips stranded rows to `permanently_rejected`. That
+  // re-resolution is US4-RESOLVE-FAIL / 017 work, NOT this read-only feed (a
+  // status write inside the GET would break the 012 idempotent-replay invariant).
+  // In the MVP no map-retirement path is exercised against a pending posting, so
+  // this is a latent edge handled safely (omit, never corrupt), not a live gap.
+  const wireLines: WorkItemLine[] = [];
+  for (const l of lines.rows) {
+    if (l.erpnext_item_ref === null || l.erpnext_item_ref.length === 0) {
+      return null; // stale/retired map → omit the work-item rather than ship "".
+    }
+    wireLines.push({
+      lineName: l.line_name,
+      unitPrice: l.unit_price,
+      currencyCode: l.currency_code,
+      quantity: l.quantity,
+      lineAmount: l.line_amount,
+      taxAmount: l.tax_amount,
+      unit: l.unit,
+      erpnextItemRef: l.erpnext_item_ref,
+      tenantProductRef: l.tenant_product_ref,
+    });
+  }
 
   return {
     workItemRef: row.id,

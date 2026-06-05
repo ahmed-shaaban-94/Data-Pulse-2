@@ -18,6 +18,11 @@ export const PullPostingsQuerySchema = z
     since: z
       .string()
       .min(1)
+      // Bound to 18 digits: a PG bigint maxes at 9223372036854775807 (19 digits).
+      // Capping at 18 keeps every accepted value safely in range, so the
+      // `$1::bigint` cast in the feed query cannot overflow → a too-long cursor is
+      // a clean 400, never an unhandled 22003 → 500.
+      .max(18, "since exceeds the maximum cursor length")
       .regex(/^[0-9]+$/, "since must be an opaque numeric cursor")
       .optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
