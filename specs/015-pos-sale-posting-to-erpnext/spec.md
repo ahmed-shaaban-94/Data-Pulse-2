@@ -500,6 +500,14 @@ addressed in §5.5 and §9.
 
 ## 13. Dependencies, gates & sequencing
 
+> **Status superseded (2026-06-06).** The state column below is the **2026-06-05
+> point-in-time** snapshot. Since then, prerequisites 1–3 have **shipped to `main`**:
+> P-DP-008-LIVELOOP (#496/#497), 014-CRUD (#495), and the `[GATED]` 012
+> `SaleLine.erpnextItemRef` correction (#494). For current truth see
+> [plan.md → Technical Context → *Prerequisite reality*](./plan.md). Only the
+> `[GATED]` `erpnext.posting.requested` event-type + 015's own data-model/tasks/
+> execution-map remain outstanding.
+
 | Dependency / gate | State (verified 2026-06-05 against the worktree from `origin/main @ 0cafd0c`) |
 |---|---|
 | **gated_by**: posting decision (011-DR-POSTING) | ✅ **SIGNED** 2026-06-03 (gates 012/013/015/017) |

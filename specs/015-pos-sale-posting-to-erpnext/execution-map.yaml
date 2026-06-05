@@ -1,0 +1,487 @@
+# 015-pos-sale-posting-to-erpnext — Execution Map (Agent OS v1)
+#
+# Authoritative state of the 015 spec for Maestro dispatch. Mirrors the task
+# plan in tasks.md but adds: slice status, agent assignments, allowed files,
+# validation contracts, parallel-safety, and the GATED-first serialization.
+#
+# 015 is the KEYSTONE of the ERPNext arc: it turns a PROCESSED 008 sale (and its
+# void/refund terminal events) into ERPNext accounting truth by serving the FIXED
+# 012 pull/feed contract (erpnext-connector/posting-feed.yaml). DP2 exposes the
+# feed of pending posting work-items (connectorPullPostings) and ingests outcomes
+# (connectorAckOutcome); it makes NO outbound HTTP calls and holds NO ERPNext
+# credentials — the connector (separate repo, ADR 0008) is the only ERPNext-calling
+# component. Posting-time item/warehouse resolution (015-RESOLVE) is DP2-side; an
+# unresolvable line/store fails-to-DLQ BEFORE the work-item is offered.
+#
+# The OQs are RATIFIED by the SIGNED owner rider (011-DR-POSTING-R1, 2026-06-05):
+# interim Sales-Invoice-only / outstanding-AR mode (R1/OQ-7); DP2-side resolution
+# (R2/OQ-8-bis); fail-to-DLQ postures (R3/R4/R5 — OQ-5/6/8). Payment Entry is a
+# LATER, separately-gated arc (DP2 tender model → 012 payment extension → connector
+# PE → payment repair) — NOT in 015.
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3), both under
+# packages/db/**:
+#   - 015-EVENT-TYPE → register erpnext.posting.requested in OUTBOX_EVENT_TYPES
+#                      (packages/db/src/outbox/producer.ts) — the 008-LIVELOOP
+#                      sale.captured registration (#496) is the precedent.
+#   - 015-SCHEMA     → new erpnext_posting_status Drizzle schema + migration under
+#                      packages/db/** (next number after 0018, 0019 indicative;
+#                      paired *.down.sql, lock-duration review; O-3 idempotency
+#                      unique on the originating row's own (tenant,source,external);
+#                      fail-closed RLS; NO money column).
+# Both carry `approval_required: true` and `status: proposed`. They touch DISJOINT
+# files within packages/db (the outbox registry vs a new schema+migration) so they
+# are parallel_safety: safe with each other, even though both block the feed/ack.
+#
+# NO 012 CONTRACT slice: the DP2-side feed/ack implements the FIXED posting-feed.yaml
+# (read-only input); the rider-R2 SaleLine.erpnextItemRef correction it needed is
+# already on main (#494). Any further contract change is a separate [GATED] 012 slice.
+#
+# IMPORTANT: authoring this map does NOT authorize the first dispatch. The first
+# slice touching packages/db / apps/api is a new threshold the owner crosses
+# explicitly. 015-SIGNOFF-STATE (T001) — the new-state-table decision — must be
+# recorded before 015-SCHEMA dispatches (mirrors 010-SIGNOFF-READONLY).
+#
+# The DLQ drain + reconciliation RUN + repair API (015-DLQ-DRAIN) belongs to 017,
+# which has NO spec yet — listed `status: proposed`, hard non-dispatchable. Payment
+# Entry posting (015-PAYMENT-ENTRY) is a later separately-gated arc — also non-
+# dispatchable here.
+#
+# Schema reference: docs/agent-os/slice-schema.yaml
+# Wave summary:     specs/015-pos-sale-posting-to-erpnext/wave-status.md
+# Brief source:     specs/015-pos-sale-posting-to-erpnext/tasks.md
+#
+# Predecessor docs on main: 012 MERGED (#476/#479/#481/#482 + #494 erpnextItemRef);
+# 013 CLOSED (#489); 008 CLOSED + DP-008-LIVELOOP SHIPPED (#496/#497); 014-CRUD
+# MERGED (#495 — erpnext_warehouse_map / 0018). gated_by the SIGNED posting +
+# stock-impact decisions (011-DR-POSTING + 011-DR-STOCK-IMPACT) + the 2026-06-05 rider.
+#
+# Status: 015 implementation NOT STARTED — planning chain (spec/plan/data-model/
+# tasks) + this map authored on branch docs/015-plan (off origin/main). No slice
+# dispatched yet. MVP = 015-US1-FEED (serve the posting feed, happy path) once the
+# two [GATED] foundational slices + the isolation harness land.
+#
+# Updated: 2026-06-06 — initial authoring (post /speckit-tasks + /speckit-analyze).
+#          OQs RATIFIED by the 2026-06-05 owner rider at spec time; the new-state-
+#          table decision recommended at data-model time (T001 [SIGN-OFF]).
+#          /speckit-analyze: 0 critical / 0 high; 2 medium (spec §13 stale prereqs,
+#          derived-stories note) REMEDIATED.
+
+version: 1
+spec: 015-pos-sale-posting-to-erpnext
+base: origin/main
+
+# ============================================================================
+# findings
+# ============================================================================
+
+findings:
+  - id: REVERSAL-CARDINALITY
+    severity: resolved
+    note: >
+      The O-3 idempotency unique on erpnext_posting_status is keyed on the
+      ORIGINATING ROW's own (tenant_id, source_system, external_id) — a sale's for
+      sale_post, the terminal event's for reversal — mirroring 008's per-table
+      dedup. Keying on the parent sale would wrongly permit only ONE reversal per
+      sale and permanently block a 2nd partial refund. Verified against 0012
+      (sale_voids / sale_refunds are append-only, each with its own per-row unique).
+      Guarded explicitly by T052 (US3) + the 015-SCHEMA unique. See data-model §5.
+  - id: STATE-TABLE-SIGNOFF
+    severity: open-decision
+    note: >
+      The new erpnext_posting_status table is a recommended-but-not-self-approved
+      decision (derive-on-read is infeasible — no source for documentRef / posting
+      status; cannot satisfy O-3). Recorded as 015-SIGNOFF-STATE (T001), which must
+      be confirmed before 015-SCHEMA dispatches. Mirrors 010-SIGNOFF-READONLY.
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 015-SIGNOFF
+    task_ids: [T001, T002, T003]
+    type: docs
+    # [SIGN-OFF] gates: (T001) 015-SIGNOFF-STATE — a NEW [GATED] erpnext_posting_status
+    # table, NOT derive-on-read (data-model §2); (T002) interim Sales-Invoice-only
+    # mode (rider R1) — no Payment Entry / tender state; (T003) 015 produces the DLQ /
+    # permanently_rejected state only — the reconciliation run + drain + repair is 017.
+    status: ready
+    approval_required: false   # decision gates, not code gates
+    depends_on: []
+    blocks:
+      - 015-SETUP
+      - 015-SCHEMA   # the state decision (T001) must land before the schema slice
+    agent: opus-maestro
+    allowed_files:
+      - specs/015-pos-sale-posting-to-erpnext/wave-status.md
+    validation:
+      - command: 'grep -niE "posting_status|derive-on-read|SIGNOFF-STATE|interim|Sales Invoice only|Payment Entry|017|DLQ" specs/015-pos-sale-posting-to-erpnext/wave-status.md'
+        expected: One+ match — the new-state-table decision (vs derive-on-read), the interim SI-only mode (no PE), and the DLQ-only / run-is-017 carve are recorded.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop and re-open the SIGNED posting decision (a new signed rider) if any intent to post a Payment Entry, derive a PE from posTotal, or make 'Sales Invoice only' the FINAL model surfaces — interim mode is gated + not finance-complete (rider R1, STOP-and-raise)"
+      - "stop if anything proposes mutating the 008 sale fact on a posting outcome — the sale fact is NEVER mutated; only posting status is recorded (§IX)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  - id: 015-SETUP
+    task_ids: [T004]
+    type: chore
+    status: ready
+    approval_required: false
+    depends_on: [015-SIGNOFF]
+    blocks:
+      - 015-US1-FEED
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.module.ts
+      - apps/api/src/app.module.ts   # register the new module (mirror erpnext-item-map wiring)
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — the new empty erpnext-posting module compiles and is registered in app.module.ts (mirrors erpnext-item-map.module.ts); no routes yet. Existing catalog modules still compile (no regression).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 015 branch is not off latest origin/main — rebase first"
+      - "stop if any existing catalog module fails to compile — that is a regression, not a 015 task"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # single new module file + one registration line
+
+  # ===== Phase 2: Foundational (GATED; block all capability slices) ==========
+
+  # ----- 2.1 GATED erpnext.posting.requested outbox event-type ----------------
+
+  - id: 015-EVENT-TYPE
+    task_ids: [T010]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/db/** outbox event-type registry (Constitution §VIII)
+    depends_on: [015-SETUP]
+    blocks:
+      - 015-US1-FEED
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/outbox/producer.ts   # add OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED
+      - packages/db/__tests__/outbox/event-types-registry.spec.ts   # APPEND to EXPECTED_EVENT_TYPES (regression)
+    validation:
+      - command: pnpm --filter @data-pulse-2/db test -- event-types-registry
+        expected: GREEN — OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED = "erpnext.posting.requested" registered (mirrors the 008-LIVELOOP SALE_CAPTURED registration, #496); event-types registry spec updated; db package builds.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** outbox registry); do NOT author until the owner approves THIS slice in-session"
+      - "REMEMBER the registry regression: append erpnext.posting.requested to the EXPECTED_EVENT_TYPES guard (the #447-class hosted-CI break — reference_migration_test_gotchas)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint file from 015-SCHEMA (producer.ts vs new schema+migration); both block the feed
+
+  # ----- 2.2 GATED erpnext_posting_status schema + migration ------------------
+
+  - id: 015-SCHEMA
+    task_ids: [T012a, T012]
+    type: feat
+    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    approval_required: true   # packages/db/** schema + SQL migration (Constitution §VIII)
+    depends_on: [015-SETUP, 015-SIGNOFF]   # 015-SIGNOFF-STATE (T001) decision must land first
+    blocks:
+      - 015-ISOLATION-HARNESS
+      - 015-US1-FEED
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/catalog/erpnext-posting-status.ts
+      - packages/db/src/schema/index.ts   # barrel re-export
+      - packages/db/drizzle/0019_erpnext_posting_status.sql            # next number indicative — confirm at authoring
+      - packages/db/drizzle/0019_erpnext_posting_status.down.sql
+      - apps/api/test/catalog/erpnext-posting/schema/erpnext-posting-status-schema-shape.spec.ts
+      - packages/db/__tests__/migration/0019-erpnext-posting-status.spec.ts
+      - packages/db/__tests__/cli/migrate.spec.ts                     # APPEND 0019 to EXPECTED_MIGRATIONS (regression)
+      - packages/db/__tests__/schema/catalog/barrel.spec.ts           # APPEND erpnext-posting-status to EXPECTED_CATALOG_MODULES (regression)
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- --runInBand 0019-erpnext-posting-status"
+        expected: >
+          GREEN — erpnext_posting_status created per data-model.md §5: tenant_id/store_id/sale_id/source_ref_id NOT NULL,
+          kind enum (sale_post|reversal), source_system/external_id, payload_hash char(64), status enum
+          (pending|posted|failed_transient|permanently_rejected), nullable document_ref, nullable rejection_category,
+          retry_count, nullable reversal_of_sale_id, sequence bigint IDENTITY; O-3 idempotency UNIQUE
+          (tenant_id, source_system, external_id) — the originating row's own pair, so two reversals of one sale
+          (distinct external_id) both insert while a duplicate post of the same row is rejected; fail-closed RLS
+          (SELECT + INSERT + UPDATE on app.current_tenant, empty-GUC CASE guard, mirror 0012/0017); NO money column;
+          migration applies + rolls back clean (UP→DOWN→UP).
+        docker_required: true   # Testcontainers — WSL only (reference_007_test_env)
+      - command: pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting/schema
+        expected: GREEN — schema-shape spec (Drizzle introspection; Docker-free companion).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] forbidden path (packages/db/** schema + migration); do NOT author until the owner approves THIS slice in-session"
+      - "stop if 015-SIGNOFF-STATE (T001) is not yet recorded — the new-table-vs-derive-on-read decision is its precondition"
+      - "stop if the migration is not paired with a reviewed *.down.sql, or lock duration on the new table is not assessed"
+      - "stop if the O-3 unique is keyed on the PARENT sale (tenant, sale_id) instead of the originating row's own (tenant, source_system, external_id) — that would block a 2nd partial refund forever (REVERSAL-CARDINALITY finding; data-model §5)"
+      - "stop if a money/amount column appears — amounts live on the 008 sale fact + are projected at read time; this table tracks posting STATE only"
+      - "stop if the chosen migration number is already taken on origin/main — use the next free number"
+      - "REMEMBER the two-allowlist regression: append 0019 to cli/migrate.spec EXPECTED_MIGRATIONS AND erpnext-posting-status to schema/catalog/barrel.spec EXPECTED_CATALOG_MODULES (the #487-class hosted-CI break)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint file from 015-EVENT-TYPE within packages/db
+
+  # ----- 2.3 Isolation harness (blocking — serves the capability slices) ------
+
+  - id: 015-ISOLATION-HARNESS
+    task_ids: [T020]
+    type: test
+    status: blocked   # waits on 015-SCHEMA
+    approval_required: false
+    depends_on: [015-SCHEMA]
+    blocks:
+      - 015-US1-FEED
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/catalog/erpnext-posting/__support__/seed-posting-status.ts
+      - apps/api/test/catalog/erpnext-posting/isolation/posting-status-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting/isolation"
+        expected: GREEN (DB-layer, characterises the shipped 0019 RLS — mirrors 013/014 ISOLATION-HARNESS) — RLS-bypass probe (wrong app.current_tenant → 0 rows; unset GUC → fail-closed + INSERT denied); cross-tenant read/ack → 0 rows / non-disclosing 404 on workItemRef/cursor. seed-posting-status.ts mirrors seed-item-map.ts; does NOT touch the 003-owned isolation-harness.ts.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts modifying the 003-owned isolation-harness.ts — extend via the new seed-posting-status.ts only"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # new test files + new seed helper
+
+  # ===== Phase 3: US1 (P1) 🎯 MVP — serve the posting feed (happy path) =======
+
+  - id: 015-US1-FEED
+    task_ids: [T030, T031, T032, T033, T034]
+    type: feat
+    status: blocked   # waits on both [GATED] slices + harness
+    approval_required: false   # the gated surfaces are EVENT-TYPE + SCHEMA; the controller/service/projection is not itself gated
+    depends_on: [015-EVENT-TYPE, 015-SCHEMA, 015-ISOLATION-HARNESS]
+    blocks:
+      - 015-US2-ACK
+      - 015-US3-REVERSAL
+      - 015-US4-RESOLVE-FAIL
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.controller.ts
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.service.ts
+      - apps/api/src/catalog/erpnext-posting/posting-work-item.projection.ts
+      - apps/api/src/catalog/erpnext-posting/dto/*.ts
+      - apps/worker/src/erpnext-posting/posting-requested.consumer.ts   # the trigger consumer (mirror SaleCapturedConsumer)
+      - apps/api/test/catalog/erpnext-posting/**   # US1 RED/GREEN specs
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting && pnpm --filter @data-pulse-2/worker test -- erpnext-posting"
+        expected: >
+          GREEN — connectorPullPostings projects a PROCESSED sale (processed_at non-NULL) into a sale_post
+          PostingWorkItem (012 schema): workItemRef=row id, full Sale projection with each line carrying the
+          DP2-resolved erpnextItemRef (O-1 self-sufficiency); cursor-paginated/ordered/gap-detectable (mirrors 010
+          read-down delta) with a bounded per-pull page ceiling; a NULL-processed_at sale is ABSENT (not errored);
+          re-pulling the same since cursor yields the same logical set (idempotent replay). The erpnext.posting.requested
+          trigger emits in-transaction → exactly one pending row; the worker consumer dedupes re-delivery (deterministic
+          jobId). Money exact-decimal string (no float, §III); businessDate carried (→ posting_date, §X). §XII:
+          cross-tenant/foreign-scope workItemRef|cursor → non-disclosing 404; stale cursor → snapshot_required (409);
+          unauthenticated → 401 (connectorBearer).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a sale with NULL processed_at is offered on the feed — only processed sales are eligible (008-LIVELOOP); an empty feed is correct, not an error"
+      - "stop if the projection reaches back into DP2 from the work-item — it must be self-sufficient (O-1); the connector never looks anything up"
+      - "stop if DP2 makes ANY outbound HTTP call — DP2 exposes the feed only; the connector posts to ERPNext"
+      - "stop if the 012 posting-feed.yaml is edited — it is a READ-ONLY input (any change is a separate [GATED] 012 slice)"
+      - "stop if money is represented as anything but an exact-decimal string (§III)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # US1–US4 share erpnext-posting.controller/service — serialize (US1 first as MVP)
+
+  # ===== Phase 4: US2 (P2) — ingest outcomes (connectorAckOutcome) ===========
+
+  - id: 015-US2-ACK
+    task_ids: [T040, T041, T042, T043]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [015-US1-FEED]
+    blocks:
+      - 015-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.controller.ts
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.service.ts
+      - apps/api/src/catalog/erpnext-posting/dto/*.ts
+      - apps/api/test/catalog/erpnext-posting/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting"
+        expected: >
+          GREEN — connectorAckOutcome records the outcome on erpnext_posting_status, NEVER the sale fact: posted
+          requires + stores document_ref; failed_transient → pending (retry_count++ , NO new doc); permanently_rejected
+          → rejection_category + reconciliation flag. Idempotency (O-3, §XI): reuses the existing Idempotency-Key
+          interceptor — same logical outcome replays 200 (echoes document_ref), a different outcome for the same key →
+          409 idempotency_key_conflict; a re-pull after posted does NOT re-offer. §XII: body-supplied tenant/store/
+          server-owned fields rejected (strict DTO); scope from the connectorBearer principal; cross-tenant workItemRef
+          → non-disclosing 404.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if an outcome mutates the 008 sale fact — only erpnext_posting_status is updated (§IX)"
+      - "stop if a new idempotency primitive is introduced — reuse the existing Idempotency-Key interceptor (no new primitive)"
+      - "stop if a failed_transient creates a new ERPNext document on retry — O-3 holds (same row, same eventual document_ref)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # shares the erpnext-posting module with US1/US3/US4 — serialize after US1
+
+  # ===== Phase 5: US3 (P3) — reversals (void/refund → reversing document) =====
+
+  - id: 015-US3-REVERSAL
+    task_ids: [T050, T051, T052]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [015-US1-FEED]
+    blocks:
+      - 015-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.service.ts
+      - apps/api/src/catalog/erpnext-posting/posting-work-item.projection.ts
+      - apps/api/test/catalog/erpnext-posting/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting/reversal"
+        expected: >
+          GREEN — a sale_voids / sale_refunds terminal event projects into a reversal PostingWorkItem carrying
+          reversalOf (the original sale's provenance + reversalKind void|refund); the original sale_post row is
+          untouched (§IX, append-only); the trigger creates a pending row per terminal event keyed by the TERMINAL
+          EVENT's own (source_system, external_id). MULTIPLE reversals per sale: two partial refunds → two distinct
+          reversal rows (distinct external_id), both postable; a sale both voided and refunded → two reversals,
+          neither blocked by the O-3 unique (REVERSAL-CARDINALITY guarantee, data-model §5).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a reversal edits/cancels/amends the original submitted invoice — it must be a NEW reversing document referencing the original (§5.4, posting §6)"
+      - "stop if the reversal row is keyed on the parent sale rather than the terminal event's own (source_system, external_id) — that blocks a 2nd partial refund (REVERSAL-CARDINALITY)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # shares the erpnext-posting module — serialize after US1 (may run in either order vs US2/US4, but all serialize through the module)
+
+  # ===== Phase 6: US4 (P3) — 015-RESOLVE failure posture (fails-to-DLQ) =======
+
+  - id: 015-US4-RESOLVE-FAIL
+    task_ids: [T060, T061, T062, T063]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [015-US1-FEED]
+    blocks:
+      - 015-POLISH
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/posting-work-item.projection.ts
+      - apps/api/src/catalog/erpnext-posting/erpnext-posting.service.ts
+      - apps/api/test/catalog/erpnext-posting/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting/resolve"
+        expected: >
+          GREEN — 015-RESOLVE (DP2-side, at projection, BEFORE offer): an unmapped line (no confirmed erpnext_item_map,
+          or only a suggested one) → the sale is NOT offered, a permanently_rejected row with
+          rejection_category=unmapped_item + reconciliation flag, the 008 sale fact untouched; an ad-hoc line (null
+          tenant_product_id) → same posture; an unmapped store → rejection_category=unmapped_store (never guess a
+          warehouse — rider R5); a disabled/non-sales ERPNext Item → fails-to-DLQ (validation/unmapped_item),
+          operational sellability unaffected (rider R3). A posting failure is NOT routed into the inbound unknown-items
+          queue (rider R4 / OQ-6 — separate operational states) — only a reconciliation flag (017 consumes it).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if an unmapped line falls back to a 'Misc'/substitute item — there is NO substitute (rider R3); it fails-to-DLQ"
+      - "stop if an unmapped store guesses a default warehouse — never guess (rider R5); it fails-to-DLQ (unmapped_store)"
+      - "stop if a posting failure writes into the unknown-items queue — those are separate operational states (rider R4 / OQ-6)"
+      - "stop if a resolution failure mutates the 008 sale fact — it never does (§IX); it only writes a permanently_rejected status row"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # shares the erpnext-posting module — serialize through it
+
+  # ===== Phase 7: Polish =====================================================
+
+  - id: 015-POLISH
+    task_ids: [T090, T091, T092]
+    type: chore
+    status: blocked
+    approval_required: false
+    depends_on: [015-US2-ACK, 015-US3-REVERSAL, 015-US4-RESOLVE-FAIL]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/catalog/erpnext-posting/**
+      - apps/worker/src/erpnext-posting/**
+      - apps/api/src/observability/api.metrics.ts        # register §VII posting signals (shared file, not per-feature)
+      - apps/worker/src/observability/worker.metrics.ts  # worker-side equivalent
+      - loadtests/k6/erpnext-posting.js                  # report-only perf scenario
+      - apps/api/test/catalog/erpnext-posting/**
+      - specs/015-pos-sale-posting-to-erpnext/execution-map.yaml
+      - specs/015-pos-sale-posting-to-erpnext/wave-status.md
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting --coverage"
+        expected: GREEN — ≥80% coverage for the new module + worker; §VII signals (queue lag, failed-job rate, reconciliation mismatch rate, DLQ depth) registered in the shared metrics files (NOT a per-feature file), carrying correlationId/tenantId; raw payloads never logged; report-only k6 scenario authored (thresholds carried, not gating — no perf env); map + wave-status reconciled to terminal.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the §VII signals are registered in a per-feature metrics file instead of the shared api.metrics.ts / worker.metrics.ts (010 catalog_unpriced_issue_rate precedent)"
+      - "stop if perf cannot be measured in a real env — report report-only (005/008/009/010 T560 precedent), do not weaken thresholds into a gate"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Consumers / later arcs (NOT 015 slices) =============================
+
+  - id: 015-DLQ-DRAIN
+    task_ids: [T100]
+    type: feat
+    # The DLQ drain + reconciliation RUN + repair API: 017 reads 015's
+    # permanently_rejected rows + reconciliation flags, surfaces the mismatch
+    # reports, and exposes the repair re-post workflow (a repair must resolve to the
+    # SAME document_ref — idempotency holds across repair; never a silent rewrite).
+    # NOT dispatchable from this map — 017 has NO spec yet. Traceability only.
+    status: proposed
+    approval_required: false
+    depends_on: [015-US2-ACK, "017-<future-recon-slice>"]   # 017 does not exist yet — hard non-dispatchable
+    blocks: []
+    agent: sonnet-api
+    allowed_files: []   # authored under 017, not 015
+    validation:
+      - command: "(deferred — authored under the future 017 spec)"
+        expected: 017 drains 015's permanently_rejected rows, surfaces reconciliation reports, exposes repair re-post (same document_ref, idempotent); never rewrites a posted document.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop — NOT a 015 slice. Do NOT dispatch from the 015 map; this belongs to the future 017 spec (which must run its own Spec-Kit chain first)."
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unknown
+
+  - id: 015-PAYMENT-ENTRY
+    task_ids: [T101]
+    type: feat
+    # Payment Entry posting — completing the SIGNED target (rider R1). Requires ALL
+    # of: a DP2 tender/payment fact model → a [GATED] 012 posting-feed payment/tender
+    # extension (versioned, backward-compatible) → connector idempotent PE creation →
+    # payment repair/reconciliation semantics. A LATER, separately-gated arc. NOT
+    # dispatchable from this map. Deriving a PE from posTotal is NOT ratified (STOP-and-raise).
+    status: proposed
+    approval_required: true   # multiple [GATED] surfaces (012 contract extension + a new DP2 tender model)
+    depends_on: [015-US2-ACK, "DP2-tender-model", "012-payment-extension"]   # none exist yet — hard non-dispatchable
+    blocks: []
+    agent: sonnet-api
+    allowed_files: []   # authored under the future tender/payment arc, not 015
+    validation:
+      - command: "(deferred — authored under the future tender/payment + 012-payment-extension arc)"
+        expected: a submitted Sales Invoice gains its associated Payment Entry (idempotent), completing the signed target; the interim outstanding-AR state is closed.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop — NOT a 015 slice and NOT yet buildable. Payment Entry requires the four gated prerequisites (DP2 tender model, 012 payment extension, connector PE, payment repair). Deriving a PE from posTotal is STOP-and-raise (rider R1)."
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unknown
+
+# ============================================================================
+# groups — proposed parallel sets (awaiting approval)
+# ============================================================================
+
+groups:
+  - id: 015-FOUNDATIONAL-GATED
+    members: [015-EVENT-TYPE, 015-SCHEMA]
+    parallel_safety: safe   # disjoint files within packages/db (the outbox registry vs a new schema+migration)
+    proposed: true   # both are [GATED]; running them as a pair needs explicit owner approval of BOTH (015-SCHEMA also waits on the 015-SIGNOFF-STATE decision)
