@@ -31,15 +31,17 @@ import {
   type OutboxEventType,
 } from "../../src/outbox/producer";
 
-describe("outbox event-types registry: audit.event.created + inventory.movement.created", () => {
+describe("outbox event-types registry: audit.event.created + inventory.movement.created + sale.captured", () => {
   // Originally T599 pinned a single type (audit.event.created). 009 issue #465
-  // part B intentionally registers a SECOND type, inventory.movement.created
-  // (the same shape as the 008 sale.captured deferral) — this drift test is
-  // updated in lockstep with that registration, which is exactly its purpose:
-  // a new outbox type cannot land silently.
+  // part B added a SECOND type, inventory.movement.created. DP-008-LIVELOOP
+  // adds a THIRD, sale.captured (the worker-side consumer bridges it to the
+  // existing sale-processing BullMQ queue) — this drift test is updated in
+  // lockstep with each registration, which is exactly its purpose: a new
+  // outbox type cannot land silently.
   const EXPECTED_EVENT_TYPES = [
     "audit.event.created",
     "inventory.movement.created",
+    "sale.captured",
   ] as const;
 
   it("OUTBOX_EVENT_TYPES has exactly the expected entries", () => {
@@ -53,11 +55,16 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
     expect(OUTBOX_EVENT_TYPES.INVENTORY_MOVEMENT_CREATED).toBe(
       "inventory.movement.created",
     );
+    expect(OUTBOX_EVENT_TYPES.SALE_CAPTURED).toBe("sale.captured");
   });
 
   it("the const is shape-frozen — keys are exactly the expected set", () => {
     expect(Object.keys(OUTBOX_EVENT_TYPES).sort()).toEqual(
-      ["AUDIT_EVENT_CREATED", "INVENTORY_MOVEMENT_CREATED"].sort(),
+      [
+        "AUDIT_EVENT_CREATED",
+        "INVENTORY_MOVEMENT_CREATED",
+        "SALE_CAPTURED",
+      ].sort(),
     );
   });
 
@@ -65,6 +72,7 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
     const cases: ReadonlyArray<OutboxEventType> = [
       "audit.event.created",
       "inventory.movement.created",
+      "sale.captured",
     ];
     expect(cases).toHaveLength(EXPECTED_EVENT_TYPES.length);
   });

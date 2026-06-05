@@ -53,10 +53,18 @@ import { runWithTenantContext, type TenantContext } from "../middleware/tenant-c
  *     consumers receive movement events. Same registration shape as the 008
  *     `sale.captured` deferral; the payload carries IDs + provenance only
  *     (no PII / no money), redacted-by-default like the audit event.
+ *   - `sale.captured` (008 DP-008-LIVELOOP): emitted in-transaction when a
+ *     sale fact is captured, so the worker-side `SaleCapturedConsumer` can
+ *     bridge it to the existing `sale-processing` BullMQ queue (which the
+ *     `SaleWorker`/`SaleProcessingProcessor` consume). The payload carries IDs
+ *     only (saleId / storeId) — no PII / no money / no line amounts (FR-042 /
+ *     FR-092). The capture-side emit + `SALES_OUTBOX_PRODUCER` binding and the
+ *     `saleWorker.start()` in `main.ts` are a SEPARATE follow-up slice.
  */
 export const OUTBOX_EVENT_TYPES = {
   AUDIT_EVENT_CREATED: "audit.event.created",
   INVENTORY_MOVEMENT_CREATED: "inventory.movement.created",
+  SALE_CAPTURED: "sale.captured",
 } as const;
 
 export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
