@@ -11,7 +11,13 @@
 **Last updated:** 2026-06-06 by Ahmed Shaaban — MVP implementation started; the two `[GATED]` `packages/db` slices (015-EVENT-TYPE + 015-SCHEMA) + the new-table decision (015-SIGNOFF-STATE) owner-AUTHORIZED in-session
 **Spec:** `015-pos-sale-posting-to-erpnext` (`specs/015-pos-sale-posting-to-erpnext/`)
 **Base:** `feat/015-pos-sale-posting-mvp` off `origin/main` (planning chain MERGED via #493 + #500)
-**Status:** planning chain MERGED (#493 spec, #500 plan/data-model/tasks/execution-map). MVP implementation UNDERWAY. The two `[GATED]` db slices are owner-authorized; remaining 015 surfaces (US2/US3/US4) follow after the US1-FEED MVP checkpoint.
+**Status:** planning chain MERGED (#493 spec, #500 plan/data-model/tasks/execution-map). **MVP (6 slices) GREEN on `feat/015-pos-sale-posting-mvp`**: SIGNOFF + SETUP + `[GATED]` EVENT-TYPE + `[GATED]` SCHEMA (0019) + ISOLATION-HARNESS + 🎯 US1-FEED. Remaining 015 surfaces (US2-ACK / US3-REVERSAL / US4-RESOLVE-FAIL / POLISH) follow.
+
+### MVP build results (WSL Testcontainers)
+- `[GATED]` SCHEMA (0019 `erpnext_posting_status`): migration round-trip **16/16**, migrate allowlist **10/10**, schema-shape **11/11**. O-3 unique keyed on the collision-proof `source_ref_id` (NOT `source_system/external_id` — the REVERSAL-CARDINALITY fix, so multiple partial refunds per sale each post).
+- `[GATED]` EVENT-TYPE (`erpnext.posting.requested`): registry **5/5**.
+- ISOLATION-HARNESS: RLS sweep **8/8**.
+- 🎯 US1-FEED: **two-moment 015-RESOLVE split** (eligibility at row CREATION in the worker `PostingRequestedConsumer` → `pending`/`permanently_rejected`; wire assembly at PULL is a pure read → 012 idempotent replay holds). Consumer spec **5/5** (resolvable→pending, ad-hoc→`unmapped_item`, no-warehouse→`unmapped_store`, idempotent re-run via `ON CONFLICT`, sale-fact-untouched). Feed spec **5/5** (resolved `erpnextItemRef`, posted-excluded, exact-decimal money + `businessDate`, cursor ordering + replay, limit cap). Auth = a new `connector` bearer scope + `ConnectorAuthGuard` (type-only, no migration — `auth_tokens.scope` is free text). The posting trigger emits `erpnext.posting.requested` in-transaction from the 008 `SaleProcessingProcessor` when a sale first becomes processed (cross-slice edit; 008 regression **7/7** GREEN after fixing the UUID-typed `correlation_id`). Consumer wired into the drainer registry via the WorkerModule `drainerProcessorProviderFactory` (race-free: before the runner's `onModuleInit` start).
 **Active finding(s):** REVERSAL-CARDINALITY (resolved — O-3 unique keyed on the originating row's own pair, data-model §5); inherits 013 `AUTO_MATCH_NO_SOURCE` → v1 manual-only.
 
 ---

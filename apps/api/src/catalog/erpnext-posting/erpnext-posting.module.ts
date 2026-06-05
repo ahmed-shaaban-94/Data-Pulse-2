@@ -33,16 +33,20 @@ import { Module } from "@nestjs/common";
 import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
 import { ContextModule } from "../../context/context.module";
+import { ErpnextPostingController } from "./erpnext-posting.controller";
+import { ErpnextPostingService } from "./erpnext-posting.service";
 
 /**
- * Empty registered module (no routes yet) — 015-SETUP. Keeps the DI graph + build
- * green ahead of the capability slices (mirrors how 013/014 SETUP shipped before
- * their CRUD slices).
+ * Wires the DP2 side of the 012 posting-feed contract. 015-US1-FEED adds the
+ * `connectorPullPostings` GET feed (controller + service + work-item projection);
+ * the outcome ack (015-US2-ACK) and reversals/resolve-failures (US3/US4) extend
+ * the same controller/service. `AuthModule` provides `PG_POOL` + the base
+ * `AuthGuard` the `ConnectorAuthGuard` extends.
  */
 @Module({
   imports: [AuthModule, AuditModule, ContextModule],
-  controllers: [],
-  providers: [],
-  exports: [],
+  controllers: [ErpnextPostingController],
+  providers: [ErpnextPostingService],
+  exports: [ErpnextPostingService],
 })
 export class ErpnextPostingModule {}

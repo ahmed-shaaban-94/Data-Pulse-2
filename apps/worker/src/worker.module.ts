@@ -125,6 +125,7 @@ import { AuditRetentionScheduler } from "./audit/audit-retention.scheduler";
 import { OutboxModule, OutboxDrainerRunner } from "./outbox/outbox.module";
 import { OutboxConsumerRegistry } from "./outbox/registry";
 import { DrainerProcessor } from "./outbox/drainer.processor";
+import { PostingRequestedConsumer } from "./erpnext-posting/posting-requested.consumer";
 import {
   OutboxRetentionProcessor,
   OUTBOX_RETENTION_REPO,
@@ -438,6 +439,13 @@ export function drainerProcessorProviderFactory(
   if (pool === null) {
     return null;
   }
+  // 015: register the DB-capable `erpnext.posting.requested` consumer here —
+  // the one place that holds BOTH the pool and the (mutable, exported) registry,
+  // and runs DURING provider construction, BEFORE OutboxDrainerRunner.onModuleInit
+  // starts the poll loop (so there is no register-after-drain race). The pool-free
+  // consumers (audit, sale-captured) register in OutboxModule's factory; this one
+  // cannot (OutboxModule cannot inject the pool — that would be a circular dep).
+  registry.register(new PostingRequestedConsumer(pool));
   return new DrainerProcessor({ pool, registry });
 }
 

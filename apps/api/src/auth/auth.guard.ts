@@ -47,6 +47,7 @@ export const BEARER_AUTH_SCOPES = new Set<BearerAuthScope>([
   "dashboard_api",
   "pos",
   "pos_operator",
+  "connector",
 ]);
 
 /**
