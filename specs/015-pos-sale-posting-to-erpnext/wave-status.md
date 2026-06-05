@@ -7,10 +7,10 @@
 > `tasks.md`, `data-model.md`, `execution-map.yaml`, and no dispatchable code
 > slices. Implementation stays blocked pending 015's own Spec-Kit chain.
 
-**Last updated:** 2026-06-05 by Ahmed Shaaban — owner-decision rider patch applied (011-DR-POSTING-R1; OQ-5/6/7/8/8-bis **RATIFIED**)
+**Last updated:** 2026-06-05 by Ahmed Shaaban — prerequisite reconciliation: implementation prereqs 1–3 (P-DP-008-LIVELOOP #496/#497, 014-CRUD #495, 012 `erpnextItemRef` #494) now SATISFIED on `main`
 **Spec:** `015-pos-sale-posting-to-erpnext` (`specs/015-pos-sale-posting-to-erpnext/`)
-**Base:** worktree from `origin/main @ 0cafd0c`
-**Status:** spec + companions **authored** on `docs/015-sale-posting-spec`; open questions **RATIFIED** via the [2026-06-05 owner rider](../011-erpnext-pos-reference-and-integration-foundation/decisions/posting-decision-rider-2026-06-05.md) — **NOT committed/pushed** (stop-before-commit)
+**Base:** verified against `origin/main` (spec MERGED via #493, `1faea76`)
+**Status:** spec + companions **MERGED to `main`** (#493); open questions **RATIFIED** via the [2026-06-05 owner rider](../011-erpnext-pos-reference-and-integration-foundation/decisions/posting-decision-rider-2026-06-05.md). Planning lane complete; **implementation not yet started** (no `plan.md`/`tasks.md`/`execution-map.yaml`). Next live step: 015's own Spec-Kit chain (`/speckit-plan`) + the `[GATED]` `erpnext.posting.requested` registration.
 **Active finding(s):** none new (inherits 013 `AUTO_MATCH_NO_SOURCE` → v1 manual-only)
 
 ---
@@ -80,8 +80,8 @@ is the only ERPNext-calling component, behind the 012 contract (ADR 0008).
 | **depends_on**: 012 `posting-feed.yaml` on `main` | ✅ present (`1.0.0-draft`; git-verified) |
 | **depends_on**: 013 `erpnext_item_map` MVP on `main` | ✅ CLOSED — module + `0017` migration (git-verified); `013-RESOLVE` lands here |
 | **depends_on**: 008 sale fact on `main` | ✅ CLOSED — `sales`+`sale_lines`+`0012` migration (git-verified) |
-| **depends_on**: DP-014 warehouse map | ⏳ planning chain only; SCHEMA/CONTRACT `[GATED]`+`proposed`, **not built** (no `erpnext_warehouse_map` on `main`; git-verified) |
-| **prerequisite**: P-DP-008-LIVELOOP | ⏳ GATED — separate slice (`specs/008`); must ship before the feed carries real work-items e2e |
+| **depends_on**: DP-014 warehouse map | ✅ **CLOSED** — 014-CRUD merged (#495, `4d0cdd3`): `erpnext_warehouse_map` table + `0018_erpnext_warehouse_map.sql` migration + module on `main` (git-verified 2026-06-05) |
+| **prerequisite**: P-DP-008-LIVELOOP | ✅ **SHIPPED** — DP-008-LIVELOOP merged (#496 `6dd1e84` + #497 `12013cc`): `sale.captured` registered in `OUTBOX_EVENT_TYPES` + in-transaction emit + `SaleWorker.start()`; `processed_at` set off-request, Docker-gated e2e (git-verified 2026-06-05). The feed can now carry real processed work-items e2e. |
 | G0 repo truth | ✅ worktree from `origin/main @ 0cafd0c` |
 | G2 contracts | ✅ `posting-feed.yaml` present |
 | G3 / G5 / G7 / G8 | defined, not satisfied (planning lane) |
@@ -90,20 +90,26 @@ is the only ERPNext-calling component, behind the 012 contract (ADR 0008).
 
 ## Next recommended action
 
-015's spec is authored (planning lane complete). The implementation arc, in
-order:
+015's spec is authored (planning lane complete). **Prerequisites 1–3 below are
+now SATISFIED on `main` (verified 2026-06-05)** — the next live work is the
+`erpnext.posting.requested` event-type (4) and then 015's own Spec-Kit chain (5).
+The implementation arc, in order:
 
-1. **P-DP-008-LIVELOOP** (scoped under `specs/008`) — makes processed sales
-   feedable end-to-end (rider R6: separate prerequisite, never absorbed).
-2. **014-CRUD** (+ its `[GATED]` SCHEMA/CONTRACT) — the store→warehouse map.
-3. The **`[GATED]` 012 contract correction/extension**
-   (`SaleLine.erpnextItemRef` or equivalent + `tenantProductRef` description
-   correction) — **required before 015 implementation** (rider R2).
-4. The **`[GATED]` `erpnext.posting.requested`** event-type registration.
+1. ~~**P-DP-008-LIVELOOP**~~ — ✅ **DONE** (#496 + #497): processed sales are now
+   feedable end-to-end (rider R6 honored — it shipped as its own `specs/008`
+   slice, never absorbed into 015).
+2. ~~**014-CRUD**~~ — ✅ **DONE** (#495): the store→warehouse map (`erpnext_warehouse_map`
+   + `0018` migration) is on `main`.
+3. ~~**`[GATED]` 012 contract correction**~~ — ✅ **DONE** (#494): `SaleLine.erpnextItemRef`
+   is now `required` in `posting-feed.yaml` (DP2-side resolution; rider R2 satisfied).
+4. **`[GATED]` `erpnext.posting.requested` event-type registration** — ⏳ **NEXT
+   GATED STEP.** Not yet in `OUTBOX_EVENT_TYPES` (git-verified). Scope it as a
+   `[GATED]` `packages/db` slice (T541-style approval), ideally within 015's plan.
 5. **015's own Spec-Kit chain** (`plan.md` → Constitution Check → `[GATED]`
    schema/contract as needed → `tasks.md` → `execution-map.yaml`), then the
    posting feed + worker + `015-RESOLVE` — in the **interim
-   invoice-only/outstanding-AR mode** (rider R1).
+   invoice-only/outstanding-AR mode** (rider R1). ← **the recommended next action
+   for 015 itself** (`/speckit-plan`); steps 1–3 no longer block it.
 6. **016** tax/fiscal; **017** DLQ drain + reconciliation + repair.
 7. *(Later, separately gated — rider R1)*: tender model → 012 payment extension
    → connector idempotent Payment Entry → payment repair semantics →
@@ -118,4 +124,4 @@ No application code, DB schema/migration, OpenAPI YAML (incl. `posting-feed.yaml
 behavior changed.** This slice adds the 015 planning spec + companions under
 `specs/015-pos-sale-posting-to-erpnext/` **plus the durable owner-decision rider**
 `specs/011-erpnext-pos-reference-and-integration-foundation/decisions/posting-decision-rider-2026-06-05.md`
-— nothing else. Left uncommitted in the worktree per stop-before-commit.
+— nothing else. **Merged to `main` via PR #493** (`1faea76`).
