@@ -2,16 +2,33 @@
 
 > Human-readable summary of where the spec stands. 015 is the **keystone** of the
 > ERPNext integration arc: it turns a DP2 sale fact (008) into ERPNext accounting
-> truth over the fixed 012 pull/feed contract, resolving items via 013. This is a
-> **planning / docs-only** spec (like 011/012/013's spec PR) — no `plan.md`,
-> `tasks.md`, `data-model.md`, `execution-map.yaml`, and no dispatchable code
-> slices. Implementation stays blocked pending 015's own Spec-Kit chain.
+> truth over the fixed 012 pull/feed contract, resolving items via 013. The full
+> Spec-Kit planning chain (`plan.md` / `data-model.md` / `tasks.md` /
+> `execution-map.yaml`) is MERGED (#500); **MVP implementation is now UNDERWAY** on
+> branch `feat/015-pos-sale-posting-mvp` (SIGNOFF → SETUP → [GATED] EVENT-TYPE +
+> SCHEMA → ISOLATION-HARNESS → US1-FEED 🎯).
 
-**Last updated:** 2026-06-05 by Ahmed Shaaban — prerequisite reconciliation: implementation prereqs 1–3 (P-DP-008-LIVELOOP #496/#497, 014-CRUD #495, 012 `erpnextItemRef` #494) now SATISFIED on `main`
+**Last updated:** 2026-06-06 by Ahmed Shaaban — MVP implementation started; the two `[GATED]` `packages/db` slices (015-EVENT-TYPE + 015-SCHEMA) + the new-table decision (015-SIGNOFF-STATE) owner-AUTHORIZED in-session
 **Spec:** `015-pos-sale-posting-to-erpnext` (`specs/015-pos-sale-posting-to-erpnext/`)
-**Base:** verified against `origin/main` (spec MERGED via #493, `1faea76`)
-**Status:** spec + companions **MERGED to `main`** (#493); open questions **RATIFIED** via the [2026-06-05 owner rider](../011-erpnext-pos-reference-and-integration-foundation/decisions/posting-decision-rider-2026-06-05.md). Planning lane complete; **implementation not yet started** (no `plan.md`/`tasks.md`/`execution-map.yaml`). Next live step: 015's own Spec-Kit chain (`/speckit-plan`) + the `[GATED]` `erpnext.posting.requested` registration.
-**Active finding(s):** none new (inherits 013 `AUTO_MATCH_NO_SOURCE` → v1 manual-only)
+**Base:** `feat/015-pos-sale-posting-mvp` off `origin/main` (planning chain MERGED via #493 + #500)
+**Status:** planning chain MERGED (#493 spec, #500 plan/data-model/tasks/execution-map). MVP implementation UNDERWAY. The two `[GATED]` db slices are owner-authorized; remaining 015 surfaces (US2/US3/US4) follow after the US1-FEED MVP checkpoint.
+**Active finding(s):** REVERSAL-CARDINALITY (resolved — O-3 unique keyed on the originating row's own pair, data-model §5); inherits 013 `AUTO_MATCH_NO_SOURCE` → v1 manual-only.
+
+---
+
+## SIGN-OFF Decisions (015-SIGNOFF, T001–T003 — recorded 2026-06-06)
+
+### T001 — `015-SIGNOFF-STATE`: a new `[GATED]` `erpnext_posting_status` table (NOT derive-on-read)
+
+**Decision: a new `[GATED]` state table.** 015 records, per DP2 sale (and per void/refund terminal event), the state of its ERPNext posting — `pending` → `posted` / `failed_transient` / `permanently_rejected` — plus the ERPNext `documentRef`. Derive-on-read is **infeasible**: the 008 sale fact (`0012`) carries no posting columns and must stay immutable (the 012 contract: *"the sale fact is NEVER mutated by an outcome — only its posting status is recorded"*), and an externally-assigned ERPNext `documentRef` **cannot be derived** — so O-3 (exactly-one document per sale) is unenforceable without persisted state. The 010 read-down feed set the precedent (a `[GATED]` `0015` change-log table; the app/outbox-mirror alternative was rejected) for a *weaker* need. **Owner-authorized in-session 2026-06-06.** Full rationale: [data-model.md §2](./data-model.md#2-the-load-bearing-decision--state-table-vs-derive-on-read).
+
+### T002 — interim Sales-Invoice-only / outstanding-AR mode (rider R1)
+
+015 posts a **submitted Sales Invoice only** (with stock impact) — **no Payment Entry / tender** state or payload. This interim mode is **gated** and **not finance-complete**: expect **unpaid/outstanding** ERPNext invoices (open AR) until the Payment Entry arc ships (DP2 tender model → 012 payment extension → connector PE → payment repair). Deriving a PE from `posTotal` is **STOP-and-raise** (not ratified). The signed target (SI + associated PE) is unchanged, not replaced. [spec §5.2 / rider R1].
+
+### T003 — DLQ / `permanently_rejected` state only; the reconciliation run is 017
+
+015 **produces** the `permanently_rejected` rows + reconciliation flags; the **DLQ drain + reconciliation run + repair API is 017** (a separate Spec-Kit chain, not yet specced). 015 adds no scheduled job, no repair endpoint, no ERPNext-Bin fetch. [spec §8, §10.4].
 
 ---
 

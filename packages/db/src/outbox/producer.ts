@@ -60,11 +60,20 @@ import { runWithTenantContext, type TenantContext } from "../middleware/tenant-c
  *     only (saleId / storeId) — no PII / no money / no line amounts (FR-042 /
  *     FR-092). The capture-side emit + `SALES_OUTBOX_PRODUCER` binding and the
  *     `saleWorker.start()` in `main.ts` are a SEPARATE follow-up slice.
+ *   - `erpnext.posting.requested` (015 POS-sale-posting-to-ERPNext): emitted
+ *     in-transaction when a PROCESSED 008 sale (or a void/refund terminal event)
+ *     becomes eligible for ERPNext posting, so the worker-side posting-requested
+ *     consumer can record a `pending` `erpnext_posting_status` row (migration
+ *     0019). The payload carries IDs + provenance only (saleId / storeId /
+ *     sourceSystem / externalId / kind) — no PII / no money / no line amounts;
+ *     the posting work-item is projected lazily on pull (012 feed). Mirrors the
+ *     `sale.captured` registration shape.
  */
 export const OUTBOX_EVENT_TYPES = {
   AUDIT_EVENT_CREATED: "audit.event.created",
   INVENTORY_MOVEMENT_CREATED: "inventory.movement.created",
   SALE_CAPTURED: "sale.captured",
+  ERPNEXT_POSTING_REQUESTED: "erpnext.posting.requested",
 } as const;
 
 export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
