@@ -1,0 +1,182 @@
+/**
+ * posting-work-item.projection.ts — the 012 work-item WIRE SHAPE (PULL side).
+ *
+ * The DP2 posting pipeline resolves item/warehouse identity at TWO moments,
+ * deliberately split (the 012 contract's idempotent-replay obligation forbids a
+ * write side-effect on the GET feed):
+ *
+ *   1. ELIGIBILITY — at row CREATION. Owned by the worker
+ *      `PostingRequestedConsumer.resolveEligibility` (apps/worker): it joins each
+ *      line → a CONFIRMED `erpnext_item_map` + the store → `erpnext_warehouse_map`
+ *      and inserts a `pending` (resolvable) or `permanently_rejected` row BEFORE
+ *      the work-item is offered (rider R2). That logic lives THERE, not here — the
+ *      worker cannot import api code, and only one live copy must exist.
+ *
+ *   2. WIRE ASSEMBLY — at PULL (this file, `buildWorkItem()`). A pure read: it
+ *      re-joins an already-`pending` row's sale + frozen lines + confirmed
+ *      item-map to populate the 012 `PostingWorkItem` (each line's
+ *      `erpnextItemRef`). NO status mutation → re-pulling the same cursor yields
+ *      the same logical set (012 idempotent replay).
+ *
+ * All queries run under the caller's tenant GUC (the caller wraps in
+ * `runWithTenantContext`); RLS does the tenant scoping.
+ */
+import type { PoolClient } from "pg";
+
+// ---------------------------------------------------------------------------
+// Wire shape — the 012 PostingWorkItem (subset 015 populates in the interim mode)
+// ---------------------------------------------------------------------------
+
+/** A 012 SaleLine projection line (interim mode: no tender). */
+export interface WorkItemLine {
+  readonly lineName: string;
+  readonly unitPrice: string;
+  readonly currencyCode: string;
+  readonly quantity: string;
+  readonly lineAmount: string;
+  readonly taxAmount: string | null;
+  readonly unit: string;
+  /** The DP2-resolved ERPNext Item identity (required on every OFFERED line). */
+  readonly erpnextItemRef: string;
+  readonly tenantProductRef: string | null;
+}
+
+/** A 012 PostingWorkItem (sale_post; reversal adds reversalOf in US3). */
+export interface PostingWorkItem {
+  readonly workItemRef: string;
+  readonly kind: "sale_post" | "reversal";
+  readonly sourceSystem: string;
+  readonly externalId: string;
+  readonly payloadHash: string;
+  readonly businessDate: string;
+  readonly sale: {
+    readonly saleRef: string;
+    readonly storeId: string;
+    readonly currencyCode: string;
+    readonly posTotal: string;
+    readonly occurredAt: string;
+    readonly businessDate: string;
+    readonly sourceSystem: string;
+    readonly externalId: string;
+    readonly lines: readonly WorkItemLine[];
+  };
+  readonly itemCursor: string;
+}
+
+/**
+ * Build the 012 wire work-item for one ALREADY-`pending` status row (pull-time,
+ * read-only). Re-joins the sale + frozen lines + confirmed item-map to populate
+ * each line's `erpnextItemRef`. Money is emitted as the exact-decimal strings the
+ * DB holds (no float, §III). Returns null if the row's sale/lines are not found
+ * under the current tenant (defensive; the feed filters those out).
+ */
+export async function buildWorkItem(
+  client: PoolClient,
+  row: {
+    readonly id: string;
+    readonly kind: "sale_post" | "reversal";
+    readonly saleId: string;
+    readonly sourceSystem: string;
+    readonly externalId: string;
+    readonly payloadHash: string;
+    readonly sequence: string;
+  },
+): Promise<PostingWorkItem | null> {
+  const sale = await client.query<{
+    id: string;
+    store_id: string;
+    currency_code: string;
+    pos_total: string;
+    occurred_at: Date;
+    business_date: string;
+    source_system: string;
+    external_id: string;
+  }>(
+    `SELECT id, store_id, currency_code, pos_total::text AS pos_total,
+            occurred_at, business_date::text AS business_date,
+            source_system, external_id
+       FROM sales WHERE id = $1`,
+    [row.saleId],
+  );
+  const s = sale.rows[0];
+  if (!s) return null;
+
+  const lines = await client.query<{
+    line_name: string;
+    unit_price: string;
+    currency_code: string;
+    quantity: string;
+    line_amount: string;
+    tax_amount: string | null;
+    unit: string;
+    erpnext_item_ref: string | null;
+    tenant_product_ref: string | null;
+  }>(
+    `SELECT sl.line_name, sl.unit_price::text AS unit_price, sl.currency_code,
+            sl.quantity::text AS quantity, sl.line_amount::text AS line_amount,
+            sl.tax_amount::text AS tax_amount, sl.unit,
+            m.erpnext_item_ref, sl.tenant_product_ref::text AS tenant_product_ref
+       FROM sale_lines sl
+       LEFT JOIN erpnext_item_map m
+         ON m.tenant_product_id = sl.tenant_product_ref
+        AND m.state = 'confirmed'
+        AND m.retired_at IS NULL
+      WHERE sl.sale_id = $1
+      ORDER BY sl.id`,
+    [row.saleId],
+  );
+
+  // A `pending` row was only created when eligibility resolved at CREATION, so
+  // every line normally re-resolves here. EDGE CASE: a confirmed item-map can be
+  // retired (013 REPOINT) BETWEEN creation and this pull, leaving a line's
+  // `erpnext_item_ref` NULL. We MUST NOT ship an empty/contract-violating
+  // `erpnextItemRef` (012 O-1 self-sufficiency). Returning null here makes the
+  // feed OMIT the whole work-item (the service's `if (item)` filter), so the
+  // connector never receives a malformed item.
+  //
+  // KNOWN LIMITATION (MVP): the omitted row stays `pending` in the DB but the
+  // pull cursor advances past its `sequence`, so it is not re-offered until a
+  // re-resolution pass flips stranded rows to `permanently_rejected`. That
+  // re-resolution is US4-RESOLVE-FAIL / 017 work, NOT this read-only feed (a
+  // status write inside the GET would break the 012 idempotent-replay invariant).
+  // In the MVP no map-retirement path is exercised against a pending posting, so
+  // this is a latent edge handled safely (omit, never corrupt), not a live gap.
+  const wireLines: WorkItemLine[] = [];
+  for (const l of lines.rows) {
+    if (l.erpnext_item_ref === null || l.erpnext_item_ref.length === 0) {
+      return null; // stale/retired map → omit the work-item rather than ship "".
+    }
+    wireLines.push({
+      lineName: l.line_name,
+      unitPrice: l.unit_price,
+      currencyCode: l.currency_code,
+      quantity: l.quantity,
+      lineAmount: l.line_amount,
+      taxAmount: l.tax_amount,
+      unit: l.unit,
+      erpnextItemRef: l.erpnext_item_ref,
+      tenantProductRef: l.tenant_product_ref,
+    });
+  }
+
+  return {
+    workItemRef: row.id,
+    kind: row.kind,
+    sourceSystem: row.sourceSystem,
+    externalId: row.externalId,
+    payloadHash: row.payloadHash,
+    businessDate: s.business_date,
+    sale: {
+      saleRef: s.id,
+      storeId: s.store_id,
+      currencyCode: s.currency_code,
+      posTotal: s.pos_total,
+      occurredAt: s.occurred_at.toISOString(),
+      businessDate: s.business_date,
+      sourceSystem: s.source_system,
+      externalId: s.external_id,
+      lines: wireLines,
+    },
+    itemCursor: row.sequence,
+  };
+}

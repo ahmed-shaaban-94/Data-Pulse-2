@@ -339,9 +339,12 @@ describe("AuthGuard — precedence and uniformity", () => {
     }
   });
 
-  it("BEARER_AUTH_SCOPES contains exactly dashboard_api, pos, and pos_operator", () => {
+  it("BEARER_AUTH_SCOPES contains exactly dashboard_api, pos, pos_operator, and connector", () => {
+    // `connector` (015): the opaque machine scheme the ERPNext connector presents
+    // on the 012 posting-feed surface. Added in lockstep with the scope set, like
+    // every drift test in this repo — a new bearer scope cannot land silently.
     expect([...BEARER_AUTH_SCOPES].sort()).toEqual(
-      ["dashboard_api", "pos", "pos_operator"].sort(),
+      ["dashboard_api", "pos", "pos_operator", "connector"].sort(),
     );
   });
 });

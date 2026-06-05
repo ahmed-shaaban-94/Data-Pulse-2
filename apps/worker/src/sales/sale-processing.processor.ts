@@ -40,7 +40,7 @@
  * policy is the enforcement boundary.
  */
 import type { Pool } from "pg";
-import { runWithTenantContext } from "@data-pulse-2/db";
+import { runWithTenantContext, emit, OUTBOX_EVENT_TYPES } from "@data-pulse-2/db";
 
 // ---------------------------------------------------------------------------
 // Envelope — the off-request job carries the tenant scope + correlation id
@@ -161,6 +161,35 @@ export class SaleProcessingProcessor {
 
           if (updated.rows[0]) {
             const row = updated.rows[0];
+
+            // 015 posting trigger: the sale just became PROCESSED (first time —
+            // this branch only runs when the `processed_at IS NULL` guard matched).
+            // Emit `erpnext.posting.requested` IN-TRANSACTION, atomic with the
+            // processed_at write, so a processed sale becomes eligible for the
+            // ERPNext posting feed. The worker-side posting-requested consumer
+            // resolves eligibility (015-RESOLVE) and inserts the pending /
+            // permanently_rejected erpnext_posting_status row. Payload is IDs +
+            // provenance only (no money / PII). Idempotent downstream via the O-3
+            // unique (tenant_id, source_ref_id) — a re-delivery is a no-op insert.
+            // The `processed_at IS NULL` guard means a re-run does NOT re-emit.
+            await emit(client, {
+              eventType: OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED,
+              tenantId: job.tenantId,
+              storeId: job.storeId,
+              payload: {
+                sale_id: job.saleId,
+                store_id: job.storeId,
+                kind: "sale_post",
+                source_ref_id: job.saleId,
+              },
+              // outbox_events.correlation_id is UUID-typed. The sale-processing
+              // job's correlationId is free text (may be a non-UUID), so do NOT
+              // forward it here — passing null mirrors the sale.captured emit in
+              // sales.service.ts (which also emits correlationId: null). A future
+              // UUID correlation id can be threaded once the job carries one.
+              correlationId: null,
+            });
+
             return {
               saleId: job.saleId,
               mismatchFlag: row.mismatch_flag,

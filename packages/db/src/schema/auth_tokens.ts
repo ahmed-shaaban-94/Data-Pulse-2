@@ -57,8 +57,20 @@ export const authTokens = pgTable("auth_tokens", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
-/** Scopes that are valid for general API bearer authentication. */
-export type BearerAuthScope = "dashboard_api" | "pos" | "pos_operator";
+/**
+ * Scopes that are valid for general API bearer authentication.
+ *
+ * `connector` (015): the opaque, revocable MACHINE principal the ERPNext
+ * connector (separate repo, ADR 0008) presents on the 012 posting-feed surface
+ * (`connectorBearer`). It reuses the existing `auth_tokens` opaque-bearer path —
+ * `scope` is free TEXT (no DB CHECK), so this is a TYPE-ONLY addition, no
+ * migration. NOT a human/POS scope: only the connector feed/ack routes accept it.
+ */
+export type BearerAuthScope =
+  | "dashboard_api"
+  | "pos"
+  | "pos_operator"
+  | "connector";
 /** Scopes reserved for single-use workflow tokens (password reset, email verify). */
 export type SingleUseTokenScope = "password_reset" | "email_verify";
 export type AuthTokenScope = BearerAuthScope | SingleUseTokenScope;
