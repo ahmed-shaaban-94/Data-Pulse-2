@@ -132,6 +132,7 @@ describe("data-pulse-migrate CLI", () => {
     "0018_erpnext_warehouse_map",
     "0019_erpnext_posting_status",
     "0020_erpnext_reconciliation",
+    "0021_connector_registration",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
