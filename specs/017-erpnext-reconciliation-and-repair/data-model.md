@@ -26,14 +26,19 @@ finalized at SCHEMA authoring, but the migration is `[GATED]` regardless
 
 ### 2.1 `erpnext_reconciliation_run`
 
-One reconciliation execution (a posting-backlog snapshot, or a stock compare).
+One reconciliation execution. **`kind` is STOCK-ONLY** (advisor #2 / R2): the
+posting backlog (US1) is a **live read-projection** over the 015
+`erpnext_posting_status` rows (READ, never mirror) and the contract has **no
+posting-run trigger** (only `triggerReconciliationRun` = stock). A `kind='posting'`
+run would never produce result rows, so it is NOT modeled — keeping it out
+removes an implied mirror and shrinks the schema.
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | UUIDv7 (caller-supplied, no DB default — the 0019 precedent) |
 | `tenant_id` | uuid NOT NULL → tenants | RLS axis; FK ON DELETE RESTRICT |
-| `store_id` | uuid NULL → stores | NULL = tenant-wide (posting backlog); set for a stock run. Tenant-local FK, not a 2nd RLS axis (the 0019 precedent) |
-| `kind` | text NOT NULL | CHECK `IN ('posting','stock')` |
+| `store_id` | uuid NOT NULL → stores | a stock run is always store-scoped (needs the 014 mapping). Tenant-local FK, not a 2nd RLS axis (the 0019 precedent) |
+| `kind` | text NOT NULL | CHECK `IN ('stock')` — stock-only in v1 (posting is a read-projection, not a run; advisor #2). The CHECK reserves room to add `'posting'` later only if a posting-snapshot run is ever needed. |
 | `trigger` | text NOT NULL | CHECK `IN ('on_demand','scheduled')` (v1 emits `on_demand`) |
 | `status` | text NOT NULL DEFAULT `'running'` | CHECK `IN ('running','completed','failed')` |
 | `started_at` | timestamptz NOT NULL DEFAULT now() | |
@@ -50,10 +55,10 @@ One classified line of a run's mismatch report. Append-only per run.
 | Column | Type | Notes |
 |---|---|---|
 | `id` | uuid PK | |
-| `run_id` | uuid NOT NULL → erpnext_reconciliation_run | composite `(run_id, tenant_id)` FK (the 008 child pattern); ON DELETE RESTRICT |
+| `run_id` | uuid NOT NULL → erpnext_reconciliation_run(id) | **single-column FK** to the run PK (advisor #1) — `id` is a UUIDv7 PK and RLS scopes both rows to one tenant, so a composite `(run_id, tenant_id)` FK (which would need an extra `UNIQUE (id, tenant_id)` on the run) buys nothing here. ON DELETE RESTRICT |
 | `tenant_id` | uuid NOT NULL → tenants | RLS axis |
-| `mismatch_class` | text NOT NULL | CHECK against the union of 014's stock vocab + 015's posting categories (research R4) — 017 owns NO class of its own |
-| `source_ref_id` | uuid NULL | originating ref (a 015 posting row's `source_ref_id`, or a product/store ref for stock); NULL for an aggregate line. POLYMORPHIC → no FK (the 0019 precedent) |
+| `mismatch_class` | text NOT NULL | CHECK against **014's stock vocabulary ONLY** (`match`/`quantity_divergence`/`unmapped_store`/`unmapped_item`/`dp2_only`/`erpnext_only`/`negative_balance_flagged` — 014 data-model §6.2, finalized). The 015 posting categories are NOT here: posting dead-letters are read in place on the 015 rows, never mirrored as 017 results (advisor #2 / R2). 017 owns NO class of its own. |
+| `source_ref_id` | uuid NULL | originating ref (for a stock line: the product ref); NULL for an aggregate line. POLYMORPHIC → no FK (the 0019 precedent) |
 | `source_system` / `external_id` | text NULL | provenance carried for reconciliation |
 | `result_state` | text NOT NULL DEFAULT `'open'` | CHECK `IN ('open','repaired','accepted')` — 017's OWN orthogonal workflow state (research R4) |
 | `detail` | jsonb NULL | operator-facing values (DP2 vs ERPNext qty etc.) — values allowed on the row (NOT in metric labels) |

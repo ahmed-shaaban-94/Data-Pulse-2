@@ -24,6 +24,7 @@ export * from "./catalog/catalog-change-log";
 export * from "./catalog/erpnext-item-map";
 export * from "./catalog/erpnext-warehouse-map";
 export * from "./catalog/erpnext-posting-status";
+export * from "./catalog/erpnext-reconciliation";
 export * from "./sales/sales";
 export * from "./sales/sale-lines";
 export * from "./sales/sale-terminal-events";
