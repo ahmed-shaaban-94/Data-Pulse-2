@@ -136,3 +136,155 @@ from this map.
 > The 015 rider's **Payment Entry** arc remains separate + later-gated (DP2 tender
 > model → 012 payment extension → connector PE → payment repair); 017 does not
 > touch it.
+
+---
+
+## Live Verification Wave — `017-VERIFY` (pilot-credibility, post-merge)
+
+**Added:** 2026-06-06 — a **bounded verification/follow-up plan** (NOT a new feature
+spec, NOT a refactor) proving DP2 is pilot-credible for ERPNext posting operations
+now that **DP-015** (feed/ack/reversal/polish) and **DP-017** (run/report/repair)
+are merged on `main` (017 via #509) and the connector poller is live (connector
+repo PR #23). Goal: the smallest practical wave that evidences the merged DP2 half
+end-to-end and **honestly** marks the cross-system leg as not-yet-run.
+
+### 🟢 RUN LEDGER — DP2-side legs executed 2026-06-06 (WSL Testcontainers, Docker up)
+
+All four slices' **🟢 in-repo legs RUN + GREEN** — **75/75 across 14 suites**; `pnpm -r run build` (tsc strict, 6 packages) clean. The **🔶 cross-system legs were NOT run and are NOT claimed** (no connector + staging ERPNext from this repo).
+
+| Slice | 🟢 leg | Suites | Tests | Result |
+|---|---|---|---|---|
+| V1 | capture→feed→(recorded)ack→posted | 7 | 41/41 | ✅ RUN+GREEN |
+| V2 | rejected → backlog + isolation | 2 | 18/18 | ✅ RUN+GREEN |
+| V3 | repair → re-head → (recorded) re-post | 2 | 10/10 | ✅ RUN+GREEN |
+| V4 | stock recon (directly-invoked, stub-tolerant) | 3 | 16/16 | ✅ RUN+GREEN |
+| **Total** | | **14** | **75/75** | **🟢 DP2 half PASS** |
+
+> Evidence is the green suites listed per-slice below. The single-`document_ref`, sale-fact immutability, RLS isolation, same-`document_ref`-on-repost, and never-guess-warehouse assertions all live **inside** those specs. The 🔶 legs (connector poller → real ERPNext SI/ack, live Bin read, live triggered run) remain prerequisites/stop conditions, unrun.
+
+### The honesty split every slice obeys
+
+The target loop spans **three systems** — DP2 → connector poller → ERPNext → ack.
+Two are **out of this repo's reach** (connector = separate repo, "do not touch";
+ERPNext = "do not touch directly"). Therefore each slice has two legs:
+
+- **🟢 DP2-side, runnable in-repo now** — real evidence: the already-GREEN
+  Testcontainers specs + k6 found below. The connector ack is **simulated/recorded**
+  inside these specs (the ack ingest path is driven directly, not by a live poller).
+- **🔶 Cross-system live leg** — connector poller + a real/staging ERPNext. This is
+  the actual pilot end-to-end. It is **a prerequisite + stop condition, NOT claimed
+  runnable or passed from this repo.** Evidence is specified but left **unchecked**
+  until run with connector + staging available.
+
+> **No slice has a pass criterion satisfiable only by the connector running against
+> ERPNext** — that cannot be run from here, and "do not claim live verification has
+> passed unless actually run and evidenced" governs.
+
+### Prerequisites common to all slices
+
+- All on `main`: `0019` `erpnext_posting_status` (015), `0020` reconciliation tables
+  (017), `0018` `erpnext_warehouse_map` (014), `0014` `stock_movements` (009).
+- DB-backed runs are **WSL Testcontainers** (`reference_007_test_env`); `MIGRATION_TEST_ALLOW_SKIP=1`
+  for Docker-less, `WORKER_INCLUDE_DB_TESTS=1` for worker run specs.
+- 🔶 legs additionally need: the connector poller pointed at a DP2 instance with a
+  `connector`-scoped bearer, and a real/staging ERPNext (ERPNext-major staging
+  validation — open arc item). **Absent these, the 🔶 leg does not run.**
+
+### Run commands (do not duplicate — see [`quickstart.md`](./quickstart.md) gate checks)
+
+```
+pnpm -r run build                                          # tsc strict (repo has NO eslint/md-lint)
+wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-posting"
+wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- catalog/erpnext-reconciliation"
+wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker test -- erpnext-posting erpnext-reconciliation"
+wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker test -- sales/dp-008-liveloop"
+```
+
+---
+
+### Slice V1 — DP2 posting half: capture → feed → (recorded) ack → posted 🎯 FIRST
+
+- **Purpose:** prove the merged DP2 posting half end-to-end with **zero external
+  dependency** — a processed 008 sale becomes a `pending` posting work-item, is
+  offered on the feed, and a `posted` ack flips it to `posted` with **exactly one**
+  `document_ref`. This is flow 1's DP2 leg.
+- **Prerequisites:** common prerequisites only. No connector, no ERPNext.
+- **Run (🟢 in-repo):**
+  - `apps/worker/test/sales/dp-008-liveloop.e2e.spec.ts` — capture→outbox→drain→`processed_at` (the live-loop precedent).
+  - `apps/worker/test/erpnext-posting/posting-requested-consumer.spec.ts` — sale→`pending` / `unmapped_item` / `unmapped_store`, idempotent re-run.
+  - `apps/api/test/catalog/erpnext-posting/feed/{posting-feed,build-work-item}.spec.ts` — resolved `erpnextItemRef`, posted-excluded, exact-decimal money, cursor replay.
+  - `apps/api/test/catalog/erpnext-posting/ack/posting-ack.spec.ts` + `http/posting-ack-http-edge.spec.ts` — `posted`/`failed_transient`-re-head/`permanently_rejected`, two-layer idempotency, §XII 404.
+- **Evidence to collect:** suite pass counts (expect feed 5/5, ack 7/7 + edge 8/8, consumer 5/5 per 015 ledger); a `posting_status` row transitioning `pending→posted` with a single non-null `document_ref`; the 008 `sales` row byte-identical before/after (immutability).
+- **Pass/fail:** 🟢 PASS = all listed specs green + single `document_ref` + sale-fact unchanged. **FAIL** if any spec regresses or a 2nd `document_ref` appears.
+- **✅ RUN+GREEN (2026-06-06):** worker 8/8 (`dp-008-liveloop.e2e` + `posting-requested-consumer`, `WORKER_INCLUDE_DB_TESTS=1`) + api 33/33 (`build-work-item` + `posting-feed` + `posting-ack` + 2× http-edge) = **41/41 across 7 suites**, WSL Testcontainers.
+- **🔶 Cross-system live leg (NOT run here):** the connector poller actually GETs the feed and POSTs a real ERPNext Sales-Invoice ack. Evidence *to collect when run*: a real ERPNext SI doc id echoed back; DP2 row `posted`. **Unchecked.**
+- **Stop conditions:** the ack in 🟢 is **recorded/simulated**, not a live poller — do not claim flow 1 is live end-to-end (Deferrals: "live trigger→queue→processor wiring", line 28). If a live e2e harness is wanted, **STOP and report it as a proposed slice** — do not write it.
+
+### Slice V2 — Rejected posting → 017 backlog (flow 2)
+
+- **Purpose:** prove a `permanently_rejected` posting surfaces in the 017 dead-letter
+  backlog with class + provenance + reason, tenant-isolated.
+- **Prerequisites:** common only. Reuses V1's reject paths (`unmapped_item` / `unmapped_store` / `validation`).
+- **Run (🟢 in-repo):**
+  - `apps/api/test/catalog/erpnext-reconciliation/backlog/posting-backlog.spec.ts` — read-projection over `status='permanently_rejected'`; class/provenance/reason; healthy rows absent; pagination/sort/group.
+  - `apps/api/test/catalog/erpnext-reconciliation/isolation/reconciliation-sweep.spec.ts` — RLS sweep, wrong-`app.current_tenant` → 0 rows.
+- **Evidence to collect:** backlog returns exactly the seeded dead-letters (per quickstart US1: 3 rejected of 5); tenant-B call returns none of tenant-A's; suite pass counts (expect US1 10/10, isolation 8/8).
+- **Pass/fail:** 🟢 PASS = both specs green + correct backlog membership + isolation. **FAIL** on cross-tenant leak or healthy-row inclusion.
+- **✅ RUN+GREEN (2026-06-06):** api **18/18 across 2 suites** (`posting-backlog` + `reconciliation-sweep`), WSL Testcontainers.
+- **🔶 Cross-system live leg:** the reject originates from a **real** ERPNext validation failure relayed by the connector ack (vs. the in-repo seeded reject). Evidence *to collect when run*: a connector-relayed `permanently_rejected` with a real ERPNext reason. **Unchecked.**
+- **Stop conditions:** none beyond V1's recorded-ack caveat (the reject is seeded/recorded, not connector-relayed).
+
+### Slice V3 — Operator repair → re-head → (recorded) re-post → posted (flow 3)
+
+- **Purpose:** prove the idempotent repair re-uses the 015 O-3 state machine — a
+  fixed dead-letter flips `permanently_rejected → pending` + **re-heads `sequence`**,
+  is re-offered on the feed, and a `posted` ack resolves to the **same**
+  `document_ref` (no 2nd document, no silent rewrite).
+- **Prerequisites:** common only. A V2 backlog row whose cause is confirmed fixed.
+- **Run (🟢 in-repo):**
+  - `apps/api/test/catalog/erpnext-reconciliation/repair/posting-repair.spec.ts` — 4-status branching, `retry_count` reset, in-tx audit, `repair_attempt.outcome`.
+  - `apps/api/test/catalog/erpnext-reconciliation/http/posting-repair-http-edge.spec.ts` — HTTP idempotency.
+  - Re-offer + `no_op_echo` re-verified via the V1 feed/ack specs (the same 012 loop).
+- **Evidence to collect:** `permanently_rejected→pending` + re-headed `sequence`; `repair_attempt outcome=eligible_again`; second repair of a now-`posted` row → `no_op_echo` + same `document_ref`; a still-broken repair → stays `permanently_rejected` + `outcome=still_failing` + returns to backlog; 008 `sales` byte-identical before/after every repair; suite counts (expect repair 9/9 + edge per ledger).
+- **Pass/fail:** 🟢 PASS = repair specs green + same-`document_ref` on re-post + sale-fact unchanged + still-broken returns to backlog. **FAIL** on a 2nd `document_ref`, a rewrite, or a sale-fact mutation.
+- **✅ RUN+GREEN (2026-06-06):** api **10/10 across 2 suites** (`posting-repair` incl. `eligible_again`/`no_op_echo`/`still_failing` branches + `posting-repair-http-edge` idempotency), WSL Testcontainers.
+- **🔶 Cross-system live leg:** the connector actually re-posts the re-headed work-item to ERPNext and acks `posted`. Evidence *to collect when run*: same ERPNext SI doc id as (or, for a previously-never-posted row, a single new id). **Unchecked.**
+- **Stop conditions:** `repairStock`/repair is a **state-transition + audit, NOT an ERPNext mutation** (Deferrals line 29) — DP2 makes no outbound HTTP; the actual ERPNext fix is the connector re-post when it runs. Do not claim the repost reached ERPNext from in-repo evidence.
+
+### Slice V4 — Stock reconciliation run (current-limit, stub-tolerant) (flow 4)
+
+- **Purpose:** prove the stock reconciliation classification logic over a known DP2
+  divergence using the **stub-tolerant** ERPNext-Bin seam, and **honestly mark the
+  live Bin read + live triggered run as deferred**.
+- **Prerequisites:** common only. A mapped store (014), a seeded 009 on-hand divergence, a **stub/recorded** ERPNext-Bin view (connector seam, research R3).
+- **Run (🟢 in-repo):**
+  - `apps/worker/test/erpnext-reconciliation/reconciliation-run.spec.ts` (`WORKER_INCLUDE_DB_TESTS=1`) — processor classification in 014 §6.3 order, stub-tolerant, idempotent (**directly-invoked**, not queue-triggered).
+  - `apps/api/test/catalog/erpnext-reconciliation/run/{stock-run-api,stock-service-branches}.spec.ts` — trigger/get/list/repair API; classification branches.
+- **Evidence to collect:** classified results per 014 vocabulary (unmapped store → `unmapped_store`, never a guessed warehouse); the 009 ledger + 008 sale fact unchanged before/after the run; suite counts (expect US3 8/8).
+- **Pass/fail:** 🟢 PASS = run + API specs green via the directly-invoked processor + correct classification + ledger/sale-fact unchanged. **FAIL** on a ledger mutation or a guessed warehouse.
+- **✅ RUN+GREEN (2026-06-06):** worker 4/4 (`reconciliation-run`, directly-invoked, `WORKER_INCLUDE_DB_TESTS=1`) + api 12/12 (`stock-run-api` + `stock-service-branches`) = **16/16 across 3 suites**, WSL Testcontainers. **🔶 live Bin read + live triggered run remain deferred + unrun** (processor not wired into `worker.module.ts`).
+- **🔶 Cross-system live leg (the current limit):** a **live ERPNext-Bin read** through the connector + a **live triggered run** (trigger → queue → processor). Both are **deferred** (Deferrals lines 28, 30): `reconciliation-run.processor.ts` is **NOT wired into `apps/worker/src/worker.module.ts`** (verified 2026-06-06), and the live Bin read needs the future `[GATED]` `017-STOCK-VIEW-CONTRACT`. **A triggered run in production-without-wiring stays `running`** — do not claim a live run.
+- **Stop conditions:** **do NOT implement the worker wiring or the Bin-read contract** — both are forbidden production-code surfaces here. In-repo evidence is the **directly-invoked processor only**. Scheduled runs (`017-SCHEDULED-RUNS`) are likewise deferred (Deferrals line 31).
+
+---
+
+### Known deferred items (carried from "Deferrals carried", lines 28–32)
+
+| Deferred | Owning slice | Why it cannot be verified live here |
+|---|---|---|
+| Live trigger → queue → processor wiring | `017-` follow-up (not specced) | `reconciliation-run.processor.ts` absent from `worker.module.ts`; triggered run stays `running`. |
+| Live ERPNext-Bin read | `017-STOCK-VIEW-CONTRACT` (future `[GATED]`) | Connector→DP2 view contract not authored; v1 is stub-tolerant. |
+| Scheduled reconciliation runs | `017-SCHEDULED-RUNS` (proposed) | v1 is on-demand (R5); scheduling is later wiring over the same processor. |
+| Perf assertions | report-only (k6) | No perf env (005/008/009/010/015 precedent). `loadtests/k6/erpnext-posting.js` + `loadtests/k6/erpnext-reconciliation.js` ready; thresholds carried, not gating. |
+
+### Recommendation — execute V1 first
+
+**Run `017-VERIFY` Slice V1 first.** It is the **fully in-repo-runnable baseline with
+zero external dependency** — re-running the already-green 015/017 posting suites +
+the DP-008 live-loop e2e proves the DP2 half is pilot-credible with no connector or
+ERPNext gating, the cheapest highest-signal start. V2 and V3 build on V1's reject and
+repair paths (also fully in-repo). V4 is in-repo only for the **directly-invoked
+processor**; its live legs are deferred. The 🔶 cross-system legs of V1/V2/V3 run
+**after** the connector + a staging ERPNext are available (ERPNext-major staging
+validation is the gating open-arc item) — they are **not** runnable or claimable from
+this repo.
