@@ -42,11 +42,11 @@
 **Goal**: a Tenant Admin registers a connector instance and issues its first usable credential (raw secret shown once).
 **Independent test**: register → issue → a test client authenticates on the connector feed with the raw secret; the secret never reappears in any list/get/log.
 
-- [ ] T040 [US1] RED: write `apps/api/test/connector/registration/register-and-issue.spec.ts` (WSL Testcontainers) — register (strict DTO, mass-assignment ban §XII), duplicate `(env, site_ref)` → clear error (FR-005a), issue returns raw secret once, list/get never expose secret/hash; bounded expiry default 90d (FR-012).
+- [ ] T040 [US1] RED: write `apps/api/test/connector/registration/register-and-issue.spec.ts` (WSL Testcontainers) — register (strict DTO, mass-assignment ban §XII), duplicate `(env, site_ref)` → clear error (FR-005a), issue returns raw secret once, list/get never expose secret/hash; bounded expiry default 90d (FR-012). **Authorization (FR-005b): a non-admin authenticated principal AND a `dashboard_api` bearer are DENIED (default-deny → 404) on register/list/issue; only owner/tenant_admin succeed** — cover both the negative and positive role cases.
 - [ ] T041 [US1] Add strict DTOs `apps/api/src/connector/dto/register-connector.dto.ts` + `issue-credential.dto.ts` + the response wire shapes (`toBody` projections — no raw row, no hash, §IV).
 - [ ] T042 [US1] Implement `apps/api/src/connector/connector-credential.repository.ts` (connector-only credential writes/lookups; raw secret hashed via the existing opaque-bearer path; expiry default 90d + ceiling).
 - [ ] T043 [US1] Implement register + issue in `apps/api/src/connector/connector-registration.service.ts` (runWithTenantContext; in-tx audit `connector.registration.created` / `connector.credential.issued`; lifecycle counter).
-- [ ] T044 [US1] Wire the admin routes (`register` / `list` / `issue`) in `apps/api/src/connector/connector-registration.controller.ts` behind `DashboardAuthGuard` (cookieAuth; tenant from session, never body — §XII). GREEN.
+- [ ] T044 [US1] Wire the admin routes (`register` / `list` / `issue`) in `apps/api/src/connector/connector-registration.controller.ts` behind **`DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` with `@Roles("owner","tenant_admin")`** (the 014/017 controller precedent; default-deny → 404; cookieAuth; tenant from session, never body — §XII / FR-005b). `DashboardAuthGuard` alone is INSUFFICIENT — credential issuance is privileged. GREEN.
 
 ## Phase 4 — User Story 4: Enforce only connector credentials reach connector endpoints (P1)
 
@@ -67,7 +67,7 @@
 
 - [ ] T060 [US2] RED: `apps/api/test/connector/lifecycle/rotate-revoke.spec.ts` — atomic rotate (old revoked + new issued in one tx), rollback-on-issue-failure leaves old active, raw secret once, revoke one credential, concurrent rotation → exactly one active (partial-unique serializes).
 - [ ] T061 [US2] Implement rotate + revoke in `apps/api/src/connector/connector-registration.service.ts` (one transaction: verify registration not-disabled → revoke unrevoked connector creds → insert new → in-tx audit `connector.credential.rotated` / `.revoked` + counter).
-- [ ] T062 [US2] Wire the `rotate` / `revoke` routes in the controller (cookieAuth; `@Idempotent('required')` on rotate — reuse the existing interceptor, no new primitive). GREEN.
+- [ ] T062 [US2] Wire the `rotate` / `revoke` routes in the controller (same `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` `@Roles("owner","tenant_admin")` gate as US1; `@Idempotent('required')` on rotate — reuse the existing interceptor, no new primitive). GREEN.
 
 ## Phase 6 — User Story 3: Disable a connector instance (P2)
 
@@ -75,7 +75,7 @@
 **Independent test**: disable → credential rejected next call; instance + credential rows still present.
 
 - [ ] T070 [US3] RED: `apps/api/test/connector/lifecycle/disable-instance.spec.ts` — disable sets `disabled_at`/`disabled_by`; the linked credential is rejected (predicate clause 7); no rows deleted (FR-014); idempotent re-disable.
-- [ ] T071 [US3] Implement `disable` in the service (set disabled_at/by; in-tx audit `connector.registration.disabled` + counter; issuing a credential for a disabled instance is rejected). Wire the `disable` route. GREEN.
+- [ ] T071 [US3] Implement `disable` in the service (set disabled_at/by; in-tx audit `connector.registration.disabled` + counter; issuing a credential for a disabled instance is rejected). Wire the `disable` route behind the same `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` `@Roles("owner","tenant_admin")` gate (FR-005b). GREEN.
 
 ## Phase 7 — User Story 5: Boundary-of-record doc (P3)
 

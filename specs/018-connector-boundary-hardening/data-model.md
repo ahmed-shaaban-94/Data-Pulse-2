@@ -71,4 +71,5 @@ Unlabeled counter `connector_lifecycle_total` (or equivalent) in the shared `app
 - Lifecycle: issue / rotate (atomic + rollback-on-failure) / revoke / disable; at-most-one-unrevoked invariant (concurrent rotation → one active); raw-secret-once.
 - Guard: full usability predicate + non-disclosing 401 + identity attachment; dashboard/POS path unaffected.
 - Mass-assignment ban on registration create (tenant/id/disabled/created_by client-supplied → ignored/rejected, §XII).
+- **Authorization (FR-005b):** the admin surface is gated by `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` `@Roles("owner","tenant_admin")` (default-deny → 404, the 014/017 precedent). Tests cover the negative cases: a non-admin session AND a `dashboard_api` bearer are denied on every lifecycle route; only owner/tenant_admin succeed.
 - Audit-in-transaction for every action; no raw secret in any log/response except the one issue/rotate body.

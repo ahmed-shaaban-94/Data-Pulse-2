@@ -115,6 +115,7 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **FR-003**: The connector instance identity MUST be stable across credential rotation — rotating the secret MUST NOT change the instance identity that operators, audits, and future capabilities refer to.
 - **FR-004**: The system MUST let a tenant administrator list their tenant's connector instances and view each instance's identity and status. Listings MUST NOT expose any secret.
 - **FR-005**: A connector instance MUST belong to exactly one tenant and MUST be visible only within that tenant's scope.
+- **FR-005b**: Every registration and credential-lifecycle operation (register / list / issue / rotate / revoke / disable) MUST require a privileged tenant role (owner or tenant administrator), not merely an authenticated dashboard principal. A non-privileged authenticated principal MUST be denied without disclosing the resource's existence (default-deny → 404, §II/§XII). A `dashboard_api` bearer or any non-admin session MUST NOT be able to issue, rotate, or revoke a connector credential.
 - **FR-005a**: The system MUST enforce that a tenant cannot register the same ERPNext site reference more than once within the same environment — registration MUST be unique on (tenant, environment, ERPNext site reference), and a duplicate registration MUST be rejected with a clear error (not silently accepted).
 
 **Credential lifecycle**

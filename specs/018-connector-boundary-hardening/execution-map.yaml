@@ -252,12 +252,16 @@ slices:
         expected: >
           GREEN — register (strict DTO, mass-assignment ban §XII; duplicate (env, site_ref) -> clear
           error FR-005a) + issue (raw secret returned ONCE; bounded expiry default 90d + ceiling
-          FR-012; toBody projections, no hash) behind DashboardAuthGuard (cookieAuth; tenant from
-          session, never body §XII); in-tx audit; lifecycle counter incremented.
+          FR-012; toBody projections, no hash) behind DashboardAuthGuard + TenantContextGuard +
+          RolesGuard @Roles("owner","tenant_admin") (the 014/017 precedent; default-deny -> 404;
+          cookieAuth; tenant from session, never body §XII). A non-admin session AND a dashboard_api
+          bearer are DENIED on every route; only owner/tenant_admin succeed (FR-005b). In-tx audit;
+          lifecycle counter incremented.
         docker_required: true
     stop:
       - standing-rules universal stops
       - "stop if a response returns a raw secret or token hash anywhere except the one issue response (FR-007/021)"
+      - "stop if the admin surface is gated by DashboardAuthGuard ALONE (any authenticated dashboard principal / dashboard_api bearer) — credential issuance is PRIVILEGED; it MUST also pass RolesGuard @Roles('owner','tenant_admin') (FR-005b, the 014/017 precedent; Codex P1)"
       - "stop if the admin surface accepts connectorBearer or a POS credential — cookieAuth human Tenant Admin only (FR-018)"
       - "stop if tenant is read from the body/query instead of the session principal (§XII)"
     report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
@@ -302,7 +306,7 @@ slices:
     type: feat
     status: blocked
     approval_required: false
-    depends_on: [018-US1-REGISTER-ISSUE]
+    depends_on: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]   # US4 first: this slice's validation asserts revoked creds are REJECTED on the connector endpoints, which requires the tightened guard (Codex P2)
     blocks: [018-POLISH]
     agent: sonnet-api
     allowed_files:
@@ -334,7 +338,7 @@ slices:
     type: feat
     status: blocked
     approval_required: false
-    depends_on: [018-US1-REGISTER-ISSUE]
+    depends_on: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]   # US4 first: this slice's validation asserts a disabled-instance cred is REJECTED at the guard (predicate clause 7) — requires the tightened guard (Codex P2)
     blocks: [018-POLISH]
     agent: sonnet-api
     allowed_files:

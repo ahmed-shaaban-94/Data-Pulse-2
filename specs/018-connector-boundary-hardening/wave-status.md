@@ -24,6 +24,11 @@
 
 **0 critical / 0 high / 0 medium.** 5 LOW findings, all intentional or cosmetic: US4-after-US1 ordering (explained inline — US4 needs an issued credential to enforce against); SC-001 non-buildable UX outcome (covered implicitly by US1); FR-012 expiry ceiling value pinned at implementation (T042 constant); admin REST-vs-CLI deferred to T021 (gated decision point); environment prose-vs-enum token wording (`development`→`dev` etc., harmless). Coverage: 100% of 29 FR have ≥1 task; buildable SCs covered; 0 unmapped tasks; 0 constitution conflicts (plan's PASS corroborated — §IV credential-hash-never-in-response directly mirrored by FR-007/021).
 
+## Codex review (PR #514, 2026-06-06) — 2 findings, both ADDRESSED
+
+- **P1 (authorization gap):** the admin surface was specced behind `DashboardAuthGuard` alone — which authenticates *any* dashboard principal / `dashboard_api` bearer but does not enforce tenant role. Credential issuance is privileged. **Fixed:** added FR-005b + the `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` `@Roles("owner","tenant_admin")` gate (default-deny → 404, the **014/017 controller precedent**) across plan/data-model/tasks (T040/T044/T062/T071) + execution-map US1 validation/stop-conditions; tests cover the non-admin + `dashboard_api`-bearer denial cases.
+- **P2 (dispatch-vs-security-sequence gap):** US2/US3 validation asserts revoked/disabled creds are rejected on the connector endpoints — which requires the tightened guard (US4) — but their `depends_on` listed only US1, letting Maestro dispatch them before US4. **Fixed:** added `018-US4-GUARD` to both `018-US2-ROTATE-REVOKE` and `018-US3-DISABLE` `depends_on`.
+
 ## Slices (execution-map.yaml)
 
 | Slice | Gate | Status |
