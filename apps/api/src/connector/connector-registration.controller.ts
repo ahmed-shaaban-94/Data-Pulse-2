@@ -125,6 +125,25 @@ export class ConnectorRegistrationController {
     throw new NotFoundException("Not Found");
   }
 
+  /** POST :id/disable — logically disable an instance (US3). Idempotent. */
+  @Post("api/v1/connector/instances/:id/disable")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async disable(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+  ): Promise<ConnectorInstanceBody> {
+    const { tenantId, userId } = this.requireContext(request);
+    const result = await this.service.disable({
+      tenantId,
+      actorUserId: userId,
+      instanceId: id,
+    });
+    if (result.kind === "ok") return result.instance;
+    throw new NotFoundException("Not Found");
+  }
+
   /** POST :id/credentials/rotate — atomic immediate-revoke rotation (US2). */
   @Post("api/v1/connector/instances/:id/credentials/rotate")
   @HttpCode(HttpStatus.CREATED)

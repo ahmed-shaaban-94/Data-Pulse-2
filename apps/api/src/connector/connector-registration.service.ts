@@ -116,6 +116,53 @@ export class ConnectorRegistrationService {
     );
   }
 
+  /**
+   * Disable a connector instance (US3): logical disable (set disabled_at/by).
+   * All its credentials become unusable at the guard (predicate clause 7). NO
+   * row is deleted (FR-014). Idempotent: re-disabling is a success no-op.
+   * Cross-tenant / absent id → not_found (non-disclosing).
+   */
+  async disable(input: {
+    tenantId: string;
+    actorUserId: string;
+    instanceId: string;
+  }): Promise<{ kind: "ok"; instance: ConnectorInstanceBody } | { kind: "not_found" }> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<{ kind: "ok"; instance: ConnectorInstanceBody } | { kind: "not_found" }> => {
+        const found = await client.query<RegistrationDbRow>(
+          `SELECT ${INSTANCE_COLS} FROM connector_registration WHERE id = $1`,
+          [input.instanceId],
+        );
+        const existing = found.rows[0];
+        if (!existing) return { kind: "not_found" };
+
+        // Idempotent: only set + audit on the first transition to disabled.
+        if (existing.disabled_at === null) {
+          const upd = await client.query<RegistrationDbRow>(
+            `UPDATE connector_registration
+                SET disabled_at = now(), disabled_by = $2
+              WHERE id = $1 AND disabled_at IS NULL
+            RETURNING ${INSTANCE_COLS}`,
+            [input.instanceId, input.actorUserId],
+          );
+          const row = upd.rows[0] ?? existing;
+          await this.insertAudit(client, input.tenantId, input.actorUserId, {
+            action: "connector.registration.disabled",
+            targetType: "connector_registration",
+            targetId: input.instanceId,
+            metadata: {},
+          });
+          const active = await this.activeCredential(client, input.instanceId);
+          return { kind: "ok", instance: toConnectorInstance(asRow(row), active) };
+        }
+        const active = await this.activeCredential(client, input.instanceId);
+        return { kind: "ok", instance: toConnectorInstance(asRow(existing), active) };
+      },
+    );
+  }
+
   /** List the tenant's connector instances with active-credential status. */
   async list(input: { tenantId: string }): Promise<ConnectorInstanceBody[]> {
     return runWithTenantContext(
