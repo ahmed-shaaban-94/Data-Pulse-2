@@ -1,0 +1,419 @@
+# 018-connector-boundary-hardening — Execution Map (Agent OS v1)
+#
+# Authoritative state for Maestro dispatch. Mirrors tasks.md but adds slice status,
+# allowed files, validation contracts, parallel-safety, and GATED-first serialization.
+#
+# 018 is the DP2-OWNED CONNECTOR BOUNDARY HARDENING v1: now that the ERPNext
+# connector is real and posting, make it safely OPERABLE for a tenant pilot —
+# stable connector-instance identity (connector_registration), operator-safe
+# credential lifecycle (issue/rotate/revoke/disable), a tightened ConnectorAuthGuard,
+# audit + an unlabeled lifecycle signal, and a boundary-of-record doc. NOT live
+# stock read (019), NOT scheduled reconciliation (029), NOT fiscal (016). DP2 makes
+# NO outbound ERPNext HTTP; reuses the opaque-bearer auth primitive (no new primitive).
+#
+# Decisions ratified at spec/clarify/plan time:
+#   Approach A (thin connector_registration table + auth_tokens FK; identity survives
+#   rotation). Immediate-revoke atomic rotation, at-most-one-active per registration
+#   (DB partial-unique on UNREVOKED connector creds; expiry at the guard, not the
+#   predicate — now() is not IMMUTABLE). Preflight-gated CHECKs (scope enum +
+#   connector-token consistency); stray/legacy rows STOP for owner. Site uniqueness
+#   ENFORCED on (tenant, environment, erpnext_site_ref) [clarify Q1]. Credential
+#   expiry 90d default + ceiling [clarify Q2]. Unlabeled lifecycle counter [clarify Q3].
+#   cookieAuth human-Tenant-Admin admin surface; REST-vs-CLI decided at T021.
+#
+# TWO slices are `[GATED]` (Constitution §IV/§VIII, Standing Rules §3):
+#   - 018-SCHEMA   → packages/db: connector_registration + auth_tokens FK + migration 0021.
+#   - 018-CONTRACT → packages/contracts: admin OpenAPI (IFF REST chosen at T021) +
+#                    the boundary-of-record doc (always). Disjoint files from SCHEMA.
+# BOTH gates are OWNER-APPROVED 2026-06-06 (in-session). They remain explicitly
+# marked; the PREFLIGHT stop-on-stray-rows discipline still applies at 018-SCHEMA.
+#
+# NO new outbox event-type. NO redesign of the 012 posting-feed.yaml (READ-ONLY;
+# 018 documents + tightens access to it). The connector posting endpoints stay in
+# apps/api/src/catalog/erpnext-posting; 018 only tightens their guard.
+#
+# Predecessors on main: 012 posting-feed.yaml SHIPPED; 015 CLOSED (auth_tokens
+# 'connector' scope, ConnectorAuthGuard); 001 auth (auth_tokens, opaque-bearer,
+# DashboardAuthGuard); audit_events. Connector repo is real (specs 001-006, poller #23).
+#
+# Status: planning chain authored (spec + clarify + plan + research + data-model +
+# contracts + this map). Gates pre-approved. No slice dispatched yet.
+#
+# Updated: 2026-06-06 — initial authoring (post /speckit-plan + /speckit-tasks).
+
+version: 1
+spec: 018-connector-boundary-hardening
+base: origin/main
+
+# ============================================================================
+# findings
+# ============================================================================
+
+findings:
+  - id: IDENTITY-SURVIVES-ROTATION
+    severity: resolved
+    note: >
+      Connector identity lives in a new connector_registration table; credentials
+      stay in auth_tokens linked by a nullable connector_registration_id FK. Rotation
+      swaps the token, not the identity (Approach A; research R1). Rejected: all-on-
+      auth_tokens (identity dies with the token) and a full registry subsystem (YAGNI).
+  - id: AT-MOST-ONE-ACTIVE-IMMUTABLE-PREDICATE
+    severity: resolved
+    note: >
+      At-most-one-active enforced by UNIQUE (connector_registration_id) WHERE
+      scope='connector' AND revoked_at IS NULL — an IMMUTABLE predicate. Expiry is
+      NOT in the predicate (now() is STABLE, not IMMUTABLE — a partial-index predicate
+      referencing it is rejected by Postgres); expiry is enforced at the guard +
+      lifecycle maintenance (research R2; the 009 EXCLUDE-constraint precedent).
+  - id: CHECKS-PREFLIGHT-GATED
+    severity: open-deferred
+    note: >
+      The scope-enum + connector-token-consistency CHECKs are added only after a
+      preflight of existing rows (T010). Stray/legacy scope values or unlinked
+      connector tokens are STOP-and-raise for an owner decision, never silent
+      normalization (research R3; spec open questions 4/5). The CHECK becomes a named
+      follow-up if the preflight is not clean.
+  - id: GUARD-TIGHTENING-IS-BREAKING-FOR-LEGACY-TOKENS
+    severity: open-deferred
+    note: >
+      CRITICAL SEQUENCING: US4 (FR-015) tightens ConnectorAuthGuard to REJECT a
+      connector-scoped token with no connector_registration_id. This enforcement is
+      INDEPENDENT of the DB CHECK — deferring the CHECK does NOT make US4 safe. The
+      connector is already built + its poller activated (connector PR #23), so any
+      hand-issued connector token in an environment the connector talks to would be
+      cut off the moment US4 ships there. The T010 preflight (whether ANY pre-existing
+      connector token exists) therefore GATES US4-GUARD, not just T012's CHECK: if one
+      is found, backfill a registration -> link-or-reissue the credential -> reconfigure
+      the connector BEFORE US4 reaches that environment. 017-VERIFY records the
+      cross-system leg never ran live, so the preflight may well be clean — which is
+      exactly why it must be run and must gate US4.
+
+# ============================================================================
+# slices
+# ============================================================================
+
+slices:
+
+  # ===== Phase 1: Setup =======================================================
+
+  - id: 018-SIGNOFF
+    task_ids: [T001]
+    type: docs
+    status: ready
+    approval_required: false   # decision gates, not code gates
+    depends_on: []
+    blocks: [018-SETUP, 018-SCHEMA, 018-CONTRACT]
+    agent: opus-maestro
+    allowed_files:
+      - specs/018-connector-boundary-hardening/wave-status.md
+    validation:
+      - command: 'grep -niE "approach a|connector_registration|immediate.?revoke|at-most-one|preflight|cookieauth|owner-approved" specs/018-connector-boundary-hardening/wave-status.md'
+        expected: One+ match — the identity model, rotation invariant, preflight discipline, human-only auth, and gate approval are recorded.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if any intent surfaces to make the connector authoritative, to let DP2 call ERPNext directly, or to redesign the 012 posting-feed.yaml — 018 hardens ACCESS to the existing boundary, it does not change the boundary"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  - id: 018-SETUP
+    task_ids: [T002]
+    type: chore
+    status: ready
+    approval_required: false
+    depends_on: [018-SIGNOFF]
+    blocks: [018-US1-REGISTER-ISSUE]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/connector/connector.module.ts
+      - apps/api/src/app.module.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api build
+        expected: GREEN — empty connector module compiles + registered in app.module.ts (mirrors erpnext-posting); no routes yet; no regression.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the 018 branch is not off latest origin/main — rebase first"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Phase 2: Foundational (GATED; block all user stories) ===============
+
+  - id: 018-SCHEMA
+    task_ids: [T010, T011, T012, T013, T014, T015, T016]
+    type: feat
+    status: proposed   # [GATED] packages/db — OWNER-APPROVED 2026-06-06; preflight (T010) still gates the CHECKs
+    approval_required: true
+    depends_on: [018-SIGNOFF]
+    blocks: [018-ISOLATION-HARNESS, 018-US1-REGISTER-ISSUE, 018-US4-GUARD, 018-US2-ROTATE-REVOKE, 018-US3-DISABLE]
+    agent: sonnet-sql
+    allowed_files:
+      - packages/db/src/schema/connector_registration.ts
+      - packages/db/src/schema/auth_tokens.ts
+      - packages/db/src/schema/index.ts
+      - packages/db/drizzle/0021_connector_registration.sql
+      - packages/db/drizzle/0021_connector_registration.down.sql
+      - packages/db/__tests__/migration/0021-connector-registration.spec.ts
+      - packages/db/__tests__/migration/0021-connector-registration-preflight.spec.ts
+      - packages/db/__tests__/cli/migrate.spec.ts
+      - packages/db/__tests__/schema/barrel.spec.ts
+      - apps/api/test/connector/schema/connector-registration-schema-shape.spec.ts
+    validation:
+      - command: wsl -e bash -lc "MIGRATION_TEST_ALLOW_SKIP=0 pnpm --filter @data-pulse-2/db test -- --runInBand 0021-connector-registration"
+        expected: >
+          GREEN — connector_registration created per data-model.md (environment enum + non-empty
+          display_name CHECKs; unique (tenant_id, environment, erpnext_site_ref); fail-closed RLS;
+          no DELETE policy; no money/PII). auth_tokens gains connector_registration_id FK (RESTRICT)
+          + the at-most-one-unrevoked partial-unique; the scope-enum + connector-token-consistency
+          CHECKs added ONLY if the T010 preflight is clean. Migration UP->DOWN->UP clean.
+        docker_required: true
+      - command: pnpm --filter @data-pulse-2/api test -- connector/schema
+        expected: GREEN — Docker-free schema-shape companion.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] packages/db; gate is owner-approved 2026-06-06, but if T010 preflight finds stray scope values or unlinked connector tokens, STOP and report (do not author the CHECKs blindly)"
+      - "stop if a money/amount or any PII or any raw-secret column appears — BUSINESS-class only (§XIV)"
+      - "stop if a DELETE policy appears on connector_registration — disable is logical, not deletion (FR-014)"
+      - "stop if the expiry condition is put INTO the partial-unique predicate — now() is not IMMUTABLE; expiry is enforced at the guard"
+      - "stop if the chosen migration number is already taken on origin/main — use the next free number"
+      - "REMEMBER the two-allowlist regression: append 0021 to cli/migrate EXPECTED_MIGRATIONS AND the module to the schema barrel allowlist; re-call ensureAppRole AFTER the migration"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint files from 018-CONTRACT
+
+  - id: 018-CONTRACT
+    task_ids: [T020, T021]
+    type: feat
+    status: proposed   # [GATED] packages/contracts (IFF REST) — OWNER-APPROVED 2026-06-06
+    approval_required: true
+    depends_on: [018-SIGNOFF]
+    blocks: [018-US1-REGISTER-ISSUE]
+    agent: sonnet-contract
+    allowed_files:
+      - specs/018-connector-boundary-hardening/contracts/connector-boundary.md
+      - packages/contracts/openapi/connector/connector-admin.yaml
+      - apps/api/test/connector/contract/connector-admin.contract.spec.ts
+    validation:
+      - command: pnpm --filter @data-pulse-2/api test -- connector/contract
+        expected: >
+          GREEN (if REST chosen at T021) — connector-admin.yaml (OpenAPI 3.1): cookieAuth only;
+          register/list/disable + issue/rotate/revoke; raw secret returned ONCE on issue/rotate,
+          never on list/get; canonical error envelope; strict bodies; non-disclosing 404/401;
+          no secret/hash in any response shape. If CLI chosen, the admin contract is documented in
+          connector-boundary.md and this slice has no OpenAPI (skip the conformance spec).
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop — [GATED] packages/contracts (owner-approved); but do NOT edit posting-feed.yaml — it is READ-ONLY input; 018 adds NO machine change to surface A"
+      - "stop if connectorBearer appears on the ADMIN surface — admin is cookieAuth (human) ONLY; connectorBearer is the connector's posting surface, not the admin surface"
+      - "stop if any response shape exposes a raw secret or token hash (§IV / FR-007/021)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe   # disjoint files from 018-SCHEMA
+
+  - id: 018-ISOLATION-HARNESS
+    task_ids: [T030]
+    type: test
+    status: blocked   # waits on 018-SCHEMA
+    approval_required: false
+    depends_on: [018-SCHEMA]
+    blocks: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]
+    agent: sonnet-test
+    allowed_files:
+      - apps/api/test/connector/__support__/seed-connector.ts
+      - apps/api/test/connector/isolation/connector-sweep.spec.ts
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector/isolation"
+        expected: GREEN — RLS sweep (wrong app.current_tenant -> 0 rows; unset GUC -> fail-closed + INSERT denied); cross-tenant registration invisible. seed-connector.ts mirrors seed-posting-status.ts; does NOT touch the 003-owned isolation-harness.ts.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a fix tempts modifying the 003-owned isolation-harness.ts — extend via seed-connector.ts only"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Phase 3: US1 (P1) 🎯 MVP — register + issue ==========================
+
+  - id: 018-US1-REGISTER-ISSUE
+    task_ids: [T040, T041, T042, T043, T044]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [018-SCHEMA, 018-CONTRACT, 018-ISOLATION-HARNESS]
+    blocks: [018-US4-GUARD]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/connector/connector-registration.controller.ts
+      - apps/api/src/connector/connector-registration.service.ts
+      - apps/api/src/connector/connector-credential.repository.ts
+      - apps/api/src/connector/dto/*.ts
+      - apps/api/test/connector/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector"
+        expected: >
+          GREEN — register (strict DTO, mass-assignment ban §XII; duplicate (env, site_ref) -> clear
+          error FR-005a) + issue (raw secret returned ONCE; bounded expiry default 90d + ceiling
+          FR-012; toBody projections, no hash) behind DashboardAuthGuard (cookieAuth; tenant from
+          session, never body §XII); in-tx audit; lifecycle counter incremented.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a response returns a raw secret or token hash anywhere except the one issue response (FR-007/021)"
+      - "stop if the admin surface accepts connectorBearer or a POS credential — cookieAuth human Tenant Admin only (FR-018)"
+      - "stop if tenant is read from the body/query instead of the session principal (§XII)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # US1-US3 share the connector service/controller — serialize (US1 first)
+
+  # ===== Phase 4: US4 (P1) — guard enforcement (security backbone) ============
+
+  - id: 018-US4-GUARD
+    task_ids: [T050, T051, T052, T053]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [018-US1-REGISTER-ISSUE, 018-ISOLATION-HARNESS, 018-SCHEMA]   # 018-SCHEMA carries the T010 preflight that gates this slice
+    blocks: [018-US2-ROTATE-REVOKE]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/auth/connector-auth.guard.ts
+      - apps/api/src/auth/auth-token.repository.ts
+      - apps/api/test/connector/**
+      - apps/api/test/auth/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector/guard auth"
+        expected: >
+          GREEN — the full usability predicate (token exists/not-expired/not-revoked/scope=connector/
+          linked/tenant-matches/instance-not-disabled) via a connector-only lookup; every disallowed
+          credential + condition (human session, POS, expired, revoked, unlinked, disabled-instance,
+          cross-tenant) -> IDENTICAL non-disclosing 401; valid -> allow + request.connector identity
+          attached. Dashboard + POS auth behavior UNCHANGED (FR-019).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the T010 preflight (018-SCHEMA) found a pre-existing connector token in any environment the connector talks to AND it has not been backfilled+linked (or reissued) + the connector reconfigured — shipping this guard there cuts off the live connector (GUARD-TIGHTENING-IS-BREAKING-FOR-LEGACY-TOKENS). The link requirement is enforced here INDEPENDENTLY of T012's DB CHECK."
+      - "stop if the generic dashboard/POS token lookup is broadened — use a connector-only path (FR-019)"
+      - "stop if any rejection reveals which condition failed — single non-disclosing 401 (FR-016, §II)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # touches the shared connector-auth.guard
+
+  # ===== Phase 5: US2 (P2) — rotate + revoke ==================================
+
+  - id: 018-US2-ROTATE-REVOKE
+    task_ids: [T060, T061, T062]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [018-US1-REGISTER-ISSUE]
+    blocks: [018-POLISH]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/connector/connector-registration.controller.ts
+      - apps/api/src/connector/connector-registration.service.ts
+      - apps/api/src/connector/connector-credential.repository.ts
+      - apps/api/test/connector/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector/lifecycle"
+        expected: >
+          GREEN — rotate is ONE transaction (verify not-disabled -> revoke unrevoked connector creds ->
+          insert new -> in-tx audit + counter; raw secret once); issue-failure rolls back leaving the old
+          credential active (no lockout, FR-009); concurrent rotation -> exactly one active (partial-unique
+          serializes, FR-010); revoke one credential -> rejected on connector endpoints, registration stays
+          active. @Idempotent('required') on rotate (reuse the interceptor).
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if a new idempotency/auth primitive is introduced — reuse the existing interceptor + opaque-bearer path"
+      - "stop if rotation can leave two active (unrevoked) connector credentials for one registration (FR-010)"
+      - "stop if a failed issue during rotation leaves the registration with NO active credential (must roll back, FR-009)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # shares the connector service/controller
+
+  # ===== Phase 6: US3 (P2) — disable instance =================================
+
+  - id: 018-US3-DISABLE
+    task_ids: [T070, T071]
+    type: feat
+    status: blocked
+    approval_required: false
+    depends_on: [018-US1-REGISTER-ISSUE]
+    blocks: [018-POLISH]
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/connector/connector-registration.controller.ts
+      - apps/api/src/connector/connector-registration.service.ts
+      - apps/api/test/connector/**
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector/lifecycle"
+        expected: >
+          GREEN — disable sets disabled_at/disabled_by; the linked credential is rejected at the guard
+          (predicate clause 7); NO rows deleted (FR-014); re-disable idempotent; issuing a credential for a
+          disabled instance is rejected; in-tx audit connector.registration.disabled + counter.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if disable DELETES the instance or its credentials — disable is logical, rows retained for audit (FR-014)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: unsafe   # shares the connector service/controller
+
+  # ===== Phase 7: US5 (P3) — boundary-of-record doc ===========================
+
+  - id: 018-US5-BOUNDARY-DOC
+    task_ids: [T080]
+    type: docs
+    status: blocked
+    approval_required: false
+    depends_on: [018-CONTRACT]
+    blocks: [018-POLISH]
+    agent: sonnet-api
+    allowed_files:
+      - specs/018-connector-boundary-hardening/contracts/connector-boundary.md
+      - specs/017-erpnext-reconciliation-and-repair/wave-status.md   # cross-link 019 = 017-STOCK-VIEW-CONTRACT
+    validation:
+      - command: 'grep -niE "019|017-stock-view-contract|020|023|ownership" specs/018-connector-boundary-hardening/contracts/connector-boundary.md'
+        expected: One+ match — the A-E ownership table + the 019 = 017-STOCK-VIEW-CONTRACT cross-link are present.
+        docker_required: false
+    stop:
+      - standing-rules universal stops
+      - "stop if the doc REDESIGNS the 012 feed/ack contract — it documents it (FR-023)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Phase 8: Polish ======================================================
+
+  - id: 018-POLISH
+    task_ids: [T090, T091, T092]
+    type: chore
+    status: blocked
+    approval_required: false
+    depends_on: [018-US2-ROTATE-REVOKE, 018-US3-DISABLE, 018-US4-GUARD, 018-US5-BOUNDARY-DOC]
+    blocks: []
+    agent: sonnet-api
+    allowed_files:
+      - apps/api/src/observability/metrics/api.metrics.ts
+      - packages/shared/src/observability/metrics-labels.ts
+      - apps/api/test/observability/cardinality.spec.ts
+      - apps/api/test/connector/**
+      - specs/018-connector-boundary-hardening/execution-map.yaml
+      - specs/018-connector-boundary-hardening/wave-status.md
+    validation:
+      - command: wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- connector --coverage"
+        expected: >
+          GREEN — unlabeled connector_lifecycle_total in the shared api.metrics.ts (3-place register) +
+          ALLOWED_METRIC_LABELS + cardinality drift list (lockstep), no per-instance/tenant/secret label
+          (FR-022a, SC-011); >=80% module coverage; raw secret never logged; map + wave-status reconciled.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the signal is registered in a per-feature metrics file instead of the shared api.metrics.ts (010/015/017 precedent)"
+      - "stop if the counter carries a per-instance/tenant/secret label (cardinality + §XIV)"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+# ============================================================================
+# groups — proposed parallel sets
+# ============================================================================
+
+groups:
+  - id: 018-FOUNDATIONAL-GATED
+    members: [018-SCHEMA, 018-CONTRACT]
+    parallel_safety: safe   # disjoint files (packages/db vs packages/contracts)
+    proposed: true   # both [GATED]; both owner-approved 2026-06-06; both wait on 018-SIGNOFF
