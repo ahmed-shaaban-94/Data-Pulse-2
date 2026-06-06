@@ -106,7 +106,13 @@ describe("ErpnextPostingService.pullPostings — 015-US1-FEED", () => {
     expect(item!.sale.saleRef).toBe(SALE_A_X);
     expect(item!.sale.lines.length).toBeGreaterThan(0);
     for (const l of item!.sale.lines) {
-      expect(l.erpnextItemRef.length).toBeGreaterThan(0); // O-1: every offered line resolved
+      // O-1: every offered line is resolved AND carries the 012 ErpnextItemRef OBJECT shape
+      // {doctype:"Item", name} — NOT a bare string (issue #506: the projection emitted the raw
+      // Item code, violating the contract; a conforming consumer cannot parse it).
+      expect(typeof l.erpnextItemRef).toBe("object");
+      expect(l.erpnextItemRef.doctype).toBe("Item");
+      expect(typeof l.erpnextItemRef.name).toBe("string");
+      expect(l.erpnextItemRef.name.length).toBeGreaterThan(0);
     }
   });
 
