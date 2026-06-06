@@ -93,13 +93,21 @@ export type AuthedRequest = Request & {
   cookies?: Record<string, string | undefined>;
   requestId?: string;
   principal?: Principal;
+  /**
+   * 018-US4 — the resolved connector instance identity, attached by
+   * `ConnectorAuthGuard` on a successful connector request (FR-017). Absent on
+   * non-connector requests.
+   */
+  connector?: { registrationId: string; tenantId: string; environment: string };
 };
 
 @Injectable()
 export class AuthGuard implements CanActivate {
   constructor(
-    private readonly sessions: SessionRepository,
-    private readonly authTokens: AuthTokenRepository,
+    // `protected` (not private) so subclasses (ConnectorAuthGuard) can reuse the
+    // injected AuthTokenRepository for connector-credential resolution (018-US4).
+    protected readonly sessions: SessionRepository,
+    protected readonly authTokens: AuthTokenRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

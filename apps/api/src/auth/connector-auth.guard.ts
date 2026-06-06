@@ -33,10 +33,24 @@ export class ConnectorAuthGuard extends AuthGuard {
     const principal = request.principal;
 
     if (!principal) throw new UnauthorizedException("Unauthorized");
-    if (principal.kind === "token" && principal.scope === "connector") {
-      return true;
+    if (principal.kind !== "token" || principal.scope !== "connector") {
+      throw new UnauthorizedException("Unauthorized");
     }
 
-    throw new UnauthorizedException("Unauthorized");
+    // 018-US4 (FR-015): the connector token MUST be linked to a non-disabled
+    // connector_registration in its own tenant. Resolve via a connector-only
+    // lookup; null → a single non-disclosing 401 (FR-016) covering expired /
+    // revoked / unlinked / disabled-instance / cross-tenant. The generic
+    // dashboard/POS path is untouched (FR-019).
+    const resolved = await this.authTokens.findActiveConnectorCredentialByTokenId(
+      principal.tokenId,
+    );
+    if (!resolved) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+
+    // Attach the calling connector instance identity (FR-017) for handlers/audit.
+    request.connector = resolved;
+    return true;
   }
 }
