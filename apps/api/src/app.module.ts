@@ -10,6 +10,7 @@ import { ErpnextPostingModule } from "./catalog/erpnext-posting/erpnext-posting.
 import { ErpnextReconciliationModule } from "./catalog/erpnext-reconciliation/erpnext-reconciliation.module";
 import { ErpnextWarehouseMapModule } from "./catalog/erpnext-warehouse-map/erpnext-warehouse-map.module";
 import { ReadDownModule } from "./catalog/read-down/read-down.module";
+import { ConnectorModule } from "./connector/connector.module";
 import { ReconciliationModule } from "./catalog/reconciliation/reconciliation.module";
 import { SalesModule } from "./catalog/sales/sales.module";
 import { UnknownItemsModule } from "./catalog/unknown-items/unknown-items.module";
@@ -211,7 +212,7 @@ class ApiDbMigrationStatusGaugeRegistrar implements OnModuleInit, OnModuleDestro
  * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule, ReadDownModule, ErpnextItemMapModule, ErpnextWarehouseMapModule, ErpnextPostingModule, ErpnextReconciliationModule],
+  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule, ReadDownModule, ErpnextItemMapModule, ErpnextWarehouseMapModule, ErpnextPostingModule, ErpnextReconciliationModule, ConnectorModule],
   controllers: [],
   providers: [ApiDbPoolGaugeRegistrar, ApiDbMigrationStatusGaugeRegistrar],
 })
