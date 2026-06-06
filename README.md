@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/brand/data-pulse-2-logo.svg" alt="Retail Tower OS (Data-Pulse-2) logo" width="120" height="120"/>
+
 # Retail Tower OS
 
 **The command tower for modern retail. Control every branch from one secure core.**
