@@ -38,6 +38,8 @@ import { Module } from "@nestjs/common";
 import { AuditModule } from "../../audit/audit.module";
 import { AuthModule } from "../../auth/auth.module";
 import { ContextModule } from "../../context/context.module";
+import { ErpnextReconciliationController } from "./erpnext-reconciliation.controller";
+import { ErpnextReconciliationService } from "./erpnext-reconciliation.service";
 
 /**
  * Wires the DP2-side reconciliation/repair surface. 017-US1-BACKLOG adds the
@@ -48,8 +50,8 @@ import { ContextModule } from "../../context/context.module";
  */
 @Module({
   imports: [AuthModule, AuditModule, ContextModule],
-  controllers: [],
-  providers: [],
-  exports: [],
+  controllers: [ErpnextReconciliationController],
+  providers: [ErpnextReconciliationService],
+  exports: [ErpnextReconciliationService],
 })
 export class ErpnextReconciliationModule {}
