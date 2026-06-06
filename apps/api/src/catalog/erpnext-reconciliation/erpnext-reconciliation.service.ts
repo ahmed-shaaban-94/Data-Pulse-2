@@ -68,6 +68,56 @@ export class RepairNotFoundError extends Error {
   }
 }
 
+/** The addressed run / result does not resolve in the tenant scope. 404. */
+export class RunNotFoundError extends Error {
+  constructor() {
+    super("not found");
+    this.name = "RunNotFoundError";
+  }
+}
+
+/** The addressed store is not found / out of scope (trigger). 404. */
+export class StoreNotFoundError extends Error {
+  constructor() {
+    super("not found");
+    this.name = "StoreNotFoundError";
+  }
+}
+
+export interface ReconciliationRunBody {
+  readonly id: string;
+  readonly storeId: string;
+  readonly kind: "stock";
+  readonly trigger: "on_demand" | "scheduled";
+  readonly status: "running" | "completed" | "failed";
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly summary: Record<string, unknown> | null;
+}
+
+export interface ReconciliationResultBody {
+  readonly id: string;
+  readonly runId: string;
+  readonly mismatchClass: string;
+  readonly sourceRef: string | null;
+  readonly resultState: "open" | "repaired" | "accepted";
+  readonly detail: Record<string, unknown> | null;
+}
+
+export interface TriggerRunInput {
+  readonly tenantId: string;
+  readonly actorUserId: string;
+  readonly storeId: string;
+}
+
+export interface RepairStockInput {
+  readonly tenantId: string;
+  readonly actorUserId: string;
+  readonly runId: string;
+  readonly resultId: string;
+  readonly repairKind: "re_map" | "re_sync";
+}
+
 export interface ListBacklogInput {
   readonly tenantId: string;
   /** Opaque cursor — the last `sequence` the operator saw. null = from start. */
@@ -261,17 +311,12 @@ export class ErpnextReconciliationService {
        RETURNING created_at`,
       [newId(), input.tenantId, input.workItemRef, input.actorUserId, outcome, documentRef],
     );
-    await client.query(
-      `INSERT INTO audit_events (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
-       VALUES ($1, $2, $3, 'erpnext_reconciliation.posting.repaired', 'erpnext_posting_status', $4, $5::jsonb)`,
-      [
-        newId(),
-        input.actorUserId,
-        input.tenantId,
-        input.workItemRef,
-        JSON.stringify({ outcome, repair_kind: "re_post" }),
-      ],
-    );
+    await this.insertAudit(client, input.tenantId, input.actorUserId, {
+      action: "erpnext_reconciliation.posting.repaired",
+      targetType: "erpnext_posting_status",
+      targetId: input.workItemRef,
+      metadata: { outcome, repair_kind: "re_post" },
+    });
     return {
       replayed,
       repair: {
@@ -284,4 +329,234 @@ export class ErpnextReconciliationService {
       },
     };
   }
+
+  // ===== US3: stock reconciliation run + report + repair ====================
+
+  /**
+   * Trigger an on-demand stock reconciliation run (US3). Creates the run row
+   * (`status='running'`) + a platform `audit_events` row in one transaction, and
+   * returns it. It does NOT enqueue/emit — the live trigger→queue→processor
+   * wiring (an outbox event-type / a BullMQ queue) touches gated/cross-cutting
+   * files outside US3's approved scope and is a DEFERRED slice; until it lands a
+   * triggered run stays `running` (the processor is invoked directly in tests).
+   * The target store must resolve in the tenant scope (RLS); else StoreNotFoundError.
+   */
+  async triggerRun(input: TriggerRunInput): Promise<ReconciliationRunBody> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ReconciliationRunBody> => {
+        const store = await client.query<{ id: string }>(
+          `SELECT id FROM stores WHERE id = $1`,
+          [input.storeId],
+        );
+        if (!store.rows[0]) throw new StoreNotFoundError();
+
+        const runId = newId();
+        const row = await client.query<RunDbRow>(
+          `INSERT INTO erpnext_reconciliation_run
+             (id, tenant_id, store_id, kind, trigger, status, actor_user_id)
+           VALUES ($1, $2, $3, 'stock', 'on_demand', 'running', $4)
+           RETURNING ${RUN_COLS}`,
+          [runId, input.tenantId, input.storeId, input.actorUserId],
+        );
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "erpnext_reconciliation.run.triggered",
+          targetType: "erpnext_reconciliation_run",
+          targetId: runId,
+          metadata: { store_id: input.storeId },
+        });
+        return toRunBody(row.rows[0]!);
+      },
+    );
+  }
+
+  /** Get a run by id (US3). Cross-tenant / absent → RunNotFoundError (404). */
+  async getRun(input: { tenantId: string; runId: string }): Promise<ReconciliationRunBody> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ReconciliationRunBody> => {
+        const r = await client.query<RunDbRow>(
+          `SELECT ${RUN_COLS} FROM erpnext_reconciliation_run WHERE id = $1`,
+          [input.runId],
+        );
+        if (!r.rows[0]) throw new RunNotFoundError();
+        return toRunBody(r.rows[0]);
+      },
+    );
+  }
+
+  /** List a run's classified results (US3), cursor-paginated. Foreign run → 404. */
+  async listResults(input: {
+    tenantId: string;
+    runId: string;
+    cursor: string | null;
+    limit: number;
+    mismatchClass?: string;
+  }): Promise<{ items: ReconciliationResultBody[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(1, input.limit), BACKLOG_MAX_PAGE);
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client) => {
+        const run = await client.query<{ id: string }>(
+          `SELECT id FROM erpnext_reconciliation_run WHERE id = $1`,
+          [input.runId],
+        );
+        if (!run.rows[0]) throw new RunNotFoundError();
+
+        const rows = await client.query<ResultDbRow>(
+          `SELECT id, run_id, mismatch_class, source_ref_id, result_state, detail
+             FROM erpnext_reconciliation_result
+            WHERE run_id = $1
+              AND ($2::uuid IS NULL OR id > $2::uuid)
+              AND ($3::text IS NULL OR mismatch_class = $3::text)
+            ORDER BY id
+            LIMIT $4`,
+          [input.runId, input.cursor ?? null, input.mismatchClass ?? null, limit],
+        );
+        const items = rows.rows.map(toResultBody);
+        const nextCursor =
+          rows.rows.length === limit && rows.rows.length > 0
+            ? rows.rows[rows.rows.length - 1]!.id
+            : null;
+        return { items, nextCursor };
+      },
+    );
+  }
+
+  /**
+   * Repair an actionable stock-mismatch result (US3). A state-transition + audit
+   * — NOT an ERPNext mutation: DP2 makes no outbound HTTP and the connector
+   * isn't built, so `re_map`/`re_sync` records the repair_attempt, flips the
+   * result `open → repaired`, and audits. `result_state='repaired'` means the
+   * operator ACKNOWLEDGED + INITIATED the fix (through the owning flow — 014 admin
+   * re-map; re_sync via the connector when it ships), NOT that ERPNext now agrees.
+   * The 009 ledger is NEVER mutated (FR-013/016). Foreign run/result → 404.
+   */
+  async repairStock(input: RepairStockInput): Promise<RepairResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<RepairResult> => {
+        const cur = await client.query<{ result_state: string }>(
+          `SELECT res.result_state
+             FROM erpnext_reconciliation_result res
+             JOIN erpnext_reconciliation_run run ON run.id = res.run_id
+            WHERE res.id = $1 AND res.run_id = $2
+            FOR UPDATE OF res`,
+          [input.resultId, input.runId],
+        );
+        const row = cur.rows[0];
+        if (!row) throw new RunNotFoundError();
+
+        // Already repaired → idempotent no-op echo (no re-transition).
+        const replayed = row.result_state !== "open";
+        if (!replayed) {
+          await client.query(
+            `UPDATE erpnext_reconciliation_result
+                SET result_state = 'repaired', updated_at = now()
+              WHERE id = $1`,
+            [input.resultId],
+          );
+        }
+        const r = await client.query<{ created_at: Date }>(
+          `INSERT INTO erpnext_reconciliation_repair_attempt
+             (id, tenant_id, target_kind, target_ref_id, repair_kind, actor_user_id, outcome)
+           VALUES ($1, $2, 'stock', $3, $4, $5, $6)
+           RETURNING created_at`,
+          [
+            newId(),
+            input.tenantId,
+            input.resultId,
+            input.repairKind,
+            input.actorUserId,
+            replayed ? "no_op_echo" : "eligible_again",
+          ],
+        );
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "erpnext_reconciliation.stock.repaired",
+          targetType: "erpnext_reconciliation_result",
+          targetId: input.resultId,
+          metadata: { repair_kind: input.repairKind },
+        });
+        return {
+          replayed,
+          repair: {
+            targetKind: "stock",
+            targetRef: input.resultId,
+            repairKind: input.repairKind,
+            outcome: replayed ? "no_op_echo" : "eligible_again",
+            resolvedDocumentRef: null,
+            recordedAt: r.rows[0]!.created_at.toISOString(),
+          },
+        };
+      },
+    );
+  }
+
+  /** Shared in-transaction platform audit insert (FR-014; same tx client, no PII). */
+  private async insertAudit(
+    client: PoolClient,
+    tenantId: string,
+    actorUserId: string,
+    opts: { action: string; targetType: string; targetId: string; metadata: Record<string, unknown> },
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO audit_events (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [newId(), actorUserId, tenantId, opts.action, opts.targetType, opts.targetId, JSON.stringify(opts.metadata)],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// US3 row → wire projection helpers
+// ---------------------------------------------------------------------------
+
+const RUN_COLS = `id, store_id, kind, trigger, status, started_at, finished_at, summary`;
+
+interface RunDbRow {
+  id: string;
+  store_id: string;
+  kind: "stock";
+  trigger: "on_demand" | "scheduled";
+  status: "running" | "completed" | "failed";
+  started_at: Date;
+  finished_at: Date | null;
+  summary: Record<string, unknown> | null;
+}
+
+interface ResultDbRow {
+  id: string;
+  run_id: string;
+  mismatch_class: string;
+  source_ref_id: string | null;
+  result_state: "open" | "repaired" | "accepted";
+  detail: Record<string, unknown> | null;
+}
+
+function toRunBody(r: RunDbRow): ReconciliationRunBody {
+  return {
+    id: r.id,
+    storeId: r.store_id,
+    kind: r.kind,
+    trigger: r.trigger,
+    status: r.status,
+    startedAt: r.started_at.toISOString(),
+    finishedAt: r.finished_at ? r.finished_at.toISOString() : null,
+    summary: r.summary,
+  };
+}
+
+function toResultBody(r: ResultDbRow): ReconciliationResultBody {
+  return {
+    id: r.id,
+    runId: r.run_id,
+    mismatchClass: r.mismatch_class,
+    sourceRef: r.source_ref_id,
+    resultState: r.result_state,
+    detail: r.detail,
+  };
 }

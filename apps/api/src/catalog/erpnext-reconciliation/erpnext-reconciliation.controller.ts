@@ -46,13 +46,23 @@ import {
   type ListBacklogQuery,
 } from "./dto/list-backlog-query.dto";
 import {
+  ListResultsQuerySchema,
   RepairPostingBodySchema,
+  RepairStockBodySchema,
+  TriggerRunBodySchema,
+  type ListResultsQuery,
   type RepairPostingBody,
+  type RepairStockBody,
+  type TriggerRunBody,
 } from "./dto/repair-request.dto";
 import {
   ErpnextReconciliationService,
   RepairNotFoundError,
+  RunNotFoundError,
+  StoreNotFoundError,
   type RecordedRepair,
+  type ReconciliationRunBody,
+  type ReconciliationResultBody,
 } from "./erpnext-reconciliation.service";
 import type { PostingBacklogItem } from "./reconciliation-report.projection";
 
@@ -135,6 +145,115 @@ export class ErpnextReconciliationController {
     } catch (err) {
       if (err instanceof RepairNotFoundError) {
         throw new NotFoundException({ code: "not_found", message: "Work item not found." });
+      }
+      throw err;
+    }
+  }
+
+  // ===== US3: stock reconciliation run + report + repair ====================
+
+  /** POST — trigger an on-demand stock reconciliation run (US3). Idempotent. */
+  @Post("api/v1/catalog/erpnext-reconciliation/runs")
+  @Idempotent("required")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Auditable("erpnext_reconciliation.run.triggered")
+  @HttpCode(201)
+  async triggerRun(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(TriggerRunBodySchema)) body: TriggerRunBody,
+  ): Promise<ReconciliationRunBody> {
+    const { tenantId, userId } = this.requireContext(request);
+    try {
+      return await this.service.triggerRun({
+        tenantId,
+        actorUserId: userId,
+        storeId: body.storeId,
+      });
+    } catch (err) {
+      if (err instanceof StoreNotFoundError) {
+        throw new NotFoundException({ code: "not_found", message: "Store not found." });
+      }
+      throw err;
+    }
+  }
+
+  /** GET — a run's status + summary (US3). */
+  @Get("api/v1/catalog/erpnext-reconciliation/runs/:runId")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async getRun(
+    @Req() request: TenantContextRequest,
+    @Param("runId", new ParseUUIDPipe()) runId: string,
+  ): Promise<ReconciliationRunBody> {
+    const tenantId = this.requireTenant(request);
+    try {
+      return await this.service.getRun({ tenantId, runId });
+    } catch (err) {
+      if (err instanceof RunNotFoundError) {
+        throw new NotFoundException({ code: "not_found", message: "Run not found." });
+      }
+      throw err;
+    }
+  }
+
+  /** GET — a run's classified mismatch results (US3), paginated. */
+  @Get("api/v1/catalog/erpnext-reconciliation/runs/:runId/results")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async listResults(
+    @Req() request: TenantContextRequest,
+    @Param("runId", new ParseUUIDPipe()) runId: string,
+    @Query(new ZodValidationPipe(ListResultsQuerySchema)) query: ListResultsQuery,
+  ): Promise<{ items: ReconciliationResultBody[]; nextCursor: string | null }> {
+    const tenantId = this.requireTenant(request);
+    try {
+      return await this.service.listResults({
+        tenantId,
+        runId,
+        cursor: query.cursor ?? null,
+        limit: query.limit ?? 100,
+        ...(query.class ? { mismatchClass: query.class } : {}),
+      });
+    } catch (err) {
+      if (err instanceof RunNotFoundError) {
+        throw new NotFoundException({ code: "not_found", message: "Run not found." });
+      }
+      throw err;
+    }
+  }
+
+  /** POST — repair an actionable stock mismatch (US3). Idempotent. */
+  @Post("api/v1/catalog/erpnext-reconciliation/runs/:runId/results/:resultId/repair")
+  @Idempotent("required")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Auditable("erpnext_reconciliation.stock.repaired")
+  @HttpCode(201)
+  async repairStock(
+    @Req() request: TenantContextRequest,
+    @Param("runId", new ParseUUIDPipe()) runId: string,
+    @Param("resultId", new ParseUUIDPipe()) resultId: string,
+    @Body(new ZodValidationPipe(RepairStockBodySchema)) body: RepairStockBody,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<RecordedRepair> {
+    const { tenantId, userId } = this.requireContext(request);
+    try {
+      const result = await this.service.repairStock({
+        tenantId,
+        actorUserId: userId,
+        runId,
+        resultId,
+        repairKind: body.repairKind,
+      });
+      if (result.replayed) {
+        res.setHeader("Idempotent-Replayed", "true");
+        res.status(200);
+      }
+      return result.repair;
+    } catch (err) {
+      if (err instanceof RunNotFoundError) {
+        throw new NotFoundException({ code: "not_found", message: "Result not found." });
       }
       throw err;
     }

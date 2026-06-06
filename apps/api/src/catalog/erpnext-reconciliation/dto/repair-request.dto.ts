@@ -23,3 +23,23 @@ export const RepairStockBodySchema = z
   .strict();
 
 export type RepairStockBody = z.infer<typeof RepairStockBodySchema>;
+
+/** Trigger a stock reconciliation run — strict; only the target store. */
+export const TriggerRunBodySchema = z
+  .object({
+    storeId: z.string().uuid(),
+  })
+  .strict();
+
+export type TriggerRunBody = z.infer<typeof TriggerRunBodySchema>;
+
+/** List a run's results — cursor (uuid), limit, optional class filter. */
+export const ListResultsQuerySchema = z
+  .object({
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    class: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
+export type ListResultsQuery = z.infer<typeof ListResultsQuerySchema>;
