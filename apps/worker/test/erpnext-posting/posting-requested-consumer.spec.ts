@@ -252,4 +252,78 @@ describe("PostingRequestedConsumer.handle — 015-RESOLVE at creation", () => {
     );
     expect(after.rows[0]?.processed_at ?? null).toEqual(before.rows[0]?.processed_at ?? null);
   });
+
+  it("does NOT write to the unknown-items queue on an unmapped posting failure (rider R4)", async () => {
+    if (skip) return;
+    const e = guard();
+    const saleId = "01900000-0000-7000-8000-00000050a006";
+    await seedSale(e, { id: saleId, store: STORE_MAPPED, externalId: "s-noq", tenantProductRef: null });
+    const before = await e.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM unknown_items WHERE tenant_id = $1`,
+      [TENANT],
+    );
+    const c = new PostingRequestedConsumer(e.app);
+    await c.handle(
+      envelope(
+        { sale_id: saleId, store_id: STORE_MAPPED, kind: "sale_post", source_ref_id: saleId },
+        "01900000-0000-7000-8000-0000000ev006",
+      ),
+    );
+    // The failure is a permanently_rejected posting row + a reconciliation case
+    // (017) — NEVER routed into the inbound unknown-items queue (rider R4 / OQ-6:
+    // separate operational states).
+    const after = await e.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM unknown_items WHERE tenant_id = $1`,
+      [TENANT],
+    );
+    expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
+    expect((await statusRow(e, saleId)).status).toBe("permanently_rejected");
+  });
+});
+
+describe("PostingRequestedConsumer.handle — US3 reversal cardinality (data-model §5)", () => {
+  it("a void AND a refund of the SAME sale → TWO distinct reversal rows (REVERSAL-CARDINALITY)", async () => {
+    if (skip) return;
+    const e = guard();
+    const saleId = "01900000-0000-7000-8000-00000050b001";
+    await seedSale(e, { id: saleId, store: STORE_MAPPED, externalId: "rev-sale-1", tenantProductRef: TPRODUCT });
+    // The terminal events' OWN ids — distinct source_ref_id per reversal.
+    const voidId = "01900000-0000-7000-8000-0000005ee0d1";
+    const refundId = "01900000-0000-7000-8000-0000005ee0d2";
+    await e.admin.query(
+      `INSERT INTO sale_voids (id, sale_id, tenant_id, store_id, source_system, external_id, payload_hash, created_by)
+       VALUES ($1, $2, $3, $4, 'pos-prc', 'void-rev-1', $5, $6)`,
+      [voidId, saleId, TENANT, STORE_MAPPED, PAYLOAD_HASH, ACTOR],
+    );
+    await e.admin.query(
+      `INSERT INTO sale_refunds (id, sale_id, tenant_id, store_id, pos_refund_amount, currency_code, source_system, external_id, payload_hash, created_by)
+       VALUES ($1, $2, $3, $4, 2.50, 'USD', 'pos-prc', 'refund-rev-1', $5, $6)`,
+      [refundId, saleId, TENANT, STORE_MAPPED, PAYLOAD_HASH, ACTOR],
+    );
+
+    const c = new PostingRequestedConsumer(e.app);
+    await c.handle(
+      envelope(
+        { sale_id: saleId, store_id: STORE_MAPPED, kind: "reversal", source_ref_id: voidId },
+        "01900000-0000-7000-8000-0000000ev0b1",
+      ),
+    );
+    await c.handle(
+      envelope(
+        { sale_id: saleId, store_id: STORE_MAPPED, kind: "reversal", source_ref_id: refundId },
+        "01900000-0000-7000-8000-0000000ev0b2",
+      ),
+    );
+
+    // Two distinct reversal rows — neither blocked by the O-3 unique
+    // (tenant_id, source_ref_id), since each terminal event has its own id.
+    const rows = await e.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM erpnext_posting_status
+        WHERE tenant_id = $1 AND sale_id = $2 AND kind = 'reversal'`,
+      [TENANT, saleId],
+    );
+    expect(rows.rows[0]?.count).toBe("2");
+    expect((await statusRow(e, voidId)).status).toBe("pending");
+    expect((await statusRow(e, refundId)).status).toBe("pending");
+  });
 });
