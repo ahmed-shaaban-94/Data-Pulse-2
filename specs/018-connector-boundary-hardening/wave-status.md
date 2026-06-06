@@ -29,6 +29,10 @@
 - **P1 (authorization gap):** the admin surface was specced behind `DashboardAuthGuard` alone — which authenticates *any* dashboard principal / `dashboard_api` bearer but does not enforce tenant role. Credential issuance is privileged. **Fixed:** added FR-005b + the `DashboardAuthGuard` + `TenantContextGuard` + `RolesGuard` `@Roles("owner","tenant_admin")` gate (default-deny → 404, the **014/017 controller precedent**) across plan/data-model/tasks (T040/T044/T062/T071) + execution-map US1 validation/stop-conditions; tests cover the non-admin + `dashboard_api`-bearer denial cases.
 - **P2 (dispatch-vs-security-sequence gap):** US2/US3 validation asserts revoked/disabled creds are rejected on the connector endpoints — which requires the tightened guard (US4) — but their `depends_on` listed only US1, letting Maestro dispatch them before US4. **Fixed:** added `018-US4-GUARD` to both `018-US2-ROTATE-REVOKE` and `018-US3-DISABLE` `depends_on`.
 
+**Round 2 (commit `8efd64e` re-review) — 1 finding, ADDRESSED:**
+
+- **P1-round2 (the role gate is insufficient):** `DashboardAuthGuard` ALLOWS `principal.kind==="token" && scope==="dashboard_api"` (verified, guard line 36), and `RolesGuard` only checks role — so an owner/tenant_admin holding a `dashboard_api` machine bearer would pass both, making FR-005b's "dashboard_api bearer denied" test unsatisfiable by the prescribed wiring (an internal contradiction). **Fixed:** added **FR-005c** (human-session-only — authorization is now TWO orthogonal checks: principal KIND = session-only AND ROLE = owner/tenant_admin) + a new **session-only admin guard** (`session-only-admin.guard.ts`, task T044a — rejects `principal.kind==="token"` incl. `dashboard_api`; no such guard existed). 018 is deliberately STRICTER than its 014/017 precedent (which tolerates `dashboard_api`): a connector-credential-minting surface must not accept another machine bearer. `DashboardAuthGuard` is NOT used on this surface. Propagated to spec/plan/data-model/tasks (T040/T044a/T044/T062/T071)/execution-map.
+
 ## Slices (execution-map.yaml)
 
 | Slice | Gate | Status |
