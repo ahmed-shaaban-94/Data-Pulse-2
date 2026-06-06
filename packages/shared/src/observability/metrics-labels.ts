@@ -193,6 +193,15 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // the erpnext_reconciliation_repair_attempt row + audit_events, NOT metric
   // labels (the 009/010/015 domain-keyed-not-attribute-keyed precedent).
   erpnext_reconciliation_repair_total: [],
+
+  // ---- Connector boundary lifecycle — 018-POLISH (spec §FR-022a) ----
+  // Increments on every connector credential/registration lifecycle action
+  // (register / issue / rotate / revoke / disable) — operational visibility for
+  // the pilot boundary. UNLABELED — the (tenant, instance, credential, actor)
+  // lives on connector_registration / auth_tokens + audit_events, NOT metric
+  // labels (the 009/010/015/017 domain-keyed-not-attribute-keyed precedent; a
+  // per-instance/tenant label would be a cardinality + §XIV hazard).
+  connector_lifecycle_total: [],
 };
 
 /**

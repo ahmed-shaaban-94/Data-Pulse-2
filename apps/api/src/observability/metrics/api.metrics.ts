@@ -120,6 +120,10 @@ assertMetricLabels("erpnext_posting_reconciliation_total", []);
 // ERPNext reconciliation/repair domain — 017-POLISH (spec §VII). UNLABELED — the
 // (tenant, store, target, outcome) lives on the repair_attempt row + audit_events.
 assertMetricLabels("erpnext_reconciliation_repair_total", []);
+// Connector boundary lifecycle — 018-POLISH (spec §FR-022a). UNLABELED — the
+// (tenant, instance, credential, actor) lives on connector_registration /
+// auth_tokens + audit_events, not metric labels.
+assertMetricLabels("connector_lifecycle_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -228,6 +232,14 @@ const _erpnextPostingReconciliation: Counter = meter.createCounter(
   {
     description:
       "ERPNext posting rows that became permanently_rejected — the reconciliation / dead-letter flag the 017 surface drains (015 spec §VII). Emitted by connectorAckOutcome on a permanently_rejected / retry-budget-exhausted ack. Unlabeled — the (tenant, store, sale, category) lives on the erpnext_posting_status row + audit, not metric labels.",
+  },
+);
+
+const _connectorLifecycle: Counter = meter.createCounter(
+  "connector_lifecycle_total",
+  {
+    description:
+      "Connector credential/registration lifecycle actions (register / issue / rotate / revoke / disable) — operational visibility for the 018 pilot boundary. Unlabeled — the (tenant, instance, credential, actor) lives on connector_registration / auth_tokens + audit_events, not metric labels.",
   },
 );
 
@@ -471,6 +483,18 @@ export function recordErpnextPostingReconciliation(): void {
  */
 export function recordErpnextReconciliationRepair(): void {
   _erpnextReconciliationRepair.add(1);
+}
+
+/**
+ * Increment connector_lifecycle_total (018-POLISH, spec §FR-022a).
+ * Emission site: ConnectorRegistrationService register / issue / rotate /
+ * revoke / disable, once per recorded lifecycle action. Unlabeled — the
+ * (tenant, instance, credential, actor) is on connector_registration /
+ * auth_tokens + audit_events, not metric labels. A SIGNAL — emission MUST NOT
+ * alter the lifecycle outcome.
+ */
+export function recordConnectorLifecycle(): void {
+  _connectorLifecycle.add(1);
 }
 
 // ---------------------------------------------------------------------------

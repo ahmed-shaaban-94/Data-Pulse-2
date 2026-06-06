@@ -21,6 +21,7 @@ import { newId } from "@data-pulse-2/shared";
 import type { Pool, PoolClient } from "pg";
 
 import { PG_POOL } from "../auth/auth.module";
+import { recordConnectorLifecycle } from "../observability/metrics/api.metrics";
 import {
   type ConnectorInstanceBody,
   type CredentialStatusBody,
@@ -398,6 +399,11 @@ export class ConnectorRegistrationService {
         JSON.stringify(opts.metadata),
       ],
     );
+    // §FR-022a operational signal — one increment per connector lifecycle
+    // action (every caller of insertAudit here is a lifecycle action). A SIGNAL:
+    // unlabeled, never alters the outcome. Fires inside the tx by call-position
+    // but the metric add is a pure in-memory no-op-until-reader op.
+    recordConnectorLifecycle();
   }
 }
 
