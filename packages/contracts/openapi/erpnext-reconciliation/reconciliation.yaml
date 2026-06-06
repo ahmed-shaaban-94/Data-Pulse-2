@@ -1,0 +1,681 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — ERPNext Reconciliation & Repair API
+  version: "1.0.0-draft"
+  description: >
+    Spec 017 (erpnext-reconciliation-and-repair) — the ERPNext arc's OPERATIONAL
+    reconciliation surface (011→017): run → report → repair. The human
+    Tenant-Admin surface the 015 `015-DLQ-DRAIN` traceability stub and the 014 §8
+    carve pointed to. It makes the 015 posting dead-letter backlog VISIBLE, exposes
+    an IDEMPOTENT repair that re-uses the 015 O-3 state machine (re-make a
+    `permanently_rejected` work-item eligible; the connector re-posts via the
+    EXISTING 012 feed/ack — exactly one document reference, never a second, never a
+    silent rewrite), and runs STOCK reconciliation comparing DP2 on-hand (009)
+    against the connector's ERPNext-Bin view per the 014 mapping, persisting
+    mismatch reports in 014's vocabulary.
+
+    Six operations, all under `/api/v1/catalog/erpnext-reconciliation/...`:
+
+      1. `listPostingBacklog` — list the tenant's 015 `permanently_rejected`
+         posting dead-letters (a LIVE read-projection over `erpnext_posting_status`;
+         READ, never mirrored). Paginated; filter by store + class.
+      2. `repairPosting` — idempotent repair of a posting dead-letter: re-evaluate
+         015-RESOLVE → re-offer (re-head) so the connector re-posts via the
+         EXISTING 012 feed/ack. `Idempotency-Key` REQUIRED. Echoes the recorded
+         outcome; a repair of an already-`posted` row is a `no_op_echo` returning
+         the stored document reference (O-3 — never a 2nd document).
+      3. `triggerReconciliationRun` — trigger an on-demand STOCK reconciliation run
+         for a `(tenant, store)`; returns the run id (the async run is worker work).
+         `Idempotency-Key` REQUIRED.
+      4. `getReconciliationRun` — run status + summary counts by class.
+      5. `listReconciliationResults` — the run's classified mismatch report
+         (014 vocabulary), paginated.
+      6. `repairStockMismatch` — idempotent re-map / re-sync for an actionable
+         stock-mismatch class; transitions the result `open → repaired`.
+
+    Authentication boundary:
+
+      * ALL operations are dashboard-session-authenticated via `cookieAuth` (the
+        httpOnly `dp2_session` cookie — the human Tenant-Admin scheme, mirroring
+        `catalog/erpnext-warehouse-map.yaml` / `catalog/erpnext-item-map.yaml`).
+        017 is human-operator-only in v1 (FR-018): the connector never calls 017 —
+        a posting repair re-makes a 015 work-item eligible and the connector
+        re-posts via the EXISTING 012 feed/ack. Deliberately NOT the 012
+        `connectorBearer` machine scheme and NOT the POS `clerkJwt` device scheme.
+      * `tenant_id` and the acting principal resolve server-side from the session,
+        NEVER from the request body (§XII). Cross-tenant / out-of-scope addresses
+        are non-disclosing 404s (§II/§XII).
+
+    Boundary invariants: DP2 makes NO outbound ERPNext HTTP (any ERPNext-Bin read
+    is the connector's machinery behind the fixed 012 boundary; v1 is
+    stub-tolerant). 017 introduces NO new ERPNext authority — DP2 stays operational
+    on-hand truth, ERPNext is valuation; a divergence is surfaced, never silently
+    overwritten. The 008 sale fact + the 009 ledger are NEVER mutated — repair
+    transitions only 015 posting state / 017 result state (§IX).
+
+    Idempotency (O-3): `repairPosting` + `triggerReconciliationRun` +
+    `repairStockMismatch` require the `Idempotency-Key` header, reusing the
+    existing `IdempotencyInterceptor` — no new primitive. Same-key replay echoes
+    the stored response (`Idempotent-Replayed: true`); a duplicate logical repair
+    of an already-resolved target echoes its recorded outcome, never double-applies.
+
+    Conventions shared with the other catalog contracts: OpenAPI 3.1 of record; a
+    `toBody()` projection (no raw DB entity, §IV); the canonical `Error` envelope
+    with a closed set incl. `409` (`idempotency_key_conflict`) + the non-disclosing
+    `404`. Consumed by
+    `apps/api/test/catalog/erpnext-reconciliation/contract/reconciliation.contract.spec.ts`,
+    which loads it with an explicit `dir` (the production `loadOpenApiContracts`
+    helper is non-recursive).
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: erpnext-reconciliation
+    description: >
+      ERPNext reconciliation & repair — the human Tenant-Admin run/report/repair
+      surface. Spec 017.
+
+paths:
+  /api/v1/catalog/erpnext-reconciliation/postings/backlog:
+    get:
+      summary: List the tenant's ERPNext posting dead-letter backlog.
+      operationId: listPostingBacklog
+      tags: [erpnext-reconciliation]
+      description: >
+        A LIVE read-projection over the 015 `erpnext_posting_status` rows with
+        `status = 'permanently_rejected'` for the session tenant (READ, never
+        mirrored). Each item carries its rejection class, originating
+        sale/terminal-event reference, provenance, structured reason, and
+        dead-letter time. Cursor-paginated; filter by store + class. Scoped to the
+        session tenant (RLS); cross-tenant rows are never disclosed.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/StoreFilter"
+        - $ref: "#/components/parameters/ClassFilter"
+      responses:
+        "200":
+          description: A page of posting dead-letters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostingBacklogPage"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/catalog/erpnext-reconciliation/postings/{workItemRef}/repair:
+    post:
+      summary: Repair (re-offer) a posting dead-letter.
+      operationId: repairPosting
+      x-idempotency: required
+      tags: [erpnext-reconciliation]
+      description: >
+        Re-evaluate 015-RESOLVE for the addressed `permanently_rejected` posting
+        and, if it now resolves, re-make it eligible (`pending`, re-headed) so the
+        connector re-posts it via the EXISTING 012 feed/ack — DP2 makes no outbound
+        ERPNext HTTP. Idempotent (O-3): a repair of an already-`posted` row is a
+        `no_op_echo` returning the stored document reference (never a 2nd document,
+        never a rewrite). A still-unresolved cause leaves the row dead-lettered
+        (`still_failing`) — it returns to the backlog with its class intact. The
+        008 sale fact is NEVER mutated. `Idempotency-Key` REQUIRED.
+      parameters:
+        - $ref: "#/components/parameters/WorkItemRef"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairPostingRequest"
+      responses:
+        "200":
+          description: >
+            Idempotent replay — this repair was already recorded (same
+            `Idempotency-Key`) OR the target was already terminal under the same
+            logical outcome. Echoes the recorded outcome; `Idempotent-Replayed: true`.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedRepair"
+        "201":
+          description: Repair recorded for the first time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedRepair"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/catalog/erpnext-reconciliation/runs:
+    post:
+      summary: Trigger an on-demand stock reconciliation run.
+      operationId: triggerReconciliationRun
+      x-idempotency: required
+      tags: [erpnext-reconciliation]
+      description: >
+        Trigger a STOCK reconciliation run for a `(tenant, store)` — compares DP2
+        operational on-hand (009) against the connector's ERPNext-Bin view for the
+        014-mapped warehouse, classifying each item in 014's vocabulary. The run is
+        async worker work; this returns the created run id. The 009 ledger + the
+        008 sale fact are NEVER mutated by the run. `Idempotency-Key` REQUIRED.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerRunRequest"
+      responses:
+        "200":
+          description: Idempotent replay — a run was already triggered with this key.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationRun"
+        "201":
+          description: Run created (status `running`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationRun"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/catalog/erpnext-reconciliation/runs/{runId}:
+    get:
+      summary: Get a reconciliation run's status + summary.
+      operationId: getReconciliationRun
+      tags: [erpnext-reconciliation]
+      description: >
+        The run's status (`running` / `completed` / `failed`) + summary counts by
+        mismatch class. Cross-tenant / out-of-scope `runId` is a non-disclosing 404.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/catalog/erpnext-reconciliation/runs/{runId}/results:
+    get:
+      summary: List a run's classified mismatch results.
+      operationId: listReconciliationResults
+      tags: [erpnext-reconciliation]
+      description: >
+        The run's persisted mismatch report — one classified result per item, in
+        014's vocabulary. Cursor-paginated; filter by class. Cross-tenant `runId`
+        is a non-disclosing 404.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ClassFilter"
+      responses:
+        "200":
+          description: A page of classified results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconciliationResultPage"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/catalog/erpnext-reconciliation/runs/{runId}/results/{resultId}/repair:
+    post:
+      summary: Repair an actionable stock mismatch (re-map / re-sync).
+      operationId: repairStockMismatch
+      x-idempotency: required
+      tags: [erpnext-reconciliation]
+      description: >
+        Record an idempotent repair for an actionable stock-mismatch result
+        (e.g. `unmapped_store` → re-map drives the 014 admin flow;
+        `quantity_divergence` → re-sync). Transitions the result `open → repaired`.
+        NEVER mutates the 009 ledger — a divergence is surfaced + repaired through
+        the proper owning flow, never a silent overwrite (FR-016). `Idempotency-Key`
+        REQUIRED.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/ResultId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairStockRequest"
+      responses:
+        "200":
+          description: Idempotent replay — this repair was already recorded.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedRepair"
+        "201":
+          description: Repair recorded for the first time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedRepair"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+# All operations require a dashboard session (httpOnly cookie) — the human
+# Tenant-Admin scheme. NOT connectorBearer (012 machine), NOT clerkJwt (POS).
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+      description: Opaque pagination cursor from a prior page. Omit to start.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+      description: Maximum items per page (the 009 500/req ceiling).
+    StoreFilter:
+      name: storeId
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Optional store filter (within the session tenant scope).
+    ClassFilter:
+      name: class
+      in: query
+      required: false
+      schema:
+        type: string
+      description: Optional mismatch-class / rejection-category filter.
+    WorkItemRef:
+      name: workItemRef
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        The 015 `erpnext_posting_status` row id (the dead-letter to repair).
+        Resolves only within the session tenant; out-of-scope ids are
+        non-disclosing 404s (§II/§XII).
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: The reconciliation run id. Out-of-scope ids are non-disclosing 404s.
+    ResultId:
+      name: resultId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: The mismatch-result id (within the addressed run).
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+      description: >
+        REQUIRED on repair + run-trigger. Reuses the existing
+        `IdempotencyInterceptor` — identical retry replays the stored response;
+        key-reuse with a different body is 409 `idempotency_key_conflict`. No new
+        primitive.
+
+  headers:
+    IdempotentReplayed:
+      description: Present and `true` on a 200 idempotent-replay response.
+      schema:
+        type: boolean
+
+  responses:
+    ValidationFailure:
+      description: >
+        `validation_failure` — malformed query / body, unknown key (strict
+        boundary), or a body-supplied server-owned field. Deterministic; no record.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Generic 401 refusal — missing / invalid dashboard session. Non-disclosing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        `not_found` — a cross-tenant / out-of-scope / absent `workItemRef`,
+        `runId`, or `resultId`. Identical shape for all three (no existence leak,
+        §II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: >
+        `idempotency_key_conflict` (409) — the same `Idempotency-Key` reused with a
+        DIFFERENT body. (A duplicate repair of an already-resolved target with the
+        same outcome is an idempotent 200 echo, not a conflict.)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # Posting backlog (US1) — a read-projection over the 015 dead-letters.
+    # -----------------------------------------------------------------------
+    PostingBacklogItem:
+      type: object
+      additionalProperties: false
+      required:
+        - workItemRef
+        - kind
+        - rejectionCategory
+        - sourceSystem
+        - externalId
+        - deadLetteredAt
+      description: >
+        One 015 `permanently_rejected` posting dead-letter, projected (§IV) — NOT
+        a raw DB row, NOT a stored 017 row (read in place over
+        `erpnext_posting_status`). NO money field (the sale's amounts live on the
+        008 fact, not surfaced here).
+      properties:
+        workItemRef:
+          type: string
+          format: uuid
+          description: The 015 `erpnext_posting_status.id` — pass to `repairPosting`.
+        kind:
+          type: string
+          enum: [sale_post, reversal]
+        rejectionCategory:
+          type: string
+          description: >
+            The 015 rejection category (`unmapped_item` / `unmapped_store` /
+            `unmapped_account` / `validation` / `closed_period` /
+            `retry_budget_exhausted`). 015's vocabulary, read in place.
+        saleRef:
+          type: [string, "null"]
+          format: uuid
+          description: The parent 008 sale id (lineage).
+        sourceSystem:
+          type: string
+        externalId:
+          type: string
+        reason:
+          type: [string, "null"]
+          description: Structured rejection detail (no credentials / sensitive ERPNext internals).
+        deadLetteredAt:
+          type: string
+          format: date-time
+          description: When the posting became `permanently_rejected` (the 015 row's updated_at).
+    PostingBacklogPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/PostingBacklogItem"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque continuation token; null on the last page.
+
+    # -----------------------------------------------------------------------
+    # Repair requests (US2 + US3) — strict (§XII)
+    # -----------------------------------------------------------------------
+    RepairPostingRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Posting-repair command. Strict (§XII): tenant + actor are server-resolved
+        from the session and MUST NOT appear here. `note` is an optional operator
+        annotation (no PII).
+      properties:
+        note:
+          type: [string, "null"]
+          maxLength: 1000
+    RepairStockRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Stock-mismatch repair command. Strict (§XII). `repairKind` selects the
+        action for the result's class; `note` is an optional operator annotation.
+      required: [repairKind]
+      properties:
+        repairKind:
+          type: string
+          enum: [re_map, re_sync]
+          description: >
+            `re_map` (drive the 014 mapping admin flow for `unmapped_store`) /
+            `re_sync` (for `quantity_divergence` / `dp2_only` / `erpnext_only`).
+        note:
+          type: [string, "null"]
+          maxLength: 1000
+    TriggerRunRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Stock-run trigger. Strict (§XII): tenant + actor are server-resolved;
+        `kind`/`trigger` are server-set (`stock` / `on_demand`). Only the target
+        store is supplied.
+      required: [storeId]
+      properties:
+        storeId:
+          type: string
+          format: uuid
+          description: The store to reconcile (within the session tenant scope).
+
+    # -----------------------------------------------------------------------
+    # toBody projections (DP2 → operator) — §IV
+    # -----------------------------------------------------------------------
+    RecordedRepair:
+      type: object
+      additionalProperties: false
+      required: [targetKind, targetRef, repairKind, outcome, recordedAt]
+      description: >
+        The recorded outcome of a repair. Confirms what DP2 stored; the operator
+        treats it as the authoritative repair acknowledgement.
+      properties:
+        targetKind:
+          type: string
+          enum: [posting, stock]
+        targetRef:
+          type: string
+          format: uuid
+          description: The 015 work-item ref (posting) or the result id (stock).
+        repairKind:
+          type: string
+          enum: [re_post, re_map, re_sync, drain]
+        outcome:
+          type: string
+          enum: [eligible_again, still_failing, no_op_echo]
+        resolvedDocumentRef:
+          type: [string, "null"]
+          description: >
+            The ERPNext document reference echoed when a posting repair targets an
+            already-`posted` row (O-3 — the stored document, never a new one). Null
+            otherwise.
+        recordedAt:
+          type: string
+          format: date-time
+    ReconciliationRun:
+      type: object
+      additionalProperties: false
+      required: [id, storeId, kind, trigger, status, startedAt]
+      description: A reconciliation run projection (§IV). NO money/valuation field.
+      properties:
+        id:
+          type: string
+          format: uuid
+        storeId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [stock]
+          description: STOCK-only in v1 (the posting backlog is a read-projection, not a run).
+        trigger:
+          type: string
+          enum: [on_demand, scheduled]
+        status:
+          type: string
+          enum: [running, completed, failed]
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        summary:
+          type: [object, "null"]
+          description: Counts by mismatch class (counts only — no PII/money/qty values here).
+    ReconciliationResult:
+      type: object
+      additionalProperties: false
+      required: [id, runId, mismatchClass, resultState]
+      description: >
+        One classified mismatch result projection (§IV), in 014's vocabulary.
+        `detail` carries operator-facing qty values (NEVER PII/money).
+      properties:
+        id:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        mismatchClass:
+          type: string
+          enum:
+            - match
+            - quantity_divergence
+            - unmapped_store
+            - unmapped_item
+            - dp2_only
+            - erpnext_only
+            - negative_balance_flagged
+          description: 014's mismatch-class vocabulary (014 data-model §6.2). 017 owns no class.
+        sourceRef:
+          type: [string, "null"]
+          format: uuid
+          description: The originating product ref for a stock line; null for an aggregate line.
+        resultState:
+          type: string
+          enum: [open, repaired, accepted]
+          description: 017's OWN orthogonal workflow status (distinct from the mismatch class).
+        detail:
+          type: [object, "null"]
+          description: Operator-facing values (DP2 vs ERPNext qty etc.). No PII/money.
+    ReconciliationResultPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/ReconciliationResult"
+        nextCursor:
+          type: [string, "null"]
+
+    # -----------------------------------------------------------------------
+    # Canonical Error envelope (verbatim shared shape)
+    # -----------------------------------------------------------------------
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `catalog/erpnext-warehouse-map.yaml` (used verbatim).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII).
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | idempotency_key_conflict |
+                system_failure (plus the generic 401 refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
