@@ -67,6 +67,16 @@
 #          "fix all"). All OQs resolved at spec/plan time (FR-018 human-only;
 #          R1-R7). Schema/CONTRACT [GATED] proposed; RECON-RUN connector-view live
 #          read deferred to a future 012-style slice.
+#
+# RECONCILED 2026-06-06 (implementation complete) — owner authorized BOTH [GATED]
+# slices in-session; all 8 capability slices BUILT + GREEN on feat/017-impl (WSL
+# Testcontainers), built in an isolated worktree off fresh main. Per-slice status
+# below is superseded by wave-status.md's slice ledger (the human-readable
+# authority): SETUP/SCHEMA/CONTRACT/ISOLATION/US1/US2/US3/POLISH all done. The live
+# trigger->queue->processor WIRING is a deferred slice (out of US3's approved
+# scope — touches the [GATED] outbox registry / worker.module); the run processor
+# ships as a directly-invokable class (the 015 consumer precedent). 017-STOCK-VIEW-
+# CONTRACT (live ERPNext-Bin read) + 017-SCHEDULED-RUNS remain non-dispatchable.
 
 version: 1
 spec: 017-erpnext-reconciliation-and-repair

@@ -62,6 +62,7 @@ const EXPECTED_CATALOG_MODULES: readonly string[] = [
   "erpnext-item-map",
   "erpnext-warehouse-map",
   "erpnext-posting-status",
+  "erpnext-reconciliation",
 ];
 
 const SCHEMA_BARREL_PATH = resolve(

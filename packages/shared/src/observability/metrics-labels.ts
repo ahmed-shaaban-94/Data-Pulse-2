@@ -185,6 +185,14 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // / business-sensitive and lives on the erpnext_posting_status row + audit,
   // NOT here (the 009/010 domain-keyed-not-attribute-keyed precedent).
   erpnext_posting_reconciliation_total: [],
+
+  // ---- ERPNext reconciliation/repair domain — 017-POLISH (spec §VII) ----
+  // Increments on every operator repair action recorded by 017 (a posting
+  // re-offer OR a stock re-map/re-sync) — the REPAIR side of run -> report ->
+  // repair. UNLABELED — the affected (tenant, store, target, outcome) lives on
+  // the erpnext_reconciliation_repair_attempt row + audit_events, NOT metric
+  // labels (the 009/010/015 domain-keyed-not-attribute-keyed precedent).
+  erpnext_reconciliation_repair_total: [],
 };
 
 /**

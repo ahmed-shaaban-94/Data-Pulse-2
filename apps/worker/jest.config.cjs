@@ -32,7 +32,9 @@ const dockerOutboxSuites = includeDbBackedTests
      // 009-US4 inventory-backfill Testcontainers suite (F-04/F-05).
      "/inventory/backfill-processor\\.spec\\.ts$",
      // 015-US1-FEED posting-requested consumer (resolve eligibility + insert).
-     "/erpnext-posting/posting-requested-consumer\\.spec\\.ts$"];
+     "/erpnext-posting/posting-requested-consumer\\.spec\\.ts$",
+     // 017-US3 reconciliation-run processor (009 on-hand vs ERPNext-Bin compare).
+     "/erpnext-reconciliation/reconciliation-run\\.spec\\.ts$"];
 
 /** @type {import('jest').Config} */
 module.exports = {

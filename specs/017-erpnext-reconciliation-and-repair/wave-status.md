@@ -7,10 +7,29 @@
 > **idempotent repair** that re-uses the 015 O-3 state machine, and runs **stock
 > reconciliation** (009 vs the connector's ERPNext-Bin view per the 014 mapping).
 
-**Last updated:** 2026-06-06 by Ahmed Shaaban — full Spec-Kit planning chain authored (spec → plan → research → data-model → contracts → tasks → execution-map + this file); `/speckit-analyze` clean (0 crit/0 high; 2 medium + 4 low REMEDIATED via "fix all"). **NOT STARTED** — no slice dispatched; the two `[GATED]` slices + the first `apps/api` slice are owner thresholds not yet crossed.
+**Last updated:** 2026-06-06 by Ahmed Shaaban — **implementation COMPLETE end-to-end** on `feat/017-impl` (owner-authorized both `[GATED]` slices in-session; built in an isolated worktree off fresh `main`). All 8 slices GREEN (WSL Testcontainers).
 **Spec:** `017-erpnext-reconciliation-and-repair` (`specs/017-erpnext-reconciliation-and-repair/`)
-**Base:** `origin/main` (015 CLOSED #501–#505; 014-CRUD #495; 009 CLOSED; 012 SHIPPED)
-**Status:** **planning complete, implementation NOT STARTED.** MVP = `017-US1-BACKLOG` (the visible posting dead-letter backlog) once the two `[GATED]` foundational slices (`017-CONTRACT` + `017-SCHEMA`) + the isolation harness land.
+**Base:** `feat/017-impl` off `origin/main` (planning chain MERGED via #507; 015 CLOSED #501–#505; 014-CRUD #495; 009 CLOSED; 012 SHIPPED)
+**Status:** **FUNCTIONALLY COMPLETE.** SETUP + `[GATED]` SCHEMA (0020) + `[GATED]` CONTRACT (reconciliation.yaml) + ISOLATION-HARNESS + 🎯 US1-BACKLOG + US2-REPAIR + US3-STOCK + POLISH all built + GREEN.
+
+### Slice ledger (all GREEN, WSL Testcontainers)
+| Slice | Tests | Notes |
+|---|---|---|
+| SETUP | build | empty module registered |
+| `[GATED]` SCHEMA (0020) | 32/32 | run + result + repair_attempt; migration round-trip + migrate + barrel drift |
+| `[GATED]` CONTRACT | 19/19 | reconciliation.yaml conformance (6 ops, cookieAuth, 014-vocab-only) |
+| ISOLATION-HARNESS | 8/8 | RLS sweep on all 3 tables (incl. repair_attempt append-only) |
+| US1-BACKLOG 🎯 | 10/10 | read-projection over 015 permanently_rejected; tenant isolation; §XII |
+| US2-REPAIR | 9/9 | 4-status branching + retry_count reset + in-tx audit; HTTP idempotency |
+| US3-STOCK | 8/8 | worker classification (014 §6.3 order) + stub-tolerant + idempotent; api trigger/get/list/repair |
+| POLISH | — | `erpnext_reconciliation_repair_total` (shared); report-only k6; coverage; this reconcile |
+
+### Deferrals carried (not blockers)
+- **Live trigger→queue→processor wiring** — the `ReconciliationRunProcessor` is a directly-invokable class (the 015 consumer precedent); the live wiring (an outbox event-type in the `[GATED]` `packages/db` registry, or a BullMQ queue in `worker.module`) is OUT of US3's approved scope → a **separate deferred slice**. **In production-without-wiring a triggered run stays `running`** until that slice lands (NOT claimed live end-to-end).
+- **`repairStock` is a state-transition + audit, NOT an ERPNext mutation** — DP2 makes no outbound HTTP and the connector isn't built; `result_state='repaired'` = operator acknowledged+initiated, the actual fix is the 014 admin re-map / connector re_sync when it ships.
+- **Live ERPNext-Bin read** — v1 ships the stub-tolerant seam (R3); the live connector→DP2 view contract is `017-STOCK-VIEW-CONTRACT` (future `[GATED]`).
+- **Scheduled runs** — v1 is on-demand (R5); scheduling is later wiring over the same processor.
+- **Perf report-only** — no perf env (005/008/009/010/015 precedent); k6 thresholds carried, not gating.
 
 ---
 
