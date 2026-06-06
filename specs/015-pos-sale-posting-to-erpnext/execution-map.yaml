@@ -299,7 +299,7 @@ slices:
   - id: 015-US2-ACK
     task_ids: [T040, T041, T042, T043]
     type: feat
-    status: in_review   # built on feat/015-us2-ack; 15/15 GREEN WSL-TC (7 service + 8 HTTP-edge)
+    status: merged   # PR #503 (9c05a03) — 15/15 GREEN WSL-TC (7 service + 8 HTTP-edge)
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:
@@ -334,7 +334,7 @@ slices:
   - id: 015-US3-REVERSAL
     task_ids: [T050, T051, T052]
     type: feat
-    status: blocked
+    status: in_review   # built on feat/015-us3-reversal; cross-slice 008 reversal emit + projection reversalOf + worker cardinality. 53/53 api + 7/7 worker GREEN WSL-TC. 008 sales suite 141/141 (no regression).
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:
@@ -366,7 +366,14 @@ slices:
   - id: 015-US4-RESOLVE-FAIL
     task_ids: [T060, T061, T062, T063]
     type: feat
-    status: blocked
+    # COVERED — the shipped two-moment split put 015-RESOLVE in the worker
+    # consumer (resolveEligibility), so the unmapped_item / unmapped_store / ad-hoc
+    # failure postures were already implemented + tested in the US1-FEED consumer
+    # spec. The two genuinely-new US4 assertions (rider R4 "no write to the
+    # unknown-items queue" + the disabled-Item = ack-path-not-DP2-resolve carve)
+    # ride in with US3 (feat/015-us3-reversal). T061's "projection.ts" target is
+    # superseded by the shipped design (resolve lives in the consumer).
+    status: in_review   # folded into feat/015-us3-reversal (worker consumer spec)
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:

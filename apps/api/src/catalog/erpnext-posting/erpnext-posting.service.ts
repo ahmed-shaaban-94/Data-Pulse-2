@@ -183,12 +183,13 @@ export class ErpnextPostingService {
           id: string;
           kind: "sale_post" | "reversal";
           sale_id: string;
+          source_ref_id: string;
           source_system: string;
           external_id: string;
           payload_hash: string;
           sequence: string;
         }>(
-          `SELECT id, kind, sale_id, source_system, external_id,
+          `SELECT id, kind, sale_id, source_ref_id, source_system, external_id,
                   payload_hash, sequence::text AS sequence
              FROM erpnext_posting_status
             WHERE status = 'pending'
@@ -204,6 +205,7 @@ export class ErpnextPostingService {
             id: row.id,
             kind: row.kind,
             saleId: row.sale_id,
+            sourceRefId: row.source_ref_id,
             sourceSystem: row.source_system,
             externalId: row.external_id,
             payloadHash: row.payload_hash,

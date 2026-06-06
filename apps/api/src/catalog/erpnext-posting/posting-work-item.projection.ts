@@ -41,7 +41,18 @@ export interface WorkItemLine {
   readonly tenantProductRef: string | null;
 }
 
-/** A 012 PostingWorkItem (sale_post; reversal adds reversalOf in US3). */
+/**
+ * The 012 ReversalRef — present only on a `reversal` work-item. Carries the
+ * ORIGINAL sale's provenance so the connector locates the document to reverse
+ * (O-4), plus whether the reversal stems from a void or a refund.
+ */
+export interface ReversalRef {
+  readonly sourceSystem: string;
+  readonly externalId: string;
+  readonly reversalKind: "void" | "refund";
+}
+
+/** A 012 PostingWorkItem (sale_post; a reversal additionally carries reversalOf). */
 export interface PostingWorkItem {
   readonly workItemRef: string;
   readonly kind: "sale_post" | "reversal";
@@ -49,6 +60,8 @@ export interface PostingWorkItem {
   readonly externalId: string;
   readonly payloadHash: string;
   readonly businessDate: string;
+  /** Present only when kind=reversal (the original sale''s provenance, O-4). */
+  readonly reversalOf: ReversalRef | null;
   readonly sale: {
     readonly saleRef: string;
     readonly storeId: string;
@@ -76,6 +89,7 @@ export async function buildWorkItem(
     readonly id: string;
     readonly kind: "sale_post" | "reversal";
     readonly saleId: string;
+    readonly sourceRefId: string;
     readonly sourceSystem: string;
     readonly externalId: string;
     readonly payloadHash: string;
@@ -159,6 +173,30 @@ export async function buildWorkItem(
     });
   }
 
+  // For a reversal, carry the ORIGINAL sale's provenance (so the connector
+  // locates the document to reverse, O-4) + whether the source is a void or a
+  // refund — derived from which terminal table holds `source_ref_id`. The
+  // reversal posts a NEW reversing document; the original sale_post row is never
+  // touched (§IX). A reversal whose terminal row cannot be classified is omitted
+  // (defensive — should not happen, the consumer only inserts for real events).
+  let reversalOf: ReversalRef | null = null;
+  if (row.kind === "reversal") {
+    const kindRow = await client.query<{ reversal_kind: "void" | "refund" }>(
+      `SELECT 'void'::text AS reversal_kind FROM sale_voids WHERE id = $1
+       UNION ALL
+       SELECT 'refund'::text AS reversal_kind FROM sale_refunds WHERE id = $1
+       LIMIT 1`,
+      [row.sourceRefId],
+    );
+    const rk = kindRow.rows[0];
+    if (!rk) return null;
+    reversalOf = {
+      sourceSystem: s.source_system,
+      externalId: s.external_id,
+      reversalKind: rk.reversal_kind,
+    };
+  }
+
   return {
     workItemRef: row.id,
     kind: row.kind,
@@ -166,6 +204,7 @@ export async function buildWorkItem(
     externalId: row.externalId,
     payloadHash: row.payloadHash,
     businessDate: s.business_date,
+    reversalOf,
     sale: {
       saleRef: s.id,
       storeId: s.store_id,

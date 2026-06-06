@@ -483,6 +483,29 @@ export class SalesService {
         }
 
         const row = inserted.rows[0]!;
+
+        // 015 posting trigger (reversal): a void terminal event just landed.
+        // Emit `erpnext.posting.requested` IN-TRANSACTION, atomic with the
+        // sale_voids insert, so the void becomes eligible for a REVERSING ERPNext
+        // document (012 O-4). `source_ref_id` is the VOID row's OWN id (not the
+        // sale's) — the REVERSAL-CARDINALITY anchor (data-model §5), so a sale
+        // both voided and refunded yields two distinct posting rows. ONLY the
+        // created path emits (the dedup-replay branch returned above), so a
+        // re-delivery does NOT double-emit; downstream the O-3 unique
+        // (tenant_id, source_ref_id) keeps the consumer insert idempotent.
+        await emit(client, {
+          eventType: OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED,
+          tenantId,
+          storeId,
+          payload: {
+            sale_id: saleRef,
+            store_id: storeId,
+            kind: "reversal",
+            source_ref_id: row.id,
+          },
+          correlationId: null,
+        });
+
         return {
           projection: toTerminalEvent("void", row.id, saleRef, row.voided_at, null, null),
           created: true,
@@ -580,6 +603,25 @@ export class SalesService {
         }
 
         const row = inserted.rows[0]!;
+
+        // 015 posting trigger (reversal): a refund terminal event just landed.
+        // Same posture as recordVoid — emit IN-TRANSACTION with source_ref_id =
+        // the REFUND row's OWN id, so two partial refunds of one sale each get a
+        // distinct posting row (REVERSAL-CARDINALITY, data-model §5). Created
+        // path only; idempotent downstream via the O-3 unique.
+        await emit(client, {
+          eventType: OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED,
+          tenantId,
+          storeId,
+          payload: {
+            sale_id: saleRef,
+            store_id: storeId,
+            kind: "reversal",
+            source_ref_id: row.id,
+          },
+          correlationId: null,
+        });
+
         return {
           projection: toTerminalEvent(
             "refund",
