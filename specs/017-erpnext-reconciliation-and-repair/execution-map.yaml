@@ -71,12 +71,21 @@
 # RECONCILED 2026-06-06 (implementation complete) — owner authorized BOTH [GATED]
 # slices in-session; all 8 capability slices BUILT + GREEN on feat/017-impl (WSL
 # Testcontainers), built in an isolated worktree off fresh main. Per-slice status
-# below is superseded by wave-status.md's slice ledger (the human-readable
-# authority): SETUP/SCHEMA/CONTRACT/ISOLATION/US1/US2/US3/POLISH all done. The live
-# trigger->queue->processor WIRING is a deferred slice (out of US3's approved
-# scope — touches the [GATED] outbox registry / worker.module); the run processor
-# ships as a directly-invokable class (the 015 consumer precedent). 017-STOCK-VIEW-
-# CONTRACT (live ERPNext-Bin read) + 017-SCHEDULED-RUNS remain non-dispatchable.
+# below is reconciled to terminal (merged) with provenance; wave-status.md's slice
+# ledger remains the human-readable authority. SETUP/SCHEMA/CONTRACT/ISOLATION/US1/
+# US2/US3/POLISH all MERGED via PR #509.
+#
+# CLOSED 2026-06-06 — 017 v1 is functionally complete on main (PR #509). The live
+# trigger->queue->processor WIRING deferral is now ALSO RESOLVED: 017-RECON-WIRING
+# (PR #511) registered erpnext.reconciliation.requested in the [GATED] outbox
+# registry, made triggerRun emit it in-transaction, and registered the
+# ReconciliationRequestedConsumer in worker.module's drainer seam — a triggered run
+# now advances running->completed DP2-internally (over EMPTY_BIN_VIEW, stub-tolerant;
+# no connector/ERPNext call). 017-VERIFY (PR #510) recorded the DP2-side
+# verification (75/75 in-repo). The two REMAINING items are NOT 017 v1 and stay
+# non-dispatchable: 017-STOCK-VIEW-CONTRACT (live ERPNext-Bin read — future [GATED],
+# needs the connector repo) + 017-SCHEDULED-RUNS (later wiring over the same
+# processor). 017 is CLOSED as far as anything buildable in this repo.
 
 version: 1
 spec: 017-erpnext-reconciliation-and-repair
@@ -134,7 +143,7 @@ slices:
     # (T002) repair = 015 O-3 state-machine re-use (R1); (T003) v1 carve —
     # on-demand only (R5), connector-seam stub-tolerant stock read (R3),
     # human-only auth (R6).
-    status: ready
+    status: merged   # PR #509 (decisions recorded in wave-status SIGN-OFF section)
     approval_required: false   # decision gates, not code gates
     depends_on: []
     blocks:
@@ -158,7 +167,7 @@ slices:
   - id: 017-SETUP
     task_ids: [T004]
     type: chore
-    status: ready
+    status: merged   # PR #509
     approval_required: false
     depends_on: [017-SIGNOFF]
     blocks:
@@ -185,7 +194,7 @@ slices:
   - id: 017-CONTRACT
     task_ids: [T010]
     type: feat
-    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    status: merged   # PR #509 — [GATED] owner-authorized in-session; reconciliation.yaml shipped (19/19 conformance)
     approval_required: true   # packages/contracts/openapi/** (Constitution §IV/§VIII)
     depends_on: [017-SIGNOFF]
     blocks:
@@ -225,7 +234,7 @@ slices:
   - id: 017-SCHEMA
     task_ids: [T012a, T012]
     type: feat
-    status: proposed   # [GATED] — awaiting explicit in-session approval; NOT yet authorized
+    status: merged   # PR #509 — [GATED] owner-authorized in-session; migration 0020 shipped (32/32)
     approval_required: true   # packages/db/** schema + SQL migration (Constitution §VIII)
     depends_on: [017-SIGNOFF]   # 017-SIGNOFF-STATE (T001) decision must land first
     blocks:
@@ -280,7 +289,7 @@ slices:
   - id: 017-ISOLATION-HARNESS
     task_ids: [T020]
     type: test
-    status: blocked   # waits on 017-SCHEMA
+    status: merged   # PR #509 — RLS sweep 8/8
     approval_required: false
     depends_on: [017-SCHEMA]
     blocks:
@@ -305,7 +314,7 @@ slices:
   - id: 017-US1-BACKLOG
     task_ids: [T030, T031, T032, T033, T034]
     type: feat
-    status: blocked   # waits on both [GATED] slices + harness
+    status: merged   # PR #509 — 🎯 MVP, backlog read-projection 10/10
     approval_required: false   # the gated surfaces are CONTRACT + SCHEMA; the controller/service/projection is not itself gated
     depends_on: [017-CONTRACT, 017-SCHEMA, 017-ISOLATION-HARNESS]
     blocks:
@@ -345,7 +354,7 @@ slices:
   - id: 017-US2-REPAIR
     task_ids: [T040, T041, T042, T043, T044]
     type: feat
-    status: blocked
+    status: merged   # PR #509 — idempotent repair 9/9 (4-status branching + no_op_echo + still_failing)
     approval_required: false
     depends_on: [017-US1-BACKLOG]
     blocks:
@@ -389,7 +398,7 @@ slices:
   - id: 017-US3-STOCK
     task_ids: [T050, T051, T052, T053, T054, T055, T056]
     type: feat
-    status: blocked
+    status: merged   # PR #509 — stock run/report/repair 8/8 (directly-invoked processor; live trigger wiring later landed via 017-RECON-WIRING #511)
     approval_required: false
     depends_on: [017-US1-BACKLOG, 017-SCHEMA, 017-ISOLATION-HARNESS]
     blocks:
@@ -437,7 +446,7 @@ slices:
   - id: 017-POLISH
     task_ids: [T090, T091, T092]
     type: chore
-    status: blocked
+    status: merged   # PR #509 — shared erpnext_reconciliation_repair_total signal + report-only k6 + coverage + closeout
     approval_required: false
     depends_on: [017-US2-REPAIR, 017-US3-STOCK]
     blocks: []
@@ -469,6 +478,45 @@ slices:
       - standing-rules universal stops
       - "stop if the §VII signals are registered in a per-feature metrics file instead of the shared api.metrics.ts / worker.metrics.ts (010 catalog_unpriced_issue_rate / 015 precedent)"
       - "stop if perf cannot be measured in a real env — report report-only (005/008/009/010 T560 precedent), do not weaken thresholds into a gate"
+    report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
+    parallel_safety: safe
+
+  # ===== Follow-up (post-v1, shipped) =========================================
+
+  - id: 017-RECON-WIRING
+    task_ids: []   # follow-up slice, specced in followup-reconciliation-wiring.md (not in tasks.md)
+    type: feat
+    # Closes the live trigger->queue->processor WIRING deferral via the OUTBOX path
+    # (Option A, owner-approved incl. the [GATED] packages/db change). triggerRun
+    # emits erpnext.reconciliation.requested IN-TRANSACTION; the new
+    # ReconciliationRequestedConsumer (registered in worker.module's
+    # drainerProcessorProviderFactory alongside the 015 consumer) invokes the run
+    # processor over EMPTY_BIN_VIEW. A triggered run now advances running->completed
+    # DP2-internally — no connector/ERPNext call. Did NOT make the live ERPNext-Bin
+    # read live (still 017-STOCK-VIEW-CONTRACT).
+    status: merged   # PR #511 (2026-06-06) — registry 5/5, worker recon 12/12, api glob 99/99, worker regression 264/264
+    approval_required: true   # [GATED] packages/db OUTBOX_EVENT_TYPES (owner-approved)
+    depends_on: [017-US3-STOCK]
+    blocks: []
+    agent: opus-maestro
+    allowed_files:
+      - packages/db/src/outbox/producer.ts
+      - packages/db/__tests__/outbox/event-types-registry.spec.ts
+      - docs/outbox/event-types.md
+      - apps/api/src/catalog/erpnext-reconciliation/erpnext-reconciliation.service.ts
+      - apps/api/test/catalog/erpnext-reconciliation/run/stock-run-api.spec.ts
+      - apps/worker/src/erpnext-reconciliation/reconciliation-requested.consumer.ts
+      - apps/worker/src/worker.module.ts
+      - apps/worker/test/erpnext-reconciliation/reconciliation-requested-consumer.spec.ts
+      - apps/worker/test/erpnext-reconciliation/reconciliation-wiring.spec.ts
+    validation:
+      - command: wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker test -- erpnext-reconciliation && pnpm --filter @data-pulse-2/api test -- catalog/erpnext-reconciliation"
+        expected: GREEN — in-tx emit (atomic with the run insert), consumer advances running->completed over EMPTY_BIN_VIEW (stub-tolerant), idempotent redelivery no-op, malformed-payload throw; registry drift test updated in lockstep.
+        docker_required: true
+    stop:
+      - standing-rules universal stops
+      - "stop if the emit is NOT in the same transaction as the run insert — an orphaned running row with no driving event is the bug this slice fixes"
+      - "stop if the Bin read is made live here — that is 017-STOCK-VIEW-CONTRACT (future [GATED]); this slice wires EMPTY_BIN_VIEW only"
     report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
     parallel_safety: safe
 
