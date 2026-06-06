@@ -172,6 +172,19 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // excluded product is recorded on the reconciliation backlog, NOT here (no
   // product/price/PII labels; same domain-keyed precedent as the catalog set).
   catalog_unpriced_issue_rate: [],
+
+  // ---- ERPNext posting domain — 015-POLISH (spec §VII / plan §3.x) ----
+  // A NEW signal (consciously introduced; NOT in the constitution §VII named
+  // list — same posture as the 009/010 domain signals). Increments when an
+  // erpnext_posting_status row becomes `permanently_rejected` — the
+  // reconciliation / dead-letter flag the 017 surface drains. Both emit sites
+  // (the connectorAckOutcome ack on the api side, and the worker
+  // PostingRequestedConsumer 015-RESOLVE rejection at row creation) register the
+  // SAME family name in their respective shared metrics module. UNLABELED — the
+  // (tenant, store, sale, rejection_category) it happened to is high-cardinality
+  // / business-sensitive and lives on the erpnext_posting_status row + audit,
+  // NOT here (the 009/010 domain-keyed-not-attribute-keyed precedent).
+  erpnext_posting_reconciliation_total: [],
 };
 
 /**

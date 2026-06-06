@@ -201,6 +201,8 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "inventory_negative_balance_total",
     // Catalog domain — 010-US1-SNAPSHOT read-down (R6 / FR-070). Unlabeled.
     "catalog_unpriced_issue_rate",
+    // ERPNext posting domain — 015-POLISH (spec §VII). Unlabeled.
+    "erpnext_posting_reconciliation_total",
   ];
 
   for (const name of expectedSignals) {
