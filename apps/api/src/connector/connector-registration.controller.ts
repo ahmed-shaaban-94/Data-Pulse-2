@@ -32,6 +32,7 @@ import { z } from "zod";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { SessionOnlyAdminGuard } from "../auth/session-only-admin.guard";
+import { Idempotent } from "../idempotency/idempotent.decorator";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { TenantContextGuard } from "../context/tenant-context.guard";
 import type { TenantContextRequest } from "../context/types";
@@ -121,6 +122,47 @@ export class ConnectorRegistrationController {
     });
     if (result.kind === "ok") return result.credential;
     // Non-disclosing 404 — absent / cross-tenant / disabled instance (§II/§XII).
+    throw new NotFoundException("Not Found");
+  }
+
+  /** POST :id/credentials/rotate — atomic immediate-revoke rotation (US2). */
+  @Post("api/v1/connector/instances/:id/credentials/rotate")
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Idempotent("required")
+  async rotate(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+  ): Promise<IssuedCredentialBody> {
+    const { tenantId, userId } = this.requireContext(request);
+    const result = await this.service.rotate({
+      tenantId,
+      actorUserId: userId,
+      instanceId: id,
+    });
+    if (result.kind === "ok") return result.credential;
+    throw new NotFoundException("Not Found");
+  }
+
+  /** POST /credentials/:credentialId/revoke — revoke one credential (US2). */
+  @Post("api/v1/connector/credentials/:credentialId/revoke")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Idempotent("required")
+  async revoke(
+    @Req() request: TenantContextRequest,
+    @Param("credentialId", new ZodValidationPipe(z.string().uuid()))
+    credentialId: string,
+  ): Promise<{ ok: true }> {
+    const { tenantId, userId } = this.requireContext(request);
+    const result = await this.service.revoke({
+      tenantId,
+      actorUserId: userId,
+      credentialId,
+    });
+    if (result.kind === "ok") return { ok: true };
     throw new NotFoundException("Not Found");
   }
 }

@@ -171,6 +171,94 @@ export class ConnectorRegistrationService {
   }
 
   /**
+   * Rotate an instance's credential (US2): atomic immediate-revoke. In ONE
+   * transaction — verify the registration exists/tenant/not-disabled → revoke
+   * its unrevoked connector credential(s) → issue a new one for the SAME
+   * registration → audit. If the issue fails, the whole tx rolls back and the
+   * old credential stays active (FR-009). At most one active per registration
+   * (the revoke-first ordering keeps the partial-unique satisfied; FR-010).
+   */
+  async rotate(input: IssueCredentialInput): Promise<IssueResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<IssueResult> => {
+        const inst = await client.query<{ id: string; disabled_at: Date | null }>(
+          `SELECT id, disabled_at FROM connector_registration WHERE id = $1`,
+          [input.instanceId],
+        );
+        const row = inst.rows[0];
+        if (!row || row.disabled_at !== null) return { kind: "not_found" };
+
+        // Revoke the current active credential(s) FIRST so the new insert does
+        // not collide with the at-most-one-unrevoked partial-unique.
+        await client.query(
+          `UPDATE auth_tokens
+              SET revoked_at = now()
+            WHERE connector_registration_id = $1
+              AND scope = 'connector'
+              AND revoked_at IS NULL`,
+          [input.instanceId],
+        );
+
+        const credential = await this.issueCredentialRow(client, {
+          tenantId: input.tenantId,
+          actorUserId: input.actorUserId,
+          instanceId: input.instanceId,
+          expiresInDays: input.expiresInDays ?? DEFAULT_CREDENTIAL_EXPIRY_DAYS,
+        });
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "connector.credential.rotated",
+          targetType: "connector_registration",
+          targetId: input.instanceId,
+          metadata: { credential_id: credential.credential_id },
+        });
+        return { kind: "ok", credential };
+      },
+    );
+  }
+
+  /**
+   * Revoke one credential by id (US2). RLS-scoped: a cross-tenant / absent id
+   * resolves to 0 rows → not_found (non-disclosing). Idempotent: revoking an
+   * already-revoked credential is a success no-op. The registration stays
+   * active. Audited in-tx.
+   */
+  async revoke(input: {
+    tenantId: string;
+    actorUserId: string;
+    credentialId: string;
+  }): Promise<{ kind: "ok" } | { kind: "not_found" }> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<{ kind: "ok" } | { kind: "not_found" }> => {
+        // Confirm the credential exists in scope (RLS) + is a connector cred.
+        const found = await client.query<{ id: string; connector_registration_id: string | null }>(
+          `SELECT id, connector_registration_id FROM auth_tokens
+            WHERE id = $1 AND scope = 'connector'`,
+          [input.credentialId],
+        );
+        const r = found.rows[0];
+        if (!r) return { kind: "not_found" };
+
+        await client.query(
+          `UPDATE auth_tokens SET revoked_at = now()
+            WHERE id = $1 AND revoked_at IS NULL`,
+          [input.credentialId],
+        );
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "connector.credential.revoked",
+          targetType: "connector_registration",
+          targetId: r.connector_registration_id ?? input.credentialId,
+          metadata: { credential_id: input.credentialId },
+        });
+        return { kind: "ok" };
+      },
+    );
+  }
+
+  /**
    * Insert one connector-scoped auth_tokens row (raw secret hashed here) and
    * return the one-time wire shape. Shared by issue + rotate (US2).
    */
