@@ -299,7 +299,7 @@ slices:
   - id: 015-US2-ACK
     task_ids: [T040, T041, T042, T043]
     type: feat
-    status: blocked
+    status: in_review   # built on feat/015-us2-ack; 15/15 GREEN WSL-TC (7 service + 8 HTTP-edge)
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:
