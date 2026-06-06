@@ -17,16 +17,25 @@
  * `toBody` projection (no raw DB entity, §IV).
  */
 import {
+  Body,
   Controller,
   Get,
+  HttpCode,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
   Query,
   Req,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import type { Response } from "express";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { DashboardAuthGuard } from "../../auth/dashboard-auth.guard";
+import { Idempotent } from "../../idempotency/idempotent.decorator";
 import { Roles } from "../../auth/roles.decorator";
 import { RolesGuard } from "../../auth/roles.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
@@ -36,7 +45,15 @@ import {
   ListBacklogQuerySchema,
   type ListBacklogQuery,
 } from "./dto/list-backlog-query.dto";
-import { ErpnextReconciliationService } from "./erpnext-reconciliation.service";
+import {
+  RepairPostingBodySchema,
+  type RepairPostingBody,
+} from "./dto/repair-request.dto";
+import {
+  ErpnextReconciliationService,
+  RepairNotFoundError,
+  type RecordedRepair,
+} from "./erpnext-reconciliation.service";
 import type { PostingBacklogItem } from "./reconciliation-report.projection";
 
 interface PostingBacklogPageResponse {
@@ -55,6 +72,17 @@ export class ErpnextReconciliationController {
       throw new UnauthorizedException("Unauthorized");
     }
     return ctx.tenantId;
+  }
+
+  private requireContext(request: TenantContextRequest): {
+    tenantId: string;
+    userId: string;
+  } {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null || ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    return { tenantId: ctx.tenantId, userId: ctx.userId };
   }
 
   /** GET — the tenant's posting dead-letter backlog (US1; a read-projection over 015). */
@@ -76,5 +104,39 @@ export class ErpnextReconciliationController {
       ...(query.class ? { rejectionCategory: query.class } : {}),
     });
     return { items: result.items, nextCursor: result.nextCursor };
+  }
+
+  /** POST — repair (re-offer) a posting dead-letter (US2). Idempotent (O-3). */
+  @Post("api/v1/catalog/erpnext-reconciliation/postings/:workItemRef/repair")
+  @Idempotent("required")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Auditable("erpnext_reconciliation.posting.repaired")
+  @HttpCode(201)
+  async repairPosting(
+    @Req() request: TenantContextRequest,
+    @Param("workItemRef", new ParseUUIDPipe()) workItemRef: string,
+    @Body(new ZodValidationPipe(RepairPostingBodySchema)) _body: RepairPostingBody,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<RecordedRepair> {
+    const { tenantId, userId } = this.requireContext(request);
+    try {
+      const result = await this.service.repairPosting({
+        tenantId,
+        actorUserId: userId,
+        workItemRef,
+      });
+      if (result.replayed) {
+        // Service-level no-op echo (already-terminal/in-flight target) → 200.
+        res.setHeader("Idempotent-Replayed", "true");
+        res.status(200);
+      }
+      return result.repair;
+    } catch (err) {
+      if (err instanceof RepairNotFoundError) {
+        throw new NotFoundException({ code: "not_found", message: "Work item not found." });
+      }
+      throw err;
+    }
   }
 }
