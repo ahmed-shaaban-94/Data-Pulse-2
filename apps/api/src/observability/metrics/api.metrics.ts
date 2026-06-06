@@ -113,6 +113,10 @@ assertMetricLabels("inventory_negative_balance_total", []);
 // product/price/PII in labels; the excluded product is on the reconciliation
 // backlog, not the metric.
 assertMetricLabels("catalog_unpriced_issue_rate", []);
+// ERPNext posting domain — 015-POLISH (spec §VII). UNLABELED — the
+// (tenant, store, sale, category) lives on the erpnext_posting_status row +
+// audit, not metric labels (009/010 domain-keyed precedent).
+assertMetricLabels("erpnext_posting_reconciliation_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -205,6 +209,14 @@ const _catalogUnpricedIssue: Counter = meter.createCounter(
   {
     description:
       "Products excluded from the read-down sellable stream because the resolved price is missing / has no currency / is non-representable in the currency minor unit (010 R5/R6, FR-041/044). Unlabeled — the excluded product is recorded on the reconciliation backlog, not in metric labels (no product/price/PII).",
+  },
+);
+
+const _erpnextPostingReconciliation: Counter = meter.createCounter(
+  "erpnext_posting_reconciliation_total",
+  {
+    description:
+      "ERPNext posting rows that became permanently_rejected — the reconciliation / dead-letter flag the 017 surface drains (015 spec §VII). Emitted by connectorAckOutcome on a permanently_rejected / retry-budget-exhausted ack. Unlabeled — the (tenant, store, sale, category) lives on the erpnext_posting_status row + audit, not metric labels.",
   },
 );
 
@@ -425,6 +437,18 @@ export function recordInventoryNegativeBalance(): void {
  */
 export function recordCatalogUnpricedIssue(): void {
   _catalogUnpricedIssue.add(1);
+}
+
+/**
+ * Increment erpnext_posting_reconciliation_total (015-POLISH, spec §VII).
+ * Emission site: ErpnextPostingService.ackOutcome, once per row that becomes
+ * `permanently_rejected` (a connector permanently_rejected ack OR a
+ * retry-budget-exhausted failed_transient). Unlabeled — the affected
+ * (tenant, store, sale, category) is on the erpnext_posting_status row + audit,
+ * not metric labels. A SIGNAL — emission MUST NOT alter the ack outcome.
+ */
+export function recordErpnextPostingReconciliation(): void {
+  _erpnextPostingReconciliation.add(1);
 }
 
 // ---------------------------------------------------------------------------

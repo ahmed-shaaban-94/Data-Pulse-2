@@ -8,10 +8,35 @@
 > branch `feat/015-pos-sale-posting-mvp` (SIGNOFF → SETUP → [GATED] EVENT-TYPE +
 > SCHEMA → ISOLATION-HARNESS → US1-FEED 🎯).
 
-**Last updated:** 2026-06-06 by Ahmed Shaaban — MVP implementation started; the two `[GATED]` `packages/db` slices (015-EVENT-TYPE + 015-SCHEMA) + the new-table decision (015-SIGNOFF-STATE) owner-AUTHORIZED in-session
+**Last updated:** 2026-06-06 by Ahmed Shaaban — **015 implementation COMPLETE end-to-end.** All capability slices shipped: US1-FEED (#501) + T034 HTTP-edge (#502) + US2-ACK (#503) + US3-REVERSAL incl. US4 closeout (#504); POLISH on `feat/015-polish` (this patch).
 **Spec:** `015-pos-sale-posting-to-erpnext` (`specs/015-pos-sale-posting-to-erpnext/`)
-**Base:** `feat/015-pos-sale-posting-mvp` off `origin/main` (planning chain MERGED via #493 + #500)
-**Status:** planning chain MERGED (#493 spec, #500). **MVP (6 slices) MERGED to `main` (#501, `f1f9340`)**: SIGNOFF + SETUP + `[GATED]` EVENT-TYPE + `[GATED]` SCHEMA (0019) + ISOLATION-HARNESS + 🎯 US1-FEED (incl. code-review fixes). **T034 HTTP-edge** (controller + real `ConnectorAuthGuard` + DTO) follows on `feat/015-us1-feed-http-edge`. Remaining 015 surfaces (US2-ACK / US3-REVERSAL / US4-RESOLVE-FAIL / POLISH) after.
+**Base:** planning chain MERGED via #493 + #500; implementation off `origin/main`
+**Status:** **015 FUNCTIONALLY COMPLETE.** SIGNOFF + SETUP + `[GATED]` EVENT-TYPE + `[GATED]` SCHEMA (0019) + ISOLATION-HARNESS + 🎯 US1-FEED MERGED (#501, `f1f9340`); T034 HTTP-edge MERGED (#502, `11a8d85`); **US2-ACK MERGED (#503)** — connectorAckOutcome (posted/failed_transient-re-head/permanently_rejected + two-layer idempotency + §XII 404); **US3-REVERSAL + US4 closeout MERGED (#504)** — void/refund→reversal work-item (cross-slice 008 emit + reversalOf projection + REVERSAL-CARDINALITY) + US4 failure-posture (rider R4 no-unknown-items + disabled-Item=ack-path carve); **015-POLISH** (this branch) — §VII `erpnext_posting_reconciliation_total` in the shared api+worker metrics, report-only k6 `erpnext-posting.js`, coverage gate.
+
+### Slice ledger (all GREEN, WSL Testcontainers)
+| Slice | PR | Result |
+|---|---|---|
+| US1-FEED 🎯 | #501 | feed 5/5, consumer 5/5 |
+| T034 HTTP-edge | #502 | 11/11 |
+| US2-ACK | #503 | service 7/7 + HTTP-edge 8/8 |
+| US3-REVERSAL (+US4) | #504 | api 53/53 (3 reversal) + worker 7/7 + 008-sales 141/141 |
+| POLISH | this | signals 4/4 + cardinality 50/50; module coverage stmts 83.45 / branch 81.15 / funcs 94.73 / lines 85.12 (≥80% gate met) |
+
+> **Coverage note:** the ≥80% POLISH gate is met on every axis for the
+> erpnext-posting module (controller 85/100, service 90/89/93, projection
+> 94/83/100, DTOs 100 + 84). `erpnext-posting.module.ts` reads 0% — it is pure
+> NestJS DI wiring exercised only on a full-app boot, never in the hand-rolled
+> `Test.createTestingModule` harnesses (the same way every feature module
+> reports). The repo's *global* jest thresholds (96/90/97) apply to the full-suite
+> aggregate, not a single-feature `--coverage` run; `--coverage` is non-blocking in
+> CI (009-CI-OPT precedent).
+
+### Deferrals carried (not blockers)
+- **DLQ drain + reconciliation RUN + repair API = 017** (015 produces `permanently_rejected` rows + the `erpnext_posting_reconciliation_total` flag; the run/repair surface is a separate Spec-Kit chain). 
+- **Payment Entry** = later separately-gated arc (interim Sales-Invoice-only / outstanding-AR, rider R1).
+- **Perf report-only** — no perf env (005/008/009/010 precedent); k6 thresholds carried, not gating.
+- **The `failed_transient` re-offer is bounded** by `POSTING_RETRY_BUDGET` (DP2-side cap → `permanently_rejected` at the ceiling), closing the unbounded-retry correctness gap the contract's "bounded by a retry budget" requires.
+- The pull-time stale-map omission (a confirmed map retired between creation and pull) stays a latent edge handled safely (omit, never corrupt); flipping such stranded rows to `permanently_rejected` is 017 re-resolution work (a status write in the GET would break idempotent replay).
 
 ### T034 scope correction (the deferred HTTP-edge gap, verified 2026-06-05)
 The MVP feed spec drove the *service* directly; T034 adds the real HTTP surface. Investigation shrank T034 to **four real behaviors** — two of the originally-listed paths **do not apply to the pull endpoint** and are documented as out-of-scope, not implemented:
@@ -119,6 +144,15 @@ is the only ERPNext-calling component, behind the 012 contract (ADR 0008).
 
 ## Next recommended action
 
+**015 is functionally complete on `main` (US1–US4) + POLISH in review.** The next
+arc work is **016** (tax/fiscal — ETA passthrough is already a nullable field on the
+012 ack) and **017** (the DLQ drain + reconciliation RUN + repair API that consumes
+015's `permanently_rejected` rows + the `erpnext_posting_reconciliation_total` flag),
+each its own Spec-Kit chain. Payment Entry remains the later separately-gated arc
+(DP2 tender model → 012 payment extension → connector PE → payment repair).
+
+<details><summary>Original (planning-lane) recommended-action history</summary>
+
 015's spec is authored (planning lane complete). **Prerequisites 1–3 below are
 now SATISFIED on `main` (verified 2026-06-05)** — the next live work is the
 `erpnext.posting.requested` event-type (4) and then 015's own Spec-Kit chain (5).
@@ -144,9 +178,11 @@ The implementation arc, in order:
    → connector idempotent Payment Entry → payment repair semantics →
    **Payment Entry posting** (completing the signed target).
 
+</details>
+
 ---
 
-## Closeout note (docs-only)
+## Closeout note (docs-only — planning slice #493)
 
 No application code, DB schema/migration, OpenAPI YAML (incl. `posting-feed.yaml`),
 `package.json`/lockfile, CI, connector, POS, or Console file changed. **No runtime

@@ -21,6 +21,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { PG_POOL } from "../../auth/auth.module";
 import { runWithTenantContext } from "@data-pulse-2/db";
+import { recordErpnextPostingReconciliation } from "../../observability/metrics/api.metrics";
 import {
   buildWorkItem,
   type PostingWorkItem,
@@ -374,6 +375,9 @@ export class ErpnextPostingService {
         RETURNING updated_at`,
       [workItemRef, category],
     );
+    // §VII reconciliation / DLQ signal — a posting row just dead-lettered. A
+    // SIGNAL: it never alters the ack outcome (the row is already updated above).
+    recordErpnextPostingReconciliation();
     return {
       workItemRef,
       outcome: "permanently_rejected",

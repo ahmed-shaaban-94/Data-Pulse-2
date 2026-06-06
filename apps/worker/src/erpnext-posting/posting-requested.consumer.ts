@@ -36,6 +36,8 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId, type OutboxConsumer, type OutboxEventEnvelope } from "@data-pulse-2/shared";
 import type { Pool, PoolClient } from "pg";
 
+import { recordErpnextPostingReconciliation } from "../observability/metrics/worker.metrics";
+
 // ---------------------------------------------------------------------------
 // Payload schema — IDs + provenance only (no PII / money)
 // ---------------------------------------------------------------------------
@@ -90,8 +92,10 @@ export class PostingRequestedConsumer
         });
 
         // Conflict-safe insert (O-3 unique on (tenant_id, source_ref_id)): a
-        // re-delivery is a no-op; the first verdict stands.
-        await client.query(
+        // re-delivery is a no-op; the first verdict stands. RETURNING id tells
+        // us whether THIS call inserted (vs a no-op re-delivery) so the §VII
+        // reconciliation signal fires exactly once per dead-lettered row.
+        const inserted = await client.query<{ id: string }>(
           `INSERT INTO erpnext_posting_status
              (id, tenant_id, store_id, sale_id, kind, source_ref_id,
               source_system, external_id, payload_hash, status,
@@ -100,7 +104,8 @@ export class PostingRequestedConsumer
                   s.source_system, s.external_id, s.payload_hash, $7, $8, $9
              FROM sales s
             WHERE s.id = $4 AND s.store_id = $3
-           ON CONFLICT (tenant_id, source_ref_id) DO NOTHING`,
+           ON CONFLICT (tenant_id, source_ref_id) DO NOTHING
+           RETURNING id`,
           [
             newId(),
             tenantId,
@@ -115,6 +120,17 @@ export class PostingRequestedConsumer
             event.correlation_id,
           ],
         );
+
+        // §VII reconciliation / DLQ signal — a posting dead-lettered at
+        // 015-RESOLVE creation time. Fires only on a FRESH insert of a
+        // permanently_rejected row (rowCount > 0), so a re-delivery no-op does
+        // not double-count. A SIGNAL: never alters the insert outcome.
+        if (
+          (inserted.rowCount ?? 0) > 0 &&
+          verdict.status === "permanently_rejected"
+        ) {
+          recordErpnextPostingReconciliation();
+        }
       },
     );
   }

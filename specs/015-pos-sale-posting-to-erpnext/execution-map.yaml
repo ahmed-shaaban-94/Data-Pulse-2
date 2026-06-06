@@ -334,7 +334,7 @@ slices:
   - id: 015-US3-REVERSAL
     task_ids: [T050, T051, T052]
     type: feat
-    status: in_review   # built on feat/015-us3-reversal; cross-slice 008 reversal emit + projection reversalOf + worker cardinality. 53/53 api + 7/7 worker GREEN WSL-TC. 008 sales suite 141/141 (no regression).
+    status: merged   # PR #504 (2bb6545) — cross-slice 008 reversal emit + projection reversalOf + worker cardinality. 53/53 api + 7/7 worker + 141/141 008-sales GREEN WSL-TC.
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:
@@ -373,7 +373,7 @@ slices:
     # unknown-items queue" + the disabled-Item = ack-path-not-DP2-resolve carve)
     # ride in with US3 (feat/015-us3-reversal). T061's "projection.ts" target is
     # superseded by the shipped design (resolve lives in the consumer).
-    status: in_review   # folded into feat/015-us3-reversal (worker consumer spec)
+    status: merged   # folded into US3 (PR #504, worker consumer spec) — no separate slice
     approval_required: false
     depends_on: [015-US1-FEED]
     blocks:
@@ -408,7 +408,17 @@ slices:
   - id: 015-POLISH
     task_ids: [T090, T091, T092]
     type: chore
-    status: blocked
+    # erpnext_posting_reconciliation_total (§VII reconciliation / DLQ flag)
+    # registered in the SHARED api.metrics.ts + worker.metrics.ts (NOT a
+    # per-feature file) + ALLOWED_METRIC_LABELS + the cardinality drift list,
+    # emitted on every permanently_rejected transition (ack path + creation-time
+    # 015-RESOLVE rejection); unlabeled (no tenant/store/sale/category). DLQ-depth
+    # / queue-lag / failed-job-rate are already covered generically by the
+    # outbox_*{event_type} + queue_*{queue} signals (fire for erpnext.posting.requested
+    # too). Report-only k6 loadtests/k6/erpnext-posting.js (thresholds carried,
+    # not gating — no perf env, 005/008/009/010 precedent). Coverage gate via the
+    # validation command.
+    status: in_review   # built on feat/015-polish
     approval_required: false
     depends_on: [015-US2-ACK, 015-US3-REVERSAL, 015-US4-RESOLVE-FAIL]
     blocks: []

@@ -162,6 +162,13 @@ assertMetricLabels("outbox_pending_total", ["event_type"]);
 assertMetricLabels("outbox_dead_letter_total", ["event_type"]);
 assertMetricLabels("outbox_drain_duration_seconds", ["event_type"]);
 
+// ERPNext posting domain — 015-POLISH (spec §VII). The SAME family the api side
+// registers (api.metrics.ts): a posting row that dead-letters at 015-RESOLVE
+// creation time (unmapped_item / unmapped_store) increments it here, mirroring
+// the connectorAckOutcome emission on the api side. UNLABELED — the affected
+// (tenant, store, sale, category) lives on the erpnext_posting_status row + audit.
+assertMetricLabels("erpnext_posting_reconciliation_total", []);
+
 // ---------------------------------------------------------------------------
 // Instruments
 // ---------------------------------------------------------------------------
@@ -272,6 +279,20 @@ const _outboxDrainDuration: Histogram = meter.createHistogram(
       "Outbox per-row drain duration in seconds, labelled by event_type. " +
       "Wall-clock from claim-dispatch to consumer return (success or failure).",
     unit: "s",
+  },
+);
+
+// ERPNext posting domain — 015-POLISH (spec §VII). Same family name as the api
+// side; emitted by PostingRequestedConsumer when 015-RESOLVE rejects a posting
+// at creation (unmapped_item / unmapped_store → permanently_rejected).
+const _erpnextPostingReconciliation: Counter = meter.createCounter(
+  "erpnext_posting_reconciliation_total",
+  {
+    description:
+      "ERPNext posting rows that became permanently_rejected at 015-RESOLVE " +
+      "creation time (unmapped_item / unmapped_store). The reconciliation / " +
+      "dead-letter flag the 017 surface drains. Unlabeled — the affected " +
+      "(tenant, store, sale, category) lives on the erpnext_posting_status row.",
   },
 );
 
@@ -458,6 +479,18 @@ export function recordOutboxDrainDuration(
   durationSeconds: number,
 ): void {
   _outboxDrainDuration.record(durationSeconds, attrs as unknown as Attributes);
+}
+
+/**
+ * Increment erpnext_posting_reconciliation_total (015-POLISH, spec §VII).
+ * Emission site: PostingRequestedConsumer.handle — once per posting row that
+ * 015-RESOLVE rejects at creation (unmapped_item / unmapped_store →
+ * permanently_rejected). Unlabeled — the affected (tenant, store, sale,
+ * category) lives on the erpnext_posting_status row + audit, not metric labels.
+ * A SIGNAL: emission MUST NOT alter the consumer's insert outcome.
+ */
+export function recordErpnextPostingReconciliation(): void {
+  _erpnextPostingReconciliation.add(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -852,6 +885,9 @@ export const WORKER_METRIC_NAMES = [
   // WorkerModule's OutboxPendingGaugeRegistrar against AuditDbPool on
   // Nest init.
   "outbox_pending_total",
+  // 015-POLISH (spec §VII): posting reconciliation / DLQ flag, emitted by
+  // PostingRequestedConsumer on a 015-RESOLVE creation-time rejection.
+  "erpnext_posting_reconciliation_total",
 ] as const satisfies readonly string[];
 
 export type WorkerMetricName = (typeof WORKER_METRIC_NAMES)[number];
