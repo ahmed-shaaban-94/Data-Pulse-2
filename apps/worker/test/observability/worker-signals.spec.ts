@@ -83,6 +83,9 @@ describe("T465 — signal presence: every worker metric is in ALLOWED_METRIC_LAB
       "outbox_drain_duration_seconds",
       // T595 PR-B-2: ObservableGauge with scrape-time addCallback
       "outbox_pending_total",
+      // 015-POLISH: posting reconciliation / DLQ flag, emitted by the worker
+      // PostingRequestedConsumer on a 015-RESOLVE creation-time rejection.
+      "erpnext_posting_reconciliation_total",
     ];
     expect([...WORKER_METRIC_NAMES].sort()).toEqual([...expected].sort());
   });
