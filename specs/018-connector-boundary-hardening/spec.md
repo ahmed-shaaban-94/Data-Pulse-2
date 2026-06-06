@@ -14,6 +14,14 @@ The ERPNext Connector is no longer theoretical: it is a real, deployed applicati
 
 Today the boundary works but is too loose for pilot operations: a connector authenticates with a generic, unconstrained machine credential; there is no formal way to register a connector instance, no operator-safe way to issue / rotate / revoke its credential, no stable identity for *which* connector instance is calling, and no written boundary fixing which future capabilities belong to the platform versus the connector. This feature hardens that boundary so a tenant connector can be operated safely in a pilot.
 
+## Clarifications
+
+### Session 2026-06-06
+
+- Q: Should one tenant be prevented from registering the same ERPNext site reference twice within the same environment? → A: Enforce uniqueness on (tenant, environment, ERPNext site reference) — duplicate registration is rejected with a clear error. (resolves Open Question 1)
+- Q: What default expiry should an issued connector credential carry? → A: A bounded default of 90 days, operator-overridable at issue up to a maximum ceiling; a credential can never be minted without a bounded expiry.
+- Q: Should connector credential/registration lifecycle actions emit an operational signal beyond the audit record? → A: Yes — an unlabeled counter for lifecycle actions (issue/rotate/revoke/disable) on the shared platform metrics surface; no per-instance/tenant/secret labels (cardinality + data-class discipline), mirroring the existing posting/reconciliation signal pattern.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Register a connector instance and issue its first credential (Priority: P1) 🎯 MVP
@@ -107,6 +115,7 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **FR-003**: The connector instance identity MUST be stable across credential rotation — rotating the secret MUST NOT change the instance identity that operators, audits, and future capabilities refer to.
 - **FR-004**: The system MUST let a tenant administrator list their tenant's connector instances and view each instance's identity and status. Listings MUST NOT expose any secret.
 - **FR-005**: A connector instance MUST belong to exactly one tenant and MUST be visible only within that tenant's scope.
+- **FR-005a**: The system MUST enforce that a tenant cannot register the same ERPNext site reference more than once within the same environment — registration MUST be unique on (tenant, environment, ERPNext site reference), and a duplicate registration MUST be rejected with a clear error (not silently accepted).
 
 **Credential lifecycle**
 
@@ -116,7 +125,7 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **FR-009**: If issuing the replacement credential during rotation fails, the system MUST leave the previous credential active (no lockout, no partial rotation).
 - **FR-010**: The system MUST guarantee that a connector instance has at most one active (non-revoked) credential at any time.
 - **FR-011**: The system MUST let a tenant administrator revoke a specific credential, after which it is rejected on connector endpoints while the connector instance identity remains registered.
-- **FR-012**: Credentials MUST carry an expiry; an expired credential MUST be rejected on connector endpoints regardless of revocation state.
+- **FR-012**: Credentials MUST carry an expiry; an expired credential MUST be rejected on connector endpoints regardless of revocation state. A credential MUST NOT be issuable without a bounded expiry: the default expiry is 90 days, an administrator MAY override it at issue time, and the override MUST NOT exceed a maximum ceiling (so a credential can never be minted effectively-immortal).
 
 **Instance disable**
 
@@ -136,6 +145,7 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **FR-020**: The system MUST record auditable evidence for every lifecycle action — instance registered, instance disabled, credential issued, credential rotated, credential revoked — capturing the acting administrator, the instance, and the credential, but never the raw secret.
 - **FR-021**: The system MUST NOT log raw credential secrets anywhere; the only place a raw secret appears is the one-time issue/rotation response.
 - **FR-022**: The connector credentialing surface MUST NOT carry customer-identifying (PII) or monetary data.
+- **FR-022a**: The system MUST emit an operational signal (an unlabeled counter) for connector lifecycle actions — credential issued / rotated / revoked and instance registered / disabled — on the platform's shared metrics surface, for operational visibility. The signal MUST NOT carry per-instance, per-tenant, or secret-bearing labels (cardinality and data-class discipline). This is in addition to, not a replacement for, the audit evidence in FR-020.
 
 **Boundary of record**
 
@@ -166,6 +176,9 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **SC-006**: Disabling a connector instance blocks all its credentials on the next request while deleting no records.
 - **SC-007**: Every lifecycle action produces audit evidence, and no raw secret appears in any audit record or log.
 - **SC-008**: A reader can determine, from the boundary document alone, how a connector authenticates, what a replayed acknowledgement does, and which future spec owns the live stock view versus the health/status capability.
+- **SC-009**: Registering a connector instance for an (environment, ERPNext site reference) pair that the tenant has already registered in that environment is rejected with a clear error, 100% of the time.
+- **SC-010**: Every issued credential has a bounded expiry (default 90 days, never exceeding the maximum ceiling), verified across default and operator-overridden issuance.
+- **SC-011**: Every lifecycle action increments the operational lifecycle counter, and the counter exposes no per-instance, per-tenant, or secret-bearing label.
 
 ## Assumptions
 
@@ -189,8 +202,15 @@ A tenant administrator, an auditor, and the connector team can read a single doc
 - **029 — scheduled reconciliation**.
 - **Connector-repository counterpart spec** (consumes this boundary).
 
-## Open Questions (carried to planning)
+## Open Questions
 
-1. **Per-environment site uniqueness**: should one tenant be prevented from registering the same ERPNext site reference twice within the same environment? Default for v1: **not enforced** unless the owner confirms the constraint. (Scope/UX impact — informed default exists, so not a blocker.)
-2. **Administrative surface form**: whether credential/registration management is exposed as platform administrative endpoints or an operator tool is a planning-time decision; if it introduces a new external contract surface, it requires explicit gated approval before authoring.
-3. **Legacy credential handling**: the exact handling of any pre-existing connector credentials (backfill a legacy instance vs. document and defer the tightening rule) depends on a preflight inspection of existing data; stray or legacy records are a stop-and-raise for an owner decision, never an automatic normalization.
+**Resolved in clarification (Session 2026-06-06):**
+
+1. ~~**Per-environment site uniqueness**~~ — **RESOLVED: enforced** on (tenant, environment, ERPNext site reference); duplicate registration rejected with a clear error (FR-005a, SC-009).
+2. ~~**Credential default expiry**~~ — **RESOLVED: 90-day default**, operator-overridable up to a maximum ceiling, never unbounded (FR-012, SC-010).
+3. ~~**Lifecycle observability**~~ — **RESOLVED: an unlabeled lifecycle counter** on the shared metrics surface, in addition to audit (FR-022a, SC-011).
+
+**Still carried to planning (genuinely plan-time / preflight-dependent):**
+
+4. **Administrative surface form**: whether credential/registration management is exposed as platform administrative endpoints or an operator tool is a planning-time decision; if it introduces a new external contract surface, it requires explicit gated approval before authoring.
+5. **Legacy credential handling**: the exact handling of any pre-existing connector credentials (backfill a legacy instance vs. document and defer the tightening rule) depends on a preflight inspection of existing data; stray or legacy records are a stop-and-raise for an owner decision, never an automatic normalization.

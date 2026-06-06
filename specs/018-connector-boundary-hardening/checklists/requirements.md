@@ -39,6 +39,13 @@
 
 ## Result
 
-All items pass on iteration 1. Spec is ready for `/speckit-clarify` (optional — open questions already have defaults) or `/speckit-plan`.
+All items pass on iteration 1. Spec is ready for `/speckit-plan`.
 
-The three carried open questions are scope/security decisions with documented v1 defaults; they can be resolved at `/speckit-clarify` or deferred into `/speckit-plan` (where the gated thresholds are surfaced for approval anyway). None blocks planning.
+## Clarification (Session 2026-06-06)
+
+`/speckit-clarify` run; 3 questions asked + answered (recommended option accepted for all):
+- Site uniqueness → ENFORCED on (tenant, environment, ERPNext site ref) — FR-005a, SC-009.
+- Credential expiry → 90-day default, operator-overridable up to a max ceiling, never unbounded — FR-012, SC-010.
+- Lifecycle observability → unlabeled lifecycle counter on the shared metrics surface, in addition to audit — FR-022a, SC-011.
+
+Two open questions remain CARRIED to planning (genuinely plan-time / preflight-dependent, not blockers): administrative surface form (REST-gated vs CLI), legacy-credential handling (preflight stop-and-raise). All checklist items remain PASS after integration.
