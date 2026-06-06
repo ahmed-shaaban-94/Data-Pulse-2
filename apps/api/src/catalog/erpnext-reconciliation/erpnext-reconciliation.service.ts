@@ -15,7 +15,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
-import { runWithTenantContext } from "@data-pulse-2/db";
+import { emit, OUTBOX_EVENT_TYPES, runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../../auth/auth.module";
@@ -339,11 +339,18 @@ export class ErpnextReconciliationService {
 
   /**
    * Trigger an on-demand stock reconciliation run (US3). Creates the run row
-   * (`status='running'`) + a platform `audit_events` row in one transaction, and
-   * returns it. It does NOT enqueue/emit — the live trigger→queue→processor
-   * wiring (an outbox event-type / a BullMQ queue) touches gated/cross-cutting
-   * files outside US3's approved scope and is a DEFERRED slice; until it lands a
-   * triggered run stays `running` (the processor is invoked directly in tests).
+   * (`status='running'`), a platform `audit_events` row, AND emits an
+   * `erpnext.reconciliation.requested` outbox event — all in ONE transaction
+   * (017-RECON-WIRING). The worker-side `ReconciliationRequestedConsumer` drains
+   * the event and invokes `ReconciliationRunProcessor`, advancing the run
+   * `running → completed`. The emit is ATOMIC with the run insert: if the
+   * transaction rolls back, neither the run nor the event persists, so there is
+   * never an orphaned `running` row with no event to drive it (nor an event for
+   * a run that never committed).
+   *
+   * The emit makes the DP2-INTERNAL loop live; it does NOT make the cross-system
+   * connector→ERPNext-Bin read live (the consumer wires `EMPTY_BIN_VIEW` — the
+   * stub-tolerant seam; the live read is the future [GATED] 017-STOCK-VIEW-CONTRACT).
    * The target store must resolve in the tenant scope (RLS); else StoreNotFoundError.
    */
   async triggerRun(input: TriggerRunInput): Promise<ReconciliationRunBody> {
@@ -370,6 +377,15 @@ export class ErpnextReconciliationService {
           targetType: "erpnext_reconciliation_run",
           targetId: runId,
           metadata: { store_id: input.storeId },
+        });
+        // 017-RECON-WIRING: emit in-transaction (atomic with the run insert).
+        // Payload = IDs + provenance only (no money / PII). The envelope tenant
+        // is authoritative on the consumer side.
+        await emit(client, {
+          eventType: OUTBOX_EVENT_TYPES.ERPNEXT_RECONCILIATION_REQUESTED,
+          tenantId: input.tenantId,
+          storeId: input.storeId,
+          payload: { run_id: runId, store_id: input.storeId },
         });
         return toRunBody(row.rows[0]!);
       },

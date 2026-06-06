@@ -25,7 +25,7 @@
 | POLISH | — | `erpnext_reconciliation_repair_total` (shared); report-only k6; coverage; this reconcile |
 
 ### Deferrals carried (not blockers)
-- **Live trigger→queue→processor wiring** — the `ReconciliationRunProcessor` is a directly-invokable class (the 015 consumer precedent); the live wiring (an outbox event-type in the `[GATED]` `packages/db` registry, or a BullMQ queue in `worker.module`) is OUT of US3's approved scope → a **separate deferred slice**. **In production-without-wiring a triggered run stays `running`** until that slice lands (NOT claimed live end-to-end).
+- **~~Live trigger→queue→processor wiring~~ — RESOLVED 2026-06-06 (`017-RECON-WIRING`).** The wiring shipped via the outbox path (Option A): `erpnext.reconciliation.requested` registered in the `[GATED]` `packages/db` `OUTBOX_EVENT_TYPES`; `triggerRun` emits it **in-transaction** (atomic with the run insert); the new `ReconciliationRequestedConsumer` (registered in `drainerProcessorProviderFactory` alongside the 015 consumer) invokes `ReconciliationRunProcessor`. **A triggered run now advances `running → completed` DP2-internally** over `EMPTY_BIN_VIEW` (stub-tolerant) — no connector/ERPNext call. See [`followup-reconciliation-wiring.md`](./followup-reconciliation-wiring.md).
 - **`repairStock` is a state-transition + audit, NOT an ERPNext mutation** — DP2 makes no outbound HTTP and the connector isn't built; `result_state='repaired'` = operator acknowledged+initiated, the actual fix is the 014 admin re-map / connector re_sync when it ships.
 - **Live ERPNext-Bin read** — v1 ships the stub-tolerant seam (R3); the live connector→DP2 view contract is `017-STOCK-VIEW-CONTRACT` (future `[GATED]`).
 - **Scheduled runs** — v1 is on-demand (R5); scheduling is later wiring over the same processor.
@@ -263,8 +263,8 @@ wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker te
 - **Evidence to collect:** classified results per 014 vocabulary (unmapped store → `unmapped_store`, never a guessed warehouse); the 009 ledger + 008 sale fact unchanged before/after the run; suite counts (expect US3 8/8).
 - **Pass/fail:** 🟢 PASS = run + API specs green via the directly-invoked processor + correct classification + ledger/sale-fact unchanged. **FAIL** on a ledger mutation or a guessed warehouse.
 - **✅ RUN+GREEN (2026-06-06):** worker 4/4 (`reconciliation-run`, directly-invoked, `WORKER_INCLUDE_DB_TESTS=1`) + api 12/12 (`stock-run-api` + `stock-service-branches`) = **16/16 across 3 suites**, WSL Testcontainers. **🔶 live Bin read + live triggered run remain deferred + unrun** (processor not wired into `worker.module.ts`).
-- **🔶 Cross-system live leg (the current limit):** a **live ERPNext-Bin read** through the connector + a **live triggered run** (trigger → queue → processor). Both are **deferred** (Deferrals lines 28, 30): `reconciliation-run.processor.ts` is **NOT wired into `apps/worker/src/worker.module.ts`** (verified 2026-06-06), and the live Bin read needs the future `[GATED]` `017-STOCK-VIEW-CONTRACT`. **A triggered run in production-without-wiring stays `running`** — do not claim a live run.
-- **Stop conditions:** **do NOT implement the worker wiring or the Bin-read contract** — both are forbidden production-code surfaces here. In-repo evidence is the **directly-invoked processor only**. Scheduled runs (`017-SCHEDULED-RUNS`) are likewise deferred (Deferrals line 31).
+- **🔶 Cross-system live leg (the current limit):** a **live ERPNext-Bin read** through the connector. The **live triggered run** (trigger → outbox → processor) is **NO LONGER deferred** — `017-RECON-WIRING` (2026-06-06) wired it: `triggerRun` emits `erpnext.reconciliation.requested` in-tx and `ReconciliationRequestedConsumer` (registered in `drainerProcessorProviderFactory`) advances the run `running → completed`. The remaining 🔶 limit is purely the **live Bin read** (future `[GATED]` `017-STOCK-VIEW-CONTRACT`); the wired run uses `EMPTY_BIN_VIEW`, so live runs class confirmed items as `dp2_only` until the connector reports.
+- **Stop conditions:** the worker wiring is now SHIPPED (`017-RECON-WIRING`). The **Bin-read contract** remains a forbidden/future surface — do NOT implement it here. Scheduled runs (`017-SCHEDULED-RUNS`) are likewise still deferred.
 
 ---
 
@@ -272,7 +272,7 @@ wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker te
 
 | Deferred | Owning slice | Why it cannot be verified live here |
 |---|---|---|
-| Live trigger → queue → processor wiring | `017-` follow-up (not specced) | `reconciliation-run.processor.ts` absent from `worker.module.ts`; triggered run stays `running`. |
+| ~~Live trigger → queue → processor wiring~~ **RESOLVED** | `017-RECON-WIRING` (shipped 2026-06-06) | Outbox path: in-tx emit + `ReconciliationRequestedConsumer`; triggered run now advances `running → completed` DP2-internally. |
 | Live ERPNext-Bin read | `017-STOCK-VIEW-CONTRACT` (future `[GATED]`) | Connector→DP2 view contract not authored; v1 is stub-tolerant. |
 | Scheduled reconciliation runs | `017-SCHEDULED-RUNS` (proposed) | v1 is on-demand (R5); scheduling is later wiring over the same processor. |
 | Perf assertions | report-only (k6) | No perf env (005/008/009/010/015 precedent). `loadtests/k6/erpnext-posting.js` + `loadtests/k6/erpnext-reconciliation.js` ready; thresholds carried, not gating. |

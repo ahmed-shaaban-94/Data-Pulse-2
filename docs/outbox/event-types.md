@@ -76,6 +76,18 @@ The payload is JSONB on the wire (within the `outbox_events.payload` column). Pe
 - A regression in audit delivery is observable: missing audit rows would surface in cross-tenant sweep tests and in the audit-relevant retention queries.
 - Choosing audit first means **no new business surface** is exposed to a brand-new mechanism — we change the wire under a known-good consumer.
 
+### 2.4 Registered event types (live registry — single source of truth: `packages/db/src/outbox/producer.ts` `OUTBOX_EVENT_TYPES`)
+
+Types registered since the first slice, each via its own approval PR (§1.1). The `OUTBOX_EVENT_TYPES` const + its drift test (`packages/db/__tests__/outbox/event-types-registry.spec.ts`) are the enforced source of truth; this table is the human-readable mirror (backfilled for completeness).
+
+| Event type | Feature | Producer | Consumer | Payload (IDs/provenance only — no money/PII) |
+|---|---|---|---|---|
+| `audit.event.created` | 004 | `AuditEmitter` (api) | `audit-event-created.consumer` (worker) | audit envelope |
+| `inventory.movement.created` | 009 (#465) | stock-movement write paths (api/worker) | downstream consumers | movement IDs |
+| `sale.captured` | 008 (DP-008-LIVELOOP) | `captureSale` in-tx (api) | `SaleCapturedConsumer` → sale-processing queue | saleId / storeId |
+| `erpnext.posting.requested` | 015 | `SaleProcessingProcessor` in-tx (worker) | `PostingRequestedConsumer` → `erpnext_posting_status` | saleId / storeId / kind / source_ref_id |
+| `erpnext.reconciliation.requested` | 017-RECON-WIRING | `triggerRun` in-tx (api) | `ReconciliationRequestedConsumer` → `ReconciliationRunProcessor` | run_id / store_id |
+
 ---
 
 ## 3. Out-of-scope event types

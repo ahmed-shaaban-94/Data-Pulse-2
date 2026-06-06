@@ -68,12 +68,22 @@ import { runWithTenantContext, type TenantContext } from "../middleware/tenant-c
  *     sourceSystem / externalId / kind) — no PII / no money / no line amounts;
  *     the posting work-item is projected lazily on pull (012 feed). Mirrors the
  *     `sale.captured` registration shape.
+ *   - `erpnext.reconciliation.requested` (017-RECON-WIRING): emitted in-
+ *     transaction by the api-side `triggerRun` when an on-demand stock
+ *     reconciliation run is created (`erpnext_reconciliation_run` row,
+ *     `status='running'`, migration 0020), so the worker-side
+ *     `ReconciliationRequestedConsumer` invokes `ReconciliationRunProcessor`
+ *     and advances the run `running → completed`. The payload carries IDs +
+ *     provenance only (runId / storeId) — no PII / no money. Mirrors the
+ *     `erpnext.posting.requested` registration shape; the processor's terminal
+ *     write is guarded so at-least-once redelivery is an idempotent no-op.
  */
 export const OUTBOX_EVENT_TYPES = {
   AUDIT_EVENT_CREATED: "audit.event.created",
   INVENTORY_MOVEMENT_CREATED: "inventory.movement.created",
   SALE_CAPTURED: "sale.captured",
   ERPNEXT_POSTING_REQUESTED: "erpnext.posting.requested",
+  ERPNEXT_RECONCILIATION_REQUESTED: "erpnext.reconciliation.requested",
 } as const;
 
 export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];
