@@ -117,6 +117,9 @@ assertMetricLabels("catalog_unpriced_issue_rate", []);
 // (tenant, store, sale, category) lives on the erpnext_posting_status row +
 // audit, not metric labels (009/010 domain-keyed precedent).
 assertMetricLabels("erpnext_posting_reconciliation_total", []);
+// ERPNext reconciliation/repair domain — 017-POLISH (spec §VII). UNLABELED — the
+// (tenant, store, target, outcome) lives on the repair_attempt row + audit_events.
+assertMetricLabels("erpnext_reconciliation_repair_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -209,6 +212,14 @@ const _catalogUnpricedIssue: Counter = meter.createCounter(
   {
     description:
       "Products excluded from the read-down sellable stream because the resolved price is missing / has no currency / is non-representable in the currency minor unit (010 R5/R6, FR-041/044). Unlabeled — the excluded product is recorded on the reconciliation backlog, not in metric labels (no product/price/PII).",
+  },
+);
+
+const _erpnextReconciliationRepair: Counter = meter.createCounter(
+  "erpnext_reconciliation_repair_total",
+  {
+    description:
+      "Operator repair actions recorded by 017 (a posting re-offer OR a stock re-map/re-sync) — the REPAIR side of run -> report -> repair (017 spec §VII). Emitted by repairPosting + repairStock. Unlabeled — the (tenant, store, target, outcome) lives on the erpnext_reconciliation_repair_attempt row + audit_events, not metric labels.",
   },
 );
 
@@ -449,6 +460,17 @@ export function recordCatalogUnpricedIssue(): void {
  */
 export function recordErpnextPostingReconciliation(): void {
   _erpnextPostingReconciliation.add(1);
+}
+
+/**
+ * Increment erpnext_reconciliation_repair_total (017-POLISH, spec §VII).
+ * Emission site: ErpnextReconciliationService.repairPosting + repairStock, once
+ * per recorded repair action. Unlabeled — the (tenant, store, target, outcome)
+ * is on the erpnext_reconciliation_repair_attempt row + audit_events, not metric
+ * labels. A SIGNAL — emission MUST NOT alter the repair outcome.
+ */
+export function recordErpnextReconciliationRepair(): void {
+  _erpnextReconciliationRepair.add(1);
 }
 
 // ---------------------------------------------------------------------------

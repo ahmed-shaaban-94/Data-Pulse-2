@@ -19,6 +19,7 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../../auth/auth.module";
+import { recordErpnextReconciliationRepair } from "../../observability/metrics/api.metrics";
 import {
   toBacklogItem,
   type PostingBacklogItem,
@@ -317,6 +318,8 @@ export class ErpnextReconciliationService {
       targetId: input.workItemRef,
       metadata: { outcome, repair_kind: "re_post" },
     });
+    // §VII repair signal — a SIGNAL, never alters the outcome (the row is written above).
+    recordErpnextReconciliationRepair();
     return {
       replayed,
       repair: {
@@ -481,6 +484,7 @@ export class ErpnextReconciliationService {
           targetId: input.resultId,
           metadata: { repair_kind: input.repairKind },
         });
+        recordErpnextReconciliationRepair();
         return {
           replayed,
           repair: {
