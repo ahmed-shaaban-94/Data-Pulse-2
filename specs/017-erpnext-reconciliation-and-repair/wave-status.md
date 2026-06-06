@@ -93,8 +93,10 @@ connector re-posts via the existing 012 feed/ack.
 
 0 critical / 0 high. Remediated: **I1** (namespace `/api/admin/v1` → the real
 `/api/v1/catalog/erpnext-reconciliation` 014 convention), **C1** (FR-014 now names
-the platform `audit_events` pipeline, audit-in-transaction with the run/repair
-state write), **C2** (SC-006 backlog-depth alerting carved as ops-config, not a DP2
+the platform `audit_events` table + requires the audit write be ATOMIC with the
+run/repair state write — via a NEW in-tx `INSERT INTO audit_events`, since the
+async `@Auditable` 013/014/015 use is post-response and `insertAuditEvent` forbids
+in-tx use), **C2** (SC-006 backlog-depth alerting carved as ops-config, not a DP2
 task), **U1** (`repair_attempt` audit vs `result_state` workflow status — both
 written atomically), **A1** (spec US3 discloses the stub-tolerant connector seam),
 **X1** (typo `toBacklogItem`). Coverage: 100% of 19 FR + 6 SC have ≥1 task.

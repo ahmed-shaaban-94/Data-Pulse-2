@@ -162,7 +162,8 @@ mutating the 009 ledger.
    classifying each line per 014's vocabulary, scoped to the tenant.
 2. **Given** an `unmapped_store` result, **When** the operator reviews it,
    **Then** the report names the missing mapping (it never guesses a warehouse —
-   rider R5) and offers a re-map repair path, not a silent default.
+   the 011-DR-POSTING rider / 015 OQ-8: never guess a warehouse for an unmapped
+   store) and offers a re-map repair path, not a silent default.
 3. **Given** a reconciliation run, **When** it reads DP2 and ERPNext views,
    **Then** the 009 stock ledger and the 008 sale fact are **never** mutated by
    the run — reconciliation is read + report + (idempotent) repair only.
@@ -217,7 +218,9 @@ mutating the 009 ledger.
   mismatch-class vocabulary (014 owns the definitions; 017 reports against them);
   017 MUST NOT invent a competing classification.
 - **FR-006**: A reconciliation run MUST NOT guess a warehouse for an unmapped
-  store — it MUST report `unmapped_store` and offer a re-map repair path (rider R5).
+  store — it MUST report `unmapped_store` and offer a re-map repair path (the
+  011-DR-POSTING rider / 015 OQ-8 "never guess a warehouse"; distinct from 017's
+  research R5, which is the on-demand-vs-scheduled decision).
 - **FR-007**: System MUST persist reconciliation reports for later review +
   audit; a report is retained (not deleted) for the operability/audit horizon.
 - **FR-008**: System MUST emit/track the dead-letter depth + reconciliation
@@ -245,14 +248,19 @@ mutating the 009 ledger.
   resolved state.
 - **FR-013**: A repair MUST NEVER mutate the originating immutable sale fact (008)
   or the 009 stock ledger — only posting/reconciliation state advances (§IX).
-- **FR-014**: System MUST record a platform **`audit_events`** entry (the 001
-  audit pipeline, in the same transaction as the state write — the 013/014/015
-  audit-in-transaction pattern) for every reconciliation run and every repair
-  action (actor, tenant, store, target reference, outcome), with no raw
-  payloads/PII. This is the audit-of-record; 017's own
-  `erpnext_reconciliation_run` / `…_repair_attempt` rows are the **operational**
-  history (the reviewable run/repair trail) — both are written atomically, never
-  one without the other.
+- **FR-014**: System MUST record a platform **`audit_events`** entry for every
+  reconciliation run and every repair action (actor, tenant, store, target
+  reference, outcome), with no raw payloads/PII. The write MUST be **atomic with
+  the state write** — a repair/run that cannot also audit rolls back.
+  **Implementation note (NOT the existing async pattern):** 013/014/015 use the
+  async `@Auditable` interceptor (a post-response BullMQ enqueue) and the
+  synchronous `insertAuditEvent` helper **forbids** use inside a transaction — so
+  neither satisfies this atomicity requirement. 017 MUST instead do a **direct
+  `INSERT INTO audit_events` on the same transaction client** as the state write
+  (a new in-transaction audit path, not a reuse of `@Auditable`/`insertAuditEvent`).
+  This is the audit-of-record; 017's own `erpnext_reconciliation_run` /
+  `…_repair_attempt` rows are the **operational** history (the reviewable
+  run/repair trail) — both written atomically, never one without the other.
 
 #### Boundary & authority
 

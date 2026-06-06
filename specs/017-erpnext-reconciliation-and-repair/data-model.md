@@ -93,13 +93,17 @@ Append-only audit of every repair action.
   the stored `document_ref` (research R1). Concurrent repairs serialize via
   `SELECT … FOR UPDATE` on the 015 row (the US2-ACK precedent).
 - **Two trails, one transaction (U1)** — a repair (and a run) writes BOTH (a) a
-  platform `audit_events` row (FR-014 — the audit-of-record, the 013/014/015
-  audit-in-transaction pattern) AND (b) 017's own operational record
-  (`repair_attempt` / `run` + `result_state` transition) **in the same
-  transaction**. `result_state` (`open→repaired/accepted`) is the *current
-  workflow status*; `repair_attempt` is the *immutable history*; `audit_events`
-  is the *platform audit*. They are never written independently — a repair that
-  cannot also audit rolls back.
+  platform `audit_events` row (FR-014 — the audit-of-record) AND (b) 017's own
+  operational record (`repair_attempt` / `run` + `result_state` transition) **in
+  the same transaction**. `result_state` (`open→repaired/accepted`) is the
+  *current workflow status*; `repair_attempt` is the *immutable history*;
+  `audit_events` is the *platform audit*. They are never written independently —
+  a repair that cannot also audit rolls back. **The audit write is a NEW
+  in-transaction path** (a direct `INSERT INTO audit_events` on the same tx
+  client) — NOT the async `@Auditable` interceptor 013/014/015 use (post-response
+  BullMQ enqueue, never in-tx) and NOT `insertAuditEvent` (which explicitly
+  forbids use inside a transaction). The atomicity requirement is real; the
+  implementation is new (review HIGH-finding correction).
 
 ---
 

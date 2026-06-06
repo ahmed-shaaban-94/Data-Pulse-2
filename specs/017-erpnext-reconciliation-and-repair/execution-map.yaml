@@ -415,7 +415,7 @@ slices:
     stop:
       - standing-rules universal stops
       - "stop if the run mutates the 009 ledger or the 008 sale fact — read + report + (idempotent) repair only (§IX, FR-013)"
-      - "stop if an unmapped store guesses a default warehouse — never guess (rider R5 / FR-006); it reports unmapped_store"
+      - "stop if an unmapped store guesses a default warehouse — never guess (011-DR-POSTING rider / 015 OQ-8 'never guess a warehouse' / FR-006); it reports unmapped_store"
       - "stop if 017 invents a mismatch class — consume 014's stock vocab + 015's posting categories; only result_state (open|repaired|accepted) is 017's own (R4)"
       - "stop if DP2 fetches ERPNext directly — the ERPNext-Bin view is a connector seam behind the 012 boundary; v1 is stub-tolerant (STOCK-VIEW-CONNECTOR-SEAM / R3)"
       - "stop if a stock repair silently overwrites either side — a re-map drives the 014 admin flow; divergence is a surfaced case, never a silent overwrite (FR-016)"

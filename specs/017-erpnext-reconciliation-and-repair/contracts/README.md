@@ -52,13 +52,16 @@ module uses that prefix), NOT `/api/connector/...` (machine), NOT `/api/pos/...`
 - **Mutation boundary**: nothing on this surface mutates the 008 sale fact or the
   009 ledger; repair transitions only 015 posting state / 017 result state (§IX).
 - **Audit (FR-014)**: every run trigger + every repair emits a platform
-  `audit_events` row **in the same transaction** as the state write (the
-  013/014/015 audit-in-transaction pattern — `@Auditable` / explicit emit), actor
-  + tenant + store + target ref + outcome, no raw payloads/PII. This is the
-  platform audit-of-record; the `erpnext_reconciliation_repair_attempt` /
-  `…_run` rows are 017's **operational** trail (the reviewable run/repair
-  history), written in the SAME transaction — both are authoritative for their
-  purpose, never one without the other (resolves analysis U1).
+  `audit_events` row **in the same transaction** as the state write (actor +
+  tenant + store + target ref + outcome, no raw payloads/PII) via a **NEW
+  in-transaction path** — a direct `INSERT INTO audit_events` on the same tx
+  client. **NOT** the async `@Auditable` interceptor 013/014/015 use (post-response
+  BullMQ enqueue, not in-tx) and **NOT** `insertAuditEvent` (forbids in-tx use) —
+  neither gives the FR-014 rollback atomicity. This is the platform
+  audit-of-record; the `erpnext_reconciliation_repair_attempt` / `…_run` rows are
+  017's **operational** trail, written in the SAME transaction — both
+  authoritative for their purpose, never one without the other (resolves analysis
+  U1; review HIGH-finding correction).
 - **Result vs attempt (U1)**: a stock-mismatch repair writes BOTH the append-only
   `repair_attempt` (audit) AND transitions `erpnext_reconciliation_result.result_state`
   `open→repaired` atomically; `result_state` is the current workflow status,
