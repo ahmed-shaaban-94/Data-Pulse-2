@@ -126,6 +126,7 @@ import { OutboxModule, OutboxDrainerRunner } from "./outbox/outbox.module";
 import { OutboxConsumerRegistry } from "./outbox/registry";
 import { DrainerProcessor } from "./outbox/drainer.processor";
 import { PostingRequestedConsumer } from "./erpnext-posting/posting-requested.consumer";
+import { ReconciliationRequestedConsumer } from "./erpnext-reconciliation/reconciliation-requested.consumer";
 import {
   OutboxRetentionProcessor,
   OUTBOX_RETENTION_REPO,
@@ -446,6 +447,13 @@ export function drainerProcessorProviderFactory(
   // consumers (audit, sale-captured) register in OutboxModule's factory; this one
   // cannot (OutboxModule cannot inject the pool — that would be a circular dep).
   registry.register(new PostingRequestedConsumer(pool));
+  // 017-RECON-WIRING: the DB-capable `erpnext.reconciliation.requested` consumer
+  // registers in the SAME seam — it holds the pool (it invokes
+  // ReconciliationRunProcessor) and must register BEFORE the drain loop starts.
+  // It wires EMPTY_BIN_VIEW (stub-tolerant; the live Bin read is the future
+  // [GATED] 017-STOCK-VIEW-CONTRACT), so a triggered run advances running →
+  // completed DP2-internally without any connector/ERPNext call.
+  registry.register(new ReconciliationRequestedConsumer(pool));
   return new DrainerProcessor({ pool, registry });
 }
 

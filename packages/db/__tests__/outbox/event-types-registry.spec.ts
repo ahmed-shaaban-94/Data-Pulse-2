@@ -31,20 +31,23 @@ import {
   type OutboxEventType,
 } from "../../src/outbox/producer";
 
-describe("outbox event-types registry: audit.event.created + inventory.movement.created + sale.captured + erpnext.posting.requested", () => {
+describe("outbox event-types registry: audit.event.created + inventory.movement.created + sale.captured + erpnext.posting.requested + erpnext.reconciliation.requested", () => {
   // Originally T599 pinned a single type (audit.event.created). 009 issue #465
   // part B added a SECOND type, inventory.movement.created. DP-008-LIVELOOP
   // adds a THIRD, sale.captured (the worker-side consumer bridges it to the
   // existing sale-processing BullMQ queue). 015 adds a FOURTH,
   // erpnext.posting.requested (a processed sale / terminal event becomes a
-  // pending erpnext_posting_status row) — this drift test is updated in
-  // lockstep with each registration, which is exactly its purpose: a new
-  // outbox type cannot land silently.
+  // pending erpnext_posting_status row). 017-RECON-WIRING adds a FIFTH,
+  // erpnext.reconciliation.requested (an on-demand stock reconciliation run is
+  // triggered → the worker-side consumer invokes ReconciliationRunProcessor) —
+  // this drift test is updated in lockstep with each registration, which is
+  // exactly its purpose: a new outbox type cannot land silently.
   const EXPECTED_EVENT_TYPES = [
     "audit.event.created",
     "inventory.movement.created",
     "sale.captured",
     "erpnext.posting.requested",
+    "erpnext.reconciliation.requested",
   ] as const;
 
   it("OUTBOX_EVENT_TYPES has exactly the expected entries", () => {
@@ -62,6 +65,9 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
     expect(OUTBOX_EVENT_TYPES.ERPNEXT_POSTING_REQUESTED).toBe(
       "erpnext.posting.requested",
     );
+    expect(OUTBOX_EVENT_TYPES.ERPNEXT_RECONCILIATION_REQUESTED).toBe(
+      "erpnext.reconciliation.requested",
+    );
   });
 
   it("the const is shape-frozen — keys are exactly the expected set", () => {
@@ -71,6 +77,7 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
         "INVENTORY_MOVEMENT_CREATED",
         "SALE_CAPTURED",
         "ERPNEXT_POSTING_REQUESTED",
+        "ERPNEXT_RECONCILIATION_REQUESTED",
       ].sort(),
     );
   });
@@ -81,6 +88,7 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
       "inventory.movement.created",
       "sale.captured",
       "erpnext.posting.requested",
+      "erpnext.reconciliation.requested",
     ];
     expect(cases).toHaveLength(EXPECTED_EVENT_TYPES.length);
   });
