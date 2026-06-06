@@ -117,11 +117,13 @@ export class ErpnextReconciliationController {
   }
 
   /** POST — repair (re-offer) a posting dead-letter (US2). Idempotent (O-3). */
+  // NO @Auditable here: the service writes the audit_events row IN-TRANSACTION
+  // (FR-014, atomic with the repair). The async @Auditable interceptor would
+  // produce a SECOND, duplicate audit row for the same action — removed.
   @Post("api/v1/catalog/erpnext-reconciliation/postings/:workItemRef/repair")
   @Idempotent("required")
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin")
-  @Auditable("erpnext_reconciliation.posting.repaired")
   @HttpCode(201)
   async repairPosting(
     @Req() request: TenantContextRequest,
@@ -153,11 +155,12 @@ export class ErpnextReconciliationController {
   // ===== US3: stock reconciliation run + report + repair ====================
 
   /** POST — trigger an on-demand stock reconciliation run (US3). Idempotent. */
+  // NO @Auditable: triggerRun writes the audit_events row IN-TRANSACTION (FR-014);
+  // the async decorator would duplicate it.
   @Post("api/v1/catalog/erpnext-reconciliation/runs")
   @Idempotent("required")
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin")
-  @Auditable("erpnext_reconciliation.run.triggered")
   @HttpCode(201)
   async triggerRun(
     @Req() request: TenantContextRequest,
@@ -224,11 +227,12 @@ export class ErpnextReconciliationController {
   }
 
   /** POST — repair an actionable stock mismatch (US3). Idempotent. */
+  // NO @Auditable: repairStock writes the audit_events row IN-TRANSACTION (FR-014);
+  // the async decorator would duplicate it.
   @Post("api/v1/catalog/erpnext-reconciliation/runs/:runId/results/:resultId/repair")
   @Idempotent("required")
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin")
-  @Auditable("erpnext_reconciliation.stock.repaired")
   @HttpCode(201)
   async repairStock(
     @Req() request: TenantContextRequest,

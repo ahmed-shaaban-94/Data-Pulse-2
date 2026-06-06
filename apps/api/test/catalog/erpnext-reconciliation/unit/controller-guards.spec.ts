@@ -65,6 +65,101 @@ describe("017 controller — auth context guards", () => {
       c.triggerRun(noCtxReq, { storeId: REF } as never),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
+
+  it("getRun with no session context → 401", async () => {
+    const c = controllerWith({});
+    await expect(c.getRun(noCtxReq, REF)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("listResults with no session context → 401", async () => {
+    const c = controllerWith({});
+    await expect(
+      c.listResults(noCtxReq, REF, { limit: 100 } as never),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("repairStock with no session context → 401", async () => {
+    const c = controllerWith({});
+    await expect(
+      c.repairStock(noCtxReq, REF, REF, { repairKind: "re_sync" } as never, res()),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it("listResults context-only path returns the service result (happy branch)", async () => {
+    const c = controllerWith({
+      listResults: jest.fn().mockResolvedValue({ items: [], nextCursor: null }),
+    });
+    await expect(c.listResults(authedReq, REF, { limit: 100 } as never)).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+    });
+  });
+
+  it("getRun context path returns the service result (happy branch)", async () => {
+    const run = { id: REF, storeId: REF, kind: "stock", trigger: "on_demand", status: "running", startedAt: "x", finishedAt: null, summary: null };
+    const c = controllerWith({ getRun: jest.fn().mockResolvedValue(run) });
+    await expect(c.getRun(authedReq, REF)).resolves.toBe(run);
+  });
+});
+
+// Exercise BOTH sides of the optional-query spreads / ternaries (the conditional
+// branches the integration specs only hit one side of): cursor present vs null,
+// limit set vs default, storeId/class filter present vs absent.
+describe("017 controller — optional-query branch coverage", () => {
+  it("listPostingBacklog with ALL filters present (cursor/limit/storeId/class)", async () => {
+    const spy = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const c = controllerWith({ listPostingBacklog: spy });
+    await c.listPostingBacklog(authedReq, {
+      cursor: "5",
+      limit: 25,
+      storeId: REF,
+      class: "unmapped_item",
+    } as never);
+    const arg = spy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg["cursor"]).toBe(5n); // BigInt(cursor) branch
+    expect(arg["limit"]).toBe(25); // limit-set branch
+    expect(arg["storeId"]).toBe(REF); // storeId-present spread
+    expect(arg["rejectionCategory"]).toBe("unmapped_item"); // class-present spread
+  });
+
+  it("listPostingBacklog with NO filters (defaults — the other branch side)", async () => {
+    const spy = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const c = controllerWith({ listPostingBacklog: spy });
+    await c.listPostingBacklog(authedReq, {} as never);
+    const arg = spy.mock.calls[0]![0] as Record<string, unknown>;
+    expect(arg["cursor"]).toBeNull(); // cursor-null branch
+    expect(arg["limit"]).toBe(100); // limit-default branch
+    expect(arg["storeId"]).toBeUndefined(); // storeId-absent spread
+    expect(arg["rejectionCategory"]).toBeUndefined(); // class-absent spread
+  });
+
+  it("listResults with class filter present vs absent (both spread sides)", async () => {
+    const spy = jest.fn().mockResolvedValue({ items: [], nextCursor: null });
+    const c = controllerWith({ listResults: spy });
+    await c.listResults(authedReq, REF, { cursor: REF, limit: 10, class: "match" } as never);
+    expect((spy.mock.calls[0]![0] as Record<string, unknown>)["mismatchClass"]).toBe("match");
+    await c.listResults(authedReq, REF, {} as never);
+    const arg2 = spy.mock.calls[1]![0] as Record<string, unknown>;
+    expect(arg2["mismatchClass"]).toBeUndefined();
+    expect(arg2["cursor"]).toBeNull();
+    expect(arg2["limit"]).toBe(100);
+  });
+
+  it("repairPosting / triggerRun happy paths return the result (201 branch, no replay)", async () => {
+    const setHeader = jest.fn();
+    const status = jest.fn();
+    const repair = { targetKind: "posting", targetRef: REF, repairKind: "re_post", outcome: "eligible_again", resolvedDocumentRef: null, recordedAt: "x" };
+    const run = { id: REF, storeId: REF, kind: "stock", trigger: "on_demand", status: "running", startedAt: "x", finishedAt: null, summary: null };
+    const c = controllerWith({
+      repairPosting: jest.fn().mockResolvedValue({ replayed: false, repair }),
+      triggerRun: jest.fn().mockResolvedValue(run),
+    });
+    await expect(
+      c.repairPosting(authedReq, REF, {} as never, { setHeader, status } as never),
+    ).resolves.toBe(repair);
+    expect(status).not.toHaveBeenCalled(); // replayed=false → no 200 override
+    await expect(c.triggerRun(authedReq, { storeId: REF } as never)).resolves.toBe(run);
+  });
 });
 
 describe("017 controller — error remap → canonical 404", () => {
@@ -117,6 +212,46 @@ describe("017 controller — error remap → canonical 404", () => {
       repairPosting: jest.fn().mockRejectedValue(boom),
     });
     await expect(c.repairPosting(authedReq, REF, {} as never, res())).rejects.toBe(boom);
+  });
+
+  it("triggerRun re-throws a NON-StoreNotFound error unchanged", async () => {
+    const boom = new Error("boom");
+    const c = controllerWith({ triggerRun: jest.fn().mockRejectedValue(boom) });
+    await expect(c.triggerRun(authedReq, { storeId: REF } as never)).rejects.toBe(boom);
+  });
+
+  it("getRun re-throws a NON-RunNotFound error unchanged", async () => {
+    const boom = new Error("boom");
+    const c = controllerWith({ getRun: jest.fn().mockRejectedValue(boom) });
+    await expect(c.getRun(authedReq, REF)).rejects.toBe(boom);
+  });
+
+  it("listResults re-throws a NON-RunNotFound error unchanged", async () => {
+    const boom = new Error("boom");
+    const c = controllerWith({ listResults: jest.fn().mockRejectedValue(boom) });
+    await expect(c.listResults(authedReq, REF, { limit: 100 } as never)).rejects.toBe(boom);
+  });
+
+  it("repairStock re-throws a NON-RunNotFound error unchanged", async () => {
+    const boom = new Error("boom");
+    const c = controllerWith({ repairStock: jest.fn().mockRejectedValue(boom) });
+    await expect(
+      c.repairStock(authedReq, REF, REF, { repairKind: "re_map" } as never, res()),
+    ).rejects.toBe(boom);
+  });
+
+  it("repairStock replayed=false → returns 201-path repair (no header)", async () => {
+    const setHeader = jest.fn();
+    const status = jest.fn();
+    const c = controllerWith({
+      repairStock: jest.fn().mockResolvedValue({
+        replayed: false,
+        repair: { targetKind: "stock", targetRef: REF, repairKind: "re_map", outcome: "eligible_again", resolvedDocumentRef: null, recordedAt: "x" },
+      }),
+    });
+    await c.repairStock(authedReq, REF, REF, { repairKind: "re_map" } as never, { setHeader, status } as never);
+    expect(setHeader).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
   });
 });
 

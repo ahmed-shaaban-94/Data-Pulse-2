@@ -177,10 +177,10 @@ export class ErpnextReconciliationService {
         );
 
         const items = rows.rows.map(toBacklogItem);
+        // limit >= 1 (clamped), so a full page (length === limit) is always
+        // non-empty — no redundant `&& length > 0` (it would be a dead branch).
         const advanced =
-          rows.rows.length === limit && rows.rows.length > 0
-            ? rows.rows[rows.rows.length - 1]!.sequence
-            : null;
+          rows.rows.length === limit ? rows.rows[rows.rows.length - 1]!.sequence : null;
         return { items, nextCursor: advanced };
       },
     );
@@ -274,7 +274,9 @@ export class ErpnextReconciliationService {
         WHERE store_id = $1 AND retired_at IS NULL`,
       [input.storeId],
     );
-    if (Number(wh.rows[0]?.count ?? "0") === 0) return false;
+    // A COUNT(*) query always returns exactly one row, so rows[0].count is never
+    // absent — no defensive `?? "0"` needed (it would be a dead branch).
+    if (Number(wh.rows[0]!.count) === 0) return false;
 
     const unmapped = await client.query<{ count: string }>(
       `SELECT count(*)::text AS count
@@ -287,7 +289,7 @@ export class ErpnextReconciliationService {
           AND (sl.tenant_product_ref IS NULL OR m.id IS NULL)`,
       [input.saleId],
     );
-    return Number(unmapped.rows[0]?.count ?? "0") === 0;
+    return Number(unmapped.rows[0]!.count) === 0;
   }
 
   /**
@@ -420,10 +422,10 @@ export class ErpnextReconciliationService {
           [input.runId, input.cursor ?? null, input.mismatchClass ?? null, limit],
         );
         const items = rows.rows.map(toResultBody);
+        // limit >= 1 (clamped), so a full page (length === limit) is always
+        // non-empty — no redundant `&& length > 0` (it would be a dead branch).
         const nextCursor =
-          rows.rows.length === limit && rows.rows.length > 0
-            ? rows.rows[rows.rows.length - 1]!.id
-            : null;
+          rows.rows.length === limit ? rows.rows[rows.rows.length - 1]!.id : null;
         return { items, nextCursor };
       },
     );

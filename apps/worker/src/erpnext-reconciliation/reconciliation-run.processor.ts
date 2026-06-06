@@ -102,7 +102,8 @@ export class ReconciliationRunProcessor {
             WHERE store_id = $1 AND retired_at IS NULL`,
           [storeId],
         );
-        if (Number(wh.rows[0]?.count ?? "0") === 0) {
+        // A COUNT(*) always returns one row — no defensive `?? "0"` (dead branch).
+        if (Number(wh.rows[0]!.count) === 0) {
           await this.insertResult(client, input.runId, input.tenantId, {
             mismatchClass: "unmapped_store",
             sourceRefId: null,

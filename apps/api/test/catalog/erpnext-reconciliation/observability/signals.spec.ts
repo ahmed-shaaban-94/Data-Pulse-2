@@ -105,4 +105,19 @@ describe("reconciliation observability — erpnext_reconciliation_repair_total (
     await svc().listPostingBacklog({ tenantId: TENANT_A, cursor: null, limit: 100 });
     expect(recordRepair).not.toHaveBeenCalled();
   });
+
+  it("a list with a non-null cursor + filters is a no-op read (exercises the cursor branch)", async () => {
+    if (skip) return;
+    // Pass a non-null cursor + store + class filter — covers the cursor.toString()
+    // + filter branches of listPostingBacklog. A high cursor returns an empty tail.
+    const page = await svc().listPostingBacklog({
+      tenantId: TENANT_A,
+      cursor: 1n,
+      limit: 50,
+      storeId: undefined,
+      rejectionCategory: "unmapped_item",
+    });
+    expect(Array.isArray(page.items)).toBe(true);
+    expect(recordRepair).not.toHaveBeenCalled();
+  });
 });

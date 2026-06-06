@@ -163,6 +163,36 @@ describe("017-US2 §2 — repair of a still-unresolvable dead-letter", () => {
   });
 });
 
+describe("017-US2 §2b — repair when the store IS mapped but a line is unmapped", () => {
+  it("reaches the unmapped-lines resolve branch → still_failing", async () => {
+    if (skip) return;
+    await resetDeadletter(0);
+    // Warehouse stays mapped (seed maps STORE_A_X). Break the ITEM side: point
+    // SALE_A_X's lines at an UNMAPPED product (no confirmed erpnext_item_map).
+    const UNMAPPED_PROD = "01900000-0000-7000-8000-0000000a7e09";
+    await env!.admin.query(
+      `INSERT INTO tenant_products (id, tenant_id, name, tax_category, created_by, updated_by)
+       VALUES ($1, $2, 'Unmapped', 'standard', $3, $3) ON CONFLICT (id) DO NOTHING`,
+      [UNMAPPED_PROD, TENANT_A, ACTOR_A],
+    );
+    await env!.admin.query(`UPDATE sale_lines SET tenant_product_ref = $1 WHERE sale_id = $2`, [
+      UNMAPPED_PROD,
+      SALE_A_X,
+    ]);
+    const res = await svc().repairPosting({
+      tenantId: TENANT_A,
+      actorUserId: ACTOR_A,
+      workItemRef: POSTING_DEADLETTER_A,
+    });
+    expect(res.repair.outcome).toBe("still_failing");
+    // Restore SALE_A_X resolvability for any later test.
+    await env!.admin.query(`UPDATE sale_lines SET tenant_product_ref = $1 WHERE sale_id = $2`, [
+      PRODUCT_A_ACTIVE,
+      SALE_A_X,
+    ]);
+  });
+});
+
 describe("017-US2 §3 — repair of an already-posted row (O-3 echo)", () => {
   it("is a no_op_echo returning the stored document_ref (no re-transition)", async () => {
     if (skip) return;
