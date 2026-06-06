@@ -36,8 +36,13 @@ export interface WorkItemLine {
   readonly lineAmount: string;
   readonly taxAmount: string | null;
   readonly unit: string;
-  /** The DP2-resolved ERPNext Item identity (required on every OFFERED line). */
-  readonly erpnextItemRef: string;
+  /**
+   * The DP2-resolved ERPNext Item identity (required on every OFFERED line). The 012
+   * `ErpnextItemRef` is an OBJECT `{ doctype: "Item", name }` (generic doctype+name addressing,
+   * O-6), NOT a bare string — `name` is the Item code. (Issue #506: this previously emitted the
+   * raw `erpnext_item_ref` string, which a conforming consumer cannot parse.)
+   */
+  readonly erpnextItemRef: { readonly doctype: "Item"; readonly name: string };
   readonly tenantProductRef: string | null;
 }
 
@@ -168,7 +173,8 @@ export async function buildWorkItem(
       lineAmount: l.line_amount,
       taxAmount: l.tax_amount,
       unit: l.unit,
-      erpnextItemRef: l.erpnext_item_ref,
+      // 012 ErpnextItemRef object shape (issue #506) — doctype fixed to "Item", name = Item code.
+      erpnextItemRef: { doctype: "Item", name: l.erpnext_item_ref },
       tenantProductRef: l.tenant_product_ref,
     });
   }
