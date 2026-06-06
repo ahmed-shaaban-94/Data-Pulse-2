@@ -1,0 +1,280 @@
+/**
+ * ConnectorRegistrationService — 018.
+ *
+ * The DP2-side connector boundary engine. US1 (this slice): register a
+ * connector instance + issue its first machine credential. US2/US3 extend it
+ * (rotate/revoke, disable). All writes run under the caller's tenant GUC via
+ * `runWithTenantContext` (tenant from the dashboard session principal, never the
+ * body — §XII); RLS scopes the rows.
+ *
+ * Credentials reuse the existing opaque-bearer primitive: `generateRawToken()` +
+ * the `auth_tokens` insert (hashed via `hashToken` inside the repository). The
+ * raw secret is returned to the caller EXACTLY ONCE and never stored in a
+ * recoverable form (FR-007). Every lifecycle action writes a platform
+ * `audit_events` row IN THE SAME TRANSACTION as the state change (FR-020, the
+ * 017 `triggerRun` precedent — NOT the async `@Auditable` path).
+ */
+import { Inject, Injectable } from "@nestjs/common";
+import { generateRawToken, hashToken } from "@data-pulse-2/auth";
+import { runWithTenantContext } from "@data-pulse-2/db";
+import { newId } from "@data-pulse-2/shared";
+import type { Pool, PoolClient } from "pg";
+
+import { PG_POOL } from "../auth/auth.module";
+import {
+  type ConnectorInstanceBody,
+  type CredentialStatusBody,
+  DEFAULT_CREDENTIAL_EXPIRY_DAYS,
+  type IssuedCredentialBody,
+  toConnectorInstance,
+} from "./dto/register-connector.dto";
+
+export interface RegisterInstanceInput {
+  readonly tenantId: string;
+  readonly actorUserId: string;
+  readonly displayName: string;
+  readonly erpnextSiteRef: string;
+  readonly environment: string;
+}
+
+export interface IssueCredentialInput {
+  readonly tenantId: string;
+  readonly actorUserId: string;
+  readonly instanceId: string;
+  readonly expiresInDays?: number;
+}
+
+/** A registration row as read back (snake_case from SQL). */
+interface RegistrationDbRow {
+  id: string;
+  display_name: string;
+  erpnext_site_ref: string;
+  environment: string;
+  created_at: Date;
+  disabled_at: Date | null;
+}
+
+type RegisterResult =
+  | { kind: "ok"; instance: ConnectorInstanceBody }
+  | { kind: "conflict" };
+
+type IssueResult =
+  | { kind: "ok"; credential: IssuedCredentialBody }
+  | { kind: "not_found" };
+
+const INSTANCE_COLS =
+  "id, display_name, erpnext_site_ref, environment, created_at, disabled_at";
+
+@Injectable()
+export class ConnectorRegistrationService {
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Register a connector instance. Duplicate (environment, erpnext_site_ref)
+   * for the tenant → conflict (FR-005a, the DB unique). Writes an in-tx audit.
+   */
+  async register(input: RegisterInstanceInput): Promise<RegisterResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<RegisterResult> => {
+        const id = newId();
+        let row: RegistrationDbRow | undefined;
+        try {
+          const res = await client.query<RegistrationDbRow>(
+            `INSERT INTO connector_registration
+               (id, tenant_id, display_name, erpnext_site_ref, environment, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             RETURNING ${INSTANCE_COLS}`,
+            [
+              id,
+              input.tenantId,
+              input.displayName,
+              input.erpnextSiteRef,
+              input.environment,
+              input.actorUserId,
+            ],
+          );
+          row = res.rows[0];
+        } catch (err) {
+          // 23505 unique_violation → the (tenant, environment, site_ref) 1:1.
+          if ((err as { code?: string }).code === "23505") {
+            return { kind: "conflict" };
+          }
+          throw err;
+        }
+        if (!row) throw new Error("register: insert returned no row");
+
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "connector.registration.created",
+          targetType: "connector_registration",
+          targetId: id,
+          metadata: { environment: input.environment },
+        });
+        return { kind: "ok", instance: toConnectorInstance(asRow(row), null) };
+      },
+    );
+  }
+
+  /** List the tenant's connector instances with active-credential status. */
+  async list(input: { tenantId: string }): Promise<ConnectorInstanceBody[]> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ConnectorInstanceBody[]> => {
+        const res = await client.query<RegistrationDbRow>(
+          `SELECT ${INSTANCE_COLS} FROM connector_registration ORDER BY created_at`,
+        );
+        const out: ConnectorInstanceBody[] = [];
+        for (const row of res.rows) {
+          const active = await this.activeCredential(client, row.id);
+          out.push(toConnectorInstance(asRow(row), active));
+        }
+        return out;
+      },
+    );
+  }
+
+  /**
+   * Issue a connector credential for a registered, non-disabled instance. The
+   * raw secret is in the result ONCE. Bounded expiry (default 90d). Issuing for
+   * an absent / cross-tenant / disabled instance → not_found (non-disclosing).
+   */
+  async issue(input: IssueCredentialInput): Promise<IssueResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<IssueResult> => {
+        // RLS scopes the row; a disabled instance is treated as not-issuable.
+        const inst = await client.query<{ id: string; disabled_at: Date | null }>(
+          `SELECT id, disabled_at FROM connector_registration WHERE id = $1`,
+          [input.instanceId],
+        );
+        const row = inst.rows[0];
+        if (!row || row.disabled_at !== null) return { kind: "not_found" };
+
+        const credential = await this.issueCredentialRow(client, {
+          tenantId: input.tenantId,
+          actorUserId: input.actorUserId,
+          instanceId: input.instanceId,
+          expiresInDays: input.expiresInDays ?? DEFAULT_CREDENTIAL_EXPIRY_DAYS,
+        });
+        await this.insertAudit(client, input.tenantId, input.actorUserId, {
+          action: "connector.credential.issued",
+          targetType: "connector_registration",
+          targetId: input.instanceId,
+          metadata: { credential_id: credential.credential_id },
+        });
+        return { kind: "ok", credential };
+      },
+    );
+  }
+
+  /**
+   * Insert one connector-scoped auth_tokens row (raw secret hashed here) and
+   * return the one-time wire shape. Shared by issue + rotate (US2).
+   */
+  private async issueCredentialRow(
+    client: PoolClient,
+    input: {
+      tenantId: string;
+      actorUserId: string;
+      instanceId: string;
+      expiresInDays: number;
+    },
+  ): Promise<IssuedCredentialBody> {
+    const rawToken = generateRawToken();
+    const credentialId = newId();
+    const res = await client.query<{ issued_at: Date; expires_at: Date }>(
+      `INSERT INTO auth_tokens
+         (id, token_hash, tenant_id, user_id, scope, expires_at, connector_registration_id)
+       VALUES ($1, $2, $3, $4, 'connector', now() + ($5 || ' days')::interval, $6)
+       RETURNING issued_at, expires_at`,
+      [
+        credentialId,
+        hashToken(rawToken),
+        input.tenantId,
+        input.actorUserId,
+        String(input.expiresInDays),
+        input.instanceId,
+      ],
+    );
+    const r = res.rows[0]!;
+    return {
+      credential_id: credentialId,
+      instance_id: input.instanceId,
+      secret: rawToken,
+      issued_at: r.issued_at.toISOString(),
+      expires_at: r.expires_at.toISOString(),
+    };
+  }
+
+  /** The instance's current active (unrevoked, unexpired) credential status, or null. */
+  private async activeCredential(
+    client: PoolClient,
+    instanceId: string,
+  ): Promise<CredentialStatusBody | null> {
+    const res = await client.query<{
+      id: string;
+      issued_at: Date;
+      expires_at: Date;
+      revoked_at: Date | null;
+    }>(
+      `SELECT id, issued_at, expires_at, revoked_at
+         FROM auth_tokens
+        WHERE connector_registration_id = $1
+          AND scope = 'connector'
+          AND revoked_at IS NULL
+        LIMIT 1`,
+      [instanceId],
+    );
+    const r = res.rows[0];
+    if (!r) return null;
+    return {
+      credential_id: r.id,
+      instance_id: instanceId,
+      issued_at: r.issued_at.toISOString(),
+      expires_at: r.expires_at.toISOString(),
+      revoked_at: r.revoked_at ? r.revoked_at.toISOString() : null,
+    };
+  }
+
+  private async insertAudit(
+    client: PoolClient,
+    tenantId: string,
+    actorUserId: string,
+    opts: {
+      action: string;
+      targetType: string;
+      targetId: string;
+      metadata: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO audit_events (id, actor_user_id, tenant_id, action, target_type, target_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        newId(),
+        actorUserId,
+        tenantId,
+        opts.action,
+        opts.targetType,
+        opts.targetId,
+        JSON.stringify(opts.metadata),
+      ],
+    );
+  }
+}
+
+/** Map a snake_case SQL row to the camelCase shape `toConnectorInstance` expects. */
+function asRow(r: RegistrationDbRow): Parameters<typeof toConnectorInstance>[0] {
+  return {
+    id: r.id,
+    displayName: r.display_name,
+    erpnextSiteRef: r.erpnext_site_ref,
+    environment: r.environment,
+    createdAt: r.created_at,
+    disabledAt: r.disabled_at,
+    // Fields not selected but present on the row type — not used by the projection.
+  } as Parameters<typeof toConnectorInstance>[0];
+}

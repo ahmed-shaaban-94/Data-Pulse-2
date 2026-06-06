@@ -10,12 +10,29 @@
  * surface; it is auth/identity and therefore lives at the api root, NOT under
  * `catalog/`.
  *
- * This is the foundational empty slice (the 015/017 SETUP precedent): no
- * controllers, providers, or routes yet — just a registered, compiling module
- * so the DI graph + build stay green. The connector-auth guard, token model,
- * and any boundary routes land in their own later slices.
+ * US1 (T044) adds the human-operator admin surface: register / list / issue,
+ * gated by `SessionOnlyAdminGuard` (human cookie session ONLY — FR-005c) +
+ * `RolesGuard` `@Roles("owner","tenant_admin")` (FR-005b) + `TenantContextGuard`.
+ * US2/US3 extend the same controller/service (rotate/revoke, disable).
+ *
+ * Imports mirror the tenant-scoped admin siblings:
+ *   - `AuthModule`    — provides `PG_POOL` + the auth primitives + the guards.
+ *   - `AuditModule`   — 018 writes a NEW in-transaction `INSERT INTO audit_events`
+ *                       for credential atomicity (FR-020), NOT the async path.
+ *   - `ContextModule` — `TenantContextGuard` (publishes `request.context`).
  */
 import { Module } from "@nestjs/common";
 
-@Module({})
+import { AuditModule } from "../audit/audit.module";
+import { AuthModule } from "../auth/auth.module";
+import { ContextModule } from "../context/context.module";
+import { ConnectorRegistrationController } from "./connector-registration.controller";
+import { ConnectorRegistrationService } from "./connector-registration.service";
+
+@Module({
+  imports: [AuthModule, AuditModule, ContextModule],
+  controllers: [ConnectorRegistrationController],
+  providers: [ConnectorRegistrationService],
+  exports: [ConnectorRegistrationService],
+})
 export class ConnectorModule {}

@@ -1,0 +1,126 @@
+/**
+ * ConnectorRegistrationController — 018-US1 (T044).
+ *
+ * The human-operator connector boundary admin surface. Authorization is TWO
+ * orthogonal guards (FR-005b + FR-005c):
+ *   - `SessionOnlyAdminGuard` — human cookie session ONLY (rejects any bearer,
+ *     incl. dashboard_api); the KIND check.
+ *   - `RolesGuard` `@Roles("owner","tenant_admin")` — the ROLE check.
+ * Plus `TenantContextGuard` to publish `request.context`. NOT `DashboardAuthGuard`
+ * (it allows dashboard_api bearers — forbidden here).
+ *
+ * Tenant + actor are resolved server-side from the session (§XII), never the
+ * body. Cross-tenant / disabled / absent addresses are non-disclosing 404s.
+ * US2 (rotate/revoke) + US3 (disable) add routes to this controller.
+ */
+import {
+  Body,
+  ConflictException,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+  Param,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from "@nestjs/common";
+import { z } from "zod";
+
+import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
+import { SessionOnlyAdminGuard } from "../auth/session-only-admin.guard";
+import { ZodValidationPipe } from "../common/zod-validation.pipe";
+import { TenantContextGuard } from "../context/tenant-context.guard";
+import type { TenantContextRequest } from "../context/types";
+import {
+  type ConnectorInstanceBody,
+  IssueCredentialRequestSchema,
+  type IssueCredentialRequestDto,
+  type IssuedCredentialBody,
+  RegisterConnectorInstanceRequestSchema,
+  type RegisterConnectorInstanceRequestDto,
+} from "./dto/register-connector.dto";
+import { ConnectorRegistrationService } from "./connector-registration.service";
+
+@Controller()
+@UseGuards(SessionOnlyAdminGuard, TenantContextGuard)
+export class ConnectorRegistrationController {
+  constructor(private readonly service: ConnectorRegistrationService) {}
+
+  private requireContext(request: TenantContextRequest): {
+    tenantId: string;
+    userId: string;
+  } {
+    const ctx = request.context;
+    if (!ctx || ctx.tenantId === null || ctx.userId === null) {
+      throw new UnauthorizedException("Unauthorized");
+    }
+    return { tenantId: ctx.tenantId, userId: ctx.userId };
+  }
+
+  /** GET — list the tenant's connector instances (status only, never a secret). */
+  @Get("api/v1/connector/instances")
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async list(
+    @Req() request: TenantContextRequest,
+  ): Promise<{ items: ConnectorInstanceBody[] }> {
+    const { tenantId } = this.requireContext(request);
+    const items = await this.service.list({ tenantId });
+    return { items };
+  }
+
+  /** POST — register a connector instance. Duplicate (env, site_ref) → 409. */
+  @Post("api/v1/connector/instances")
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async register(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(RegisterConnectorInstanceRequestSchema))
+    body: RegisterConnectorInstanceRequestDto,
+  ): Promise<ConnectorInstanceBody> {
+    const { tenantId, userId } = this.requireContext(request);
+    const result = await this.service.register({
+      tenantId,
+      actorUserId: userId,
+      displayName: body.display_name,
+      erpnextSiteRef: body.erpnext_site_ref,
+      environment: body.environment,
+    });
+    if (result.kind === "ok") return result.instance;
+    throw new ConflictException({
+      code: "conflict",
+      message:
+        "An active connector instance already exists for this environment and ERPNext site.",
+    });
+  }
+
+  /** POST :id/credentials — issue a credential. Raw secret in the body ONCE. */
+  @Post("api/v1/connector/instances/:id/credentials")
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(RolesGuard)
+  @Roles("owner", "tenant_admin")
+  async issue(
+    @Req() request: TenantContextRequest,
+    @Param("id", new ZodValidationPipe(z.string().uuid())) id: string,
+    @Body(new ZodValidationPipe(IssueCredentialRequestSchema))
+    body: IssueCredentialRequestDto,
+  ): Promise<IssuedCredentialBody> {
+    const { tenantId, userId } = this.requireContext(request);
+    const result = await this.service.issue({
+      tenantId,
+      actorUserId: userId,
+      instanceId: id,
+      ...(body.expires_in_days !== undefined
+        ? { expiresInDays: body.expires_in_days }
+        : {}),
+    });
+    if (result.kind === "ok") return result.credential;
+    // Non-disclosing 404 — absent / cross-tenant / disabled instance (§II/§XII).
+    throw new NotFoundException("Not Found");
+  }
+}
