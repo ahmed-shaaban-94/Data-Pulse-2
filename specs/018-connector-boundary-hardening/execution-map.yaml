@@ -99,7 +99,7 @@ slices:
   - id: 018-SIGNOFF
     task_ids: [T001]
     type: docs
-    status: ready
+    status: merged   # decisions recorded in wave-status
     approval_required: false   # decision gates, not code gates
     depends_on: []
     blocks: [018-SETUP, 018-SCHEMA, 018-CONTRACT]
@@ -119,7 +119,7 @@ slices:
   - id: 018-SETUP
     task_ids: [T002]
     type: chore
-    status: ready
+    status: merged   # 1c95a0f
     approval_required: false
     depends_on: [018-SIGNOFF]
     blocks: [018-US1-REGISTER-ISSUE]
@@ -142,7 +142,7 @@ slices:
   - id: 018-SCHEMA
     task_ids: [T010, T011, T012, T013, T014, T015, T016]
     type: feat
-    status: proposed   # [GATED] packages/db — OWNER-APPROVED 2026-06-06; preflight (T010) still gates the CHECKs
+    status: merged   # 4d829f4 — [GATED] owner-approved; consistency CHECK deferred (R3)
     approval_required: true
     depends_on: [018-SIGNOFF]
     blocks: [018-ISOLATION-HARNESS, 018-US1-REGISTER-ISSUE, 018-US4-GUARD, 018-US2-ROTATE-REVOKE, 018-US3-DISABLE]
@@ -184,7 +184,7 @@ slices:
   - id: 018-CONTRACT
     task_ids: [T020, T021]
     type: feat
-    status: proposed   # [GATED] packages/contracts (IFF REST) — OWNER-APPROVED 2026-06-06
+    status: merged   # aed72ab — [GATED] owner-approved; connector-admin.yaml + conformance 49/49
     approval_required: true
     depends_on: [018-SIGNOFF]
     blocks: [018-US1-REGISTER-ISSUE]
@@ -213,7 +213,7 @@ slices:
   - id: 018-ISOLATION-HARNESS
     task_ids: [T030]
     type: test
-    status: blocked   # waits on 018-SCHEMA
+    status: merged   # dffc0a6 — RLS sweep 8/8
     approval_required: false
     depends_on: [018-SCHEMA]
     blocks: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]
@@ -236,7 +236,7 @@ slices:
   - id: 018-US1-REGISTER-ISSUE
     task_ids: [T040, T041, T042, T043, T044]
     type: feat
-    status: blocked
+    status: merged   # 79de052 — 11/11 (incl. session-only guard FR-005c)
     approval_required: false
     depends_on: [018-SCHEMA, 018-CONTRACT, 018-ISOLATION-HARNESS]
     blocks: [018-US4-GUARD]
@@ -276,7 +276,7 @@ slices:
   - id: 018-US4-GUARD
     task_ids: [T050, T051, T052, T053]
     type: feat
-    status: blocked
+    status: merged   # afa33f8 — guard resolver 6/6 + 015 regression 22/22
     approval_required: false
     depends_on: [018-US1-REGISTER-ISSUE, 018-ISOLATION-HARNESS, 018-SCHEMA]   # 018-SCHEMA carries the T010 preflight that gates this slice
     blocks: [018-US2-ROTATE-REVOKE]
@@ -308,7 +308,7 @@ slices:
   - id: 018-US2-ROTATE-REVOKE
     task_ids: [T060, T061, T062]
     type: feat
-    status: blocked
+    status: merged   # 5b3d100 — 5/5 incl. rollback proof
     approval_required: false
     depends_on: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]   # US4 first: this slice's validation asserts revoked creds are REJECTED on the connector endpoints, which requires the tightened guard (Codex P2)
     blocks: [018-POLISH]
@@ -340,7 +340,7 @@ slices:
   - id: 018-US3-DISABLE
     task_ids: [T070, T071]
     type: feat
-    status: blocked
+    status: merged   # 2373113 — 4/4
     approval_required: false
     depends_on: [018-US1-REGISTER-ISSUE, 018-US4-GUARD]   # US4 first: this slice's validation asserts a disabled-instance cred is REJECTED at the guard (predicate clause 7) — requires the tightened guard (Codex P2)
     blocks: [018-POLISH]
@@ -367,7 +367,7 @@ slices:
   - id: 018-US5-BOUNDARY-DOC
     task_ids: [T080]
     type: docs
-    status: blocked
+    status: merged   # boundary doc + A-E table + 019 cross-link
     approval_required: false
     depends_on: [018-CONTRACT]
     blocks: [018-POLISH]
@@ -390,7 +390,7 @@ slices:
   - id: 018-POLISH
     task_ids: [T090, T091, T092]
     type: chore
-    status: blocked
+    status: merged   # connector_lifecycle_total + signals 5/5 + cardinality 52/52
     approval_required: false
     depends_on: [018-US2-ROTATE-REVOKE, 018-US3-DISABLE, 018-US4-GUARD, 018-US5-BOUNDARY-DOC]
     blocks: []

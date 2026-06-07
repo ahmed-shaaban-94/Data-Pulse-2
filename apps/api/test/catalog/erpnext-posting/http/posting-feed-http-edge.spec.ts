@@ -71,6 +71,7 @@ let skip = false;
 async function issueToken(
   tokens: AuthTokenRepository,
   scope: string,
+  connectorRegistrationId?: string,
 ): Promise<string> {
   const raw = generateRawToken();
   await tokens.issue(raw, {
@@ -80,6 +81,9 @@ async function issueToken(
     deviceId: null,
     scope,
     expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    // 018-US4: a connector token MUST link to a non-disabled connector_registration
+    // in its tenant, else ConnectorAuthGuard rejects it (FR-015).
+    connectorRegistrationId: connectorRegistrationId ?? null,
   } as Parameters<AuthTokenRepository["issue"]>[1]);
   return raw;
 }
@@ -116,8 +120,19 @@ beforeAll(async () => {
       [TENANT_A, ACTOR_USER, SALE_A_X],
     );
 
+    // 018-US4: register a connector instance so the connector token links to a
+    // non-disabled registration (ConnectorAuthGuard now requires the link).
+    const CONNECTOR_REG = "01900000-0000-7000-8000-0000000a7e09";
+    await a.query(
+      `INSERT INTO connector_registration
+         (id, tenant_id, display_name, erpnext_site_ref, environment, created_by)
+       VALUES ($1, $2, 'Feed HTTP Conn', 'erp-feed-http.example', 'pilot', $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [CONNECTOR_REG, TENANT_A, ACTOR_USER],
+    );
+
     const tokens = new AuthTokenRepository(env.admin);
-    connectorToken = await issueToken(tokens, "connector");
+    connectorToken = await issueToken(tokens, "connector", CONNECTOR_REG);
     dashboardToken = await issueToken(tokens, "dashboard_api");
     posToken = await issueToken(tokens, "pos");
 

@@ -1,0 +1,519 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Connector — Boundary Admin API
+  version: "1.0.0-draft"
+  description: >
+    Spec 018 (connector-boundary-hardening) — the tenant-admin surface for
+    registering ERPNext **connector instances** and managing their machine
+    credential lifecycle (issue / rotate / revoke) plus instance disable. This
+    is the operator-facing half of the DP2↔connector boundary; the connector's
+    own posting feed/ack surface (012 `erpnext-connector/posting-feed.yaml`) is
+    separate and unchanged.
+
+    A `connector_registration` (migration 0021) is the stable, per-tenant
+    identity of one connector deployment (display name, ERPNext site ref,
+    environment). It SURVIVES credential rotation. Credentials live in
+    `auth_tokens` (scope `connector`), linked to a registration; the raw secret
+    is returned EXACTLY ONCE at issue/rotation and is never retrievable again.
+
+    Operations:
+
+      1. `tenantAdminRegisterConnectorInstance` — register an instance
+         (`display_name` + `erpnext_site_ref` + `environment`). At most one
+         active registration per `(tenant, environment, erpnext_site_ref)`; a
+         duplicate is `409 conflict`. `tenant_id` + actor are server-resolved
+         (§XII); they MUST NOT appear in the body.
+      2. `tenantAdminListConnectorInstances` — list the tenant's registrations
+         with credential STATUS (issued/expires/revoked times) — NEVER a secret.
+      3. `tenantAdminIssueConnectorCredential` — mint a machine credential for a
+         registration; the raw secret is in the `201` body ONCE. Optional
+         `expires_in_days` (server default 90, capped at a server ceiling;
+         never unbounded).
+      4. `tenantAdminRotateConnectorCredential` — atomic immediate-revoke
+         rotation: the previously-active credential is revoked and a new one
+         issued for the SAME registration, in one step; raw secret returned
+         once. At most one active (unrevoked) credential per registration.
+         Requires an `Idempotency-Key`.
+      5. `tenantAdminRevokeConnectorCredential` — revoke one credential; the
+         registration stays active. Requires an `Idempotency-Key`.
+      6. `tenantAdminDisableConnectorInstance` — logically disable a whole
+         instance; all its credentials become unusable at the guard. No row is
+         deleted (history retained for audit).
+
+    Authentication boundary (STRICTER than the sibling catalog admin surfaces):
+
+      * ALL operations require a HUMAN cookie session (`cookieAuth`, the
+        httpOnly `dp2_session` cookie) AND a privileged tenant role
+        (owner / tenant_admin). This surface is SESSION-ONLY by design (spec
+        FR-005c): a `dashboard_api` MACHINE bearer is REJECTED even when it
+        carries the right role — minting connector machine credentials from
+        another machine bearer is the privilege path being closed. This is
+        deliberately stricter than `catalog/erpnext-warehouse-map.yaml` et al.
+        (which tolerate `dashboard_api`). It is NOT the 012 `connectorBearer`
+        machine scheme and NOT the POS `clerkJwt` device scheme.
+      * `tenant_id` and the acting principal are resolved server-side from the
+        session, NEVER from the request body (§XII). Cross-tenant / out-of-scope
+        addresses are non-disclosing `404`s (§II/§XII). A wrong-role or
+        machine-bearer caller is denied without disclosing the resource
+        (default-deny → 404).
+
+    Conventions shared with the other admin contracts: OpenAPI 3.1 of record; a
+    `toBody()` projection (no raw DB entity, no token hash, §IV); the canonical
+    `Error` envelope with a closed code set. Consumed by
+    `apps/api/test/connector/contract/connector-admin.contract.spec.ts`.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: connector-admin
+    description: >
+      ERPNext connector instance registration + credential lifecycle —
+      tenant-admin, human-session-only surface. Spec 018.
+
+paths:
+  /api/v1/connector/instances:
+    get:
+      summary: List the tenant's connector instances.
+      operationId: tenantAdminListConnectorInstances
+      tags: [connector-admin]
+      description: >
+        Returns the tenant's connector registrations as
+        `ConnectorInstance` projections (identity + lifecycle status). Scoped to
+        the session tenant (RLS); cross-tenant rows are never disclosed. NEVER
+        returns a raw secret or token hash.
+      responses:
+        "200":
+          description: The tenant's connector instances.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConnectorInstance"
+        "401":
+          description: Caller is not authenticated, or not a human session, or lacks the required role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    post:
+      summary: Register a connector instance.
+      operationId: tenantAdminRegisterConnectorInstance
+      tags: [connector-admin]
+      description: >
+        Creates a `connector_registration` for the session tenant. At most one
+        active registration per `(tenant, environment, erpnext_site_ref)`; a
+        duplicate is `409 conflict`. `tenant_id` + actor are server-resolved
+        (§XII); they MUST NOT appear in the body. No credential is issued here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterConnectorInstanceRequest"
+      responses:
+        "201":
+          description: Instance registered (no credential yet).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorInstance"
+        "400":
+          description: Bad request (validation failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated / not a human session / wrong role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            An active registration already exists for this
+            `(environment, erpnext_site_ref)`. `error.code = "conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/connector/instances/{id}/disable:
+    post:
+      summary: Disable a connector instance (logical).
+      operationId: tenantAdminDisableConnectorInstance
+      tags: [connector-admin]
+      description: >
+        Sets `disabled_at`/`disabled_by` on the addressed instance. All of its
+        credentials immediately become unusable at the connector guard. No row
+        is deleted (history retained for audit). Idempotent: re-disabling an
+        already-disabled instance is a no-op success. Cross-tenant / out-of-scope
+        ids are non-disclosing `404`s.
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+      responses:
+        "200":
+          description: Instance disabled (or already disabled — idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorInstance"
+        "401":
+          description: Not authenticated / not a human session / wrong role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/connector/instances/{id}/credentials:
+    post:
+      summary: Issue a machine credential for a connector instance.
+      operationId: tenantAdminIssueConnectorCredential
+      tags: [connector-admin]
+      description: >
+        Mints a `connector`-scoped credential for the addressed (non-disabled)
+        registration. The raw secret is in the `201` body EXACTLY ONCE and is
+        never retrievable again. Optional `expires_in_days` (server default 90,
+        capped at a server ceiling; a credential is never minted without a
+        bounded expiry). Issuing for a disabled instance is rejected.
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IssueCredentialRequest"
+      responses:
+        "201":
+          description: Credential issued. The raw secret is present ONCE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCredential"
+        "400":
+          description: Bad request (validation failure, e.g. expires_in_days over the ceiling).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Not authenticated / not a human session / wrong role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Instance not found OR not in scope OR disabled (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/connector/instances/{id}/credentials/rotate:
+    post:
+      summary: Rotate a connector credential (atomic immediate-revoke).
+      operationId: tenantAdminRotateConnectorCredential
+      tags: [connector-admin]
+      description: >
+        In ONE atomic operation: revoke the instance's currently-active
+        credential and issue a new one for the SAME registration; the new raw
+        secret is in the `201` body ONCE. At most one active (unrevoked)
+        credential per registration. If issuing the new credential fails, the
+        previous one stays active (no lockout). Requires an `Idempotency-Key`.
+      parameters:
+        - $ref: "#/components/parameters/InstanceId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Rotated. The new raw secret is present ONCE; the old credential is revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCredential"
+        "401":
+          description: Not authenticated / not a human session / wrong role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Instance not found OR not in scope OR disabled (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: An idempotency-key conflict. `error.code = "idempotency_key_conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/connector/credentials/{credentialId}/revoke:
+    post:
+      summary: Revoke one connector credential.
+      operationId: tenantAdminRevokeConnectorCredential
+      tags: [connector-admin]
+      description: >
+        Revokes the addressed credential (sets its revoked timestamp). The
+        connector instance stays registered and active. Idempotent: revoking an
+        already-revoked credential is a no-op success. Requires an
+        `Idempotency-Key`. Cross-tenant / out-of-scope ids are non-disclosing
+        `404`s.
+      parameters:
+        - $ref: "#/components/parameters/CredentialId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Credential revoked (or already revoked — idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialStatus"
+        "401":
+          description: Not authenticated / not a human session / wrong role (non-disclosing).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: An idempotency-key conflict. `error.code = "idempotency_key_conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# All operations require a HUMAN cookie session (httpOnly dp2_session) + a
+# privileged role. SESSION-ONLY: a dashboard_api machine bearer is rejected
+# (FR-005c). NOT connectorBearer (012 machine), NOT clerkJwt (POS).
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  parameters:
+    InstanceId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUIDv7 primary key of the `connector_registration` row.
+    CredentialId:
+      in: path
+      name: credentialId
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUIDv7 primary key of the `auth_tokens` credential row.
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      description: Required on rotate + revoke (reuses the platform idempotency interceptor).
+
+  schemas:
+
+    RegisterConnectorInstanceRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Register command. Strict (`additionalProperties: false`, §XII):
+        `tenant_id`, actor, id, and disabled state are server-resolved and MUST
+        NOT appear here.
+      required:
+        - display_name
+        - erpnext_site_ref
+        - environment
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 180
+          description: Operator-facing label. Non-empty/trimmed (server-enforced).
+        erpnext_site_ref:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The ERPNext site this instance targets (label/ref, NOT a secret).
+        environment:
+          type: string
+          enum: [dev, staging, pilot, prod]
+          description: The environment this instance serves.
+
+    IssueCredentialRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Issue command. All identity/actor fields are server-resolved (§XII).
+        Body is optional; omit to take the server default expiry.
+      properties:
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: >
+            Optional override of the default credential lifetime (server default
+            90). MUST NOT exceed the server ceiling (a credential is never
+            unbounded). Over-ceiling is `400`.
+
+    ConnectorInstance:
+      type: object
+      additionalProperties: false
+      description: >
+        The `toBody()` projection of a `connector_registration` row (no raw DB
+        entity, §IV). Identity + lifecycle + the active-credential STATUS only —
+        NEVER a raw secret or token hash.
+      required:
+        - id
+        - display_name
+        - erpnext_site_ref
+        - environment
+        - created_at
+        - active_credential
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        erpnext_site_ref:
+          type: string
+        environment:
+          type: string
+          enum: [dev, staging, pilot, prod]
+        created_at:
+          type: string
+          format: date-time
+        disabled_at:
+          type: [string, "null"]
+          format: date-time
+          description: Logical-disable timestamp. Null = active.
+        active_credential:
+          oneOf:
+            - $ref: "#/components/schemas/CredentialStatus"
+            - type: "null"
+          description: The current active credential's STATUS, or null if none. Never a secret.
+
+    IssuedCredential:
+      type: object
+      additionalProperties: false
+      description: >
+        The issue/rotate response. The ONLY place a raw secret ever appears, and
+        only once. The caller MUST capture `secret` here; it is unrecoverable.
+      required:
+        - credential_id
+        - instance_id
+        - secret
+        - expires_at
+        - issued_at
+      properties:
+        credential_id:
+          type: string
+          format: uuid
+        instance_id:
+          type: string
+          format: uuid
+        secret:
+          type: string
+          description: >
+            The raw machine credential, shown ONCE. Configure it into the
+            connector now — it cannot be retrieved again. Never logged, never in
+            any other response.
+        expires_at:
+          type: string
+          format: date-time
+        issued_at:
+          type: string
+          format: date-time
+
+    CredentialStatus:
+      type: object
+      additionalProperties: false
+      description: >
+        A credential's lifecycle STATUS (no secret, no hash). Used in list/get
+        and as the revoke response.
+      required:
+        - credential_id
+        - instance_id
+        - issued_at
+        - expires_at
+      properties:
+        credential_id:
+          type: string
+          format: uuid
+        instance_id:
+          type: string
+          format: uuid
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+          description: Null = active (subject also to expiry + instance-disabled).
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `catalog/erpnext-warehouse-map.yaml` (used
+        verbatim). Cross-tenant / out-of-scope / wrong-principal refusals are
+        non-disclosing (§II/§XII) — they never enumerate the underlying cause.
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | conflict |
+                idempotency_key_conflict | system_failure (plus the generic 401
+                refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.

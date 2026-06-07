@@ -86,6 +86,45 @@ export class AuthTokenRepository {
   }
 
   /**
+   * 018-US4 — resolve an active CONNECTOR credential to its registration
+   * context by token id. Returns the linked registration only when the FULL
+   * usability rule holds (FR-015): the token is connector-scoped, unrevoked,
+   * unexpired, LINKED to a registration, the registration's tenant matches the
+   * token's tenant, and the registration is NOT disabled. Returns null on any
+   * failure — the caller (ConnectorAuthGuard) maps null to a single
+   * non-disclosing 401 (FR-016). Runs on the admin pool (the guard has no tenant
+   * GUC yet — that is exactly what this resolves). Connector-only: does NOT
+   * touch the generic dashboard/POS lookup paths (FR-019).
+   */
+  async findActiveConnectorCredentialByTokenId(
+    tokenId: string,
+    client?: PoolClient,
+  ): Promise<{ registrationId: string; tenantId: string; environment: string } | null> {
+    const target = client ?? this.pool;
+    const result = await db(target).execute(sql`
+      SELECT cr.id AS registration_id, cr.tenant_id, cr.environment
+        FROM auth_tokens t
+        JOIN connector_registration cr
+          ON cr.id = t.connector_registration_id
+         AND cr.tenant_id = t.tenant_id
+         AND cr.disabled_at IS NULL
+       WHERE t.id = ${tokenId}
+         AND t.scope = 'connector'
+         AND t.revoked_at IS NULL
+         AND t.expires_at > now()
+       LIMIT 1
+    `);
+    const rows = result.rows as Array<{
+      registration_id: string;
+      tenant_id: string;
+      environment: string;
+    }>;
+    const r = rows[0];
+    if (!r) return null;
+    return { registrationId: r.registration_id, tenantId: r.tenant_id, environment: r.environment };
+  }
+
+  /**
    * Revoke a token by id. Idempotent: returns true on first revoke and
    * false on subsequent calls (the row's `revoked_at` is already set).
    */

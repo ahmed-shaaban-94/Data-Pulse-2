@@ -23,6 +23,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { connectorRegistration } from "./connector_registration";
 import { devices } from "./devices";
 import { stores } from "./stores";
 import { tenants } from "./tenants";
@@ -52,6 +53,27 @@ export const authTokens = pgTable("auth_tokens", {
     onDelete: "restrict",
   }),
   scope: text("scope").notNull(),
+  /**
+   * Link to the stable connector-instance identity (018, migration 0021).
+   * NULL for non-connector scopes; carries the `connector_registration_id`
+   * for a connector-scoped credential so the identity survives rotation
+   * (data-model.md Entity 2; research R1). FK → connector_registration(id)
+   * ON DELETE RESTRICT.
+   *
+   * At-most-one-active invariant: a partial UNIQUE
+   * `(connector_registration_id) WHERE scope='connector' AND revoked_at IS NULL`
+   * (declared in 0021) enforces at most one unrevoked connector credential per
+   * registration (FR-010). The predicate is IMMUTABLE — expiry is deliberately
+   * NOT in it (now() is STABLE, not IMMUTABLE; expiry is enforced at the guard).
+   *
+   * The connector-token consistency CHECK (scope='connector' iff this is NOT
+   * NULL) is a DEFERRED follow-up (R3) — a legacy unlinked connector token
+   * would violate it, pending a live backfill. See the 0021 migration header.
+   */
+  connectorRegistrationId: uuid("connector_registration_id").references(
+    () => connectorRegistration.id,
+    { onDelete: "restrict" },
+  ),
   issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -62,9 +84,12 @@ export const authTokens = pgTable("auth_tokens", {
  *
  * `connector` (015): the opaque, revocable MACHINE principal the ERPNext
  * connector (separate repo, ADR 0008) presents on the 012 posting-feed surface
- * (`connectorBearer`). It reuses the existing `auth_tokens` opaque-bearer path —
- * `scope` is free TEXT (no DB CHECK), so this is a TYPE-ONLY addition, no
- * migration. NOT a human/POS scope: only the connector feed/ack routes accept it.
+ * (`connectorBearer`). It reuses the existing `auth_tokens` opaque-bearer path.
+ * NOT a human/POS scope: only the connector feed/ack routes accept it.
+ *
+ * As of migration 0021 (018), `scope` is pinned by a DB CHECK
+ * `auth_tokens_scope_valid` to exactly this six-member set — the free-TEXT gap
+ * 018 targets is now closed. This union and the CHECK MUST stay in lockstep.
  */
 export type BearerAuthScope =
   | "dashboard_api"
