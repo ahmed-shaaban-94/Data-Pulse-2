@@ -6,7 +6,7 @@
 > forward-reference notes. The next moves are owner acts (accept ADR 0008) and a
 > later `[GATED]` contract slice — not a code dispatch.
 
-**Last updated:** 2026-06-04 by Ahmed Shaaban
+**Last updated:** 2026-06-07 by Ahmed Shaaban — arc advanced through 018 CLOSED + the **019–025 planning wave** merged (see below).
 **Spec:** `012-erpnext-connector-contracts` (`specs/012-erpnext-connector-contracts/`)
 **Base:** `origin/main` at `04c93a3`
 **Active finding(s):** 0
@@ -81,7 +81,8 @@ dependency (`[GATED]` `package.json`); the DP2-side feed/ack endpoint implementa
 
 ## Proposed (awaiting approval)
 
-- **013–017** — the rest of the ERPNext arc (each its own Spec-Kit chain).
+- **013–017** — ~~the rest of the ERPNext arc~~ **DONE: 013/014/015/017 CLOSED on `main`; 018 (connector-boundary-hardening) CLOSED.** (016 tax/fiscal-egypt on-hold.)
+- **019–025 planning wave — PLANNING MERGED 2026-06-07 (PR #525, squash `75d9967`).** The 018-named future arc handoffs now exist as docs-only SpecKit planning specs on `main`: **019** (ERPNext-Bin stock-view contract = the 017-deferred `017-STOCK-VIEW-CONTRACT`), **020** (connector health/status), **021** (product-master reconciliation), **023** (sales-posting command — **PLAN-ONLY, implement-if-needed**), **025** (console sync-ops read-model). Each is *plans only* — buildable `[GATED]` SCHEMA/CONTRACT slices are separate future work, most blocked on the connector repo + staging ERPNext. Per-spec state: **`specs/019-…/wave-status.md`** … **`specs/025-…/wave-status.md`**. Deferred work tracked as issues #524 (epic — live-leg frontier) + #520/#521/#522/#523.
 
 _(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04. The `[GATED]` **012-CONTRACT** OpenAPI slice is **authored** in this PR — no longer awaiting approval.)_
 
@@ -90,15 +91,19 @@ _(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04. The `[
 ## Next recommended action
 
 012 planning (#476), ADR 0008 (#479), and the `[GATED]` 012-CONTRACT contract
-(#481) are all **merged on `main`**. Remaining:
+(#481) are all **merged on `main`**. The DP2 side of the arc has since shipped:
+**013/014/015/017 CLOSED, 018 CLOSED**, and the **019–025 planning wave merged**
+(PR #525) — see the **019–025 entry under "Proposed"** above and the per-spec
+**`specs/{019,020,021,023,025}-…/wave-status.md`** for current state. The remaining
+frontier is now external/gated:
 **(a)** confirm the final ERPNext major via staging-install validation of the
 contract obligations (the version-pin gate deferred to 012);
 **(b)** build the `Retail-Tower-ERP-Next-Connector` repo against the merged
-`posting-feed.yaml` contract (+ add its upstream-decision-index pointer back to
-the DP2 011/012 decisions);
-**(c)** register the `erpnext.posting.requested` outbox event type (its own
-approval PR) and implement the DP2-side feed/ack endpoints (015 + connector-feed).
-Then **013 (product master)** can begin its own Spec-Kit chain.
+`posting-feed.yaml` contract (+ the future 019 stock-view + optional 023 command
+contracts) — most of the 019–025 buildable slices are blocked here (epic #524);
+**(c)** dispatch each 019–025 spec's `[GATED]` SCHEMA/CONTRACT slices as their
+gates clear (019/021 cross-system, blocked on #524; 020 self-contained; 023
+PLAN-ONLY pending a confirmed need at its T005 gate; 025 over 015/017 now).
 
 ---
 
