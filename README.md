@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/brand/data-pulse-2-logo.svg" alt="Retail Tower OS (Data-Pulse-2) logo" width="120" height="120"/>
+
 # Retail Tower OS
 
 **The command tower for modern retail. Control every branch from one secure core.**
@@ -57,6 +59,16 @@ POS-Pulse ─┐
 Console  ──┘        ▲ the only contract boundary
 ```
 
+### Where Data-Pulse-2 sits — the full ecosystem
+
+Zooming out from the sync flow above, the diagram below places **Data-Pulse-2** within the complete five-repository Retail Tower OS ecosystem, governed by the Retail Tower Orchestrator control plane on top.
+
+<p align="center">
+  <img src="docs/assets/architecture/retail-tower-ecosystem.svg" alt="Retail Tower OS ecosystem: the Retail Tower Orchestrator control plane governs five repositories; POS-Pulse and Retail-Tower-Console synchronize through Data-Pulse-2, the single contract boundary, which reaches ERPNext only through the ERPNext Connector" width="100%"/>
+</p>
+
+<p align="center"><sub>Data-Pulse-2 (the gold <strong>★ THIS REPO</strong> node) is the highlighted contract-boundary hub. Live animated SVG; motion is suppressed under <code>prefers-reduced-motion</code>.</sub></p>
+
 Full detail (flow + sequence + boundary guarantees):
 [docs/architecture/synchronization.md](docs/architecture/synchronization.md) ·
 Program control plane: [Retail-Tower-Orchestrator](https://github.com/ahmed-shaaban-94/Retail-Tower-Orchestrator).
@@ -77,7 +89,7 @@ Every layer of the platform — from client ingress to durable state — is laid
 
 ![Retail Tower OS animated repository structure flow](docs/assets/architecture/retail-tower-os-structure-flowchart.svg)
 
-Open [docs/assets/architecture/retail-tower-os-structure-flowchart.svg](docs/assets/architecture/retail-tower-os-structure-flowchart.svg) for the full-resolution animated view. Tokens trace each authenticated path: dashboard cookies and POS bearer tokens into the NestJS API, through auth → tenant → roles → idempotency guards, into the RLS-bound service layer, into PostgreSQL, with outbox events fanning out via Redis to the worker — and live contract, observability, and audit taps illuminated alongside.
+Open [the full-resolution animated view](docs/assets/architecture/retail-tower-os-structure-flowchart.svg). Tokens trace each authenticated path: dashboard cookies and POS bearer tokens into the NestJS API, through auth → tenant → roles → idempotency guards, into the RLS-bound service layer, into PostgreSQL, with outbox events fanning out via Redis to the worker — and live contract, observability, and audit taps illuminated alongside.
 
 ---
 
@@ -318,6 +330,8 @@ POS application code · dashboard frontend implementation · production infrastr
 | Auth | argon2id · opaque revocable bearer tokens · httpOnly cookie sessions |
 | Testing | Jest · ts-jest · Supertest · Testcontainers PostgreSQL |
 | IDs | UUIDv7 with UUIDv4 fallback |
+
+---
 
 ## Documentation
 
