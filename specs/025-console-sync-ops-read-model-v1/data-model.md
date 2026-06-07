@@ -55,41 +55,46 @@ Domain-specific `counts` (when available):
 
 ### PostingBacklogItem
 Projection of one 015 `erpnext_posting_status` row where `status='permanently_rejected'`.
+Wire field names are camelCase (matching the shipped `console-sync-ops.yaml`).
 
 | Field | Type | Source | Notes |
 |---|---|---|---|
-| `id` | uuid | posting-status row id | opaque to console |
-| `mismatch_class` | enum/string | 015 rejection classification | e.g. `unmapped_item`, `unmapped_store`, `validation`, `closed_period` |
-| `origin_ref` | object | originating sale / terminal-event reference | id + kind |
-| `source_system` | string | provenance | from 015/008 provenance |
-| `external_id` | string | provenance | from 015/008 provenance |
-| `rejection_reason` | string (structured) | 015 structured reason | redacted of secrets/PII |
-| `dead_lettered_at` | timestamptz | 015 terminal timestamp | UTC |
-| `amount` *(if present)* | exact-decimal string | 015/008 snapshot | pass-through + `currency`, never re-derived |
-| `currency` *(if present)* | ISO 4217 | snapshot | |
+| `postingStatusId` | uuid | 015 `id` | opaque operator reference |
+| `kind` | enum(`sale_post`,`reversal`) | 015 `kind` | |
+| `sourceSystem` | string | 015 `source_system` | provenance |
+| `externalId` | string | 015 `external_id` | provenance |
+| `status` | enum(`permanently_rejected`) | 015 `status` | always `permanently_rejected` (the backlog is dead-letters only) |
+| `rejectionClass` | string \| null | 015 `rejection_category` | for grouping; null if not recorded |
+| `deadLetteredAt` | date-time | 015 `updated_at` | UTC |
 
 **Read-only**: no repair affordance, no internal columns, no credential/hash material.
+**No money:** the 015 source table carries no money/valuation column, so this projection
+has none (the contract banned-field scan enforces it).
 
 ### ReconciliationRunView
 Projection of one 017 `erpnext_reconciliation_run` row.
 
 | Field | Type | Source | Notes |
 |---|---|---|---|
-| `id` | uuid | run id | |
-| `trigger_source` | enum/string | 017 run trigger | e.g. on-demand / scheduled |
-| `status` | enum(`pending`,`running`,`completed`,`failed`) | 017 run status | |
-| `started_at` | timestamptz | 017 | UTC |
-| `finished_at` | timestamptz \| null | 017 | null while non-terminal |
-| `mismatch_summary` | object | per-class counts from `erpnext_reconciliation_result` | 014 mismatch vocabulary |
+| `runId` | uuid | 017 `id` | |
+| `storeId` | uuid | 017 `store_id` | |
+| `kind` | enum(`stock`) | 017 `kind` | stock-only in v1 |
+| `trigger` | enum(`on_demand`,`scheduled`) | 017 `trigger` | |
+| `status` | enum(`running`,`completed`,`failed`) | 017 `status` | matches the DB CHECK (no `pending`) |
+| `startedAt` | date-time | 017 `started_at` | UTC |
+| `finishedAt` | date-time \| null | 017 `finished_at` | null while `running` |
+| `mismatchSummary` | object \| null | 017 run `summary` jsonb | per-class counts (014 vocabulary); null if none |
 
-### PageEnvelope<T> (list responses)
-Cursor-paginated wrapper for backlog + run-history lists.
+### Per-endpoint page schemas (list responses)
+Each list op has its OWN page schema (NOT a shared `oneOf` envelope) so the Console's
+`openapi-typescript` generator produces a homogeneous, fully-typed `items` array per
+endpoint: **`PostingBacklogPage`** (`items: PostingBacklogItem[]`) and
+**`ReconciliationRunPage`** (`items: ReconciliationRunView[]`).
 
 | Field | Type | Notes |
 |---|---|---|
-| `items` | T[] | bounded by page size (default + max) |
-| `next_cursor` | string \| null | opaque; null = end |
-| `page_size` | int | effective bounded size |
+| `items` | (per-endpoint item)[] | bounded by `page_size` (default 50, max 200) |
+| `nextCursor` | string \| null | opaque; null = last page. Backlog cursor = the `sequence` token; run-history cursor = the composite `<startedAtISO>\|<runId>` keyset token (started_at is not unique, so the UUIDv7 id tiebreaks for a stable, gap-free page boundary). |
 
 ## Validation & boundary rules
 

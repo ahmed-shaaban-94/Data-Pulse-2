@@ -65,6 +65,14 @@ export interface ListInput {
   readonly limit: number;
 }
 
+/** Run-history uses a composite string cursor (`<startedAtISO>|<runId>`). */
+export interface RunListInput {
+  readonly tenantId: string;
+  readonly storeId?: string;
+  readonly cursor: string | null;
+  readonly limit: number;
+}
+
 export interface Page<T> {
   readonly items: readonly T[];
   readonly nextCursor: string | null;
@@ -72,9 +80,39 @@ export interface Page<T> {
 
 const LIST_MAX_PAGE = 200;
 
+/** Thrown when a supplied `store_id` is not in the session tenant's scope. */
+export class StoreNotInScopeError extends Error {
+  constructor() {
+    super("Store not found");
+    this.name = "StoreNotInScopeError";
+  }
+}
+
 @Injectable()
 export class ErpnextSyncOpsReadModelService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Assert a supplied `store_id` belongs to the session tenant — under RLS, a
+   * cross-tenant/out-of-scope store id returns no row, so we throw
+   * `StoreNotInScopeError` (→ non-disclosing 404, FR-009/SC-002). A null storeId
+   * (no filter) is always in scope. Call before any store-filtered read.
+   */
+  async assertStoreInScope(tenantId: string, storeId?: string): Promise<void> {
+    if (!storeId) return;
+    const found = await runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM stores WHERE id = $1::uuid`,
+          [storeId],
+        );
+        return r.rows.length > 0;
+      },
+    );
+    if (!found) throw new StoreNotInScopeError();
+  }
 
   /**
    * US1 — the consolidated sync-ops summary. Aggregates 015 posting health
@@ -100,10 +138,17 @@ export class ErpnextSyncOpsReadModelService {
         const postingBacklog = Number(posting.rows[0]?.count ?? "0");
 
         // --- reconciliation health: open mismatch count + latest run (017) --
+        // Store-scoped via a JOIN to the run (the result table has no store_id;
+        // results are store-scoped through their run) — so a store-filtered
+        // summary's mismatch count reflects only that store's slice (spec US1
+        // acceptance scenario 3), consistent with the posting + latestRun legs.
         const openMismatches = await client.query<{ count: string }>(
           `SELECT count(*)::text AS count
              FROM erpnext_reconciliation_result r
-            WHERE r.result_state = 'open'`,
+             JOIN erpnext_reconciliation_run run ON run.id = r.run_id
+            WHERE r.result_state = 'open'
+              AND ($1::uuid IS NULL OR run.store_id = $1::uuid)`,
+          [storeId],
         );
         const openMismatchCount = Number(openMismatches.rows[0]?.count ?? "0");
 
@@ -132,7 +177,13 @@ export class ErpnextSyncOpsReadModelService {
           },
           {
             domain: "reconciliation",
-            status: openMismatchCount > 0 ? "attention" : "ok",
+            // Attention when there are open mismatches OR the latest run failed —
+            // a failed run with zero recorded mismatches still needs operator eyes
+            // (it produced no report), so count-only would mislead.
+            status:
+              openMismatchCount > 0 || latest?.status === "failed"
+                ? "attention"
+                : "ok",
             headlineCount: openMismatchCount,
             detail: latest
               ? `Latest run ${latest.status}`
@@ -219,15 +270,30 @@ export class ErpnextSyncOpsReadModelService {
    * `mismatchSummary` comes from the run's `summary` jsonb (per-class counts).
    */
   async listReconciliationRuns(
-    input: ListInput,
+    input: RunListInput,
   ): Promise<Page<ReconciliationRunView>> {
     const limit = Math.min(Math.max(1, input.limit), LIST_MAX_PAGE);
     return runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client) => {
-        // Cursor encodes the last seen started_at as epoch millis; newer→older.
-        const cursorMs = input.cursor !== null ? input.cursor.toString() : null;
+        // Composite keyset cursor `<startedAtISO>|<runId>` at FULL timestamp
+        // precision. `started_at` is not unique, so a timestamp-only cursor would
+        // skip/dup rows at a tie; the UUIDv7 `id` tiebreaker makes it stable +
+        // gap-free. Tuple comparison `(started_at, id) < (cursorTs, cursorId)`
+        // pages newer→older deterministically.
+        let cursorTs: string | null = null;
+        let cursorId: string | null = null;
+        if (input.cursor) {
+          const sep = input.cursor.lastIndexOf("|");
+          // A malformed cursor leaves both null → treated as "from the start"
+          // ONLY if neither parsed; a half-parsed token is rejected upstream by
+          // the DTO regex, so here we trust a well-formed `ts|uuid`.
+          if (sep > 0) {
+            cursorTs = input.cursor.slice(0, sep);
+            cursorId = input.cursor.slice(sep + 1);
+          }
+        }
         const rows = await client.query<{
           id: string;
           store_id: string;
@@ -242,11 +308,11 @@ export class ErpnextSyncOpsReadModelService {
                   started_at, finished_at, summary
              FROM erpnext_reconciliation_run
             WHERE ($1::uuid IS NULL OR store_id = $1::uuid)
-              AND ($2::bigint IS NULL
-                   OR started_at < to_timestamp($2::bigint / 1000.0))
-            ORDER BY started_at DESC
-            LIMIT $3`,
-          [input.storeId ?? null, cursorMs, limit],
+              AND ($2::timestamptz IS NULL
+                   OR (started_at, id) < ($2::timestamptz, $3::uuid))
+            ORDER BY started_at DESC, id DESC
+            LIMIT $4`,
+          [input.storeId ?? null, cursorTs, cursorId, limit],
         );
         const items: ReconciliationRunView[] = rows.rows.map((r) => ({
           runId: r.id,
@@ -258,11 +324,10 @@ export class ErpnextSyncOpsReadModelService {
           finishedAt: r.finished_at ? new Date(r.finished_at).toISOString() : null,
           mismatchSummary: r.summary ?? null,
         }));
+        const last = rows.rows[rows.rows.length - 1];
         const nextCursor =
-          rows.rows.length === limit
-            ? Date.parse(
-                rows.rows[rows.rows.length - 1]!.started_at,
-              ).toString()
+          rows.rows.length === limit && last
+            ? `${new Date(last.started_at).toISOString()}|${last.id}`
             : null;
         return { items, nextCursor };
       },

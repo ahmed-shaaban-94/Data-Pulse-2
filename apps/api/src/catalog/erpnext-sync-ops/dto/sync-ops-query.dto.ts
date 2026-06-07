@@ -42,3 +42,29 @@ export const SyncOpsListQuerySchema = z
   .strict();
 
 export type SyncOpsListQuery = z.infer<typeof SyncOpsListQuerySchema>;
+
+/**
+ * Run-history list: same as the list query but the cursor is a COMPOSITE keyset
+ * token `<startedAtISO>|<runId>` (the run table has no monotonic sequence; the
+ * cursor pairs the non-unique `started_at` with the unique UUIDv7 `id` for a
+ * stable, gap-free page boundary). Validated to that exact shape — a malformed
+ * cursor is a 400, never a silent from-start.
+ */
+export const SyncOpsRunListQuerySchema = z
+  .object({
+    store_id: z.string().uuid().optional(),
+    cursor: z
+      .string()
+      .min(1)
+      .max(80, "cursor exceeds the maximum length")
+      // ISO-8601 timestamp | UUID. Rejects anything else (clean 400).
+      .regex(
+        /^\d{4}-\d{2}-\d{2}T[\d:.]+Z\|[0-9a-fA-F-]{36}$/,
+        "cursor must be an opaque <timestamp>|<id> token",
+      )
+      .optional(),
+    page_size: z.coerce.number().int().min(1).max(200).optional(),
+  })
+  .strict();
+
+export type SyncOpsRunListQuery = z.infer<typeof SyncOpsRunListQuerySchema>;

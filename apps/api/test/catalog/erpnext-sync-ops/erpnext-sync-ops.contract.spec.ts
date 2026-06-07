@@ -217,11 +217,38 @@ describe("console-sync-ops.yaml — SyncOpsSummary + DomainSummary (US1, FR-004)
 });
 
 describe("console-sync-ops.yaml — list projections + pagination (US2/US3, FR-014)", () => {
-  it("PageEnvelope is strict with items + nextCursor", () => {
-    const p = schema("PageEnvelope");
+  // Per-endpoint page schemas (NOT a shared oneOf envelope) so the Console's
+  // openapi-typescript generator produces a homogeneous, fully-typed items array
+  // per endpoint (review cross-repo-fit; §IV).
+  it("PostingBacklogPage is strict, items are PostingBacklogItem (no oneOf)", () => {
+    const p = schema("PostingBacklogPage");
     expect(p?.additionalProperties).toBe(false);
     expect(p?.properties).toHaveProperty("items");
     expect(p?.properties).toHaveProperty("nextCursor");
+    const items = (p?.properties ?? {})["items"] as {
+      items?: { $ref?: string; oneOf?: unknown };
+    };
+    expect(items?.items?.$ref).toBe("#/components/schemas/PostingBacklogItem");
+    expect(items?.items?.oneOf).toBeUndefined();
+  });
+  it("ReconciliationRunPage is strict, items are ReconciliationRunView (no oneOf)", () => {
+    const p = schema("ReconciliationRunPage");
+    expect(p?.additionalProperties).toBe(false);
+    const items = (p?.properties ?? {})["items"] as {
+      items?: { $ref?: string; oneOf?: unknown };
+    };
+    expect(items?.items?.$ref).toBe("#/components/schemas/ReconciliationRunView");
+    expect(items?.items?.oneOf).toBeUndefined();
+  });
+  it("each list op references its own page schema in the 200 response", () => {
+    const ref = (path: string) =>
+      (
+        doc.paths?.[path]?.["get"]?.responses?.["200"] as {
+          content?: Record<string, { schema?: { $ref?: string } }>;
+        }
+      )?.content?.["application/json"]?.schema?.$ref;
+    expect(ref(BACKLOG_PATH)).toBe("#/components/schemas/PostingBacklogPage");
+    expect(ref(RUNS_PATH)).toBe("#/components/schemas/ReconciliationRunPage");
   });
   it("PostingBacklogItem is strict + carries class/provenance/reason/timestamp, NO write/repair field", () => {
     const b = schema("PostingBacklogItem");
@@ -256,7 +283,8 @@ describe("console-sync-ops.yaml — error envelope + object safety", () => {
     for (const name of [
       "SyncOpsSummary",
       "DomainSummary",
-      "PageEnvelope",
+      "PostingBacklogPage",
+      "ReconciliationRunPage",
       "PostingBacklogItem",
       "ReconciliationRunView",
     ]) {

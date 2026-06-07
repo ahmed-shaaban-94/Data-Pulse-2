@@ -25,6 +25,7 @@
 import {
   Controller,
   Get,
+  NotFoundException,
   Query,
   Req,
   UnauthorizedException,
@@ -40,12 +41,15 @@ import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
 import {
   SyncOpsListQuerySchema,
+  SyncOpsRunListQuerySchema,
   SyncOpsSummaryQuerySchema,
   type SyncOpsListQuery,
+  type SyncOpsRunListQuery,
   type SyncOpsSummaryQuery,
 } from "./dto/sync-ops-query.dto";
 import {
   ErpnextSyncOpsReadModelService,
+  StoreNotInScopeError,
   type Page,
   type PostingBacklogItem,
   type ReconciliationRunView,
@@ -65,6 +69,21 @@ export class ErpnextSyncOpsController {
     return ctx.tenantId;
   }
 
+  /**
+   * Validate an optional `store_id` is in the session tenant's scope; map an
+   * out-of-scope id to a non-disclosing 404 (FR-009 / SC-002). No-op when absent.
+   */
+  private async assertStore(tenantId: string, storeId?: string): Promise<void> {
+    try {
+      await this.service.assertStoreInScope(tenantId, storeId);
+    } catch (err) {
+      if (err instanceof StoreNotInScopeError) {
+        throw new NotFoundException({ code: "not_found", message: "Not found." });
+      }
+      throw err;
+    }
+  }
+
   /** GET — the consolidated sync-ops summary (US1 🎯). */
   @Get("api/v1/catalog/erpnext-sync-ops/summary")
   @UseGuards(RolesGuard)
@@ -76,6 +95,7 @@ export class ErpnextSyncOpsController {
     query: SyncOpsSummaryQuery,
   ): Promise<SyncOpsSummaryBody> {
     const tenantId = this.requireTenant(request);
+    await this.assertStore(tenantId, query.store_id);
     return this.service.getSummary({
       tenantId,
       ...(query.store_id ? { storeId: query.store_id } : {}),
@@ -92,6 +112,7 @@ export class ErpnextSyncOpsController {
     @Query(new ZodValidationPipe(SyncOpsListQuerySchema)) query: SyncOpsListQuery,
   ): Promise<Page<PostingBacklogItem>> {
     const tenantId = this.requireTenant(request);
+    await this.assertStore(tenantId, query.store_id);
     return this.service.listPostingBacklog({
       tenantId,
       cursor: query.cursor != null ? BigInt(query.cursor) : null,
@@ -107,12 +128,14 @@ export class ErpnextSyncOpsController {
   @Auditable("erpnext_sync_ops.reconciliation_runs.listed")
   async listReconciliationRuns(
     @Req() request: TenantContextRequest,
-    @Query(new ZodValidationPipe(SyncOpsListQuerySchema)) query: SyncOpsListQuery,
+    @Query(new ZodValidationPipe(SyncOpsRunListQuerySchema))
+    query: SyncOpsRunListQuery,
   ): Promise<Page<ReconciliationRunView>> {
     const tenantId = this.requireTenant(request);
+    await this.assertStore(tenantId, query.store_id);
     return this.service.listReconciliationRuns({
       tenantId,
-      cursor: query.cursor != null ? BigInt(query.cursor) : null,
+      cursor: query.cursor ?? null,
       limit: query.page_size ?? 50,
       ...(query.store_id ? { storeId: query.store_id } : {}),
     });

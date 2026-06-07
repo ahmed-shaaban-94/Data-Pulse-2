@@ -183,3 +183,41 @@ describe("025-US3 §3 — §XII strict DTO", () => {
     await http().get(BASE).query({ tenant_id: TENANT_B }).expect(400);
   });
 });
+
+describe("025-US3 §4 — pagination is stable + gap-free across same-timestamp ties", () => {
+  it("two runs with the SAME started_at both appear across pages (composite cursor)", async () => {
+    if (skip()) return;
+    // started_at is not unique. Seed two tenant-A runs at the SAME instant; a
+    // timestamp-only cursor would drop one at the page boundary. The composite
+    // (started_at, id) cursor must surface BOTH across page_size=1 paging.
+    const TIE_1 = "0a000000-0000-7000-8000-00000e0517f1";
+    const TIE_2 = "0a000000-0000-7000-8000-00000e0517f2";
+    const TIE_STORE = RECONCILIATION_FIXTURE_IDS.storeAMapped;
+    // A 'completed' run MUST carry finished_at (the schema CHECK
+    // erpnext_reconciliation_run_finished_when_terminal: running iff finished_at NULL).
+    await env!.admin.query(
+      `INSERT INTO erpnext_reconciliation_run
+         (id, tenant_id, store_id, kind, trigger, status, started_at, finished_at)
+       VALUES
+         ($1, $3, $4, 'stock', 'on_demand', 'completed', '2099-01-01T00:00:00Z', '2099-01-01T00:05:00Z'),
+         ($2, $3, $4, 'stock', 'on_demand', 'completed', '2099-01-01T00:00:00Z', '2099-01-01T00:05:00Z')
+       ON CONFLICT DO NOTHING`,
+      [TIE_1, TIE_2, TENANT_A, TIE_STORE],
+    );
+
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    // Page through with page_size=1; bounded loop guard.
+    for (let i = 0; i < 10; i++) {
+      const q: Record<string, string> = { page_size: "1" };
+      if (cursor) q["cursor"] = cursor;
+      const res = await http().get(BASE).query(q).expect(200);
+      for (const r of res.body.items as { runId: string }[]) seen.add(r.runId);
+      cursor = res.body.nextCursor;
+      if (!cursor) break;
+    }
+    // Both tie rows must have been surfaced — neither dropped at the boundary.
+    expect(seen.has(TIE_1)).toBe(true);
+    expect(seen.has(TIE_2)).toBe(true);
+  });
+});

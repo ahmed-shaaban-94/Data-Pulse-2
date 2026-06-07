@@ -191,18 +191,49 @@ describe("025-US1 §2 — empty tenant is zeroed (not errored)", () => {
   });
 });
 
-describe("025-US1 §3 — tenant isolation", () => {
-  it("tenant A's summary reflects only tenant A's state, not tenant B's", async () => {
+describe("025-US1 §3 — tenant isolation (RLS actually in effect)", () => {
+  it("tenant A sees its own dead-letter count; the EMPTY tenant control sees 0", async () => {
     if (skip()) return;
+    // Tenant A has the seeded POSTING_DEADLETTER_A → posting count >= 1.
     const a = byDomain((await http().get(BASE).expect(200)).body);
-    contextGuard.tenantId = TENANT_B;
-    const b = byDomain((await http().get(BASE).expect(200)).body);
-    // Both are valid summaries; the counts are independently tenant-scoped (RLS).
-    // Tenant A has the seeded dead-letter; if B's posting count equals A's only by
-    // coincidence the isolation still holds structurally — assert each is computed
-    // under its own tenant GUC by checking they are independent numbers.
-    expect(typeof a["posting"]!.headlineCount).toBe("number");
-    expect(typeof b["posting"]!.headlineCount).toBe("number");
+    expect(a["posting"]!.headlineCount).toBeGreaterThanOrEqual(1);
+    // The EMPTY tenant is the control: if RLS were disabled it would see A's rows
+    // (count >= 1); proving it sees 0 proves the per-tenant GUC filter is active.
+    contextGuard.tenantId = TENANT_EMPTY;
+    const empty = byDomain((await http().get(BASE).expect(200)).body);
+    expect(empty["posting"]!.headlineCount).toBe(0);
+    expect(empty["reconciliation"]!.headlineCount).toBe(0);
+  });
+});
+
+describe("025-US1 §5 — reconciliation status rollup (failed run → attention)", () => {
+  it("a failed latest run yields attention even with zero open mismatches", async () => {
+    if (skip()) return;
+    // Seed (under TENANT_A, on a NEW dedicated store) a FAILED run with NO results
+    // → query the summary FILTERED to that store, so posting + open-mismatch counts
+    // are both 0 for the store, but the latest run is 'failed'. The rollup must be
+    // 'attention' (a failed run still needs operator eyes), NOT 'ok'. Fails against
+    // a count-only rollup. (Also exercises the store-filtered path.)
+    const FAILED_RUN = "0a000000-0000-7000-8000-00000e0517cf";
+    const FAIL_STORE = "0a000000-0000-7000-8000-00000e0517ce";
+    await env!.admin.query(
+      `INSERT INTO stores (id, tenant_id, code, name)
+       VALUES ($1, $2, 'FAIL1', 'Fail Store') ON CONFLICT DO NOTHING`,
+      [FAIL_STORE, TENANT_A],
+    );
+    await env!.admin.query(
+      `INSERT INTO erpnext_reconciliation_run
+         (id, tenant_id, store_id, kind, trigger, status, started_at, finished_at)
+       VALUES ($1, $2, $3, 'stock', 'on_demand', 'failed', now(), now())
+       ON CONFLICT DO NOTHING`,
+      [FAILED_RUN, TENANT_A, FAIL_STORE],
+    );
+    const d = byDomain(
+      (await http().get(BASE).query({ store_id: FAIL_STORE }).expect(200)).body,
+    );
+    expect(d["posting"]!.headlineCount).toBe(0);
+    expect(d["reconciliation"]!.headlineCount).toBe(0);
+    expect(d["reconciliation"]!.status).toBe("attention");
   });
 });
 
@@ -210,6 +241,16 @@ describe("025-US1 §4 — §XII strict DTO", () => {
   it("a smuggled tenant_id query key → 400 (strict)", async () => {
     if (skip()) return;
     await http().get(BASE).query({ tenant_id: TENANT_B }).expect(400);
+  });
+
+  it("a well-formed but out-of-scope store_id → non-disclosing 404 (FR-009/SC-002)", async () => {
+    if (skip()) return;
+    // A valid UUID that is NOT a store in tenant A's scope must be 404, not an
+    // empty 200 (the contract's stated non-disclosing behaviour).
+    await http()
+      .get(BASE)
+      .query({ store_id: "0d000000-0000-7000-8000-00000e0517dd" })
+      .expect(404);
   });
 
   it("a non-uuid store_id → 400", async () => {

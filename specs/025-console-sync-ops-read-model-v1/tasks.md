@@ -71,7 +71,7 @@ latest-run outcome, and `not_available` deferred domains, tenant-scoped.
 ### Tests (RED first)
 
 - [ ] T008 [P] [US1] Contract conformance test for `consoleGetSyncOpsSummary` in
-  `apps/api/test/catalog/erpnext-sync-ops/erpnext-sync-ops.contract-spec.ts`. (FR-016, SC-008)
+  `apps/api/test/catalog/erpnext-sync-ops/erpnext-sync-ops.contract.spec.ts`. (FR-016, SC-008)
 - [ ] T009 [P] [US1] Integration test `sync-ops-summary.int-spec.ts`: posting-health +
   reconciliation-health counts, deferred-domain `not_available`, empty-tenant zeroed
   case, store filter. (SC-001, SC-003, SC-004)
@@ -90,8 +90,10 @@ latest-run outcome, and `not_available` deferred domains, tenant-scoped.
 - [ ] T014 [US1] Add the deferred-domain `not_available` `DomainSummary` for
   connector_health (020) + product_master (021). (FR-004)
 - [ ] T015 [US1] Implement `consoleGetSyncOpsSummary` controller route + `toBody()`
-  projection (no raw DB entity); money pass-through exact-decimal if present. (FR-001,
-  FR-010, FR-013)
+  projection (no raw DB entity). NOTE: the 015/017 source tables carry NO money /
+  valuation column (both are BUSINESS-class — refs/counts/qty/classes only), so
+  there is NO monetary field on this surface (the contract banned-field scan
+  enforces it). (FR-001, FR-010, FR-013)
 
 **Checkpoint**: US1 fully functional + independently testable (MVP).
 
@@ -119,10 +121,14 @@ tenant-scoped.
 ### Implementation (GREEN)
 
 - [ ] T020 [US2] Read-model service: backlog query (filter `status='permanently_rejected'`,
-  sort/group-by class, cursor pagination, bounded page size). (FR-005, FR-014)
+  cursor pagination on `sequence`, bounded page size). NOTE (SC-007): the existing
+  015 index is `WHERE status='pending'`; the `permanently_rejected` scan is NOT
+  backed by an index. Do NOT add one — that is a gated `packages/db` change SC-007
+  forbids; logged as a report-only perf note (T029). (FR-005, FR-014)
 - [ ] T021 [US2] Implement `consoleListPostingBacklog` controller route +
-  `PostingBacklogItem` projection (provenance, structured reason redacted, money
-  pass-through; read-only, no write field). (FR-010, FR-011, FR-013)
+  `PostingBacklogItem` projection (provenance, rejection class, dead-letter time;
+  read-only, no write/repair field). NOTE: no money field — the 015 table carries
+  none. (FR-010, FR-011, FR-013)
 
 **Checkpoint**: US1 + US2 both independently functional.
 

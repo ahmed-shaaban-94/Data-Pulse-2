@@ -113,7 +113,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PageEnvelope"
+                $ref: "#/components/schemas/PostingBacklogPage"
         "400":
           $ref: "#/components/responses/ValidationFailure"
         "401":
@@ -145,7 +145,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PageEnvelope"
+                $ref: "#/components/schemas/ReconciliationRunPage"
         "400":
           $ref: "#/components/responses/ValidationFailure"
         "401":
@@ -250,22 +250,33 @@ components:
             Short human-readable context (e.g. latest run outcome). Null when
             `not_available`. No PII, no internal identifiers.
 
-    PageEnvelope:
+    # Per-endpoint page schemas (NOT a shared oneOf envelope): each list op has a
+    # homogeneous, fully-typed items array so the Console's openapi-typescript
+    # generator produces precise per-endpoint types (no union narrowing/casting).
+    PostingBacklogPage:
       type: object
       additionalProperties: false
       required: [items, nextCursor]
-      description: >
-        A bounded page of list items with an opaque continuation cursor. `items`
-        carries `PostingBacklogItem` (posting-backlog) or `ReconciliationRunView`
-        (reconciliation-runs) per the operation.
+      description: A bounded page of posting dead-letter backlog items.
       properties:
         items:
           type: array
-          description: The page's items (operation-specific projection).
           items:
-            oneOf:
-              - $ref: "#/components/schemas/PostingBacklogItem"
-              - $ref: "#/components/schemas/ReconciliationRunView"
+            $ref: "#/components/schemas/PostingBacklogItem"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page; null on the last page.
+
+    ReconciliationRunPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      description: A bounded page of reconciliation runs (newest first).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconciliationRunView"
         nextCursor:
           type: [string, "null"]
           description: Opaque cursor for the next page; null on the last page.
