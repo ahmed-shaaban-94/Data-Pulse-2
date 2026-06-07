@@ -56,7 +56,13 @@ All 10 dispatchable slices BUILT + GREEN (WSL Testcontainers); production build 
 1. **Consistency CHECK deferred** (`scope='connector' iff connector_registration_id IS NOT NULL`) — owner confirmed a legacy connector token may exist; FK + partial-unique ship now, the CHECK lands after the live backfill.
 2. **US4 release-runbook step (live env):** a pre-existing unlinked `connector` token would be cut off by the tightened guard. Before US4 reaches a live/staging env: backfill a connector_registration → link/reissue the credential → reconfigure the connector. (017-VERIFY records the cross-system leg never ran live, so the live env may already be clean.)
 
-**Next: a final heavy code-review pass, then push + PR (owner merges).**
+**Heavy review (2026-06-06): PASS.** Full build clean (6 packages); **connector 95/95 (10 suites) + auth/015-posting regression 502/502 (44 suites) + worker observability 232/232 (7 suites)** — the shared `ALLOWED_METRIC_LABELS` change verified on BOTH consumers (worker-signals asserts subset-membership, not exact-set, so the api-only counter doesn't drift it). All 27 FRs covered.
+
+**Two known non-blocking edges (recorded, not fixed — out of v1 scope):**
+1. **SC-004 concurrency:** at-most-one-active is *structurally* guaranteed by the partial-unique + tested sequentially. Two *concurrent* rotates: the loser's INSERT hits 23505 → surfaces as 500 (not a graceful response). The real invariant (never two active) holds; graceful concurrent-rotate is a future hardening.
+2. **Lifecycle counter timing:** `connector_lifecycle_total` fires in-tx via `insertAudit` (before commit). A metric add can't alter the DB outcome, but a post-audit commit failure would over-count by one — acceptable for an unlabeled ops counter.
+
+**Next: push → PR → STOP for owner merge** (gates approved authorized building, not self-merging production code).
 
 ## Slices (execution-map.yaml)
 
