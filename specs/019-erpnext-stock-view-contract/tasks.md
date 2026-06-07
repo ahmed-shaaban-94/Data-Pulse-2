@@ -54,7 +54,7 @@ verified by the conformance spec.
 before authoring (Constitution §VIII, standing-rules forbidden paths). Until
 approved, STOP after T002 and report.
 
-- [ ] T010 **[GATED]** [US1] Author `packages/contracts/openapi/erpnext-connector/stock-view.yaml` (OpenAPI 3.1) per data-model.md §2–§3: two operations — `binViewPullRequests` (`GET /api/connector/v1/erpnext/bin-view-requests`) + `binViewReportSnapshot` (`POST .../{requestRef}/snapshot`, `x-idempotency: required`); schemas `BinViewRequest`, `BinViewPage`, `BinViewSnapshotReport`, `BinEntry`, `ErpnextItemRef`, `RecordedBinView`, canonical `Error`; `connectorBearer` security on both; closed error set `validation_failure | snapshot_required | idempotency_key_conflict | not_found | system_failure` (+401); exact-decimal `quantity` (no float); **no valuation/cost/price field anywhere**; `additionalProperties: false` throughout; no `tenant_id` echoed. **APPROVAL REQUIRED before this task.**
+- [ ] T010 **[GATED]** [US1] Author `packages/contracts/openapi/erpnext-connector/stock-view.yaml` (OpenAPI 3.1) per data-model.md §2–§3: two operations — `binViewPullRequests` (`GET /api/connector/v1/erpnext/bin-view-requests`) + `binViewReportSnapshot` (`POST .../{requestRef}/snapshot`, `x-idempotency: required`); schemas `BinViewRequest`, **`BinViewItemWindow`** (the ≤500-item per-request slice — §2.1a, so the report 500-cap is a safe invariant, NOT a truncation risk), `BinViewPage`, `BinViewSnapshotReport`, `BinEntry` (incl. **`stockUom`** — the ERPNext `Item.stock_uom`, so 017 surfaces unit mismatches distinctly), `ErpnextItemRef`, `RecordedBinView` (incl. echoed **`erpnextWarehouseRef` + `readAt`** per spec US3 §2), canonical `Error`; `connectorBearer` security on both; closed error set `validation_failure | snapshot_required | idempotency_key_conflict | not_found | system_failure` (+401); exact-decimal `quantity` (no float); **no valuation/cost/price field anywhere**; `additionalProperties: false` throughout; no `tenant_id` echoed. **APPROVAL REQUIRED before this task.**
 
 **Checkpoint**: Contract YAML exists (pending approval) — the connector repo can build against a pinned surface.
 
@@ -127,7 +127,7 @@ distinct fields.
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] GREEN: ensure T010's YAML declares the `snapshot_required` + `idempotency_key_conflict` responses, the `Idempotent-Replayed` header, the `runRef` fields on `BinViewRequest`/`RecordedBinView`, and the `readAt` (preserved, non-security-clock) vs server `recordedAt` split per §X / FR-016.
+- [ ] T031 [US3] GREEN: ensure T010's YAML declares the `snapshot_required` + `idempotency_key_conflict` responses, the `Idempotent-Replayed` header, the `runRef` fields on `BinViewRequest`/`RecordedBinView`, and the §X clock split — the connector `readAt` (preserved, non-security-clock; on the report body AND echoed onto `RecordedBinView` per spec US3 §2) vs the DP2 server `recordedAt` (security clock, on `RecordedBinView`), as two distinct fields per §X / FR-016. Also assert `RecordedBinView` echoes `erpnextWarehouseRef` (spec US3 §2).
 
 **Checkpoint**: All three stories verified by the conformance spec; the `[GATED]` CONTRACT slice is complete.
 

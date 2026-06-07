@@ -1,0 +1,629 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — ERPNext Connector Stock-View (Bin) Read API
+  version: "1.0.0-draft"
+  description: >
+    Spec 019 ERPNext live stock-view (Bin) read contract — the DP2 ↔ connector
+    boundary by which DP2 obtains the connector's point-in-time ERPNext-Bin
+    (live on-hand) view for the 017 stock reconciliation compare. This is the
+    017-deferred `017-STOCK-VIEW-CONTRACT`, now a first-class contract.
+
+    The transport mirrors 012's pull/feed bidirectional shape exactly (the
+    connector is the ONLY component that talks to ERPNext; DP2 stays the source
+    of truth, §IX, and makes NO outbound HTTP — it EXPOSES these endpoints, the
+    connector CALLS them):
+
+      1. `binViewPullRequests` — the connector PULLS a cursor-paginated, ordered,
+         idempotent feed of wanted Bin-view reads (`BinViewRequest`), one per
+         store with an active 014 `stock` warehouse mapping, scoped to the
+         principal's tenant(s). A stale/unservable cursor returns
+         `snapshot_required` (re-baseline directive), mirroring 012.
+      2. `binViewReportSnapshot` — the connector REPORTS the point-in-time
+         ERPNext-Bin snapshot for a pulled `{requestRef}` (the on-hand quantity
+         per ERPNext Item). DP2 records the report run-scoped (017
+         `reconciliation_result.detail`) and NEVER as a standing Bin mirror
+         (signed 014 OQ-1 — no read-down look-alike). The report is idempotent:
+         the `Idempotency-Key` header is REQUIRED; a duplicate replays
+         deterministically (200 `Idempotent-Replayed: true`); a key reused with a
+         different logical report returns 409 `idempotency_key_conflict`.
+
+    AUTHORITY (signed 014 stock-impact decision): DP2 is the operational on-hand
+    authority; ERPNext is the valuation authority. 019 reads ERPNext on-hand
+    QUANTITY only — there is NO valuation / cost / price / amount field ANYWHERE
+    on this surface (FR-008 / SC-004). Quantities are exact-decimal strings
+    (`numeric`-style, mirroring 012's quantity), NEVER floats (§III); negative is
+    tolerated (ERPNext may carry it); 017 compares, never rounds.
+
+    Item identity is generic `{doctype: "Item", name}` addressing (012 O-6
+    version-independence). DP2 translates a reported `erpnextItemRef` →
+    `tenant_product_ref` via the confirmed 013 `erpnext_item_map` (DP2-side, R4) —
+    the connector applies the ref it reads from ERPNext and performs no DP2 lookup.
+
+    Temporal (§X / FR-016): the connector's `readAt` (when it read the Bin at
+    ERPNext) is PRESERVED as received and is NEVER a security clock; DP2 stamps
+    its own server-clock `recordedAt` on the recorded projection — the two are
+    distinct fields.
+
+    Version-independence (O-6): this contract speaks in Retail-Tower terms
+    (request, store, warehouse ref, bin entry, quantity) — never ERPNext doctype
+    field internals. Request/response bodies are explicit wire projections (§IV):
+    no raw DB shape, no credentials, no `tenant_id` (implicit in the principal
+    scope), no body-supplied scope (FR-005 §XII strict boundary; `requestRef` is
+    a path param so it cannot be body-forged).
+
+    Failure vocabulary: the single canonical `Error` envelope matching
+    `auth.openapi.yaml` / `outbox.openapi.yaml` / `pos-sales/sales.yaml` /
+    `posting-feed.yaml`. Closed `error.code` set: `validation_failure`,
+    `snapshot_required` (stale pull cursor, 409), `idempotency_key_conflict`
+    (report key reused with a different report, 409), `not_found`
+    (non-disclosing 404 for a cross-tenant / out-of-scope `requestRef` or
+    foreign-scope cursor — no existence leak, §II/§XII), the generic bearer-auth
+    refusal (401), and `system_failure` (500).
+
+    This contract is consumed by
+    `apps/api/test/erpnext-connector/contract/stock-view.contract.spec.ts`, loaded
+    with an explicit `dir` because the production `loadOpenApiContracts` helper is
+    non-recursive (R9), exactly as `posting-feed.yaml` is loaded.
+
+    SCOPE (019-CONTRACT): this slice authors ONLY the contract YAML + its
+    structural conformance spec. It does NOT build the DP2-side feed/report
+    runtime (a future slice), the 017-rewire that replaces `EMPTY_BIN_VIEW`
+    (FR-018, separate slice — precedent `017-RECON-WIRING`), or any live
+    cross-system exercise (external: connector live Bin reader + staging ERPNext).
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: erpnext-connector
+    description: >
+      ERPNext connector stock-view (Bin) read — pull wanted reads + report the
+      point-in-time Bin snapshot. Spec 019; pull/feed bidirectional transport.
+
+paths:
+  /api/connector/v1/erpnext/bin-view-requests:
+    get:
+      summary: Pull a page of wanted ERPNext Bin-view reads after a cursor.
+      operationId: binViewPullRequests
+      tags: [erpnext-connector]
+      security:
+        - connectorBearer: []
+      description: >
+        Return ordered, idempotent wanted Bin-view reads (`BinViewRequest`) after
+        the supplied opaque `since` cursor, one per store with an active 014
+        `stock` warehouse mapping, for the authenticated connector principal's
+        tenant scope, with an advanced cursor reaching the current wanted set.
+        Mirrors 012's pull semantics. Re-requesting the same `since` cursor yields
+        the same logical work set (idempotent replay). A cursor older than the
+        retained horizon (or otherwise unservable) returns `snapshot_required` —
+        the connector MUST re-baseline by pulling from the start. A cursor
+        presented under a foreign scope is refused non-disclosingly. Scope is taken
+        from the connector principal ONLY; query scope is never trusted.
+      parameters:
+        - $ref: "#/components/parameters/Since"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: >
+            A page of wanted Bin-view reads after `since`, with the advanced opaque
+            server cursor. Cursor-paginated via `next_page_token`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BinViewPage"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/SnapshotRequired"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/connector/v1/erpnext/bin-view-requests/{requestRef}/snapshot:
+    post:
+      summary: Report the point-in-time ERPNext-Bin snapshot for a pulled request.
+      operationId: binViewReportSnapshot
+      x-idempotency: required
+      tags: [erpnext-connector]
+      security:
+        - connectorBearer: []
+      description: >
+        Report the connector's point-in-time ERPNext-Bin snapshot for the pulled
+        `{requestRef}` — the on-hand QUANTITY per ERPNext Item (no valuation). DP2
+        records it run-scoped (017 `reconciliation_result.detail`) and NEVER as a
+        standing Bin mirror (014 OQ-1). An empty `entries[]` is a valid,
+        non-failing report (the warehouse is empty / nothing to report). The DP2
+        on-hand authority + the ERPNext valuation authority are both untouched
+        (§IX); 019 contributes only the read evidence the 017 run compares. Scope
+        resolves from the connector principal; body-supplied scope is rejected
+        (§XII). `requestRef` is a path param so it cannot be body-forged.
+
+        Idempotency: the `Idempotency-Key` header is REQUIRED, reusing the existing
+        `IdempotencyInterceptor`. An identical retry replays the stored response
+        (200 `Idempotent-Replayed: true`); a key reused for a DIFFERENT logical
+        report returns 409 `idempotency_key_conflict`. No new primitive (§XI).
+      parameters:
+        - $ref: "#/components/parameters/RequestRef"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BinViewSnapshotReport"
+      responses:
+        "200":
+          description: >
+            Idempotent replay — this snapshot was already recorded (same
+            `Idempotency-Key`). Returns the identical recorded projection with
+            `Idempotent-Replayed: true`; no double-apply.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedBinView"
+        "201":
+          description: Snapshot recorded for the first time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedBinView"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+components:
+  securitySchemes:
+    connectorBearer:
+      type: http
+      scheme: bearer
+      description: >
+        OPAQUE, REVOCABLE service bearer token presented as
+        `Authorization: Bearer <token>` — the platform's "opaque revocable bearer
+        tokens (API)" baseline (the generic `bearerAuth` in `auth.openapi.yaml`),
+        NOT a Clerk JWT (`clerkJwt`) and NOT a human cookie session. The connector
+        authenticates as a dedicated, tenant-scoped, revocable MACHINE principal
+        (011 / 018 connector-registration). Verified at the API edge; fail-closed.
+
+  parameters:
+    Since:
+      name: since
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+      description: >
+        The opaque `cursor` returned by a prior pull page. Treated as opaque —
+        clients MUST NOT decode or construct it. Omit (or send empty) to pull from
+        the start (re-baseline). Scope-bound: a foreign-scope cursor is refused
+        non-disclosingly; a cursor older than the retained horizon returns
+        `snapshot_required`.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+      description: >
+        Maximum requests per page. The server MAY return fewer. Bounds memory on
+        both ends; aligns with the 500/request ceiling established in 009/012.
+    RequestRef:
+      name: requestRef
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        The opaque, server-issued reference from a pulled
+        `BinViewRequest.requestRef`. Resolves only within the connector
+        principal's tenant scope — out-of-scope refs are non-disclosing 404s
+        (§II/§XII). A path param so it cannot be body-forged.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      description: >
+        REQUIRED on the snapshot report. Reuses the existing
+        `IdempotencyInterceptor` — keyed on `(method, route, clientId = connector
+        principal, key)`. Identical retry replays the stored response; key-reuse
+        with a different logical report returns 409 `idempotency_key_conflict`.
+
+  headers:
+    IdempotentReplayed:
+      description: >
+        Present and `true` on a 200 idempotent-replay response (mirrors the
+        `posting-feed` / `pos-sales` convention). Absent on a fresh 201 record.
+      schema:
+        type: boolean
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # ErpnextItemRef — generic {doctype: "Item", name} addressing (O-6).
+    # Verbatim from posting-feed.yaml (shared discipline; no new primitive).
+    # -----------------------------------------------------------------------
+    ErpnextItemRef:
+      type: object
+      additionalProperties: false
+      required: [doctype, name]
+      description: >
+        A reference to an ERPNext **Item**. Generic doctype+name addressing (O-6
+        version-independence) with `doctype` fixed to "Item". `name` is the
+        ERPNext Item code/name — the same opaque string stored in the 013
+        `erpnext_item_map.erpnext_item_ref` (maxLength 140). DP2 translates it to
+        a `tenant_product_ref` (R4); the connector reads it from ERPNext.
+      properties:
+        doctype:
+          type: string
+          const: "Item"
+          description: Always "Item" — this ref addresses an ERPNext Item only.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: >
+            ERPNext Item code/name (the 013 `erpnext_item_ref` string). Opaque —
+            no FK, version-independent (O-6).
+
+    # -----------------------------------------------------------------------
+    # BinViewRequest — feed item (DP2 → connector). The WANTED read; no data.
+    # -----------------------------------------------------------------------
+    BinViewRequest:
+      type: object
+      additionalProperties: false
+      required: [requestRef, storeId, erpnextWarehouseRef, runRef, itemWindow, itemCursor]
+      description: >
+        One wanted ERPNext-Bin read for a store with an active 014 `stock`
+        warehouse mapping, correlated to a 017 reconciliation run. Carries NO bin
+        data (quantity belongs to the report) and no `tenant_id` (implicit scope).
+
+        ITEM WINDOWING (why a warehouse may span multiple requests): a real
+        ERPNext warehouse can hold far more distinct items than one report can
+        carry (the report's `entries` is capped at 500). DP2 therefore SPLITS a
+        warehouse into one BinViewRequest per ≤500-item `itemWindow`, so each
+        request maps cleanly to exactly one ≤500-entry report. Pagination lives on
+        the REQUEST (which already carries a cursor), NEVER on the report body —
+        the connector reports the Bin entries for the items in this request's
+        `itemWindow` only, and the 500-entry report cap becomes a guaranteed-safe
+        invariant rather than a truncation risk. A warehouse with ≤500 items is a
+        single request with one full window.
+      properties:
+        requestRef:
+          type: string
+          format: uuid
+          description: >
+            Stable, opaque, scope-bound reference. Echoed (as a path param) on the
+            report to bind the snapshot to this request.
+        storeId:
+          type: string
+          format: uuid
+          description: >
+            DP2 store id — lineage only; the connector reads the warehouse via the
+            supplied `erpnextWarehouseRef`, not by resolving this id.
+        erpnextWarehouseRef:
+          type: string
+          minLength: 1
+          maxLength: 180
+          description: >
+            The 014 `erpnext_warehouse_ref` for the store's active `stock`
+            mapping. Opaque, no FK, version-independent (O-6 / 014).
+        runRef:
+          type: string
+          format: uuid
+          description: >
+            The 017 reconciliation run this bin-view request belongs to
+            (correlation, US3).
+        itemWindow:
+          $ref: "#/components/schemas/BinViewItemWindow"
+          description: >
+            The bounded item slice this request covers (≤500 items). The connector
+            reports Bin entries for the items in this window only; DP2 issues
+            additional requests for further windows of the same warehouse.
+        itemCursor:
+          type: string
+          minLength: 1
+          description: >
+            Opaque advanced cursor after this request item (≤ the page cursor).
+            Clients MUST treat as opaque.
+
+    BinViewItemWindow:
+      type: object
+      additionalProperties: false
+      required: [windowSeq, maxItems]
+      description: >
+        A bounded item slice of a warehouse's Bin, so one BinViewRequest maps to at
+        most one ≤500-entry report. DP2 owns the windowing; the connector treats
+        the bounds as opaque scoping (it reports whatever Bin items fall in the
+        window, up to `maxItems`). The windowing scheme (item-ref range, hash
+        bucket, etc.) is a DP2 implementation concern behind these opaque bounds.
+      properties:
+        windowSeq:
+          type: integer
+          minimum: 0
+          description: >
+            Zero-based sequence of this window within the warehouse's full Bin set
+            for this run (window 0, 1, 2, …). Lets DP2 + the connector correlate
+            which slice a report covers; the final window is signalled by the feed
+            advancing past it (no more requests for this warehouse/run).
+        maxItems:
+          type: integer
+          minimum: 1
+          maximum: 500
+          description: >
+            The hard upper bound on items in this window — never exceeds the report
+            `entries` ceiling (500), so a report can always carry the full window.
+        fromItemRef:
+          description: >
+            Optional opaque lower bound of the window's item range (inclusive);
+            null on the first window. Opaque — the connector does not decode it.
+          anyOf:
+            - type: string
+              minLength: 1
+              maxLength: 140
+            - type: "null"
+        toItemRef:
+          description: >
+            Optional opaque upper bound of the window's item range (exclusive);
+            null on the last window. Opaque.
+          anyOf:
+            - type: string
+              minLength: 1
+              maxLength: 140
+            - type: "null"
+
+    # -----------------------------------------------------------------------
+    # BinViewPage — cursor-paginated feed response (mirrors 012 PostingFeedPage)
+    # -----------------------------------------------------------------------
+    BinViewPage:
+      type: object
+      additionalProperties: false
+      required: [items, cursor, next_page_token]
+      description: >
+        A page of wanted Bin-view reads after the supplied `since` cursor, with the
+        advanced server cursor.
+      properties:
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/BinViewRequest"
+        cursor:
+          type: string
+          minLength: 1
+          description: >
+            The advanced opaque server cursor — pass as `since` next time. Opaque;
+            do not decode.
+        next_page_token:
+          type: [string, "null"]
+          description: >
+            Opaque continuation token for the next page; null on the last page.
+            Opaque; do not decode.
+
+    # -----------------------------------------------------------------------
+    # BinViewSnapshotReport — report request body (connector → DP2). Strict.
+    # Scope is NEVER body-supplied (FR-005). requestRef is a path param.
+    # -----------------------------------------------------------------------
+    BinViewSnapshotReport:
+      type: object
+      additionalProperties: false
+      required: [entries, readAt]
+      description: >
+        The connector's point-in-time ERPNext-Bin snapshot for the pulled
+        `{requestRef}`. An empty `entries[]` is valid (warehouse empty / nothing to
+        report) and does NOT fail. No `tenant_id`, no `storeId` — scope is the
+        principal's (§XII).
+      properties:
+        entries:
+          type: array
+          minItems: 0
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/BinEntry"
+          description: >
+            Per-item Bin on-hand quantities read at ERPNext. Bounded by the same
+            500/page ceiling as the feed.
+        readAt:
+          type: string
+          format: date-time
+          description: >
+            Connector-reported time the Bin was read at ERPNext. PRESERVED as
+            received; NEVER a security clock (§X / FR-016). Distinct from DP2's
+            server-clock `recordedAt`.
+
+    # -----------------------------------------------------------------------
+    # BinEntry — one item's Bin quantity. Exact-decimal, NO valuation.
+    # -----------------------------------------------------------------------
+    BinEntry:
+      type: object
+      additionalProperties: false
+      required: [erpnextItemRef, quantity, stockUom]
+      description: >
+        One ERPNext Item's on-hand quantity in the warehouse, denominated in the
+        Item's stock UOM. Quantity only — there is NO valuation / cost / price
+        field (014 OQ-1 / FR-008 / SC-004).
+      properties:
+        erpnextItemRef:
+          $ref: "#/components/schemas/ErpnextItemRef"
+        quantity:
+          type: string
+          pattern: '^-?[0-9]{1,15}(\.[0-9]{1,6})?$'
+          description: >
+            Bin on-hand quantity as an exact-decimal string (NEVER a float, §III /
+            FR-008), denominated in `stockUom`. Negative is tolerated (ERPNext may
+            carry it); the 017 run compares, never rounds. The connector converts
+            ERPNext's `Bin.actual_qty` (a float) to this string deterministically
+            (round half-even to 6 dp); the precision cap is 6 fractional digits.
+        stockUom:
+          type: string
+          minLength: 1
+          maxLength: 140
+          description: >
+            The ERPNext `Item.stock_uom` name this quantity is denominated in
+            (e.g. "Nos", "kg", "gram"). REQUIRED so the 017 reconciliation can
+            detect a unit-of-measure mismatch (DP2 records movements in its own
+            `stocking_unit`) as a DISTINCT classification rather than conflating an
+            incompatible denominator into a false `quantity_divergence`. Opaque to
+            DP2 beyond equality comparison; no UOM conversion is performed on this
+            surface (a UOM-conversion layer, if needed, is a named follow-up).
+
+    # -----------------------------------------------------------------------
+    # RecordedBinView — report response projection (DP2 → connector), toBody.
+    # -----------------------------------------------------------------------
+    RecordedBinView:
+      type: object
+      additionalProperties: false
+      required:
+        - requestRef
+        - runRef
+        - erpnextWarehouseRef
+        - acceptedEntryCount
+        - readAt
+        - recordedAt
+      description: >
+        Wire projection confirming what DP2 recorded for the snapshot (spec US3
+        acceptance scenario 2). The connector treats it as the authoritative
+        acknowledgement. Carries BOTH clocks as DISTINCT fields: the connector's
+        `readAt` (echoed back, preserved as received) and DP2's server-clock
+        `recordedAt` (the §X security clock) — so the recorded point-in-time
+        record is self-describing for the 017 run's `result.detail` audit.
+      properties:
+        requestRef:
+          type: string
+          format: uuid
+          description: Echoes the bound request.
+        runRef:
+          type: string
+          format: uuid
+          description: The correlated 017 reconciliation run (US3).
+        erpnextWarehouseRef:
+          type: string
+          minLength: 1
+          maxLength: 180
+          description: >
+            The warehouse the snapshot was bound to (echoed from the request) — so
+            the connector can verify, from the response alone, which warehouse DP2
+            recorded against (spec US3 acceptance scenario 2).
+        acceptedEntryCount:
+          type: integer
+          minimum: 0
+          description: How many entries DP2 recorded.
+        readAt:
+          type: string
+          format: date-time
+          description: >
+            The connector-reported read time, echoed back unchanged from the report
+            body. PRESERVED as received; NEVER a security clock (§X / FR-016).
+        recordedAt:
+          type: string
+          format: date-time
+          description: >
+            DP2 server-clock stamp when the snapshot was recorded (the security
+            clock, §X) — distinct from the connector's `readAt`.
+
+    # -----------------------------------------------------------------------
+    # Canonical Error envelope (mirrors auth/outbox/pos-sales/posting-feed)
+    # -----------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `outbox.openapi.yaml` / `pos-sales/sales.yaml` /
+        `posting-feed.yaml` (verbatim — no extra fields, no `details`).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII).
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | snapshot_required | idempotency_key_conflict |
+                not_found | system_failure (plus the generic 401 refusal).
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: >
+        `validation_failure` — malformed query / body, unknown key (strict
+        boundary), bad cursor format, a body-supplied server-owned field (e.g. a
+        `tenant_id`/`storeId` in the report body), or a malformed quantity.
+        Deterministic; no record created.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Generic refusal (401). The body does not distinguish a missing / invalid /
+        revoked connector bearer token from a missing tenant binding or an
+        in-scope-but-not-permitted principal. Non-disclosing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        `not_found` — non-disclosing 404-class for a cross-tenant / out-of-scope
+        `requestRef` or a foreign-scope cursor. Identical for cross-tenant,
+        out-of-scope, and genuinely-absent refs, with NO existence leak via any
+        response or error shape (§II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: >
+        `idempotency_key_conflict` (409) — the same `Idempotency-Key` reused on the
+        snapshot report for a DIFFERENT logical report. Deterministic, no side
+        effects. (A duplicate report with the SAME `Idempotency-Key` is an
+        idempotent 200 replay, not a conflict.)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SnapshotRequired:
+      description: >
+        `snapshot_required` (409) — the supplied pull `since` cursor is older than
+        the retained horizon (or otherwise unservable). The connector MUST
+        re-baseline by pulling from the start (omit `since`). Deterministic.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: >
+        `system_failure` (500) — an unexpected server error. The cause is recorded
+        server-side keyed by `request_id` and is never returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
