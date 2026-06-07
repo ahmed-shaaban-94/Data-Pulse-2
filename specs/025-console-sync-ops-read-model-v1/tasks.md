@@ -158,7 +158,7 @@ fields, tenant-scoped; deferred domains `not_available`.
 ## Phase 6: Polish & Cross-Cutting
 
 - [ ] T027 [P] Reuse the shared sync-ops signals in
-  `apps/api/src/observability/api.metrics.ts` for read-model usage/source-availability;
+  `apps/api/src/observability/metrics/api.metrics.ts` for read-model usage/source-availability;
   structured logs carry `request_id`/`tenant_id`. **No per-feature metrics file.** (FR-015)
 - [ ] T028 [P] Verify no `packages/db` schema/migration change and no `package.json` /
   `pnpm-lock` change introduced (no-mirror posture). (SC-007)

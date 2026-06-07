@@ -129,7 +129,7 @@ connector-free MVP; US2 (P2) repair; US3 (P3) the connector-gated run.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T037 [P] [POLISH] Register the unmapped-backlog-depth / reconciliation-outcome signal in the shared `apps/api/src/observability/api.metrics.ts` (§VII family; no PII/money/raw-payload labels); update the cardinality/signal-name drift lists (research R9).
+- [ ] T037 [P] [POLISH] Register the unmapped-backlog-depth / reconciliation-outcome signal in the shared `apps/api/src/observability/metrics/api.metrics.ts` (§VII family; no PII/money/raw-payload labels); update the cardinality/signal-name drift lists (research R9).
 - [ ] T038 [P] [POLISH] Run worker-signals/observability suite too (shared `ALLOWED_METRIC_LABELS` — the 018 gotcha: a new metric must pass worker-obs as well).
 - [ ] T039 [POLISH] §XIV data-class guard test: owned tables carry no PII/money/raw-payload columns; no DELETE policy (retention = state).
 - [ ] T040 [P] [POLISH] Report-only perf note (no perf env — the 005/008/009/010/017 precedent); backlog-projection paging ceiling.
