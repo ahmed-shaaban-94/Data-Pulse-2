@@ -26,8 +26,10 @@ OpenAPI YAML under `packages/contracts/openapi/erpnext-connector/` plus its
 conformance test. **This planning chain authors NO code, NO YAML, NO schema, NO
 migration** — it describes the gated contract in prose and sequences the work.
 
-The single load-bearing open question (genuine DP2→connector push, which would
-invert §IX) is flagged for the owner (OQ-1) and is NOT resolved here.
+The single load-bearing open question (OQ-1 — genuine DP2→connector push, which
+would invert §IX) was **RESOLVED by the owner 2026-06-07 in favour of the
+connector-initiated command**; genuine push is rejected for 023, so the §IX
+no-outbound-HTTP invariant is preserved with no residual risk.
 
 ---
 
@@ -59,7 +61,8 @@ produces **planning + a gated contract description only**.
 
 **Performance Goals**: N/A for the contract spec. The command transport's *raison
 d'être* is lower single-item posting latency vs feed-poll; concrete latency
-targets are deferred to the implementation spec once OQ-1 / the need is confirmed.
+targets are deferred to the implementation spec once the need (T005) is confirmed
+(OQ-1 transport direction is already resolved → connector-initiated).
 
 **Constraints**:
 - No outbound HTTP from DP2 (the connector calls DP2). [§IX invariant]
@@ -84,9 +87,9 @@ in a future `[GATED]` slice. This chain: 6 planning artifacts, 0 code files.
 | **§IV Contract-First** | Yes | The boundary is an OpenAPI 3.1 YAML of record; stable new `operationId`s; explicit wire projections (no raw DB); conformance test required; 012 feed operations untouched (no rename/version reuse). | PASS |
 | **§V Async Work in Workers** | Partial | No new async work introduced by the contract; the connector's posting orchestration is its own concern. Any DP2-side projection job reuses the existing 015 worker seam. | PASS (n/a additions) |
 | **§VI Test-First** | Yes | The eventual contract ships with a structural conformance test FIRST (RED→GREEN); tasks below put the conformance test ahead of/with the YAML. | PASS |
-| **§VII Observable Systems** | Partial | No new metric mandated by the contract; if an implementation slice adds a command-posting counter it registers in the shared `api.metrics.ts` (not a per-feature file). Recorded as a forward note, not a contract obligation. | PASS |
+| **§VII Observable Systems** | Partial | No new metric mandated by the contract; if an implementation slice adds a command-posting counter it registers in the shared `apps/api/src/observability/metrics/api.metrics.ts` (not a per-feature file). Recorded as a forward note, not a contract obligation. | PASS |
 | **§VIII Reproducible / Gated** | Yes | The contract YAML lives under the `[GATED]` `packages/contracts/openapi/**` surface. This chain describes it; the YAML is authored only in an approved `[GATED]` slice. No `package.json`/lockfile/migration touched. | PASS |
-| **§IX Source-of-Truth / immutable facts** | Yes | Sale fact (008) never mutated; only 015 posting status advances; reversals are new reversing documents, never edits (O-4). The no-outbound invariant is preserved (default); the inversion is flagged as OQ-1, not adopted. | PASS |
+| **§IX Source-of-Truth / immutable facts** | Yes | Sale fact (008) never mutated; only 015 posting status advances; reversals are new reversing documents, never edits (O-4). The no-outbound invariant is preserved; the inversion (genuine push) was considered as OQ-1 and **REJECTED by the owner 2026-06-07** — connector-initiated only. | PASS |
 | **§X Retail Temporal** | Yes | `businessDate` drives ERPNext `posting_date`; `recordedAt` is the server clock; void/refund modeled as separate reversal work-items. | PASS |
 | **§XI Idempotency & External IDs** | Yes | Outcome report requires `Idempotency-Key` (existing interceptor); replay/echo/conflict semantics reused; `sourceSystem + externalId` provenance carried. No new primitive. | PASS |
 | **§XII Authorization & Object Safety** | Yes | IDs/scope from server-side principal; mass-assignment ban; strict body (`additionalProperties: false`); default-deny auth; safe 404 cross-tenant. | PASS |
@@ -94,8 +97,9 @@ in a future `[GATED]` slice. This chain: 6 planning artifacts, 0 code files.
 | **§XIV PII & Data Lifecycle** | Yes | The command surface exposes no PII beyond the 012 sale projection already on the wire; single-region posture inherited; no credentials in any body. | PASS |
 
 **Result: PASS, no violations.** Complexity Tracking below is therefore empty.
-The one §IX-adjacent risk (genuine push) is NOT taken; it is flagged for the
-owner (OQ-1) and would require its own decision record + likely a separate spec.
+The one §IX-adjacent risk (genuine push) is NOT taken; OQ-1 was **RESOLVED by the
+owner 2026-06-07 → connector-initiated**, and genuine push (which would have
+required its own decision record + likely a separate spec) is rejected for 023.
 
 ### Re-check after Phase 1 design
 
@@ -174,10 +178,11 @@ surface: `validation_failure`, `idempotency_key_conflict`, `not_found`,
 command transport).
 
 **No DB schema / migration** is part of 023: the work-item, posting status, and
-DLQ/reconciliation state are owned by 015 (and 017) and reused as-is. If OQ-1
-resolves toward genuine push (NOT the default), a callback-registration schema
-and an outbound-egress posture would be required — that is explicitly out of this
-spec and would need its own decision record + `[GATED]` slices.
+DLQ/reconciliation state are owned by 015 (and 017) and reused as-is. (Had OQ-1
+resolved toward genuine push — it did not; the owner rejected it 2026-06-07 — a
+callback-registration schema and an outbound-egress posture would have been
+required; that is explicitly out of this spec and would need its own decision
+record + `[GATED]` slices.)
 
 ---
 
@@ -187,4 +192,5 @@ spec and would need its own decision record + `[GATED]` slices.
 project, no new pattern, no new primitive: it reuses the 012 transport vocabulary
 and the 015/017 state. The only added concept (a command/imperative addressing of
 one work-item) is a thin alternative path, justified by the "if needed" handoff
-and gated on a confirmed need (Assumptions, OQ-1).
+and gated on a confirmed need (Assumptions; T005 need-confirmation). Transport
+direction (OQ-1) is already resolved → connector-initiated.

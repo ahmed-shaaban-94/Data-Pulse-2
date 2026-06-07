@@ -173,7 +173,7 @@ the 012 boundary). FR-019.
 ## R9 — Signal placement + cardinality
 
 **Decision:** Register the unmapped-product-backlog-depth / reconciliation-outcome
-signal in the **shared `apps/api/src/observability/api.metrics.ts`** (the 010
+signal in the **shared `apps/api/src/observability/metrics/api.metrics.ts`** (the 010
 `catalog_unpriced_issue_rate` precedent), as the §VII "reconciliation mismatch
 rate" family, with **no PII/money/raw-payload labels** (counts + mismatch_class
 only). Append the metric name to the cardinality/signal-name drift lists in

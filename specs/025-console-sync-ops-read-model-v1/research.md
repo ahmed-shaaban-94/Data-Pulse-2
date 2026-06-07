@@ -11,18 +11,19 @@ Each unknown is resolved to a decision with rationale and the alternatives rejec
 **Decision**: Define the full sync-ops read-model shape across all four domains, but
 v1 **populates only the buildable 015 + 017 domains**. The 020/021 domains are
 present in the contract with an explicit `not_available` `DomainSummary.status`,
-wired when those specs land.
+wired when those specs are implemented.
 
 **Rationale**: Only 015 (posting status) and 017 (reconciliation runs/reports) are
-merged and readable in this repo today; 020 and 021 are future, unwritten specs (016
-is on-hold). A user story that aggregates a non-existent source cannot be independently
-tested (no source state to seed) and would be an incoherent MVP slice. A
-forward-compatible contract lets the Retail Tower Console build against a stable shape
-now, and mirrors DP2's established deferral pattern (017's `STOCK-VIEW-CONTRACT`
-future-gate; the `EMPTY_BIN_VIEW` placeholder).
+merged and readable in this repo today; 020 and 021 exist only as planning specs
+(this same wave) — their data sources are not yet built (016 is on-hold). A user
+story that aggregates a not-yet-built source cannot be independently tested (no
+source state to seed) and would be an incoherent MVP slice. A forward-compatible
+contract lets the Retail Tower Console build against a stable shape now, and mirrors
+DP2's established deferral pattern (017's `STOCK-VIEW-CONTRACT` future-gate; the
+`EMPTY_BIN_VIEW` placeholder).
 
 **Alternatives rejected**:
-- *Block v1 until 020/021 exist* — stalls the console indefinitely on unwritten specs.
+- *Block v1 until 020/021 are built* — stalls the console indefinitely on not-yet-built sources.
 - *Omit 020/021 entirely from the v1 shape* — forces a breaking contract change later
   when those domains land; the console would have to re-integrate.
 - *Fabricate 020/021 as `0`/empty* — falsely asserts "checked, all clear"; an operator
@@ -125,7 +126,7 @@ consistent.
 ## R7 — Observability surface
 
 **Decision**: Reuse the **shared sync-ops signals** in the shared api metrics surface
-(`apps/api/src/observability/api.metrics.ts`) — the §VII-named reconciliation mismatch
+(`apps/api/src/observability/metrics/api.metrics.ts`) — the §VII-named reconciliation mismatch
 rate / POS sync lag family — rather than introducing a per-feature metrics file.
 Structured logs carry `request_id` / `tenant_id`.
 

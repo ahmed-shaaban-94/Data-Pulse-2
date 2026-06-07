@@ -30,13 +30,15 @@
 > **Source-availability reality (drives the story structure).** Of the four named
 > source domains, only **015 (posting status) and 017 (reconciliation runs/reports)
 > are merged and readable in this repo today.** **020 (connector health) and 021
-> (product-master reconciliation) are future specs that do not yet exist** (016 is
-> on-hold; 019–024 are unwritten). v1 therefore **defines the full sync-ops read-model
-> shape across all domains but populates only the 015 + 017 domains**; the 020/021
-> domains are present-but-deferred with an explicit "source not yet available" state,
-> to be wired when those specs land. This forward-compatible shape gives the console a
-> stable contract now without blocking on unwritten specs (the repo's established
-> deferral pattern — cf. 017's `STOCK-VIEW-CONTRACT` future-gate and `EMPTY_BIN_VIEW`).
+> (product-master reconciliation) exist only as PLANNING specs (this same wave) —
+> their data sources are not yet built**, so the read-model cannot populate those
+> domains until those specs are implemented (016 is on-hold; 022/024 are unassigned).
+> v1 therefore **defines the full sync-ops read-model shape across all domains but
+> populates only the 015 + 017 domains**; the 020/021 domains are present-but-deferred
+> with an explicit "source not yet available" state, to be wired when those specs are
+> built. This forward-compatible shape gives the console a stable contract now without
+> blocking on not-yet-implemented sources (the repo's established deferral pattern —
+> cf. 017's `STOCK-VIEW-CONTRACT` future-gate and `EMPTY_BIN_VIEW`).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -304,8 +306,9 @@ timestamps, trigger source, and per-class mismatch summary, scoped to that tenan
   scope and rejected.
 - **Source availability.** Only 015 (posting status) and 017 (reconciliation
   runs/reports) are merged and readable in this repo today; 020 (connector health) and
-  021 (product-master reconciliation) are future specs and are deferred via the
-  `not_available` forward-compat shape (see Clarifications). 016 is on-hold.
+  021 (product-master reconciliation) exist only as planning specs (this wave) — their
+  data sources are not yet built, so those domains are deferred via the `not_available`
+  forward-compat shape (see Clarifications). 016 is on-hold.
 - **No new authority, no mirror.** 025 reads existing operational state and projects
   it; it never becomes the source of truth, never copies rows into a new table, and
   never exposes a write. Repair/run-trigger remain 017 operations.
@@ -324,14 +327,14 @@ timestamps, trigger source, and per-class mismatch summary, scoped to that tenan
 ### Session 2026-06-07
 
 - **Q: Two of the four named source domains (020 connector-health, 021 product-master
-  reconciliation) do not exist as specs yet. How should v1 treat them — block, omit,
-  or stub?**
+  reconciliation) are only planning specs (not yet built) at v1 time. How should v1
+  treat them — block, omit, or stub?**
   **A: Forward-compatible shape with partial v1 population.** Define the full sync-ops
   read-model shape across all four domains, but v1 populates only the buildable 015 +
   017 domains; 020/021 are present-but-deferred and report an explicit
-  `not_available` domain status, to be wired when those specs land.
+  `not_available` domain status, to be wired when those specs are implemented.
   **Rationale:** The console is a sibling repo that needs a stable contract now; a
-  forward-compat stub gives it one without blocking on unwritten specs, and mirrors the
+  forward-compat stub gives it one without blocking on not-yet-built sources, and mirrors the
   repo's established deferral pattern (017's `STOCK-VIEW-CONTRACT` future-gate,
   `EMPTY_BIN_VIEW`). The independently-testable user stories are therefore the 015+017
   ones; 020/021 stay in Assumptions/Deferrals, not as fake "independently testable"

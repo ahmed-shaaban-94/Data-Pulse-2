@@ -136,7 +136,7 @@ packages/contracts/openapi/catalog/
 
 apps/api/src/modules/catalog/erpnext-product-reconciliation/   # service + controller + DTOs + projection
 apps/worker/src/...                          # the US3 run processor (BullMQ consumer)
-apps/api/src/observability/api.metrics.ts    # register the reconciliation signal (shared file)
+apps/api/src/observability/metrics/api.metrics.ts    # register the reconciliation signal (shared file)
 
 apps/api/test/...  + packages/db/__tests__/  # Testcontainers isolation harness + sweeps + drift allowlists
 ```

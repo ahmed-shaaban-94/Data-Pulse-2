@@ -8,11 +8,32 @@
 
 **Created**: 2026-06-07
 
-**Status**: Draft — planning / contract-design only (no implementation)
+**Status**: 📋 **PLAN-ONLY — implement in future only if needed**
 
 **Constitution version**: 3.0.1
 
 **Input**: User description: "Sales-posting command contract v1"
+
+---
+
+> ## ⚠️ PLAN-ONLY — implement in the future ONLY if a concrete need is confirmed
+>
+> 023 is the **"sales-posting command, *if needed*"** arc handoff named by 018.
+> It is a **planning + contract-design spec only** — it authors NO code, NO
+> OpenAPI YAML, NO schema, NO migration. **It is NOT scheduled for
+> implementation.**
+>
+> The shipped pull/feed transport (012 contract + 015) already posts sales
+> end-to-end and is sufficient for the pilot. 023's command transport is an
+> **additive, parallel, optional** alternative that earns implementation **only
+> if a concrete need is later confirmed** (e.g. low-latency single-sale posting,
+> an operator "post this sale now" repair flow, or a cursor-less connector
+> runtime). That need-confirmation is **task T005, an explicit owner gate** — the
+> `[GATED]` contract slice MUST NOT run until it clears. If no need materialises,
+> 023 stays planning-only indefinitely.
+>
+> Transport direction (OQ-1) is already resolved → **connector-initiated**
+> (genuine DP2→connector push rejected, 2026-06-07; preserves §IX).
 
 ---
 
@@ -100,8 +121,9 @@ Define, at the planning + contract-design level:
   segment that never touch or rename the 012 feed operations (§IV).
 - The **failure posture** (DLQ + reconciliation reuse via 015/017, no silent
   rewrite of the sale fact, §IX/§X).
-- The **open questions**, with the one genuinely-human decision (genuine
-  DP2→connector push vs connector-initiated command) flagged for the owner.
+- The **open questions** — the one genuinely-human decision (genuine
+  DP2→connector push vs connector-initiated command) was escalated as OQ-1 and
+  **RESOLVED by the owner 2026-06-07 → connector-initiated** (push rejected).
 
 ---
 

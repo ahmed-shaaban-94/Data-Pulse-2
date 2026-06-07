@@ -8,8 +8,8 @@ Yes. The plan's Constitution Check covers all 14 principles with PASS verdicts.
 The load-bearing risks are handled correctly:
 - sec.IX (source-of-truth / no-outbound-HTTP): the sale fact is never mutated;
   only the 015 posting status advances. The no-outbound invariant is preserved by
-  defaulting to a connector-initiated command; the inversion (genuine push) is
-  flagged as OQ-1 for the owner, NOT adopted.
+  the connector-initiated command; the inversion (genuine push) was OQ-1 and was
+  **REJECTED by the owner 2026-06-07**, NOT adopted.
 - sec.IV (contract-first / additive): new operationIds + new path segment; the
   012 feed is untouched; conformance test required; explicit wire projections.
 - sec.XI / sec.XII / sec.III (idempotency, object safety, money): reused verbatim
@@ -40,10 +40,11 @@ implementation risk is low.
 
 ## Residual risks
 
-1. (HIGH, owner) OQ-1 — genuine DP2->connector push vs connector-initiated
-   command. Resolving toward push inverts sec.IX and needs its own decision record
-   + likely a separate spec. The default (connector-initiated) is safe; the YAML
-   must not be authored until this is resolved (gated, T006).
+1. (RESOLVED 2026-06-07) OQ-1 — genuine DP2->connector push vs connector-initiated
+   command. **Owner resolved → connector-initiated; genuine push rejected** (it
+   would invert sec.IX and need its own decision record + separate spec). No longer
+   a residual risk; T006 is closed. The YAML auth/path design is unblocked under
+   the connector-initiated model.
 2. (MEDIUM, owner) The "if needed" justification — the concrete need for a command
    transport over the working pull feed is an unvalidated assumption. If no need
    is confirmed, 023 stays planning-only (gated, T005). This is the right posture
@@ -53,9 +54,9 @@ implementation risk is low.
 
 ## Single recommended next action
 
-Take OQ-1 (and the need-confirmation, T005) to the owner. If the owner confirms a
-concrete need AND chooses connector-initiated (the default), record the sec.VIII
-[GATED] approval (T007) and run the 023-CONTRACT implementation slice (RED
-conformance test -> additive posting-command.yaml -> GREEN). If the owner wants
-genuine push, that becomes a separate decision record + spec, NOT this contract.
+Take the **need-confirmation (T005)** to the owner — OQ-1 (transport direction) is
+already resolved (connector-initiated). If the owner confirms a concrete need,
+record the sec.VIII [GATED] approval (T007) and run the 023-CONTRACT implementation
+slice (RED conformance test -> additive posting-command.yaml -> GREEN). Genuine
+push is rejected and out of scope for 023.
 Until then, 023 is a complete, parked planning spec.
