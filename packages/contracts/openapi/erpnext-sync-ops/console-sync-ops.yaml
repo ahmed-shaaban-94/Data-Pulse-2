@@ -1,0 +1,409 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — Console Sync-Ops Read-Model API
+  version: "1.0.0-draft"
+  description: >
+    Spec 025 — a READ-ONLY consolidation surface for the Retail Tower Console (a
+    sibling SPA repo). It aggregates the ERPNext sync-ops state a human operator
+    needs to see into one console-facing read API:
+
+      1. `consoleGetSyncOpsSummary` — one tenant-scoped summary across the sync-ops
+         domains: 015 posting health + 017 reconciliation health populated;
+         **020 connector_health + 021 product_master present as `not_available`**
+         (forward-compat stub, until those specs ship).
+      2. `consoleListPostingBacklog` — a paginated read-through of the 015
+         `erpnext_posting_status` dead-letter backlog (`permanently_rejected` rows
+         only), with class / origin ref / provenance / structured reason /
+         dead-letter time. NO repair affordance (repair stays in 017).
+      3. `consoleListReconciliationRuns` — a paginated, newest-first read-through
+         of 017 `erpnext_reconciliation_run` rows with trigger, status,
+         timestamps, and a per-class mismatch summary.
+
+    READ-NOT-MIRROR / compute-on-read: 025 reads the 015/017 rows in place,
+    tenant-scoped under RLS (fail-closed). It owns NO table, NO migration, NO
+    worker, and exposes NO write/repair surface — write/repair stay in 017. It is
+    the read-only consolidation of 017's operator surface for the console.
+
+    AUTH (FR-007): the HUMAN `cookieAuth` (httpOnly `dp2_session`) scheme — gated
+    by `DashboardAuthGuard` + `RolesGuard`, human-operator-only. NOT the machine
+    `connectorBearer` (012/015), NOT the `dashboard_api` bearer, NOT the POS
+    `clerkJwt` device scheme. A machine credential MUST be rejected. Required at
+    the document level.
+
+    PROJECTIONS (§IV): every response is an explicit wire shape with
+    `additionalProperties: false` — no raw DB entity, no internal columns, no
+    credential/hash material, no `tenant_id` (implicit in the session scope). The
+    15/017 source tables carry NO money / valuation column, so this surface has
+    NONE either (quantities, refs, counts, classes, timestamps only).
+
+    Error envelope: the canonical `{ error: { code, message, request_id } }`,
+    identical to the shared shape (`auth` / `outbox` / `pos-sales` /
+    `erpnext-reconciliation`). Status mapping: 400 validation, 401 unauthenticated,
+    403 insufficient-role, 404 not-found / cross-tenant (non-disclosing), 500
+    internal.
+
+    Consumed by `apps/api/test/catalog/erpnext-sync-ops/erpnext-sync-ops.contract.spec.ts`,
+    loaded with an explicit `dir` (the production `loadOpenApiContracts` helper is
+    non-recursive, R9).
+
+    SCOPE (025-CONTRACT): authors ONLY this YAML + its conformance spec. The
+    read-model service + controller routes land in the US1/US2/US3 slices. No
+    `packages/db` change (SC-007), no migration, no worker, no write.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: erpnext-sync-ops
+    description: >
+      Console-facing read-only consolidation of ERPNext sync-ops state (015
+      posting + 017 reconciliation; 020/021 deferred). Spec 025.
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/v1/catalog/erpnext-sync-ops/summary:
+    get:
+      summary: Consolidated sync-ops summary across domains for the operator's tenant.
+      operationId: consoleGetSyncOpsSummary
+      tags: [erpnext-sync-ops]
+      description: >
+        One tenant-scoped summary aggregating 015 posting health + 017
+        reconciliation health, with 020 connector_health + 021 product_master
+        reported as `not_available` (forward-compat). Optional `store_id` narrows
+        to one in-scope store. Tenant resolves server-side from the session.
+      parameters:
+        - $ref: "#/components/parameters/StoreIdQuery"
+      responses:
+        "200":
+          description: The consolidated sync-ops summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncOpsSummary"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/catalog/erpnext-sync-ops/posting-backlog:
+    get:
+      summary: Paginated read-through of the 015 posting dead-letter backlog.
+      operationId: consoleListPostingBacklog
+      tags: [erpnext-sync-ops]
+      description: >
+        The tenant's `permanently_rejected` 015 posting rows ONLY — projected with
+        class, origin ref, provenance, structured rejection reason, and dead-letter
+        time. Cursor-paginated, bounded page, deterministic order. READ-ONLY — no
+        repair affordance (repair is a 017 operation).
+      parameters:
+        - $ref: "#/components/parameters/StoreIdQuery"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of dead-letter backlog items.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/catalog/erpnext-sync-ops/reconciliation-runs:
+    get:
+      summary: Paginated newest-first read-through of 017 reconciliation runs.
+      operationId: consoleListReconciliationRuns
+      tags: [erpnext-sync-ops]
+      description: >
+        The tenant's 017 `erpnext_reconciliation_run` rows, newest-first,
+        cursor-paginated, projected with trigger source, status, timestamps, and a
+        per-class mismatch summary. Optional `store_id` narrows to one store.
+        READ-ONLY.
+      parameters:
+        - $ref: "#/components/parameters/StoreIdQuery"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of reconciliation runs (newest first).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PageEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+      description: >
+        The human dashboard session cookie (httpOnly `dp2_session`), verified by
+        `DashboardAuthGuard`. The ONLY accepted credential on this surface — a
+        machine `connectorBearer` / `dashboard_api` bearer or a POS `clerkJwt` is
+        rejected (FR-007). `RolesGuard` + `@Roles` gate the routes (default deny).
+
+  parameters:
+    StoreIdQuery:
+      name: store_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Optional in-scope store filter. Validated against the operator's
+        accessible stores; an out-of-scope id is a non-disclosing 404.
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+      description: >
+        Opaque pagination cursor from a prior page's `nextCursor`. Opaque — do not
+        decode or construct. Omit for the first page.
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+      description: Maximum items per page (bounded). The server MAY return fewer.
+
+  schemas:
+    SyncOpsSummary:
+      type: object
+      additionalProperties: false
+      required: [domains]
+      description: >
+        The consolidated sync-ops summary for one tenant (optionally one store).
+        One `DomainSummary` per sync-ops domain.
+      properties:
+        domains:
+          type: array
+          items:
+            $ref: "#/components/schemas/DomainSummary"
+          description: >
+            One entry per sync-ops domain. v1 populates `posting` + `reconciliation`;
+            `connector_health` + `product_master` are present as `not_available`.
+
+    DomainSummary:
+      type: object
+      additionalProperties: false
+      required: [domain, status]
+      description: >
+        Health of one sync-ops domain. `status` is the operator-facing rollup;
+        `not_available` means the domain's source spec (020/021) is not yet built
+        (forward-compat stub — the Console renders a deferred tile).
+      properties:
+        domain:
+          type: string
+          enum: [posting, reconciliation, connector_health, product_master]
+          description: The sync-ops domain this summary describes.
+        status:
+          type: string
+          enum: [ok, attention, not_available]
+          description: >
+            `ok` — nothing needs operator attention. `attention` — there is a
+            backlog / open mismatch / failed run to look at. `not_available` — the
+            domain's source is not yet built (020/021 in v1).
+        headlineCount:
+          type: [integer, "null"]
+          description: >
+            The single operator-facing count for the domain (e.g. dead-letter
+            backlog size for `posting`; open-mismatch count for `reconciliation`).
+            Null when `not_available`.
+        detail:
+          type: [string, "null"]
+          description: >
+            Short human-readable context (e.g. latest run outcome). Null when
+            `not_available`. No PII, no internal identifiers.
+
+    PageEnvelope:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      description: >
+        A bounded page of list items with an opaque continuation cursor. `items`
+        carries `PostingBacklogItem` (posting-backlog) or `ReconciliationRunView`
+        (reconciliation-runs) per the operation.
+      properties:
+        items:
+          type: array
+          description: The page's items (operation-specific projection).
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/PostingBacklogItem"
+              - $ref: "#/components/schemas/ReconciliationRunView"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page; null on the last page.
+
+    PostingBacklogItem:
+      type: object
+      additionalProperties: false
+      required: [postingStatusId, kind, sourceSystem, externalId, status, deadLetteredAt]
+      description: >
+        One `permanently_rejected` 015 posting row, projected read-only. No write
+        / repair field (repair is a 017 operation, not exposed here).
+      properties:
+        postingStatusId:
+          type: string
+          format: uuid
+          description: The 015 `erpnext_posting_status` row id (operator reference).
+        kind:
+          type: string
+          enum: [sale_post, reversal]
+          description: Whether the posting was a sale post or a void/refund reversal.
+        sourceSystem:
+          type: string
+          description: Provenance source system (correlation; mirrors 008/015).
+        externalId:
+          type: string
+          description: POS-side identifier of the originating sale/terminal event.
+        status:
+          type: string
+          enum: [permanently_rejected]
+          description: Always `permanently_rejected` — the backlog is dead-letters only.
+        rejectionClass:
+          type: [string, "null"]
+          description: >
+            The 015 `rejection_category` (the nearest 012 RejectionReason.category),
+            for grouping. Null if not recorded.
+        deadLetteredAt:
+          type: string
+          format: date-time
+          description: When the row reached its terminal rejected state (015 `updated_at`).
+
+    ReconciliationRunView:
+      type: object
+      additionalProperties: false
+      required: [runId, storeId, kind, trigger, status, startedAt]
+      description: >
+        One 017 `erpnext_reconciliation_run` row, projected read-only, with a
+        per-class mismatch summary.
+      properties:
+        runId:
+          type: string
+          format: uuid
+        storeId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [stock]
+          description: Stock-only in v1 (017 `run.kind`).
+        trigger:
+          type: string
+          enum: [on_demand, scheduled]
+        status:
+          type: string
+          enum: [running, completed, failed]
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Null while `running`; set on a terminal status.
+        mismatchSummary:
+          type: [object, "null"]
+          additionalProperties:
+            type: integer
+          description: >
+            Per-mismatch-class counts (014 vocabulary keys → count), from the run's
+            `summary` jsonb. Null if the run produced none. Counts only, no PII/money.
+
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in `auth` /
+        `outbox` / `pos-sales` / `erpnext-reconciliation`. Cross-tenant /
+        out-of-scope refusals are non-disclosing (§II/§XII).
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable code. Closed set: validation_failure |
+                unauthorized | forbidden | not_found | system_failure.
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: validation_failure (400) — malformed query, unknown key (strict), bad cursor.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Unauthorized (401) — missing / invalid session, OR a machine credential
+        (connectorBearer / dashboard_api / clerkJwt) presented to this human-only
+        surface. Non-disclosing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: forbidden (403) — authenticated human without the required tenant role.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        not_found (404) — non-disclosing for a cross-tenant / out-of-scope
+        `store_id` or resource. Identical for cross-tenant, out-of-scope, and
+        genuinely-absent (§II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: system_failure (500) — unexpected server error; cause recorded server-side.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
