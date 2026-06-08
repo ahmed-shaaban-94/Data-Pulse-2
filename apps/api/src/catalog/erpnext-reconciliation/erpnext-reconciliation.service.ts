@@ -378,15 +378,15 @@ export class ErpnextReconciliationService {
           targetId: runId,
           metadata: { store_id: input.storeId },
         });
-        // 017-RECON-WIRING: emit in-transaction (atomic with the run insert).
-        // Payload = IDs + provenance only (no money / PII). The envelope tenant
-        // is authoritative on the consumer side.
-        await emit(client, {
-          eventType: OUTBOX_EVENT_TYPES.ERPNEXT_RECONCILIATION_REQUESTED,
-          tenantId: input.tenantId,
-          storeId: input.storeId,
-          payload: { run_id: runId, store_id: input.storeId },
-        });
+        // 019-T041 lifecycle (shape a): the trigger NO LONGER emits
+        // erpnext.reconciliation.requested. A stock run now WAITS in `running`
+        // and is offered on the 019 bin-view feed; processing is deferred until
+        // the connector REPORTS its Bin snapshot (binViewReportSnapshot emits the
+        // event after recording → consumer → processor reads a non-empty summary).
+        // This replaces the inert EMPTY_BIN_VIEW path: previously the run
+        // completed-on-trigger over an empty Bin view (every item dp2_only). A run
+        // whose connector never reports stays `running` until a re-trigger / a
+        // future scheduled sweep (017-SCHEDULED-RUNS) — the accepted trade-off.
         return toRunBody(row.rows[0]!);
       },
     );

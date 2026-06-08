@@ -166,17 +166,18 @@ describe("017-US3 api — trigger", () => {
       [TENANT_A, res.body.id],
     );
     expect(Number(audit.rows[0]?.count)).toBe(1);
-    // 017-RECON-WIRING: the trigger emits erpnext.reconciliation.requested
-    // IN-TRANSACTION (atomic with the run insert) so the worker consumer can
-    // advance the run. Payload carries IDs + provenance only (run_id / store_id).
-    const ev = await env!.admin.query<{ payload: { run_id: string; store_id: string } }>(
-      `SELECT payload FROM outbox_events
+    // 019-T041 lifecycle (shape a): the trigger NO LONGER emits
+    // erpnext.reconciliation.requested. The run WAITS in `running` (offered on the
+    // 019 bin-view feed); the event is emitted later by binViewReportSnapshot once
+    // the connector records its Bin snapshot, so the processor runs over REAL Bin
+    // data instead of the inert EMPTY_BIN_VIEW. Assert NO event on trigger.
+    const ev = await env!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM outbox_events
         WHERE tenant_id=$1 AND event_type='erpnext.reconciliation.requested'
           AND payload->>'run_id'=$2`,
       [TENANT_A, res.body.id],
     );
-    expect(ev.rows).toHaveLength(1);
-    expect(ev.rows[0]!.payload.store_id).toBe(STORE_A_X);
+    expect(Number(ev.rows[0]?.count)).toBe(0);
   });
 
   it("§5 trigger for an unknown store → 404; strict body rejects extras", async () => {

@@ -26,7 +26,7 @@
  * request table (Option B — zero `packages/db` surface, FR-009).
  */
 import { Inject, Injectable } from "@nestjs/common";
-import { runWithTenantContext } from "@data-pulse-2/db";
+import { emit, OUTBOX_EVENT_TYPES, runWithTenantContext } from "@data-pulse-2/db";
 import { deterministicId } from "@data-pulse-2/shared";
 import type { Pool } from "pg";
 
@@ -248,10 +248,12 @@ export class ErpnextBinViewService {
         // cross-tenant ref reads nothing → non-disclosing not-found.
         const runRow = await client.query<{
           run_id: string;
+          store_id: string;
           erpnext_warehouse_ref: string;
           summary: Record<string, unknown> | null;
         }>(
           `SELECT run.id AS run_id,
+                  run.store_id,
                   whm.erpnext_warehouse_ref,
                   run.summary
              FROM erpnext_reconciliation_run run
@@ -327,8 +329,8 @@ export class ErpnextBinViewService {
           entries: resolvedEntries,
         };
 
-        // MERGE write — never a bare overwrite (keeps a future T041 counts key
-        // under summary safe). COALESCE handles the NULL-summary first write.
+        // MERGE write — never a bare overwrite (keeps the 017 counts key under
+        // summary safe). COALESCE handles the NULL-summary first write.
         await client.query(
           `UPDATE erpnext_reconciliation_run
               SET summary = COALESCE(summary, '{}'::jsonb)
@@ -337,6 +339,22 @@ export class ErpnextBinViewService {
             WHERE id = $1 AND status = 'running'`,
           [match.run_id, JSON.stringify(stored)],
         );
+
+        // 019-T041 lifecycle (shape a): now that the connector's Bin snapshot is
+        // recorded, emit erpnext.reconciliation.requested IN-TRANSACTION (atomic
+        // with the MERGE). The 017 consumer → ReconciliationRunProcessor then
+        // reads this run's summary via ReportBackedBinView and completes the run
+        // (running → completed) over REAL Bin data. The trigger no longer emits
+        // (the run waited on the feed). Emitted on the FRESH-record path only — a
+        // replay must not re-trigger (it would re-run an already-processed run;
+        // the processor's status guard would no-op, but the redundant event is
+        // avoided).
+        await emit(client, {
+          eventType: OUTBOX_EVENT_TYPES.ERPNEXT_RECONCILIATION_REQUESTED,
+          tenantId: input.tenantId,
+          storeId: match.store_id,
+          payload: { run_id: match.run_id, store_id: match.store_id },
+        });
 
         return { replayed: false, view: this.project(stored) };
       },

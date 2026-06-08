@@ -135,6 +135,20 @@ describe("ErpnextBinViewService.reportSnapshot — 019 bin-view report", () => {
     expect(rpt!.entries[0]!["stockUom"]).toBe("ea");
   });
 
+  it("emits erpnext.reconciliation.requested on first record (T041 lifecycle), NOT on replay", async () => {
+    if (skip) return;
+    // The happy-path test above already recorded REQUEST_REF once. Assert exactly
+    // one reconciliation.requested event was emitted for that run (the fresh
+    // record), and that the subsequent replay (next test) does not add another.
+    const ev = await env!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM outbox_events
+        WHERE tenant_id=$1 AND event_type='erpnext.reconciliation.requested'
+          AND payload->>'run_id'=$2`,
+      [TENANT_A, RUN_A_RUNNING],
+    );
+    expect(Number(ev.rows[0]?.count)).toBe(1);
+  });
+
   it("idempotent replay: same logical report → replayed=true, stable body", async () => {
     if (skip) return;
     const service = new ErpnextBinViewService(env!.app);
