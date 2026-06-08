@@ -6,7 +6,7 @@
  * way. Swapping the underlying library or moving from v7 to v4 is a one-file
  * change here.
  */
-import { v4, v7 } from "uuid";
+import { v4, v5, v7 } from "uuid";
 
 export type UuidVariant = "v7" | "v4";
 
@@ -27,6 +27,17 @@ export function newIdV4(): string {
 /** Default generator: UUIDv7. */
 export function newId(): string {
   return newIdV7();
+}
+
+/**
+ * Deterministic UUIDv5 — the same `(namespace, name)` always yields the same id.
+ * Used where an id must be DERIVABLE/idempotent without a persisted row (e.g. the
+ * 019 bin-view `requestRef = deterministicId(NS, `${runId}:${windowSeq}`)`, so a
+ * pulled request is stable across re-pulls + bindable on the report without a
+ * request table). `namespace` MUST itself be a UUID string.
+ */
+export function deterministicId(namespace: string, name: string): string {
+  return v5(name, namespace);
 }
 
 export interface CreateIdGeneratorOptions {
