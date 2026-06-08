@@ -84,6 +84,7 @@ export const OUTBOX_EVENT_TYPES = {
   SALE_CAPTURED: "sale.captured",
   ERPNEXT_POSTING_REQUESTED: "erpnext.posting.requested",
   ERPNEXT_RECONCILIATION_REQUESTED: "erpnext.reconciliation.requested",
+  ERPNEXT_PRODUCT_RECONCILIATION_REQUESTED: "erpnext.product_reconciliation.requested",
 } as const;
 
 export type OutboxEventType = typeof OUTBOX_EVENT_TYPES[keyof typeof OUTBOX_EVENT_TYPES];

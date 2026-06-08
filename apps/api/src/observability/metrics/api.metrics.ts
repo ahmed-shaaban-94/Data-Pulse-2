@@ -124,6 +124,13 @@ assertMetricLabels("erpnext_reconciliation_repair_total", []);
 // (tenant, instance, credential, actor) lives on connector_registration /
 // auth_tokens + audit_events, not metric labels.
 assertMetricLabels("connector_lifecycle_total", []);
+// Connector health — 020-POLISH (spec FR-018). UNLABELED — the (tenant,
+// instance) lives on connector_health + connector_registration, not labels.
+assertMetricLabels("connector_heartbeat_total", []);
+// ERPNext product-master reconciliation/repair — 021-POLISH (spec §VII). UNLABELED
+// — the (tenant, product, item, outcome) lives on the
+// erpnext_product_reconciliation_repair_attempt / _result rows + audit_events.
+assertMetricLabels("erpnext_product_reconciliation_total", []);
 
 // ---------------------------------------------------------------------------
 // Instruments
@@ -240,6 +247,22 @@ const _connectorLifecycle: Counter = meter.createCounter(
   {
     description:
       "Connector credential/registration lifecycle actions (register / issue / rotate / revoke / disable) — operational visibility for the 018 pilot boundary. Unlabeled — the (tenant, instance, credential, actor) lives on connector_registration / auth_tokens + audit_events, not metric labels.",
+  },
+);
+
+const _connectorHeartbeat: Counter = meter.createCounter(
+  "connector_heartbeat_total",
+  {
+    description:
+      "Accepted connector liveness heartbeats (020-US2 / spec FR-018). Operational visibility into how often connectors report in. Unlabeled — the (tenant, instance) it came from lives on connector_health + the 018 connector_registration, not metric labels (the 009/010/015/017/018 domain-keyed-not-attribute-keyed precedent; a per-instance/tenant label would be a cardinality + §XIV hazard).",
+  },
+);
+
+const _erpnextProductReconciliation: Counter = meter.createCounter(
+  "erpnext_product_reconciliation_total",
+  {
+    description:
+      "Operator repair actions + run-completion outcomes recorded by 021 product-master reconciliation (a backlog-item confirm/suggest_confirm or run-result re_point driving 013's lifecycle, and a completed two-sided run) — the run -> report -> repair surface (021 spec §VII). Emitted by repairBacklogItem / repairResult + the run processor. Unlabeled — the (tenant, product, item, outcome) lives on the erpnext_product_reconciliation_repair_attempt / _result rows + audit_events, not metric labels.",
   },
 );
 
@@ -495,6 +518,30 @@ export function recordErpnextReconciliationRepair(): void {
  */
 export function recordConnectorLifecycle(): void {
   _connectorLifecycle.add(1);
+}
+
+/**
+ * Increment connector_heartbeat_total (020-US2, spec FR-018).
+ * Emission site: ConnectorHealthService.recordHeartbeat, once per ACCEPTED
+ * heartbeat (after the 018 usability predicate passed at the guard). Unlabeled —
+ * the (tenant, instance) it came from lives on connector_health + the 018
+ * connector_registration, not metric labels. A SIGNAL — emission MUST NOT alter
+ * the heartbeat outcome.
+ */
+export function recordConnectorHeartbeat(): void {
+  _connectorHeartbeat.add(1);
+}
+
+/**
+ * Increment erpnext_product_reconciliation_total (021-POLISH, spec §VII).
+ * Emission sites: ErpnextProductReconciliationService.repairBacklogItem +
+ * repairResult (per recorded repair) and the run processor (per completed run).
+ * Unlabeled — the (tenant, product, item, outcome) is on the
+ * erpnext_product_reconciliation_repair_attempt / _result rows + audit_events,
+ * not metric labels. A SIGNAL — emission MUST NOT alter the repair/run outcome.
+ */
+export function recordErpnextProductReconciliation(): void {
+  _erpnextProductReconciliation.add(1);
 }
 
 // ---------------------------------------------------------------------------

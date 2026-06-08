@@ -30,7 +30,7 @@
  * (success-gated, so effectively transaction-gated).
  */
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
@@ -138,7 +138,29 @@ export class ErpnextItemMapService {
     return runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
-      async (client): Promise<SuggestResult> => {
+      (client): Promise<SuggestResult> => this.suggestOnClient(client, input),
+    );
+  }
+
+  /**
+   * Client-accepting variant of {@link suggest}. Runs 013's suggest SQL on a
+   * CALLER-SUPPLIED tenant-scoped client so an external owner (021 product-master
+   * reconciliation repair) can compose this 013 transition with its own
+   * `repair_attempt` + in-transaction `audit_events` writes ATOMICALLY (FR-015).
+   * 013 still owns the SQL — 021 only supplies the connection; no new mapping
+   * primitive. The caller MUST already have set `app.current_tenant` (e.g. inside
+   * `runWithTenantContext`).
+   */
+  async suggestOnClient(
+    client: PoolClient,
+    input: {
+      readonly tenantId: string;
+      readonly tenantProductId: string;
+      readonly erpnextItemRef: string;
+      readonly actorUserId: string;
+    },
+  ): Promise<SuggestResult> {
+    {
         // Scope-check the product (RLS-filtered → cross-tenant returns 0 rows).
         const product = await client.query<{ id: string }>(
           `SELECT id FROM tenant_products WHERE id = $1 LIMIT 1`,
@@ -148,6 +170,13 @@ export class ErpnextItemMapService {
           return { kind: "not_found" };
         }
 
+        // SAVEPOINT scopes the INSERT so a constraint violation (23505/23503)
+        // does NOT abort the caller's transaction. This method runs on a
+        // caller-supplied client that may be mid-transaction (e.g. 021's
+        // runRepair, which issues further SQL on the same client after a
+        // `conflict` result). Without the savepoint a swallowed 23505 leaves
+        // the PG transaction aborted → every subsequent query throws 25P02.
+        await client.query("SAVEPOINT sp_suggest");
         try {
           const inserted = await client.query<DbRow>(
             `INSERT INTO erpnext_item_map
@@ -163,6 +192,7 @@ export class ErpnextItemMapService {
               input.actorUserId,
             ],
           );
+          await client.query("RELEASE SAVEPOINT sp_suggest");
           const row = toRow(inserted.rows[0]!);
           this.logger?.info(
             {
@@ -175,6 +205,9 @@ export class ErpnextItemMapService {
           );
           return { kind: "ok", row };
         } catch (err: unknown) {
+          // Roll the failed INSERT back to the savepoint so the caller's
+          // transaction stays usable, THEN classify the error.
+          await client.query("ROLLBACK TO SAVEPOINT sp_suggest");
           // 23505 = active partial-unique (a 2nd active mapping for the product).
           if (isPgCode(err, "23505")) {
             return { kind: "conflict" };
@@ -188,8 +221,7 @@ export class ErpnextItemMapService {
           }
           throw err;
         }
-      },
-    );
+    }
   }
 
   /**
@@ -207,7 +239,26 @@ export class ErpnextItemMapService {
     return runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
-      async (client): Promise<ConfirmResult> => {
+      (client): Promise<ConfirmResult> => this.confirmOnClient(client, input),
+    );
+  }
+
+  /**
+   * Client-accepting variant of {@link confirm} — runs 013's confirm SQL on a
+   * caller-supplied tenant-scoped client so 021's repair can compose the 013
+   * transition with its own audit + repair_attempt atomically (FR-015). See
+   * {@link suggestOnClient}.
+   */
+  async confirmOnClient(
+    client: PoolClient,
+    input: {
+      readonly tenantId: string;
+      readonly id: string;
+      readonly version: number;
+      readonly actorUserId: string;
+    },
+  ): Promise<ConfirmResult> {
+    {
         const updated = await client.query<DbRow>(
           `UPDATE erpnext_item_map
               SET state        = 'confirmed',
@@ -241,8 +292,7 @@ export class ErpnextItemMapService {
           [input.id],
         );
         return exists.rows[0] ? { kind: "conflict" } : { kind: "not_found" };
-      },
-    );
+    }
   }
 
   /**
@@ -261,7 +311,23 @@ export class ErpnextItemMapService {
     return runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
-      async (client): Promise<RetireResult> => {
+      (client): Promise<RetireResult> => this.retireOnClient(client, input),
+    );
+  }
+
+  /**
+   * Client-accepting variant of {@link retire} — runs 013's retire SQL on a
+   * caller-supplied tenant-scoped client (the {@link suggestOnClient} rationale).
+   */
+  async retireOnClient(
+    client: PoolClient,
+    input: {
+      readonly tenantId: string;
+      readonly id: string;
+      readonly version: number;
+    },
+  ): Promise<RetireResult> {
+    {
         const updated = await client.query<DbRow>(
           `UPDATE erpnext_item_map
               SET retired_at = now(),
@@ -290,8 +356,7 @@ export class ErpnextItemMapService {
           [input.id],
         );
         return exists.rows[0] ? { kind: "conflict" } : { kind: "not_found" };
-      },
-    );
+    }
   }
 
   /** List the tenant's ACTIVE mappings, optionally filtered by lifecycle state. */

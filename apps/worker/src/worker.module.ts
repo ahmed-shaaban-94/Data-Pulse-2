@@ -127,6 +127,7 @@ import { OutboxConsumerRegistry } from "./outbox/registry";
 import { DrainerProcessor } from "./outbox/drainer.processor";
 import { PostingRequestedConsumer } from "./erpnext-posting/posting-requested.consumer";
 import { ReconciliationRequestedConsumer } from "./erpnext-reconciliation/reconciliation-requested.consumer";
+import { ProductReconciliationRequestedConsumer } from "./erpnext-product-reconciliation/product-reconciliation-requested.consumer";
 import { ReportBackedBinView } from "./erpnext-reconciliation/report-backed-bin-view";
 import {
   OutboxRetentionProcessor,
@@ -459,6 +460,16 @@ export function drainerProcessorProviderFactory(
   registry.register(
     new ReconciliationRequestedConsumer(pool, new ReportBackedBinView(pool)),
   );
+  // 021-US3: the DB-capable `erpnext.product_reconciliation.requested` consumer
+  // registers in the SAME seam (it holds the pool; it invokes
+  // ProductReconciliationRunProcessor) BEFORE the drain loop starts. v1 wires the
+  // EMPTY_ERPNEXT_ITEM_VIEW stub (the connector item-view is NOT live — the future
+  // [GATED] 021-ITEM-VIEW-CONTRACT, epic #524), so a triggered run completes
+  // reporting DP2-side classes only with erpnext_view_status='unavailable' — a
+  // REPORTED condition, never a failure, never a fabricated unmapped_erpnext_item
+  // (FR-007). This makes the DP2-INTERNAL run live; it does NOT make the
+  // cross-system connector leg live.
+  registry.register(new ProductReconciliationRequestedConsumer(pool));
   return new DrainerProcessor({ pool, registry });
 }
 

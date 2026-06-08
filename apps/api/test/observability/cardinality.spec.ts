@@ -207,6 +207,10 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "erpnext_reconciliation_repair_total",
     // Connector boundary lifecycle — 018-POLISH (spec §FR-022a). Unlabeled.
     "connector_lifecycle_total",
+    // Connector health — 020-POLISH (spec FR-018). Unlabeled.
+    "connector_heartbeat_total",
+    // ERPNext product-master reconciliation/repair — 021-POLISH (spec §VII). Unlabeled.
+    "erpnext_product_reconciliation_total",
   ];
 
   for (const name of expectedSignals) {

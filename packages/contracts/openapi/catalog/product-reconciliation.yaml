@@ -1,0 +1,643 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 Catalog — ERPNext Product-Master Reconciliation API
+  version: "1.0.0-draft"
+  description: >
+    Spec 021 (product-master-reconciliation-v1) — the tenant-admin product-master
+    reconciliation surface (run → report → repair) over the 013 `erpnext_item_map`
+    mapping. 021 is to 013 what 017 is to 014/009: it READS (never mirrors) the 013
+    mapping, the 003 `tenant_products` catalog, the 008 sale facts, and the
+    connector's ERPNext-item view; it classifies product/item-mapping divergence,
+    persists the two-sided comparison as a report, and exposes an IDEMPOTENT repair
+    that drives 013's EXISTING suggest/confirm/re-point flow — never a new mapping
+    primitive (FR-010).
+
+    021 is a PURE MAPPING/RECONCILIATION layer, NOT a catalog-authority handover
+    (§IX / 013 §5 / 011-DR-STOCK-IMPACT, SIGNED): `tenant_products` stays
+    authoritative for the retail product; ERPNext owns accounting Item identity; a
+    divergence is surfaced, never silently overwritten. This contract carries NO
+    money / valuation / on-hand field.
+
+    Five operations:
+
+      1. `listProductReconciliationBacklog` — GET the US1 LIVE backlog of active
+         DP2 products lacking a confirmed-and-active 013 mapping (a read-projection
+         over 003 ⟕ 013, classified `unmapped_dp2_product` | `suggestion_unconfirmed`;
+         paginated, sortable, groupable by class, gap-detectable). NO connector
+         dependency (the MVP).
+      2. `repairProductMapping` — POST a repair (confirm / suggest_confirm /
+         re_point) carrying the expected 013 `version`; drives 013's lifecycle;
+         idempotent (a confirm of an already-confirmed-active mapping is a
+         `no_op_echo`); `409` on a stale `version`. `Idempotency-Key` REQUIRED.
+      3. `triggerProductReconciliationRun` — POST an on-demand US3 two-sided run
+         (compares the 013 confirmed mapping set vs the connector ERPNext-item
+         view). Stub-tolerant: an absent view is reported (`erpnext_view_status`),
+         never a run failure. `Idempotency-Key` REQUIRED.
+      4. `listProductReconciliationRuns` — GET past runs (newest first).
+      5. `getProductReconciliationRunResults` — GET a run's classified mismatch
+         report (filter by class; cursor-paginated).
+
+    Authentication boundary:
+
+      * ALL operations are dashboard-session-authenticated via `cookieAuth` (the
+        httpOnly `dp2_session` cookie — the human Tenant-Admin scheme, mirroring
+        `catalog/erpnext-item-map.yaml`, `catalog/erpnext-warehouse-map.yaml`, and
+        `erpnext-reconciliation/reconciliation.yaml`). Deliberately NOT the 012
+        `connectorBearer` machine scheme and NOT the POS `clerkJwt` device scheme
+        (FR-019): the connector NEVER calls 021.
+      * `tenant_id` and the acting principal are resolved server-side from the
+        session, NEVER from the request body (§XII). Cross-tenant / out-of-scope
+        addresses are non-disclosing 404s (§II/§XII).
+
+    Conventions shared with the other catalog contracts: OpenAPI 3.1 of record; a
+    `toBody()` projection (no raw DB entity, §IV); the canonical `Error` envelope;
+    the non-disclosing `404`; `409` on optimistic-concurrency / idempotency
+    conflict. Consumed by
+    `apps/api/test/catalog/erpnext-product-reconciliation/contract/product-reconciliation.contract.spec.ts`.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: catalog-erpnext-product-reconciliation
+    description: >
+      ERPNext product-master reconciliation — tenant-admin run/report/repair
+      surface over the 013 item mapping. Spec 021.
+
+paths:
+  /api/v1/catalog/erpnext-product-reconciliation/backlog:
+    get:
+      summary: List the tenant's unmapped-product backlog (US1).
+      operationId: listProductReconciliationBacklog
+      tags: [catalog-erpnext-product-reconciliation]
+      description: >
+        Returns the LIVE read-projection of active DP2 products lacking a
+        confirmed-and-active 013 mapping (FR-001/002), classified
+        `unmapped_dp2_product` (no mapping row) | `suggestion_unconfirmed` (only a
+        suggested/retired-confirmed row). Re-resolves the 013 truth on every read
+        (READ-NOT-MIRROR-013). Cursor-paginated, optionally grouped by class.
+        Scoped to the session tenant (RLS); cross-tenant rows are never disclosed.
+      parameters:
+        - $ref: "#/components/parameters/CursorQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/ClassQuery"
+      responses:
+        "200":
+          description: A page of the unmapped-product backlog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BacklogPage"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-product-reconciliation/repairs:
+    post:
+      summary: Repair an unmapped/divergent product via the 013 lifecycle (US2).
+      operationId: repairProductMapping
+      tags: [catalog-erpnext-product-reconciliation]
+      description: >
+        Drives 013's EXISTING `erpnext_item_map` lifecycle (FR-010) — confirm an
+        existing suggestion, suggest-then-confirm a mapping, or re-point a drifted
+        one — under 013's optimistic-concurrency `version` guard. 021 issues NO
+        direct write to `erpnext_item_map`; the 008 sale facts + the 003 catalog
+        are NEVER mutated (FR-014). Idempotent: a confirm of an
+        already-confirmed-and-active mapping is a non-destructive `no_op_echo`
+        echoing the existing mapping (FR-011); a stale `version` is a `409`
+        conflict and the product stays in the backlog (FR-012/013). `tenant_id` +
+        actor are server-resolved (§XII). `Idempotency-Key` REQUIRED.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RepairProductMappingRequest"
+      responses:
+        "201":
+          description: Repair recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedProductRepair"
+        "200":
+          description: >
+            Idempotent replay OR a non-destructive `no_op_echo` of an
+            already-confirmed-active mapping (FR-011).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordedProductRepair"
+        "400":
+          description: Bad request (validation failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: >
+            The addressed product / mapping is not found OR not in the session
+            tenant's scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Optimistic-concurrency conflict (stale 013 `version`) OR an
+            idempotency-key conflict. `error.code = "conflict"` (§III / FR-012).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-product-reconciliation/runs:
+    get:
+      summary: List the tenant's product-master reconciliation runs (US3).
+      operationId: listProductReconciliationRuns
+      tags: [catalog-erpnext-product-reconciliation]
+      description: >
+        Returns past runs (newest first), cursor-paginated. Scoped to the session
+        tenant (RLS); cross-tenant runs are never disclosed.
+      parameters:
+        - $ref: "#/components/parameters/CursorQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+      responses:
+        "200":
+          description: A page of reconciliation runs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPage"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      summary: Trigger an on-demand product-master reconciliation run (US3).
+      operationId: triggerProductReconciliationRun
+      tags: [catalog-erpnext-product-reconciliation]
+      description: >
+        Starts a two-sided run comparing the 013 confirmed mapping set against the
+        connector ERPNext-item view (012 seam). Stub-tolerant (FR-007): an absent
+        / partial view is REPORTED via `erpnext_view_status`, never a run failure,
+        and NO `unmapped_erpnext_item` is fabricated from an empty view. The 013
+        mapping, the 003 catalog, and the 008 sale facts are NEVER mutated by the
+        run (FR-014). DP2 makes NO outbound ERPNext HTTP (FR-016). `tenant_id` +
+        actor are server-resolved (§XII). `Idempotency-Key` REQUIRED.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriggerProductRunRequest"
+      responses:
+        "201":
+          description: Run started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductReconciliationRun"
+        "400":
+          description: Bad request (validation failure).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Idempotency-key conflict. `error.code = "conflict"`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/catalog/erpnext-product-reconciliation/runs/{runId}/results:
+    get:
+      summary: Get a run's classified mismatch report (US3).
+      operationId: getProductReconciliationRunResults
+      tags: [catalog-erpnext-product-reconciliation]
+      description: >
+        Returns the run's classified results in 021's product-master vocabulary
+        (`match` | `unmapped_dp2_product` | `suggestion_unconfirmed` |
+        `unmapped_erpnext_item` | `attribute_drift` | `sellable_state_divergence`),
+        filterable by class, cursor-paginated. A cross-tenant / unknown run id is
+        a non-disclosing 404.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/CursorQuery"
+        - $ref: "#/components/parameters/LimitQuery"
+        - $ref: "#/components/parameters/ClassQuery"
+      responses:
+        "200":
+          description: A page of the run's classified results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResultPage"
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Run not found OR not in scope (non-disclosing, §II/§XII).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# All operations require a dashboard session (httpOnly cookie) — the human
+# Tenant-Admin scheme. NOT connectorBearer (012 machine), NOT clerkJwt (POS).
+security:
+  - cookieAuth: []
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+      description: >
+        Required on the mutating ops (repair, trigger-run). Reuses the platform
+        idempotency interceptor — a replay returns the recorded outcome; a token
+        mismatch is 409 (O-3, no new primitive).
+
+    RunId:
+      in: path
+      name: runId
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUIDv7 primary key of the `erpnext_product_reconciliation_run` row.
+
+    CursorQuery:
+      in: query
+      name: cursor
+      required: false
+      schema:
+        type: string
+      description: Opaque pagination cursor (the last item id the caller saw).
+
+    LimitQuery:
+      in: query
+      name: limit
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+      description: Page size (clamped server-side to the 500/req ceiling).
+
+    ClassQuery:
+      in: query
+      name: class
+      required: false
+      schema:
+        type: string
+        enum:
+          - match
+          - unmapped_dp2_product
+          - suggestion_unconfirmed
+          - unmapped_erpnext_item
+          - attribute_drift
+          - sellable_state_divergence
+      description: Filter / group by 021's product-master mismatch class.
+
+  schemas:
+
+    RepairProductMappingRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Repair command (US2). Strict (§XII): `tenant_id` + actor are
+        server-resolved and MUST NOT appear. Drives 013's lifecycle (FR-010).
+      required:
+        - repairKind
+        - tenantProductId
+      properties:
+        repairKind:
+          type: string
+          enum: [confirm, suggest_confirm, re_point]
+          description: >
+            confirm = confirm an existing 013 suggestion; suggest_confirm =
+            suggest-then-confirm for an unmapped product; re_point = re-point a
+            drifted mapping. All drive 013's EXISTING lifecycle.
+        tenantProductId:
+          type: string
+          format: uuid
+          description: The DP2 product to repair (003 tenant_products). Scope-checked server-side.
+        mappingId:
+          type: string
+          format: uuid
+          description: >
+            The 013 `erpnext_item_map` row to confirm/re-point (required for
+            `confirm` / `re_point`).
+        erpnextItemRef:
+          type: string
+          minLength: 1
+          maxLength: 180
+          description: >
+            The ERPNext item reference for a `suggest_confirm` (the new mapping
+            target). Opaque string — no FK, version-independent (012 O-6).
+        version:
+          type: integer
+          minimum: 1
+          description: >
+            The 013 `version` the confirm/re-point is issued against
+            (optimistic-concurrency guard, §III). A stale value is a 409.
+        runId:
+          type: string
+          format: uuid
+          description: >
+            OPTIONAL — when present (with `resultId`), the repair targets a
+            persisted US3 run result: the result_state transitions
+            open→repaired on a `mapped` outcome (drives the same 013 lifecycle).
+        resultId:
+          type: string
+          format: uuid
+          description: The US3 result id to repair (supplied together with `runId`).
+
+    TriggerProductRunRequest:
+      type: object
+      additionalProperties: false
+      description: >
+        Trigger command (US3). v1 carries NO body field — `tenant_id`, trigger
+        (`on_demand`), and actor are all server-resolved (§XII). Present so a
+        future widening (e.g. a scoped run) has a strict request shape.
+      properties: {}
+
+    BacklogItem:
+      type: object
+      additionalProperties: false
+      description: >
+        One row of the US1 live backlog — the `toBody()` projection (no raw DB
+        entity, §IV). Computed live from 003 ⟕ 013; NOT a persisted 021 row
+        (READ-NOT-MIRROR-013). NO money / valuation field.
+      required:
+        - tenantProductId
+        - mismatchClass
+        - observedAt
+      properties:
+        tenantProductId:
+          type: string
+          format: uuid
+          description: The active DP2 product lacking a confirmed-and-active mapping.
+        mismatchClass:
+          type: string
+          enum: [unmapped_dp2_product, suggestion_unconfirmed]
+          description: >
+            unmapped_dp2_product = no mapping row at all; suggestion_unconfirmed =
+            only a suggested (or retired-confirmed) 013 row exists.
+        suggestionMappingId:
+          type: [string, "null"]
+          format: uuid
+          description: The inert 013 suggestion row id (for `suggestion_unconfirmed`).
+        suggestionSource:
+          type: [string, "null"]
+          description: 013 suggestion provenance (`manual` in v1).
+        suggestedBy:
+          type: [string, "null"]
+          format: uuid
+        suggestedAt:
+          type: [string, "null"]
+          format: date-time
+        erpnextItemRef:
+          type: [string, "null"]
+          description: The suggested ERPNext item reference (for `suggestion_unconfirmed`).
+        observedAt:
+          type: string
+          format: date-time
+          description: When the gap was observed (the read timestamp).
+
+    BacklogPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BacklogItem"
+        nextCursor:
+          type: [string, "null"]
+          description: The advanced cursor, or null on the last page.
+
+    ProductReconciliationRun:
+      type: object
+      additionalProperties: false
+      description: >
+        The `toBody()` projection of an `erpnext_product_reconciliation_run` row.
+        TENANT-scoped (no store axis — a mapping is tenant-wide). NO `kind` (021
+        has one run kind; the backlog is a read-projection). NO money field.
+      required:
+        - id
+        - trigger
+        - status
+        - erpnextViewStatus
+        - startedAt
+        - finishedAt
+        - summary
+      properties:
+        id:
+          type: string
+          format: uuid
+        trigger:
+          type: string
+          enum: [on_demand, scheduled]
+          description: v1 emits `on_demand`; `scheduled` reserved.
+        status:
+          type: string
+          enum: [running, completed, failed]
+        erpnextViewStatus:
+          type: string
+          enum: [available, unavailable, partial]
+          description: >
+            The connector-view availability for the run — an absent view is a
+            REPORTED condition, never a failed run (FR-007).
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        summary:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Counts by mismatch class (BUSINESS-class counts only; no PII/money).
+
+    RunPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductReconciliationRun"
+        nextCursor:
+          type: [string, "null"]
+
+    ProductReconciliationResult:
+      type: object
+      additionalProperties: false
+      description: >
+        One classified line of a run's mismatch report — the `toBody()`
+        projection. `mismatchClass` is 021's product-master vocabulary ONLY. NO
+        money / valuation field.
+      required:
+        - id
+        - runId
+        - mismatchClass
+        - tenantProductId
+        - erpnextItemRef
+        - resultState
+        - detail
+      properties:
+        id:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        mismatchClass:
+          type: string
+          enum:
+            - match
+            - unmapped_dp2_product
+            - suggestion_unconfirmed
+            - unmapped_erpnext_item
+            - attribute_drift
+            - sellable_state_divergence
+        tenantProductId:
+          type: [string, "null"]
+          format: uuid
+          description: The DP2 product ref (null for an `unmapped_erpnext_item` line).
+        erpnextItemRef:
+          type: [string, "null"]
+          description: The ERPNext item ref (null for an `unmapped_dp2_product` line).
+        resultState:
+          type: string
+          enum: [open, repaired, accepted]
+          description: 021's OWN orthogonal workflow status.
+        detail:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Operator-facing attribute / drift values (never PII/money in labels).
+
+    ResultPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductReconciliationResult"
+        nextCursor:
+          type: [string, "null"]
+
+    RecordedProductRepair:
+      type: object
+      additionalProperties: false
+      description: >
+        The `toBody()` projection of a recorded repair attempt (DP2 → operator).
+        NO money / valuation field.
+      required:
+        - targetKind
+        - targetRef
+        - repairKind
+        - outcome
+        - resolvedItemMapId
+        - recordedAt
+      properties:
+        targetKind:
+          type: string
+          enum: [backlog_item, result]
+        targetRef:
+          type: string
+          format: uuid
+          description: The tenant_products.id (backlog repair) or the result id (run repair).
+        repairKind:
+          type: string
+          enum: [confirm, suggest_confirm, re_point]
+        outcome:
+          type: string
+          enum: [mapped, still_unmapped, no_op_echo, conflict]
+          description: >
+            mapped = the 013 mapping is now confirmed-and-active; no_op_echo = an
+            already-confirmed-active mapping (FR-011); conflict = 013's version
+            guard fired (FR-012); still_unmapped = the product remains in the
+            backlog (FR-013).
+        resolvedItemMapId:
+          type: [string, "null"]
+          format: uuid
+          description: The resolved confirmed-and-active 013 mapping id (echoed on success/no-op).
+        recordedAt:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `catalog/erpnext-item-map.yaml` (used verbatim).
+        Cross-tenant / out-of-scope refusals are non-disclosing (§II/§XII).
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | conflict | system_failure
+                (plus the generic 401 refusal).
+                NOTE (documented platform drift): `validation_failure` is the
+                code for domain-level controller rejections; Zod-strict-pipe and
+                UUID-pipe 400s fall through the global filter and emit
+                `validation_error` (ErrorCodes.VALIDATION). Same drift as
+                create-product-request.dto.ts.
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
