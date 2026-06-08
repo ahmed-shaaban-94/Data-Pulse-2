@@ -6,10 +6,10 @@
 > reconciles the DP2 product master against ERPNext items over 013's
 > `erpnext_item_map`.
 
-**Last updated:** 2026-06-08 by Ahmed Shaaban — **FULL IMPLEMENTATION on `feat/wave-020-021-025-impl`** (US1 + US2 + US3 + foundation + polish). Planning chain previously MERGED to `main` via PR #525 (squash `75d9967`).
+**Last updated:** 2026-06-08 by Ahmed Shaaban — **SHIPPED via PR #534 (`6dac49f`)**, merged to `main`. Planning chain previously MERGED to `main` via PR #525 (squash `75d9967`).
 **Spec:** `021-product-master-reconciliation-v1` (`specs/021-product-master-reconciliation-v1/`)
-**Base:** `main` (shared impl branch `feat/wave-020-021-025-impl`).
-**Status:** **IMPLEMENTED — pending PR/merge.** `[GATED]` SCHEMA + migration `0023` + `[GATED]` contract authored; full api module (US1 backlog read-projection, US2 repair-via-013-lifecycle, US3 stub-tolerant two-sided run) + worker run processor/consumer shipped. Tests RED→GREEN (see below).
+**Base:** `main` (shared impl branch `feat/wave-020-021-025-impl`, merged via PR #534).
+**Status:** **CLOSED — all tasks complete. Full implementation shipped via PR #534 (`6dac49f`, 2026-06-08).** `[GATED]` SCHEMA migration `0023` + `[GATED]` contract on `main`; full api module (US1 backlog read-projection, US2 repair-via-013-lifecycle, US3 stub-tolerant two-sided run) + worker run processor/consumer shipped. Tests RED→GREEN.
 
 ### Migration number — RESOLVED to `0023` (NOT the indicative `0022`)
 The indicative `0022` collided with 020's `connector_health` (issue #520). In authoring/merge order the **020 agent took `0022`**, so 021 takes **`0023_erpnext_product_reconciliation`** — appended at the EXPECTED_MIGRATIONS tail (no #447-class mid-array insert). Collision resolved.
@@ -33,12 +33,12 @@ The indicative `0022` collided with 020's `connector_health` (issue #520). In au
 ### Key resolved design decisions
 - **READ-NOT-MUTATE / not an authority handover (§IX):** 021 reads + repairs over 013's existing `erpnext_item_map` lifecycle; owns **no new mapping primitive**.
 - Mirrors 017's run→report→repair; cookieAuth/DashboardAuthGuard **human-only** (NOT connectorBearer).
-- New `[GATED]` `0022_erpnext_product_reconciliation` table family (indicative number — **collides with 020's indicative `0022`**, see #520) + `[GATED]` `product-reconciliation.yaml`.
+- New `[GATED]` migration `0023_erpnext_product_reconciliation` table family (collision with 020 resolved — 020 took `0022`; 021 took `0023` by authoring order; #520 closed) + `[GATED]` `product-reconciliation.yaml`.
 - **MVP (US1) is connector-free.** US3 (`unmapped_erpnext_item`, `attribute_drift`) is **stub-tolerant** — inert until the live ERPNext-item view ships.
 
 ### Deferrals / blockers
 - **MED finding F3 (cross-system, BLOCKS US3):** the live ERPNext-item read is external/gated — `021-ITEM-VIEW-CONTRACT`, tracked under the **live-leg frontier epic, issue #524**. v1 ships the run skeleton + DP2-side classes only (honest 017-style split).
-- **Migration-number collision** with 020 — tracked as **issue #520**.
+- **Migration-number collision** with 020 — **RESOLVED** by authoring order (020=`0022`, 021=`0023`); issue #520 closed.
 
 ### Next recommended action
-Open the PR from `feat/wave-020-021-025-impl`; verify `db-integration` manually (main has no branch protection — CI advisory). Post-merge, the only remaining 021 frontier is the **live ERPNext-item read** (`021-ITEM-VIEW-CONTRACT`, gated under epic #524) — v1 ships stub-tolerant. `021-SCHEDULED-RUNS` (a scheduled sweep over the same processor) is a later wiring deferral.
+021 is CLOSED on `main` (PR #534). The only remaining 021 frontier is the **live ERPNext-item read** (`021-ITEM-VIEW-CONTRACT`, gated under epic #524) — v1 ships stub-tolerant (US3 `erpnext_view_status='unavailable'` when the connector item-view is absent). `021-SCHEDULED-RUNS` (a scheduled sweep over the same processor) is a later wiring deferral.
