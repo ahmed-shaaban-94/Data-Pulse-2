@@ -28,7 +28,7 @@ What belongs to which spec — so neither DP2 nor the connector drifts scope.
 |---|---|---|---|
 | **A** | Posting feed/ack (`connectorPullPostings` / `connectorAckOutcome`) | DP2 — 012 contract / 015 impl | **Shipped.** 018 documents it + tightens its auth; does not redesign it. |
 | **B** | Connector health / status (last-seen, lag, heartbeat → DP2) | DP2 — **020** (future) | References `connector_registration.id`. Out of 018. |
-| **C** | Live ERPNext-Bin stock view (connector → DP2) | DP2 — **019** (future `[GATED]`) | **019 IS the contract 017 deferred as `017-STOCK-VIEW-CONTRACT`** — one identity. Authorizes by `connector_registration`. Out of 018. |
+| **C** | Live ERPNext-Bin stock view (connector → DP2) | DP2 — **019** ~~future `[GATED]`~~ **SHIPPED + LIVE-VALIDATED 2026-06-08** | **019 IS the contract 017 deferred as `017-STOCK-VIEW-CONTRACT`** — one identity. CONTRACT (PR #526) + T040 runtime + T041 017-rewire (PR #528) + connector PR #25 all MERGED; loop live-validated. Authorizes by `connector_registration`. Out of 018. |
 | **D** | Sales-posting command contract | DP2 — **023** (future, only if a gap over A is proven) | Reuses the 018 identity boundary. Out of 018. |
 | **E** | Tax / fiscal (ETA passthrough, item tax templates) | DP2 — **016** (on hold) + the connector's ERP-side adapter | Deferred. Out of 018. |
 | **—** | Scheduled reconciliation runs | DP2 — **029** (= 017's `017-SCHEDULED-RUNS`) | Out of 018. |

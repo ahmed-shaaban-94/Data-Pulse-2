@@ -25,9 +25,9 @@
 | POLISH | — | `erpnext_reconciliation_repair_total` (shared); report-only k6; coverage; this reconcile |
 
 ### Deferrals carried (not blockers)
-- **~~Live trigger→queue→processor wiring~~ — RESOLVED 2026-06-06 (`017-RECON-WIRING`).** The wiring shipped via the outbox path (Option A): `erpnext.reconciliation.requested` registered in the `[GATED]` `packages/db` `OUTBOX_EVENT_TYPES`; `triggerRun` emits it **in-transaction** (atomic with the run insert); the new `ReconciliationRequestedConsumer` (registered in `drainerProcessorProviderFactory` alongside the 015 consumer) invokes `ReconciliationRunProcessor`. **A triggered run now advances `running → completed` DP2-internally** over `EMPTY_BIN_VIEW` (stub-tolerant) — no connector/ERPNext call. See [`followup-reconciliation-wiring.md`](./followup-reconciliation-wiring.md).
+- **~~Live trigger→queue→processor wiring~~ — RESOLVED 2026-06-06 (`017-RECON-WIRING`).** The wiring shipped via the outbox path (Option A): `erpnext.reconciliation.requested` registered in the `[GATED]` `packages/db` `OUTBOX_EVENT_TYPES`; `triggerRun` emits it **in-transaction** (atomic with the run insert); the new `ReconciliationRequestedConsumer` (registered in `drainerProcessorProviderFactory` alongside the 015 consumer) invokes `ReconciliationRunProcessor`. **A triggered run now advances `running → completed` DP2-internally** (initially over `EMPTY_BIN_VIEW` stub-tolerant; ~~stub-tolerant~~ **subsequently replaced by `ReportBackedBinView` via 019 T041, PR #528** — wired runs now read real ERPNext Bin data). See [`followup-reconciliation-wiring.md`](./followup-reconciliation-wiring.md).
 - **`repairStock` is a state-transition + audit, NOT an ERPNext mutation** — DP2 makes no outbound HTTP and the connector isn't built; `result_state='repaired'` = operator acknowledged+initiated, the actual fix is the 014 admin re-map / connector re_sync when it ships.
-- **Live ERPNext-Bin read** — v1 ships the stub-tolerant seam (R3); the live connector→DP2 view contract is `017-STOCK-VIEW-CONTRACT` (future `[GATED]`).
+- ~~**Live ERPNext-Bin read**~~ — **RESOLVED by 019** (PR #528 `9a3f475`, 2026-06-08): T041 replaced `EMPTY_BIN_VIEW` with `ReportBackedBinView`; the full loop is LIVE-VALIDATED (`019-erpnext-stock-view-contract`).
 - **Scheduled runs** — v1 is on-demand (R5); scheduling is later wiring over the same processor.
 - **Perf report-only** — no perf env (005/008/009/010/015 precedent); k6 thresholds carried, not gating.
 
@@ -83,7 +83,7 @@ state advances (§IX).
 | `017-US2-REPAIR` | T040–T044 | — | blocked |
 | `017-US3-STOCK` | T050–T056 | — | blocked |
 | `017-POLISH` | T090–T092 | — | blocked |
-| `017-STOCK-VIEW-CONTRACT` | T100 | `[GATED]` future | proposed (non-dispatchable — connector repo absent) |
+| ~~`017-STOCK-VIEW-CONTRACT`~~ | T100 | — | **RESOLVED by 019** (PR #528 + connector PR #25; LIVE-VALIDATED 2026-06-08) |
 | `017-SCHEDULED-RUNS` | T101 | — | proposed (later wiring) |
 
 **Two `[GATED]` thresholds** (`017-CONTRACT` + `017-SCHEMA`) are parallel-safe with
@@ -104,7 +104,7 @@ connector re-posts via the existing 012 feed/ack.
 | **depends_on**: 014 `erpnext_warehouse_map` + mismatch vocabulary on `main` | ✅ CLOSED (#495) — `0018` + the §7.4 vocabulary |
 | **depends_on**: 009 `stock_movements` on `main` | ✅ CLOSED — `0014` compute-on-read on-hand |
 | **depends_on**: 012 `posting-feed.yaml` on `main` (read-only) | ✅ SHIPPED |
-| **prerequisite**: connector repo (live ERPNext-Bin read) | ⏳ NOT built — v1 ships stub-tolerant (R3); the live read is a future `[GATED]` view contract (`017-STOCK-VIEW-CONTRACT`) |
+| ~~**prerequisite**: connector repo (live ERPNext-Bin read)~~ | ✅ **RESOLVED by 019** (PR #528; T041 + connector PR #25; LIVE-VALIDATED 2026-06-08) |
 
 ---
 
@@ -263,8 +263,7 @@ wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker te
 - **Evidence to collect:** classified results per 014 vocabulary (unmapped store → `unmapped_store`, never a guessed warehouse); the 009 ledger + 008 sale fact unchanged before/after the run; suite counts (expect US3 8/8).
 - **Pass/fail:** 🟢 PASS = run + API specs green via the directly-invoked processor + correct classification + ledger/sale-fact unchanged. **FAIL** on a ledger mutation or a guessed warehouse.
 - **✅ RUN+GREEN (2026-06-06):** worker 4/4 (`reconciliation-run`, directly-invoked, `WORKER_INCLUDE_DB_TESTS=1`) + api 12/12 (`stock-run-api` + `stock-service-branches`) = **16/16 across 3 suites**, WSL Testcontainers. **🔶 live Bin read + live triggered run remain deferred + unrun** (processor not wired into `worker.module.ts`).
-- **🔶 Cross-system live leg (the current limit):** a **live ERPNext-Bin read** through the connector. The **live triggered run** (trigger → outbox → processor) is **NO LONGER deferred** — `017-RECON-WIRING` (2026-06-06) wired it: `triggerRun` emits `erpnext.reconciliation.requested` in-tx and `ReconciliationRequestedConsumer` (registered in `drainerProcessorProviderFactory`) advances the run `running → completed`. The remaining 🔶 limit is purely the **live Bin read** (future `[GATED]` `017-STOCK-VIEW-CONTRACT`); the wired run uses `EMPTY_BIN_VIEW`, so live runs class confirmed items as `dp2_only` until the connector reports.
-- **Stop conditions:** the worker wiring is now SHIPPED (`017-RECON-WIRING`). The **Bin-read contract** remains a forbidden/future surface — do NOT implement it here. Scheduled runs (`017-SCHEDULED-RUNS`) are likewise still deferred.
+- **🟢 Cross-system live leg:** ~~live ERPNext-Bin read was the remaining 🔶 limit~~ — **RESOLVED by 019** (PR #528 `9a3f475`, 2026-06-08): T041 replaced `EMPTY_BIN_VIEW` with `ReportBackedBinView` and the full loop is LIVE-VALIDATED (empty-Bin → `{}`; ERPNext 10 / DP2 10 → `{match: 1}`). Scheduled runs (`017-SCHEDULED-RUNS`) remain deferred.
 
 ---
 
@@ -273,7 +272,7 @@ wsl -e bash -lc "WORKER_INCLUDE_DB_TESTS=1 pnpm --filter @data-pulse-2/worker te
 | Deferred | Owning slice | Why it cannot be verified live here |
 |---|---|---|
 | ~~Live trigger → queue → processor wiring~~ **RESOLVED** | `017-RECON-WIRING` (shipped 2026-06-06) | Outbox path: in-tx emit + `ReconciliationRequestedConsumer`; triggered run now advances `running → completed` DP2-internally. |
-| Live ERPNext-Bin read | `017-STOCK-VIEW-CONTRACT` (future `[GATED]`) | Connector→DP2 view contract not authored; v1 is stub-tolerant. |
+| ~~Live ERPNext-Bin read~~ | ~~`017-STOCK-VIEW-CONTRACT`~~ **RESOLVED by 019** | PR #528 + connector PR #25; T041 replaced `EMPTY_BIN_VIEW`; LIVE-VALIDATED 2026-06-08. |
 | Scheduled reconciliation runs | `017-SCHEDULED-RUNS` (proposed) | v1 is on-demand (R5); scheduling is later wiring over the same processor. |
 | Perf assertions | report-only (k6) | No perf env (005/008/009/010/015 precedent). `loadtests/k6/erpnext-posting.js` + `loadtests/k6/erpnext-reconciliation.js` ready; thresholds carried, not gating. |
 
