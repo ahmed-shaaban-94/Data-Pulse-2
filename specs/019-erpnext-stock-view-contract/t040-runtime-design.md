@@ -192,6 +192,23 @@ replay/conflict detection leans entirely on the `IdempotencyInterceptor` + resul
 10. **Unmapped `erpnextItemRef`** — recorded but flagged (the 017 run will class `erpnext_only`); no crash.
 11. **Auth** — non-connector principal (session/pos) → 401.
 
+## 6b. Code-review findings (2026-06-08)
+
+Two parallel reviewers (code + security) ran on the GREEN runtime. Triage (advisor-confirmed):
+
+**Fixed in T040:**
+- **[HIGH] Keyset-pagination bug** — `ORDER BY started_at, id` but cursor filters `id > $1`. Run ids are UUIDv4 (`0020` `gen_random_uuid()`), so id-order ≠ started_at-order → runs silently dropped across page boundaries. FIX: `ORDER BY run.id` only (cursor key == sort key). RED test added.
+- **[MED] N+1 reverse-resolve** — 500 per-entry item-map queries → batched to one `WHERE erpnext_item_ref = ANY($1::text[])`.
+- **[LOW] DTO over-constrains cursor to UUID** — contract says opaque string; relaxed `since` to `z.string().min(1)`.
+
+**FLAGGED, NOT fixed here (own slice — needs owner sign-off):**
+- **[HIGH] IdempotencyInterceptor tenant-partition collapse** — VERIFIED real: `idempotency.interceptor.ts:98-101` `tenantId(ctx)` reads only `req.context?.tenantId` (no `principal` fallback); connector routes have no `TenantContextGuard` → partition tenant = `null`; `clientId` = the issuing human admin's `userId` (`connector-registration.service.ts:326`). Cross-tenant key collision if one admin issues credentials in ≥2 tenants. **PRE-EXISTING on shipped 015 ack route.** Not fixed in T040: (a) platform/shared-infra fix on a closed route (own regression + sign-off); (b) the service-level O-3 (requestRef+content, RLS-scoped) is the tenant-safe PRIMARY path; (c) pilot is single-tenant. **TODO: file as a platform issue — owner to confirm (auto-creation blocked by standing rule).**
+
+**Deferred to T041 (noted, not fixed):**
+- multi-window `||` overwrite (only v1-safe — one window per run today; the §3 merge-safety claim is window-count-dependent);
+- over-broad `FOR UPDATE OF run` (locks all running runs; narrow to the matched row);
+- `LIMIT 1` reverse-resolve without `ORDER BY` (nondeterministic if two confirmed maps share an `erpnext_item_ref`).
+
 ## 7. Sequence after approval
 
 1. (If Option A) `[GATED]` migration `0022` + schema + migration-spec (append to EXPECTED_MIGRATIONS).

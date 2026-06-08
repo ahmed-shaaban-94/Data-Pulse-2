@@ -133,6 +133,36 @@ describe("ErpnextBinViewService.pullRequests — 019 bin-view feed", () => {
     expect(crossTenant).toHaveLength(0);
   });
 
+  it("paginates correctly: limit=1 walks ALL running runs across pages (keyset)", async () => {
+    if (skip) return;
+    const service = new ErpnextBinViewService(env!.app);
+    // Seed two MORE running runs on the mapped store, so tenant A has >=3.
+    const extra1 = "0a000000-0000-7000-8000-00000e7040c1";
+    const extra2 = "0a000000-0000-7000-8000-00000e7040c2";
+    for (const id of [extra1, extra2]) {
+      await env!.admin.query(
+        `INSERT INTO erpnext_reconciliation_run
+           (id, tenant_id, store_id, kind, trigger, status, actor_user_id)
+         VALUES ($1, $2, $3, 'stock', 'on_demand', 'running', $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [id, TENANT_A, STORE_A_X, ACTOR_A],
+      );
+    }
+    // Walk the whole feed one item per page; every running run must appear exactly
+    // once. A cursor/sort-key mismatch would silently drop runs across a boundary.
+    const seen = new Set<string>();
+    let since: string | null = null;
+    for (let guard = 0; guard < 50; guard++) {
+      const page = await service.pullRequests({ tenantId: TENANT_A, since, limit: 1 });
+      for (const i of page.items) seen.add(i.runRef);
+      if (page.nextPageToken === null) break;
+      since = page.cursor;
+    }
+    for (const id of [RUN_A_RUNNING, extra1, extra2]) {
+      expect(seen.has(id)).toBe(true);
+    }
+  });
+
   it("idempotent replay: same `since` yields the same logical set", async () => {
     if (skip) return;
     const service = new ErpnextBinViewService(env!.app);

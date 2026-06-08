@@ -10,7 +10,7 @@
  *     run is `running`; a completed run is never offered. READ-ONLY, idempotent on
  *     the opaque `since` cursor (mirrors the 015 `pullPostings` feed). 019 has no
  *     posting-status-like table, so the cursor derives from RUN ordering
- *     (`started_at, id`), NOT a sequence column.
+ *     (`run.id`, so the keyset cursor key == the sort key), NOT a sequence column.
  *
  *   - `reportSnapshot` (report): record the connector's point-in-time ERPNext-Bin
  *     snapshot run-scoped (lands in 019-T040-REPORT). NOT a standing Bin mirror
@@ -41,6 +41,9 @@ const BIN_VIEW_WINDOW_MAX_ITEMS = 500;
  * (not random) so the same (run, window) always derives the same ref.
  */
 const BIN_VIEW_REQUEST_NS = "0190b1de-0000-7000-8000-0000000be019";
+/** UUID shape guard for the opaque feed cursor (malformed → from-start, not 500). */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Raised when a `requestRef` does not resolve to a running run in the tenant. */
 export class BinViewNotFoundError extends Error {
@@ -152,12 +155,17 @@ export class ErpnextBinViewService {
 
   /**
    * Pull a cursor-ordered page of wanted Bin-view reads. Read-only; orders by the
-   * run's `(started_at, id)`; offers only `running` stock runs whose store has an
+   * run's `id` (keyset cursor key == sort key); offers only `running` stock runs whose store has an
    * active 014 `stock` mapping; caps at `BIN_VIEW_FEED_MAX_PAGE`. v1 emits one
    * window (windowSeq 0) per run.
    */
   async pullRequests(input: PullRequestsInput): Promise<PullRequestsResult> {
     const limit = Math.min(Math.max(1, input.limit), BIN_VIEW_FEED_MAX_PAGE);
+    // The cursor is opaque on the wire (the DTO accepts any non-empty string), but
+    // v1 encodes it as a run id (uuid). A malformed cursor is treated as
+    // from-start (null) rather than a 500 on a bad `::uuid` cast — the feed is a
+    // pure read, so re-baselining is harmless + idempotent.
+    const since = input.since && UUID_RE.test(input.since) ? input.since : null;
 
     return runWithTenantContext(
       this.pool,
@@ -165,7 +173,7 @@ export class ErpnextBinViewService {
       async (client): Promise<PullRequestsResult> => {
         // Open stock runs on a mapped store, ordered + capped, after the opaque
         // `since` cursor. RLS scopes to the connector principal's tenant. The
-        // cursor is the prior page's last run id (text), matched on (started_at, id).
+        // cursor is the prior page's last run id; keyset on run.id (cursor==sort).
         const rows = await client.query<RunRow>(
           `SELECT run.id AS run_id,
                   run.store_id,
@@ -179,9 +187,9 @@ export class ErpnextBinViewService {
             WHERE run.kind = 'stock'
               AND run.status = 'running'
               AND ($1::uuid IS NULL OR run.id > $1::uuid)
-            ORDER BY run.started_at, run.id
+            ORDER BY run.id
             LIMIT $2`,
-          [input.since, limit],
+          [since, limit],
         );
 
         const items: BinViewRequest[] = rows.rows.map((row) => {
@@ -264,26 +272,39 @@ export class ErpnextBinViewService {
         );
         if (!match) throw new BinViewNotFoundError();
 
-        // Reverse-resolve each erpnextItemRef → tenant_product_ref (confirmed 013
-        // map). An unmapped ref records tenant_product_ref: null (the 017 run will
-        // class it erpnext_only later) — never a crash.
-        const resolvedEntries: StoredBinViewReport["entries"][number][] = [];
-        for (const e of input.body.entries) {
-          const m = await client.query<{ tenant_product_id: string }>(
-            `SELECT tenant_product_id FROM erpnext_item_map
-              WHERE erpnext_item_ref = $1
+        // Reverse-resolve erpnextItemRef → tenant_product_ref (confirmed 013 map),
+        // BATCHED into ONE query (= ANY) — not N per-entry round-trips. An unmapped
+        // ref records tenant_product_ref: null (the 017 run classes it erpnext_only
+        // later) — never a crash. `latest mapping wins` (ORDER BY confirmed_at DESC)
+        // makes the resolution deterministic if two confirmed maps share a ref.
+        const refNames = Array.from(
+          new Set(input.body.entries.map((e) => e.erpnextItemRef.name)),
+        );
+        const resolvedMap = new Map<string, string>();
+        if (refNames.length > 0) {
+          const maps = await client.query<{
+            erpnext_item_ref: string;
+            tenant_product_id: string;
+          }>(
+            `SELECT DISTINCT ON (erpnext_item_ref) erpnext_item_ref, tenant_product_id
+               FROM erpnext_item_map
+              WHERE erpnext_item_ref = ANY($1::text[])
                 AND state = 'confirmed'
                 AND retired_at IS NULL
-              LIMIT 1`,
-            [e.erpnextItemRef.name],
+              ORDER BY erpnext_item_ref, confirmed_at DESC`,
+            [refNames],
           );
-          resolvedEntries.push({
+          for (const r of maps.rows) {
+            resolvedMap.set(r.erpnext_item_ref, r.tenant_product_id);
+          }
+        }
+        const resolvedEntries: StoredBinViewReport["entries"][number][] =
+          input.body.entries.map((e) => ({
             erpnextItemRef: e.erpnextItemRef.name,
-            tenant_product_ref: m.rows[0]?.tenant_product_id ?? null,
+            tenant_product_ref: resolvedMap.get(e.erpnextItemRef.name) ?? null,
             quantity: e.quantity,
             stockUom: e.stockUom,
-          });
-        }
+          }));
 
         // O-3: an existing report for this requestRef → replay (same) or conflict.
         const existing = (match.summary as { bin_view_report?: StoredBinViewReport } | null)

@@ -14,7 +14,9 @@ import { z } from "zod";
 
 export const PullRequestsQuerySchema = z
   .object({
-    since: z.string().uuid("since must be an opaque cursor").optional(),
+    // Opaque per the contract (minLength 1) — do NOT couple the DTO to the
+    // cursor's internal shape (it is a run id today, but that is an impl detail).
+    since: z.string().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(500).optional(),
   })
   .strict();
