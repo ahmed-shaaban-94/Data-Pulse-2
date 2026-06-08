@@ -96,8 +96,22 @@ function clientId(ctx: ExecutionContext): string {
 }
 
 function tenantId(ctx: ExecutionContext): string | null {
-  const req = ctx.switchToHttp().getRequest<{ context?: ResolvedContext }>();
-  return req.context?.tenantId ?? null;
+  const req = ctx
+    .switchToHttp()
+    .getRequest<{
+      context?: ResolvedContext;
+      principal?: { tenantId?: string | null };
+    }>();
+  // Fall back to the authenticated principal's tenant when the resolved context
+  // is absent — connector-facing routes (@UseGuards(ConnectorAuthGuard), e.g. the
+  // 015 posting-ack + 019 bin-view-report surfaces) do NOT run TenantContextGuard,
+  // so `req.context` is undefined there. Without this fallback the partition tenant
+  // collapses to null/"no-tenant" and idempotency keys collide ACROSS tenants
+  // (a connector credential issued by the same human admin in two tenants shares a
+  // partition) — a cross-tenant dedup/replay leak (#530). The connector token
+  // principal carries a non-null `tenantId`; mirror the `clientId` principal
+  // fallback above so the partition is always tenant-scoped.
+  return req.context?.tenantId ?? req.principal?.tenantId ?? null;
 }
 
 /** SHA-256 of a string, returned as a Buffer. */
