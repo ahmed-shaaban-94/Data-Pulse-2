@@ -42,6 +42,22 @@ const BIN_VIEW_WINDOW_MAX_ITEMS = 500;
  */
 const BIN_VIEW_REQUEST_NS = "0190b1de-0000-7000-8000-0000000be019";
 
+/** Raised when a `requestRef` does not resolve to a running run in the tenant. */
+export class BinViewNotFoundError extends Error {
+  constructor() {
+    super("Bin-view request not found.");
+    this.name = "BinViewNotFoundError";
+  }
+}
+
+/** Raised when a `requestRef` already has a DIFFERENT recorded report (O-3 conflict). */
+export class BinViewConflictError extends Error {
+  constructor() {
+    super("This bin-view request was already reported with a different snapshot.");
+    this.name = "BinViewConflictError";
+  }
+}
+
 /** A bounded item slice of a warehouse's Bin (≤500 items). */
 export interface BinViewItemWindow {
   readonly windowSeq: number;
@@ -77,6 +93,57 @@ interface RunRow {
   store_id: string;
   erpnext_warehouse_ref: string;
   started_at: string;
+}
+
+/** One reported ERPNext-Bin entry (connector → DP2). */
+export interface BinEntryInput {
+  readonly erpnextItemRef: { readonly doctype: "Item"; readonly name: string };
+  readonly quantity: string;
+  readonly stockUom: string;
+}
+
+/** The connector's point-in-time snapshot report body. */
+export interface SnapshotReportBody {
+  readonly entries: readonly BinEntryInput[];
+  readonly readAt: string;
+}
+
+export interface ReportSnapshotInput {
+  readonly tenantId: string;
+  readonly requestRef: string;
+  readonly body: SnapshotReportBody;
+  readonly idempotencyKey: string;
+}
+
+/** The recorded-report projection (DP2 → connector). */
+export interface RecordedBinView {
+  readonly requestRef: string;
+  readonly runRef: string;
+  readonly erpnextWarehouseRef: string;
+  readonly acceptedEntryCount: number;
+  readonly readAt: string;
+  readonly recordedAt: string;
+}
+
+export interface ReportSnapshotResult {
+  readonly replayed: boolean;
+  readonly view: RecordedBinView;
+}
+
+/** What lands in `run.summary.bin_view_report` (run-scoped evidence, Option B). */
+interface StoredBinViewReport {
+  readonly requestRef: string;
+  readonly runRef: string;
+  readonly erpnextWarehouseRef: string;
+  readonly readAt: string;
+  readonly recordedAt: string;
+  readonly acceptedEntryCount: number;
+  readonly entries: ReadonlyArray<{
+    readonly erpnextItemRef: string;
+    readonly tenant_product_ref: string | null;
+    readonly quantity: string;
+    readonly stockUom: string;
+  }>;
 }
 
 @Injectable()
@@ -146,5 +213,140 @@ export class ErpnextBinViewService {
         return { items, cursor: advanced, nextPageToken };
       },
     );
+  }
+
+  /**
+   * Record the connector's point-in-time ERPNext-Bin snapshot for a pulled
+   * `requestRef`. Resolves the request to its `running` stock run + active 014
+   * mapping (cross-tenant/unknown → non-disclosing `BinViewNotFoundError`),
+   * reverse-resolves each `erpnextItemRef` → `tenant_product_ref` via the confirmed
+   * 013 map (an unmapped ref is recorded with `tenant_product_ref: null`), and
+   * MERGE-writes the snapshot into `run.summary.bin_view_report` (Option B — NO
+   * standing Bin mirror, FR-009). Exact-decimal quantity STRINGs are preserved
+   * verbatim (§III). NEVER touches the 009 ledger or the 008 sale fact (§IX).
+   *
+   * O-3 idempotency: if a report already exists for this `requestRef`, the SAME
+   * logical report replays (`replayed: true`, stable body); a DIFFERENT one →
+   * `BinViewConflictError` (the stored report wins; never an overwrite).
+   */
+  async reportSnapshot(input: ReportSnapshotInput): Promise<ReportSnapshotResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ReportSnapshotResult> => {
+        // Resolve the request → its running run + active 014 mapping. The
+        // requestRef is derived from (run, window); re-derive over running stock
+        // runs on a mapped store and match. RLS scopes to the tenant, so a
+        // cross-tenant ref reads nothing → non-disclosing not-found.
+        const runRow = await client.query<{
+          run_id: string;
+          erpnext_warehouse_ref: string;
+          summary: Record<string, unknown> | null;
+        }>(
+          `SELECT run.id AS run_id,
+                  whm.erpnext_warehouse_ref,
+                  run.summary
+             FROM erpnext_reconciliation_run run
+             JOIN erpnext_warehouse_map whm
+               ON whm.store_id = run.store_id
+              AND whm.purpose = 'stock'
+              AND whm.retired_at IS NULL
+            WHERE run.kind = 'stock'
+              AND run.status = 'running'
+            FOR UPDATE OF run`,
+        );
+        // The derived requestRef binds to exactly one (run, window=0). Re-derive
+        // per candidate run and match — v1 has a single window per run.
+        const match = runRow.rows.find(
+          (r) =>
+            deterministicId(BIN_VIEW_REQUEST_NS, `${r.run_id}:0`) ===
+            input.requestRef,
+        );
+        if (!match) throw new BinViewNotFoundError();
+
+        // Reverse-resolve each erpnextItemRef → tenant_product_ref (confirmed 013
+        // map). An unmapped ref records tenant_product_ref: null (the 017 run will
+        // class it erpnext_only later) — never a crash.
+        const resolvedEntries: StoredBinViewReport["entries"][number][] = [];
+        for (const e of input.body.entries) {
+          const m = await client.query<{ tenant_product_id: string }>(
+            `SELECT tenant_product_id FROM erpnext_item_map
+              WHERE erpnext_item_ref = $1
+                AND state = 'confirmed'
+                AND retired_at IS NULL
+              LIMIT 1`,
+            [e.erpnextItemRef.name],
+          );
+          resolvedEntries.push({
+            erpnextItemRef: e.erpnextItemRef.name,
+            tenant_product_ref: m.rows[0]?.tenant_product_id ?? null,
+            quantity: e.quantity,
+            stockUom: e.stockUom,
+          });
+        }
+
+        // O-3: an existing report for this requestRef → replay (same) or conflict.
+        const existing = (match.summary as { bin_view_report?: StoredBinViewReport } | null)
+          ?.bin_view_report;
+        if (existing && existing.requestRef === input.requestRef) {
+          if (this.sameLogicalReport(existing, input, resolvedEntries)) {
+            return { replayed: true, view: this.project(existing) };
+          }
+          throw new BinViewConflictError();
+        }
+
+        const recordedAt = new Date().toISOString();
+        const stored: StoredBinViewReport = {
+          requestRef: input.requestRef,
+          runRef: match.run_id,
+          erpnextWarehouseRef: match.erpnext_warehouse_ref,
+          readAt: input.body.readAt,
+          recordedAt,
+          acceptedEntryCount: resolvedEntries.length,
+          entries: resolvedEntries,
+        };
+
+        // MERGE write — never a bare overwrite (keeps a future T041 counts key
+        // under summary safe). COALESCE handles the NULL-summary first write.
+        await client.query(
+          `UPDATE erpnext_reconciliation_run
+              SET summary = COALESCE(summary, '{}'::jsonb)
+                            || jsonb_build_object('bin_view_report', $2::jsonb),
+                  updated_at = now()
+            WHERE id = $1 AND status = 'running'`,
+          [match.run_id, JSON.stringify(stored)],
+        );
+
+        return { replayed: false, view: this.project(stored) };
+      },
+    );
+  }
+
+  /** True when an existing stored report matches the incoming one (O-3 echo). */
+  private sameLogicalReport(
+    existing: StoredBinViewReport,
+    input: ReportSnapshotInput,
+    resolved: StoredBinViewReport["entries"][number][],
+  ): boolean {
+    if (existing.readAt !== input.body.readAt) return false;
+    if (existing.entries.length !== resolved.length) return false;
+    // Compare entry-wise on the connector-reported identity + quantity + uom.
+    const key = (e: StoredBinViewReport["entries"][number]): string =>
+      `${e.erpnextItemRef}|${e.quantity}|${e.stockUom}`;
+    const a = existing.entries.map(key).sort();
+    const b = resolved.map(key).sort();
+    return a.every((v, i) => v === b[i]);
+  }
+
+  /** Project a stored report into the RecordedBinView wire shape. */
+  private project(stored: StoredBinViewReport): RecordedBinView {
+    return {
+      requestRef: stored.requestRef,
+      runRef: stored.runRef,
+      erpnextWarehouseRef: stored.erpnextWarehouseRef,
+      acceptedEntryCount: stored.acceptedEntryCount,
+      readAt: stored.readAt,
+      recordedAt: stored.recordedAt,
+    };
   }
 }
