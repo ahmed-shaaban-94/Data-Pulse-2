@@ -39,15 +39,19 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
   // erpnext.posting.requested (a processed sale / terminal event becomes a
   // pending erpnext_posting_status row). 017-RECON-WIRING adds a FIFTH,
   // erpnext.reconciliation.requested (an on-demand stock reconciliation run is
-  // triggered → the worker-side consumer invokes ReconciliationRunProcessor) —
-  // this drift test is updated in lockstep with each registration, which is
-  // exactly its purpose: a new outbox type cannot land silently.
+  // triggered → the worker-side consumer invokes ReconciliationRunProcessor).
+  // 021 adds a SIXTH, erpnext.product_reconciliation.requested (an on-demand
+  // product-master reconciliation run → the worker-side consumer invokes
+  // ProductReconciliationRunProcessor) — this drift test is updated in lockstep
+  // with each registration, which is exactly its purpose: a new outbox type
+  // cannot land silently.
   const EXPECTED_EVENT_TYPES = [
     "audit.event.created",
     "inventory.movement.created",
     "sale.captured",
     "erpnext.posting.requested",
     "erpnext.reconciliation.requested",
+    "erpnext.product_reconciliation.requested",
   ] as const;
 
   it("OUTBOX_EVENT_TYPES has exactly the expected entries", () => {
@@ -68,6 +72,9 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
     expect(OUTBOX_EVENT_TYPES.ERPNEXT_RECONCILIATION_REQUESTED).toBe(
       "erpnext.reconciliation.requested",
     );
+    expect(OUTBOX_EVENT_TYPES.ERPNEXT_PRODUCT_RECONCILIATION_REQUESTED).toBe(
+      "erpnext.product_reconciliation.requested",
+    );
   });
 
   it("the const is shape-frozen — keys are exactly the expected set", () => {
@@ -78,6 +85,7 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
         "SALE_CAPTURED",
         "ERPNEXT_POSTING_REQUESTED",
         "ERPNEXT_RECONCILIATION_REQUESTED",
+        "ERPNEXT_PRODUCT_RECONCILIATION_REQUESTED",
       ].sort(),
     );
   });
@@ -89,6 +97,7 @@ describe("outbox event-types registry: audit.event.created + inventory.movement.
       "sale.captured",
       "erpnext.posting.requested",
       "erpnext.reconciliation.requested",
+      "erpnext.product_reconciliation.requested",
     ];
     expect(cases).toHaveLength(EXPECTED_EVENT_TYPES.length);
   });
