@@ -37,8 +37,8 @@ listed so the plan is complete, marked non-dispatchable / future, NOT built in t
 
 **Purpose**: Confirm the planning chain + grounding before authoring the contract.
 
-- [ ] T001 [SETUP] Confirm the planning chain (spec/plan/research/data-model/tasks/analysis/review) is internally consistent and the dependency artifacts are on `main`: 014 `0018` `erpnext_warehouse_map`, 013 `0017` `erpnext_item_map`, 009 `0014` `stock_movements`, 017 `0020` reconciliation tables, 012 `posting-feed.yaml`, 018 `connectorBearer`/`ConnectorAuthGuard`. (Read-only check; no code.)
-- [ ] T002 [SETUP] Re-read `packages/contracts/openapi/erpnext-connector/posting-feed.yaml` + `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts` to lock the YAML conventions to mirror (strict schemas, canonical Error, `connectorBearer`, explicit-`dir` non-recursive loader). (Read-only.)
+- [x] T001 [SETUP] Confirm the planning chain (spec/plan/research/data-model/tasks/analysis/review) is internally consistent and the dependency artifacts are on `main`: 014 `0018` `erpnext_warehouse_map`, 013 `0017` `erpnext_item_map`, 009 `0014` `stock_movements`, 017 `0020` reconciliation tables, 012 `posting-feed.yaml`, 018 `connectorBearer`/`ConnectorAuthGuard`. (Read-only check; no code.)
+- [x] T002 [SETUP] Re-read `packages/contracts/openapi/erpnext-connector/posting-feed.yaml` + `apps/api/test/erpnext-connector/contract/posting-feed.contract.spec.ts` to lock the YAML conventions to mirror (strict schemas, canonical Error, `connectorBearer`, explicit-`dir` non-recursive loader). (Read-only.)
 
 **Checkpoint**: Conventions + dependencies confirmed; contract authoring can begin under `[GATED]` approval.
 
@@ -54,7 +54,7 @@ verified by the conformance spec.
 before authoring (Constitution §VIII, standing-rules forbidden paths). Until
 approved, STOP after T002 and report.
 
-- [ ] T010 **[GATED]** [US1] Author `packages/contracts/openapi/erpnext-connector/stock-view.yaml` (OpenAPI 3.1) per data-model.md §2–§3: two operations — `binViewPullRequests` (`GET /api/connector/v1/erpnext/bin-view-requests`) + `binViewReportSnapshot` (`POST .../{requestRef}/snapshot`, `x-idempotency: required`); schemas `BinViewRequest`, **`BinViewItemWindow`** (the ≤500-item per-request slice — §2.1a, so the report 500-cap is a safe invariant, NOT a truncation risk), `BinViewPage`, `BinViewSnapshotReport`, `BinEntry` (incl. **`stockUom`** — the ERPNext `Item.stock_uom`, so 017 surfaces unit mismatches distinctly), `ErpnextItemRef`, `RecordedBinView` (incl. echoed **`erpnextWarehouseRef` + `readAt`** per spec US3 §2), canonical `Error`; `connectorBearer` security on both; closed error set `validation_failure | snapshot_required | idempotency_key_conflict | not_found | system_failure` (+401); exact-decimal `quantity` (no float); **no valuation/cost/price field anywhere**; `additionalProperties: false` throughout; no `tenant_id` echoed. **APPROVAL REQUIRED before this task.**
+- [x] T010 **[GATED]** [US1] Author `packages/contracts/openapi/erpnext-connector/stock-view.yaml` (OpenAPI 3.1) per data-model.md §2–§3: two operations — `binViewPullRequests` (`GET /api/connector/v1/erpnext/bin-view-requests`) + `binViewReportSnapshot` (`POST .../{requestRef}/snapshot`, `x-idempotency: required`); schemas `BinViewRequest`, **`BinViewItemWindow`** (the ≤500-item per-request slice — §2.1a, so the report 500-cap is a safe invariant, NOT a truncation risk), `BinViewPage`, `BinViewSnapshotReport`, `BinEntry` (incl. **`stockUom`** — the ERPNext `Item.stock_uom`, so 017 surfaces unit mismatches distinctly), `ErpnextItemRef`, `RecordedBinView` (incl. echoed **`erpnextWarehouseRef` + `readAt`** per spec US3 §2), canonical `Error`; `connectorBearer` security on both; closed error set `validation_failure | snapshot_required | idempotency_key_conflict | not_found | system_failure` (+401); exact-decimal `quantity` (no float); **no valuation/cost/price field anywhere**; `additionalProperties: false` throughout; no `tenant_id` echoed. **APPROVAL REQUIRED before this task.**
 
 **Checkpoint**: Contract YAML exists (pending approval) — the connector repo can build against a pinned surface.
 
@@ -72,12 +72,12 @@ valuation field exists.
 
 ### Tests for User Story 1 (write FIRST, ensure they FAIL — RED) ⚠️
 
-- [ ] T011 [US1] RED: `apps/api/test/erpnext-connector/contract/stock-view.contract.spec.ts` — load the YAML with an explicit `dir` (non-recursive loader, R9); assert `binViewPullRequests` + `binViewReportSnapshot` exist with stable operationIds, `connectorBearer` security, request/response schemas resolved, and `binViewReportSnapshot` declares `Idempotency-Key` required. Fails until T010 lands.
+- [x] T011 [US1] RED: `apps/api/test/erpnext-connector/contract/stock-view.contract.spec.ts` — load the YAML with an explicit `dir` (non-recursive loader, R9); assert `binViewPullRequests` + `binViewReportSnapshot` exist with stable operationIds, `connectorBearer` security, request/response schemas resolved, and `binViewReportSnapshot` declares `Idempotency-Key` required. Fails until T010 lands.
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] GREEN: T010's YAML makes T011 pass (the YAML IS the implementation for a contract slice). Add assertions: `BinEntry.quantity` is `type: string` (pattern, no float); the closed error-code set matches; `additionalProperties: false` on every object schema; no schema property named cost/price/valuation/amount.
-- [ ] T013 [US1] Add a conformance assertion that the response/request bodies carry NO `tenant_id` and the report body has no scope field (FR-005/FR-013 strict boundary, mirroring posting-feed's body-scope rejection check).
+- [x] T012 [US1] GREEN: T010's YAML makes T011 pass (the YAML IS the implementation for a contract slice). Add assertions: `BinEntry.quantity` is `type: string` (pattern, no float); the closed error-code set matches; `additionalProperties: false` on every object schema; no schema property named cost/price/valuation/amount.
+- [x] T013 [US1] Add a conformance assertion that the response/request bodies carry NO `tenant_id` and the report body has no scope field (FR-005/FR-013 strict boundary, mirroring posting-feed's body-scope rejection check).
 
 **Checkpoint**: US1 fully verified by the conformance spec — the contract is buildable + pinnable.
 
@@ -94,12 +94,12 @@ both operations and that it shares the canonical non-disclosing `Error` shape (n
 
 ### Tests for User Story 2 (RED) ⚠️
 
-- [ ] T020 [US2] RED: extend the conformance spec — assert both operations declare `404` (NotFound) + `401` (Unauthorized) responses bound to the canonical `Error` schema, and that the `Error` schema has no existence-disclosing fields. Fails until the YAML declares them.
+- [x] T020 [US2] RED: extend the conformance spec — assert both operations declare `404` (NotFound) + `401` (Unauthorized) responses bound to the canonical `Error` schema, and that the `Error` schema has no existence-disclosing fields. Fails until the YAML declares them.
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] GREEN: ensure T010's YAML declares `404`/`401` on both operations with the shared `Error` envelope (no `details`), matching posting-feed's `NotFound`/`Unauthorized` responses verbatim in shape.
-- [ ] T022 [US2] Document in the contract description (and assert via a spec comment/check) that scope resolves from the connector principal only and body/query scope is rejected — the §XII strict boundary, mirroring posting-feed's outcome-ack note.
+- [x] T021 [US2] GREEN: ensure T010's YAML declares `404`/`401` on both operations with the shared `Error` envelope (no `details`), matching posting-feed's `NotFound`/`Unauthorized` responses verbatim in shape.
+- [x] T022 [US2] Document in the contract description (and assert via a spec comment/check) that scope resolves from the connector principal only and body/query scope is rejected — the §XII strict boundary, mirroring posting-feed's outcome-ack note.
 
 > NOTE: Live cross-tenant RLS sweep / RLS-bypass probe tests belong to the FUTURE
 > DP2-facing runtime slice (T040), not the contract slice — there is no runtime to
@@ -123,11 +123,11 @@ distinct fields.
 
 ### Tests for User Story 3 (RED) ⚠️
 
-- [ ] T030 [US3] RED: extend the conformance spec — assert `snapshot_required` (409) on the pull feed, `idempotency_key_conflict` (409) + `200` replay (with `Idempotent-Replayed` header) on the report, the `runRef` correlation fields, and the distinct `readAt`/`recordedAt` fields. Fails until the YAML declares them.
+- [x] T030 [US3] RED: extend the conformance spec — assert `snapshot_required` (409) on the pull feed, `idempotency_key_conflict` (409) + `200` replay (with `Idempotent-Replayed` header) on the report, the `runRef` correlation fields, and the distinct `readAt`/`recordedAt` fields. Fails until the YAML declares them.
 
 ### Implementation for User Story 3
 
-- [ ] T031 [US3] GREEN: ensure T010's YAML declares the `snapshot_required` + `idempotency_key_conflict` responses, the `Idempotent-Replayed` header, the `runRef` fields on `BinViewRequest`/`RecordedBinView`, and the §X clock split — the connector `readAt` (preserved, non-security-clock; on the report body AND echoed onto `RecordedBinView` per spec US3 §2) vs the DP2 server `recordedAt` (security clock, on `RecordedBinView`), as two distinct fields per §X / FR-016. Also assert `RecordedBinView` echoes `erpnextWarehouseRef` (spec US3 §2).
+- [x] T031 [US3] GREEN: ensure T010's YAML declares the `snapshot_required` + `idempotency_key_conflict` responses, the `Idempotent-Replayed` header, the `runRef` fields on `BinViewRequest`/`RecordedBinView`, and the §X clock split — the connector `readAt` (preserved, non-security-clock; on the report body AND echoed onto `RecordedBinView` per spec US3 §2) vs the DP2 server `recordedAt` (security clock, on `RecordedBinView`), as two distinct fields per §X / FR-016. Also assert `RecordedBinView` echoes `erpnextWarehouseRef` (spec US3 §2).
 
 **Checkpoint**: All three stories verified by the conformance spec; the `[GATED]` CONTRACT slice is complete.
 
@@ -135,9 +135,9 @@ distinct fields.
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T090 [P] Cross-check the contract description self-documents: the 012 invariant (DP2 no outbound HTTP; connector calls), the 014 OQ-1 no-mirror / run-scoped-evidence stance, the DP2-side `erpnextItemRef → tenant_product_ref` translation (R4), version-independence (O-6), and the FUTURE 017-rewire pointer (R8).
-- [ ] T091 [P] Update the spec's wave-status / execution-map (when authored) to mark the CONTRACT slice terminal and the runtime/rewire slices proposed-future. Update CLAUDE.md "Active feature" to note 019 contract shipped + the 017-rewire follow-up named.
-- [ ] T092 Verify build is clean: `pnpm -r run build`; run the conformance spec: `wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- erpnext-connector/contract/stock-view"`.
+- [x] T090 [P] Cross-check the contract description self-documents: the 012 invariant (DP2 no outbound HTTP; connector calls), the 014 OQ-1 no-mirror / run-scoped-evidence stance, the DP2-side `erpnextItemRef → tenant_product_ref` translation (R4), version-independence (O-6), and the FUTURE 017-rewire pointer (R8).
+- [x] T091 [P] Update the spec's wave-status / execution-map (when authored) to mark the CONTRACT slice terminal and the runtime/rewire slices proposed-future. Update CLAUDE.md "Active feature" to note 019 contract shipped + the 017-rewire follow-up named.
+- [x] T092 Verify build is clean: `pnpm -r run build`; run the conformance spec: `wsl -e bash -lc "pnpm --filter @data-pulse-2/api test -- erpnext-connector/contract/stock-view"`.
 
 ---
 
