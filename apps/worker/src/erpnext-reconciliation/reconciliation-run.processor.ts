@@ -30,20 +30,46 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 import type { Pool, PoolClient } from "pg";
 
-/** The connector ERPNext-Bin view seam (R3). productRef → ERPNext Bin qty. */
+/**
+ * The connector ERPNext-Bin view seam (R3). `tenant_product_ref` → ERPNext Bin
+ * on-hand quantity as an EXACT-DECIMAL STRING (NEVER a float, §III — 019 T040
+ * records the connector-reported quantity as a string and it must not be coerced
+ * back through a JS number). Keyed per-RUN: the report is recorded run-scoped
+ * (019 T040 → `run.summary.bin_view_report`), so the seam takes the `runId`.
+ */
 export interface ErpnextBinView {
   fetchBinView(input: {
     tenantId: string;
     storeId: string;
-  }): Promise<ReadonlyMap<string, number>>;
+    runId: string;
+  }): Promise<ReadonlyMap<string, string>>;
 }
 
-/** A stub-tolerant view: the connector isn't built yet, so it reports nothing. */
+/** A stub-tolerant view: no connector report present → reports nothing. */
 export const EMPTY_BIN_VIEW: ErpnextBinView = {
-  async fetchBinView(): Promise<ReadonlyMap<string, number>> {
+  async fetchBinView(): Promise<ReadonlyMap<string, string>> {
     return new Map();
   },
 };
+
+/**
+ * Canonical decimal-string compare (§III — no float). Two quantity strings are
+ * equal iff they denote the same exact value (e.g. "10" == "10.000000" ==
+ * "10.0"). Normalizes sign, leading zeros, and trailing fractional zeros without
+ * ever constructing a JS number (which would lose precision past 2^53 / introduce
+ * binary-float drift). Both inputs are already validated exact-decimal strings.
+ */
+export function canonicalDecimal(value: string): string {
+  const neg = value.startsWith("-");
+  const body = neg ? value.slice(1) : value;
+  const [intPartRaw = "0", fracPartRaw = ""] = body.split(".");
+  const intPart = intPartRaw.replace(/^0+(?=\d)/, "");
+  const fracPart = fracPartRaw.replace(/0+$/, "");
+  const canon = fracPart ? `${intPart}.${fracPart}` : intPart;
+  // "-0" / "-0.0" → "0"
+  if (canon === "0") return "0";
+  return neg ? `-${canon}` : canon;
+}
 
 /** 014's mismatch-class vocabulary (014 data-model §6.2). */
 type MismatchClass =
@@ -128,15 +154,18 @@ export class ReconciliationRunProcessor {
           [storeId],
         );
 
-        const binView = await this.bin.fetchBinView({ tenantId: input.tenantId, storeId });
+        const binView = await this.bin.fetchBinView({
+          tenantId: input.tenantId,
+          storeId,
+          runId: input.runId,
+        });
 
         const counts: Record<string, number> = {};
         const seen = new Set<string>();
         for (const row of dp2.rows) {
           seen.add(row.tenant_product_ref);
-          const onHand = Number(row.on_hand);
           const binQty = binView.get(row.tenant_product_ref);
-          const cls = this.classify(onHand, row.has_confirmed_map, binQty);
+          const cls = this.classify(row.on_hand, row.has_confirmed_map, binQty);
           counts[cls] = (counts[cls] ?? 0) + 1;
           await this.insertResult(client, input.runId, input.tenantId, {
             mismatchClass: cls,
@@ -168,14 +197,19 @@ export class ReconciliationRunProcessor {
    * presence (dp2_only); then the exact-match delta (v1 no tolerance).
    */
   private classify(
-    onHand: number,
+    onHand: string,
     hasConfirmedMap: boolean,
-    binQty: number | undefined,
+    binQty: string | undefined,
   ): MismatchClass {
-    if (onHand < 0) return "negative_balance_flagged";
+    // Negative DP2 on-hand is the class regardless of the ERPNext side. The
+    // signed-ness check is on the canonical value (a leading '-' that isn't "-0").
+    if (canonicalDecimal(onHand).startsWith("-")) return "negative_balance_flagged";
     if (!hasConfirmedMap) return "unmapped_item";
     if (binQty === undefined) return "dp2_only";
-    if (onHand !== binQty) return "quantity_divergence";
+    // Exact-decimal compare (v1 no tolerance), §III — canonical strings, no float.
+    if (canonicalDecimal(onHand) !== canonicalDecimal(binQty)) {
+      return "quantity_divergence";
+    }
     return "match";
   }
 

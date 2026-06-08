@@ -104,8 +104,10 @@ async function classesFor(e: PgTestEnv, runId: string): Promise<Record<string, n
 
 function binView(map: Record<string, number>): ErpnextBinView {
   return {
-    async fetchBinView(): Promise<ReadonlyMap<string, number>> {
-      return new Map(Object.entries(map));
+    // 019-T041: the seam value is now an exact-decimal STRING (§III). The test
+    // expresses quantities as numbers for readability; stringify at the boundary.
+    async fetchBinView(): Promise<ReadonlyMap<string, string>> {
+      return new Map(Object.entries(map).map(([k, v]) => [k, String(v)]));
     },
   };
 }

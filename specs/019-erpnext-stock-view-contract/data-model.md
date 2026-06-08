@@ -11,10 +11,20 @@ tables.
 
 > **Why there is no new table.** The signed 014 stock-impact decision (OQ-1)
 > rejects a standing DP2 copy of ERPNext stock. The reported Bin snapshot is
-> **run-scoped evidence**, recorded (if at all) in the existing 017
-> `erpnext_reconciliation_result.detail` — never in a new `erpnext_bin` table.
-> Consequently 019 touches **no `packages/db` surface**; its only gated artifact is
-> the OpenAPI YAML.
+> **run-scoped evidence**, recorded in the existing 017
+> `erpnext_reconciliation_run.summary.bin_view_report` — never in a new
+> `erpnext_bin` table. Consequently 019 touches **no `packages/db` surface**; its
+> only gated artifact is the OpenAPI YAML.
+>
+> **ERRATUM (T040, 2026-06-08):** earlier prose in this doc + spec/plan/research/
+> wave-status said the snapshot lands in `erpnext_reconciliation_result.**detail**`.
+> The **T040 runtime corrected this to `run.summary.bin_view_report`** — at report
+> time (before the run processes) NO result rows exist yet (the processor creates
+> them during the compare), but the run row exists from trigger and has an
+> updatable `summary`. The recording target of record is therefore
+> **`run.summary.bin_view_report`** (a MERGE write, sibling-key-safe). See
+> `t040-runtime-design.md` §3. Remaining `result.detail` mentions below are
+> historical planning text, superseded by this erratum.
 
 ---
 

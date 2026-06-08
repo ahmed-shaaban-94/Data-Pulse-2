@@ -127,6 +127,7 @@ import { OutboxConsumerRegistry } from "./outbox/registry";
 import { DrainerProcessor } from "./outbox/drainer.processor";
 import { PostingRequestedConsumer } from "./erpnext-posting/posting-requested.consumer";
 import { ReconciliationRequestedConsumer } from "./erpnext-reconciliation/reconciliation-requested.consumer";
+import { ReportBackedBinView } from "./erpnext-reconciliation/report-backed-bin-view";
 import {
   OutboxRetentionProcessor,
   OUTBOX_RETENTION_REPO,
@@ -447,13 +448,17 @@ export function drainerProcessorProviderFactory(
   // consumers (audit, sale-captured) register in OutboxModule's factory; this one
   // cannot (OutboxModule cannot inject the pool — that would be a circular dep).
   registry.register(new PostingRequestedConsumer(pool));
-  // 017-RECON-WIRING: the DB-capable `erpnext.reconciliation.requested` consumer
-  // registers in the SAME seam — it holds the pool (it invokes
+  // 017-RECON-WIRING + 019-T041: the DB-capable `erpnext.reconciliation.requested`
+  // consumer registers in the SAME seam — it holds the pool (it invokes
   // ReconciliationRunProcessor) and must register BEFORE the drain loop starts.
-  // It wires EMPTY_BIN_VIEW (stub-tolerant; the live Bin read is the future
-  // [GATED] 017-STOCK-VIEW-CONTRACT), so a triggered run advances running →
-  // completed DP2-internally without any connector/ERPNext call.
-  registry.register(new ReconciliationRequestedConsumer(pool));
+  // 019-T041 wires the LIVE `ReportBackedBinView` (was EMPTY_BIN_VIEW): the event
+  // is now emitted by `binViewReportSnapshot` AFTER the connector records its Bin
+  // snapshot run-scoped, so the processor reads REAL Bin data from
+  // `run.summary.bin_view_report` and completes the run over it. A run whose
+  // connector never reports stays `running` (re-trigger / future scheduled sweep).
+  registry.register(
+    new ReconciliationRequestedConsumer(pool, new ReportBackedBinView(pool)),
+  );
   return new DrainerProcessor({ pool, registry });
 }
 

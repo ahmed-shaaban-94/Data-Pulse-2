@@ -61,6 +61,7 @@ import {
 const TENANT_A = RECONCILIATION_FIXTURE_IDS.tenantA;
 const RUNS = "/api/v1/catalog/erpnext-reconciliation/runs";
 const NON_EXISTENT = "0f000000-0000-7000-8000-00000000dead";
+const STORE_A_UNMAPPED = "0a000000-0000-7000-8000-0000000a5fae";
 
 function idemp(suffix: string): string {
   return (suffix + "0".repeat(32)).slice(0, 32).replace(/[^a-z0-9]/g, "0");
@@ -111,6 +112,14 @@ beforeAll(async () => {
   }
   await applyAllUpAndCreateAppRole(env);
   await seedReconciliationFixture(env);
+  // An UNMAPPED tenant-A store (no active 014 stock map) for the unmapped-store
+  // trigger test (CodeRabbit #528 P1 — such a run must emit + process at trigger,
+  // not strand in `running`).
+  await env.admin.query(
+    `INSERT INTO stores (id, tenant_id, code, name) VALUES ($1, $2, 'UNMAP', 'Unmapped Store')
+     ON CONFLICT (id) DO NOTHING`,
+    [STORE_A_UNMAPPED, TENANT_A],
+  );
 
   const localEnv = env;
   const fakeRedis = new FakeRedis();
@@ -166,17 +175,34 @@ describe("017-US3 api — trigger", () => {
       [TENANT_A, res.body.id],
     );
     expect(Number(audit.rows[0]?.count)).toBe(1);
-    // 017-RECON-WIRING: the trigger emits erpnext.reconciliation.requested
-    // IN-TRANSACTION (atomic with the run insert) so the worker consumer can
-    // advance the run. Payload carries IDs + provenance only (run_id / store_id).
-    const ev = await env!.admin.query<{ payload: { run_id: string; store_id: string } }>(
-      `SELECT payload FROM outbox_events
+    // 019-T041 lifecycle (shape a): the trigger NO LONGER emits
+    // erpnext.reconciliation.requested. The run WAITS in `running` (offered on the
+    // 019 bin-view feed); the event is emitted later by binViewReportSnapshot once
+    // the connector records its Bin snapshot, so the processor runs over REAL Bin
+    // data instead of the inert EMPTY_BIN_VIEW. Assert NO event on trigger.
+    const ev = await env!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM outbox_events
         WHERE tenant_id=$1 AND event_type='erpnext.reconciliation.requested'
           AND payload->>'run_id'=$2`,
       [TENANT_A, res.body.id],
     );
-    expect(ev.rows).toHaveLength(1);
-    expect(ev.rows[0]!.payload.store_id).toBe(STORE_A_X);
+    expect(Number(ev.rows[0]?.count)).toBe(0);
+  });
+
+  it("§1b trigger for an UNMAPPED store emits at trigger (not stranded) — CodeRabbit #528 P1", async () => {
+    if (skip()) return;
+    const res = await http().post(RUNS).set("idempotency-key", idemp("um")).send({ storeId: STORE_A_UNMAPPED }).expect(201);
+    expect(res.body.status).toBe("running");
+    // No 014 stock map → the bin-view feed would never offer this run, so the
+    // event MUST be emitted at trigger so the processor can complete it as
+    // `unmapped_store`. (A mapped store defers; see §1.)
+    const ev = await env!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM outbox_events
+        WHERE tenant_id=$1 AND event_type='erpnext.reconciliation.requested'
+          AND payload->>'run_id'=$2`,
+      [TENANT_A, res.body.id],
+    );
+    expect(Number(ev.rows[0]?.count)).toBe(1);
   });
 
   it("§5 trigger for an unknown store → 404; strict body rejects extras", async () => {
