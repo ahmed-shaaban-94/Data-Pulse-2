@@ -61,6 +61,7 @@ import {
 const TENANT_A = RECONCILIATION_FIXTURE_IDS.tenantA;
 const RUNS = "/api/v1/catalog/erpnext-reconciliation/runs";
 const NON_EXISTENT = "0f000000-0000-7000-8000-00000000dead";
+const STORE_A_UNMAPPED = "0a000000-0000-7000-8000-0000000a5fae";
 
 function idemp(suffix: string): string {
   return (suffix + "0".repeat(32)).slice(0, 32).replace(/[^a-z0-9]/g, "0");
@@ -111,6 +112,14 @@ beforeAll(async () => {
   }
   await applyAllUpAndCreateAppRole(env);
   await seedReconciliationFixture(env);
+  // An UNMAPPED tenant-A store (no active 014 stock map) for the unmapped-store
+  // trigger test (CodeRabbit #528 P1 — such a run must emit + process at trigger,
+  // not strand in `running`).
+  await env.admin.query(
+    `INSERT INTO stores (id, tenant_id, code, name) VALUES ($1, $2, 'UNMAP', 'Unmapped Store')
+     ON CONFLICT (id) DO NOTHING`,
+    [STORE_A_UNMAPPED, TENANT_A],
+  );
 
   const localEnv = env;
   const fakeRedis = new FakeRedis();
@@ -178,6 +187,22 @@ describe("017-US3 api — trigger", () => {
       [TENANT_A, res.body.id],
     );
     expect(Number(ev.rows[0]?.count)).toBe(0);
+  });
+
+  it("§1b trigger for an UNMAPPED store emits at trigger (not stranded) — CodeRabbit #528 P1", async () => {
+    if (skip()) return;
+    const res = await http().post(RUNS).set("idempotency-key", idemp("um")).send({ storeId: STORE_A_UNMAPPED }).expect(201);
+    expect(res.body.status).toBe("running");
+    // No 014 stock map → the bin-view feed would never offer this run, so the
+    // event MUST be emitted at trigger so the processor can complete it as
+    // `unmapped_store`. (A mapped store defers; see §1.)
+    const ev = await env!.admin.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM outbox_events
+        WHERE tenant_id=$1 AND event_type='erpnext.reconciliation.requested'
+          AND payload->>'run_id'=$2`,
+      [TENANT_A, res.body.id],
+    );
+    expect(Number(ev.rows[0]?.count)).toBe(1);
   });
 
   it("§5 trigger for an unknown store → 404; strict body rejects extras", async () => {
