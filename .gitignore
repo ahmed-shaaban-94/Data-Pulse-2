@@ -60,3 +60,6 @@ coverage/
 # Claude Code session/harness state and Spec Kit backups (local-only)
 .claude/
 CLAUDE.md.backup
+
+# Graphify tooling output (not part of any slice)
+graphify-out/

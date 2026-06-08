@@ -8,11 +8,13 @@ import { AuthModule, PG_POOL } from "./auth/auth.module";
 import { ErpnextBinViewModule } from "./catalog/erpnext-bin-view/erpnext-bin-view.module";
 import { ErpnextItemMapModule } from "./catalog/erpnext-item-map/erpnext-item-map.module";
 import { ErpnextPostingModule } from "./catalog/erpnext-posting/erpnext-posting.module";
+import { ErpnextProductReconciliationModule } from "./catalog/erpnext-product-reconciliation/erpnext-product-reconciliation.module";
 import { ErpnextReconciliationModule } from "./catalog/erpnext-reconciliation/erpnext-reconciliation.module";
 import { ErpnextSyncOpsModule } from "./catalog/erpnext-sync-ops/erpnext-sync-ops.module";
 import { ErpnextWarehouseMapModule } from "./catalog/erpnext-warehouse-map/erpnext-warehouse-map.module";
 import { ReadDownModule } from "./catalog/read-down/read-down.module";
 import { ConnectorModule } from "./connector/connector.module";
+import { ConnectorHealthModule } from "./connector-health/connector-health.module";
 import { ReconciliationModule } from "./catalog/reconciliation/reconciliation.module";
 import { SalesModule } from "./catalog/sales/sales.module";
 import { UnknownItemsModule } from "./catalog/unknown-items/unknown-items.module";
@@ -214,7 +216,7 @@ class ApiDbMigrationStatusGaugeRegistrar implements OnModuleInit, OnModuleDestro
  * pipe are registered in `main.ts`.
  */
 @Module({
-  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule, ReadDownModule, ErpnextItemMapModule, ErpnextWarehouseMapModule, ErpnextPostingModule, ErpnextReconciliationModule, ErpnextBinViewModule, ErpnextSyncOpsModule, ConnectorModule],
+  imports: [AuditModule, AuthModule, ContextModule, TenantsModule, StoresModule, MembershipsModule, OutboxAdminModule, PosOperatorsModule, PosAuditEventsModule, PosShiftsModule, UnknownItemsModule, ReconciliationModule, SalesModule, InventoryModule, ReadDownModule, ErpnextItemMapModule, ErpnextWarehouseMapModule, ErpnextPostingModule, ErpnextReconciliationModule, ErpnextProductReconciliationModule, ErpnextBinViewModule, ErpnextSyncOpsModule, ConnectorModule, ConnectorHealthModule],
   controllers: [],
   providers: [ApiDbPoolGaugeRegistrar, ApiDbMigrationStatusGaugeRegistrar],
 })

@@ -1,0 +1,434 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — Connector Health and Connection-Status API
+  version: "1.0.0-draft"
+  description: >
+    Spec 020 connector health / connection-status contract. Two principals, two
+    schemes, one shared read-model (`connector_health`, keyed to the 018
+    `connector_registration`):
+
+      1. `connectorReportHeartbeat` — a registered connector instance POSTs a
+         liveness heartbeat over the machine `connectorBearer` scheme (018). DP2
+         records `last_seen_at` from its OWN server clock (NOT any
+         connector-reported time, §X) plus a bounded set of self-reported
+         observational fields (last-write-wins). The connector identity + tenant
+         are resolved from the 018 guard-attached context, NEVER from the body
+         (§XII mass-assignment ban): a body carrying `tenant_id` /
+         `registration_id` / `last_seen_at` is rejected as a validation failure.
+         Heartbeat is idempotent/convergent (repeat or concurrent beats converge
+         to the latest `last_seen_at`).
+
+      2. `listConnectorHealth` / `getConnectorHealth` — a tenant administrator
+         reads the connection status of their tenant's connector instances over
+         the human `cookieAuth` session (the 018 session-only admin pattern —
+         token principals, including `dashboard_api` bearers, are REJECTED). Each
+         item carries the 018 identity (id / display name / environment / ERPNext
+         site ref), `lastSeenAt`, the read-derived `liveness` verdict
+         (`healthy` | `stale` | `never_seen` | `disabled`), `secondsSinceLastSeen`,
+         and the most recent self-reported fields. NO secret, NO token, NO token
+         hash anywhere (§IV explicit wire projections).
+
+    THE LIVENESS VERDICT IS DERIVED AT READ from `last_seen_at` vs the DP2 server
+    clock and a documented staleness threshold (5 minutes) — it is never stored,
+    so no scheduled sweep is needed in v1 (§V deferral). A disabled registration
+    (018 `disabled_at`) surfaces as `disabled` and is NEVER reported `healthy`,
+    but stays readable for operational visibility (FR-016).
+
+    BOUNDARY (the whole ERPNext arc): DP2 makes NO outbound ERPNext HTTP as part
+    of heartbeat processing or status derivation. Any ERPNext-reachability detail
+    is the connector's SELF-REPORT only — never a DP2 probe result.
+
+    DATA CLASS: BUSINESS-class observational telemetry only. NO money, NO PII, NO
+    secret (§XIV).
+
+    Failure vocabulary: the single canonical `Error` envelope matching
+    `auth.openapi.yaml` / `posting-feed.yaml` / `stock-view.yaml` /
+    `reconciliation.yaml` (verbatim — no extra fields). Closed `error.code` set:
+    `validation_failure`, `not_found` (non-disclosing 404 for a cross-tenant /
+    out-of-scope registration — no existence leak, §II/§XII), the generic auth
+    refusal (401), and `system_failure` (500).
+
+    This contract is a NEW file (not an extension of 018's `connector-admin.yaml`)
+    because the inbound heartbeat uses `connectorBearer` and does not belong in
+    018's cookieAuth-only admin surface (research.md Q7). It is consumed by
+    `apps/api/test/connector-health/contract/connector-health.contract.spec.ts`,
+    loaded with an explicit `dir` because the production `loadOpenApiContracts`
+    helper is non-recursive (exactly as `posting-feed.yaml` / `stock-view.yaml`).
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: connector-health
+    description: >
+      Connector health / connection-status — connector heartbeat (machine) +
+      operator status reads (human session). Spec 020.
+
+paths:
+  /api/connector/v1/erpnext/health/heartbeat:
+    post:
+      summary: Report a connector liveness heartbeat.
+      operationId: connectorReportHeartbeat
+      tags: [connector-health]
+      security:
+        - connectorBearer: []
+      description: >
+        A registered connector instance reports a liveness heartbeat. DP2 records
+        `last_seen_at = now()` from its OWN server clock (§X) and upserts a bounded
+        set of self-reported observational fields (last-write-wins). The connector
+        identity + tenant are resolved from the 018 guard-attached context, NEVER
+        from the body. The body is `.strict()`: unknown keys and any identity field
+        (`tenant_id` / `registration_id` / `last_seen_at`) are rejected as
+        `validation_failure` (§XII). A heartbeat failing the full 018 usability
+        predicate (token missing / invalid / expired / revoked, scope != connector,
+        unlinked / cross-tenant / disabled-registration) is refused with the
+        non-disclosing 401. Repeated or concurrent heartbeats converge to the
+        latest `last_seen_at` (idempotent / convergent, no double effect).
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatReport"
+      responses:
+        "200":
+          description: >
+            Heartbeat accepted; the health row was upserted. Returns the
+            server-clock acknowledgement.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatAck"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/connector/health:
+    get:
+      summary: List the connection status of the tenant's connector instances.
+      operationId: listConnectorHealth
+      tags: [connector-health]
+      security:
+        - cookieAuth: []
+      description: >
+        A tenant administrator (owner / tenant_admin human cookie session ONLY —
+        the 018 session-only admin pattern; token principals incl. `dashboard_api`
+        bearers are REJECTED) lists the connection status of every connector
+        instance registered to their tenant. Each item carries the 018 identity, a
+        nullable `lastSeenAt`, the read-derived `liveness` verdict, and
+        `secondsSinceLastSeen`. An empty array is valid (no registrations). NO
+        secret material. Cross-tenant instances are absent (RLS-scoped, §II).
+      responses:
+        "200":
+          description: The tenant's connector connection-status list (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorHealthList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/connector/health/{registrationId}:
+    get:
+      summary: Read the single-instance connection status detail.
+      operationId: getConnectorHealth
+      tags: [connector-health]
+      security:
+        - cookieAuth: []
+      description: >
+        Read the single-instance health detail of one connector instance owned by
+        the caller's tenant: identity, the read-derived verdict, `lastSeenAt`,
+        `secondsSinceLastSeen`, and the most recent self-reported observational
+        fields (`connectorVersion` / `backlogIndicator` / `erpnextReachable` /
+        `reportedFieldsAt`). A cross-tenant / out-of-scope / absent `registrationId`
+        returns the canonical non-disclosing `not_found` (safe 404, no existence
+        leak — §II/§XII). Session-only admin auth (token principals rejected).
+      parameters:
+        - $ref: "#/components/parameters/RegistrationId"
+      responses:
+        "200":
+          description: The single-instance connection-status detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorHealthView"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+components:
+  securitySchemes:
+    connectorBearer:
+      type: http
+      scheme: bearer
+      description: >
+        OPAQUE, REVOCABLE service bearer token presented as
+        `Authorization: Bearer <token>` — the platform's "opaque revocable bearer
+        tokens (API)" baseline, NOT a Clerk JWT and NOT a human cookie session.
+        The connector authenticates as a dedicated, tenant-scoped, revocable
+        MACHINE principal (011 / 018 connector-registration), subject to the full
+        018 usability predicate. Verified at the API edge; fail-closed.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+      description: >
+        Human dashboard session cookie (httpOnly). The operator read surface is
+        gated by the 018 SESSION-ONLY admin pattern: a human owner / tenant_admin
+        cookie session ONLY. Token principals — including `dashboard_api` bearers,
+        even with an admin role — are REJECTED (018 FR-005c). Default-deny.
+
+  parameters:
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        The 018 `connector_registration(id)` to read. Resolves only within the
+        caller's tenant scope — out-of-scope / cross-tenant / absent ids are a
+        non-disclosing `not_found` (safe 404, §II/§XII). A path param so it cannot
+        be body-forged.
+
+  schemas:
+    # -----------------------------------------------------------------------
+    # HeartbeatReport — connector -> DP2 request body. STRICT.
+    # Self-reported fields ONLY. NO identity field (resolved from the guard).
+    # -----------------------------------------------------------------------
+    HeartbeatReport:
+      type: object
+      additionalProperties: false
+      description: >
+        A liveness heartbeat's self-reported observational fields. ALL optional —
+        an empty / absent body is a valid heartbeat (it still records
+        `last_seen_at = now()`). NO `tenant_id`, NO `registration_id`, NO
+        `last_seen_at`: identity + the authoritative last-seen clock are
+        DP2-owned (§XII / §X). Unknown keys and any identity field are rejected as
+        `validation_failure`.
+      properties:
+        connectorVersion:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Self-reported connector software version string. Stored verbatim.
+        backlogIndicator:
+          type: integer
+          minimum: 0
+          description: >
+            Self-reported lag / backlog (e.g. count of pending postings).
+            Non-negative. Stored verbatim as a self-report.
+        erpnextReachable:
+          type: boolean
+          description: >
+            Self-reported ERPNext-reachability flag. The connector's own report —
+            NEVER a DP2 probe result (DP2 makes no outbound ERPNext HTTP).
+        sourceClockAt:
+          type: string
+          format: date-time
+          description: >
+            Connector-reported clock at heartbeat time. PRESERVED as provenance
+            only; NEVER used for the liveness verdict (§X). Distinct from DP2's
+            server-clock `last_seen_at`.
+
+    # -----------------------------------------------------------------------
+    # HeartbeatAck — DP2 -> connector response. Minimal; server clock.
+    # -----------------------------------------------------------------------
+    HeartbeatAck:
+      type: object
+      additionalProperties: false
+      required: [acknowledgedAt]
+      description: >
+        Minimal heartbeat acknowledgement. Carries the DP2 server-clock stamp at
+        which the heartbeat was recorded. No identity echo beyond what the
+        connector already knows; no secret.
+      properties:
+        acknowledgedAt:
+          type: string
+          format: date-time
+          description: DP2 server-clock time the heartbeat was recorded (the §X clock).
+
+    # -----------------------------------------------------------------------
+    # ConnectorHealthView — list + detail item (DP2 -> operator). toBody.
+    # NO health-row id, NO tenant_id, NO secret.
+    # -----------------------------------------------------------------------
+    ConnectorHealthView:
+      type: object
+      additionalProperties: false
+      required:
+        - connectorId
+        - displayName
+        - environment
+        - erpnextSiteRef
+        - lastSeenAt
+        - liveness
+        - secondsSinceLastSeen
+      description: >
+        One connector instance's current connection status. Identity comes from
+        the 018 registration; `liveness` is DERIVED AT READ against the DP2 server
+        clock and the staleness threshold. Self-reported fields are the most
+        recent values stored by a heartbeat (null until the first beat). NO
+        health-row id, NO tenant_id, NO secret / token / token hash (§IV).
+      properties:
+        connectorId:
+          type: string
+          format: uuid
+          description: The 018 `connector_registration(id)`.
+        displayName:
+          type: string
+          description: The operator-facing label (018).
+        environment:
+          type: string
+          enum: [dev, staging, pilot, prod]
+          description: The 018 environment token.
+        erpnextSiteRef:
+          type: string
+          description: The 018 ERPNext site label/ref (NOT a secret).
+        lastSeenAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Server-clock time of the last accepted heartbeat; null when never
+            seen. The §X security clock — never a connector-reported time.
+        liveness:
+          type: string
+          enum: [healthy, stale, never_seen, disabled]
+          description: >
+            Read-derived liveness verdict. `disabled` (018 `disabled_at` set) wins
+            over all liveness states and is never `healthy` (FR-002 / FR-016);
+            `never_seen` when no heartbeat; `healthy` when within the 5-minute
+            staleness threshold; else `stale`.
+        secondsSinceLastSeen:
+          type: [integer, "null"]
+          minimum: 0
+          description: >
+            Whole seconds since the last heartbeat (floored); null when never seen.
+        connectorVersion:
+          type: [string, "null"]
+          description: Most recent self-reported connector version (null until reported).
+        backlogIndicator:
+          type: [integer, "null"]
+          minimum: 0
+          description: Most recent self-reported backlog/lag indicator (null until reported).
+        erpnextReachable:
+          type: [boolean, "null"]
+          description: >
+            Most recent self-reported ERPNext-reachability flag (null until
+            reported). A connector self-report, never a DP2 probe.
+        reportedFieldsAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Server-clock time the self-reported fields above were last updated
+            (null until the first beat with self-reported fields).
+
+    ConnectorHealthList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      description: >
+        The tenant's connector connection-status list. `items` is possibly empty
+        (no registrations). Only the caller's tenant's instances appear (RLS).
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorHealthView"
+
+    # -----------------------------------------------------------------------
+    # Canonical Error envelope (mirrors auth/posting-feed/stock-view/reconciliation)
+    # -----------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape in
+        `auth.openapi.yaml` / `posting-feed.yaml` / `stock-view.yaml` /
+        `reconciliation.yaml` (verbatim — no extra fields). Cross-tenant /
+        out-of-scope refusals are non-disclosing (§II/§XII).
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Closed set on this surface:
+                validation_failure | not_found | system_failure (plus the generic
+                401 auth refusal and the 403 forbidden-role refusal).
+                NOTE (documented platform drift): `validation_failure` is the
+                code for domain-level controller rejections; Zod-strict-pipe and
+                UUID-pipe 400s fall through the global filter and emit
+                `validation_error` (ErrorCodes.VALIDATION). Same drift as
+                create-product-request.dto.ts.
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: >
+        `validation_failure` — malformed body, an unknown key (strict boundary),
+        an out-of-range self-reported field, or a body-supplied server-owned
+        identity field (`tenant_id` / `registration_id` / `last_seen_at`).
+        Deterministic; no state change.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Generic refusal (401). On the heartbeat path it does not distinguish a
+        missing / invalid / expired / revoked connector bearer from an unlinked /
+        cross-tenant / disabled-registration token (the full 018 usability
+        predicate). On the operator path it covers an absent / non-session
+        principal (a token principal, incl. a `dashboard_api` bearer, is refused
+        here — session-only). Non-disclosing.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: >
+        403 — an authenticated human session whose role is not owner /
+        tenant_admin. Distinct from the 401 (no usable principal). Non-disclosing
+        of any tenant data.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        `not_found` — non-disclosing 404-class for a cross-tenant / out-of-scope /
+        genuinely-absent `registrationId`. Identical shape for all three, with NO
+        existence leak (§II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: >
+        `system_failure` (500) — an unexpected server error. The cause is recorded
+        server-side keyed by `request_id` and is never returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

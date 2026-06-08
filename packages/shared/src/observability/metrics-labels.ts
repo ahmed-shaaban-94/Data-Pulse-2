@@ -202,6 +202,25 @@ export const ALLOWED_METRIC_LABELS: Readonly<Record<string, readonly string[]>> 
   // labels (the 009/010/015/017 domain-keyed-not-attribute-keyed precedent; a
   // per-instance/tenant label would be a cardinality + §XIV hazard).
   connector_lifecycle_total: [],
+
+  // ---- Connector health — 020-POLISH (spec FR-018) ----
+  // Increments on every ACCEPTED connector heartbeat (020-US2). Operational
+  // visibility into how often connectors report liveness. UNLABELED — the
+  // (tenant, instance) it came from is high-cardinality / §XIV-adjacent and
+  // lives on connector_health + the 018 connector_registration, NOT here. A
+  // per-instance/tenant/secret label would be a cardinality + §XIV hazard (the
+  // 009/010/015/017/018 domain-keyed-not-attribute-keyed precedent).
+  connector_heartbeat_total: [],
+
+  // ---- ERPNext product-master reconciliation/repair — 021-POLISH (spec §VII) ----
+  // Increments on every operator repair action recorded by 021 (a backlog-item
+  // confirm/suggest_confirm or a run-result re_point that drives 013's lifecycle)
+  // AND on each persisted run completion outcome. UNLABELED — the affected
+  // (tenant, product, item, outcome) lives on the
+  // erpnext_product_reconciliation_repair_attempt / _result rows + audit_events,
+  // NOT metric labels (the 009/010/015/017/018/020 domain-keyed-not-attribute-keyed
+  // precedent; a per-tenant/product label would be a cardinality + §XIV hazard).
+  erpnext_product_reconciliation_total: [],
 };
 
 /**
