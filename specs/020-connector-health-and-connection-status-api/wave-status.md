@@ -6,10 +6,10 @@
 > instance (built over 018's `connector_registration` identity + the
 > `connector_lifecycle_total` signal).
 
-**Last updated:** 2026-06-07 by Ahmed Shaaban — **planning chain MERGED to `main`** via PR #525 (squash `75d9967`).
+**Last updated:** 2026-06-08 by Ahmed Shaaban — **SHIPPED via PR #534 (`6dac49f`)**, merged to `main`.
 **Spec:** `020-connector-health-and-connection-status-api` (`specs/020-connector-health-and-connection-status-api/`)
-**Base:** `main` (planning produced in an isolated worktree off `cfbf0a4`; merged via the combined `docs/019-025-planning-wave` branch, since deleted).
-**Status:** **PLANNING-COMPLETE — NOT dispatched for implementation.** Full SpecKit artifact set on `main`. No `execution-map.yaml`, no slice ledger yet. **Docs-only** — the new `connector_health` table/migration and `connector-health.yaml` contract are described in **prose only** and flagged `[GATED]`.
+**Base:** `main` (planning produced in an isolated worktree off `cfbf0a4`; merged via the combined `docs/019-025-planning-wave` branch; implementation on `feat/wave-020-021-025-impl`, merged via PR #534).
+**Status:** **CLOSED — all tasks complete. Full implementation shipped via PR #534 (`6dac49f`, 2026-06-08).** The `[GATED]` migration `0022` `connector_health` table + `[GATED]` `connector-health.yaml` contract are on `main`.
 
 ### Artifacts on `main`
 `spec.md` · `plan.md` (Constitution Check, all PASS) · `research.md` (D1–D7) · `data-model.md` (`connector_health`, one row per registration, FK to 018 `connector_registration`; **prose-only `[GATED]`**) · `tasks.md` (`[GATED]` on T003/T004/T006) · `analysis.md` (0 CRITICAL / 0 HIGH / 1 MED / 6 LOW) · `review.md`.
@@ -29,9 +29,9 @@ Submit the planning chain for human gate review of the two `[GATED]` surfaces (t
 
 ---
 
-## Implementation — IN FLIGHT on `feat/wave-020-021-025-impl` (2026-06-08)
+## Implementation — MERGED via PR #534 (`6dac49f`, 2026-06-08)
 
-**Gate PRE-APPROVED** for the 020/021/025 wave; all `[GATED]` surfaces authored. The full feature (US1 + US2 + US3 + foundational + polish) is built and GREEN on Testcontainers (WSL).
+**Gate PRE-APPROVED** for the 020/021/025 wave; all `[GATED]` surfaces authored and shipped. The full feature (US1 + US2 + US3 + foundational + polish) is on `main`, GREEN on Testcontainers (WSL).
 
 **Migration number resolved:** 020 took **`0022_connector_health`** (authored first in the wave); 021 takes `0023` (the #520 collision is resolved by authoring order — each `EXPECTED_MIGRATIONS` append is a tail/lex append, avoiding the #447-class mid-array insert).
 

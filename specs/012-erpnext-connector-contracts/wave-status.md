@@ -82,7 +82,7 @@ dependency (`[GATED]` `package.json`); the DP2-side feed/ack endpoint implementa
 ## Proposed (awaiting approval)
 
 - **013–017** — ~~the rest of the ERPNext arc~~ **DONE: 013/014/015/017 CLOSED on `main`; 018 (connector-boundary-hardening) CLOSED.** (016 tax/fiscal-egypt on-hold.)
-- **019–025 planning wave — PLANNING MERGED 2026-06-07 (PR #525, squash `75d9967`).** The 018-named future arc handoffs now exist as docs-only SpecKit planning specs on `main`: **019** (ERPNext-Bin stock-view contract = the 017-deferred `017-STOCK-VIEW-CONTRACT` — **019 has since advanced: CONTRACT + T040 runtime + T041 017-rewire MERGED via PR #528 `9a3f475`; connector client merged connector-PR #25; idempotency fix merged PR #532; loop LIVE-VALIDATED 2026-06-08 — see `specs/019-…/wave-status.md`**), **020** (connector health/status — plan-only), **021** (product-master reconciliation — plan-only), **023** (sales-posting command — **PLAN-ONLY, implement-if-needed**), **025** (console sync-ops read-model — plan-only). 020/021/023/025 remain *plans only* — buildable `[GATED]` SCHEMA/CONTRACT slices are separate future work, most blocked on the connector repo + staging ERPNext. Deferred work tracked as issues #524 (epic — live-leg frontier) + #520/#521/#522/#523.
+- **019–025 planning wave — PLANNING MERGED 2026-06-07 (PR #525, squash `75d9967`); 019/020/021/025 all SHIPPED 2026-06-08.** **019** (ERPNext-Bin stock-view contract — CONTRACT + T040 runtime + T041 017-rewire MERGED via PR #528 `9a3f475`; connector client merged connector-PR #25; idempotency fix PR #532; loop LIVE-VALIDATED 2026-06-08). **020** (connector health/status — **SHIPPED via PR #534 `6dac49f`**: migration `0022` `connector_health` table + `connector-health.yaml` contract; heartbeat+operator-read; `deriveLiveness` verdict; deferrals: dark-detection #523). **021** (product-master reconciliation — **SHIPPED via PR #534 `6dac49f`**: migration `0023` run/result/repair_attempt tables + `product-reconciliation.yaml` contract; US1 backlog read, US2 013-lifecycle repair, US3 stub-tolerant run; deferrals: live ERPNext-item read `021-ITEM-VIEW-CONTRACT` #524). **023** (sales-posting command — **PLAN-ONLY, implement-if-needed**, T005 owner gate, #521). **025** (console sync-ops read-model — **CLOSED via PR #527 `a3ccb4a` + closeout PR #535 `c3ece29`**: `console-sync-ops.yaml` contract + `erpnext-sync-ops` module; 015/017 populated; 020/021 domains `not_available` forward-compat stub — additive wiring follow-up now unblocked). Migration collision #520 **RESOLVED** (020=`0022`, 021=`0023`). Deferred work tracked as issues #524 (epic — live-leg frontier) + #521 (023 need-confirmation) + #523 (020 dark-detection).
 
 _(ADR 0008 — connector repo split — is **Accepted** as of 2026-06-04. The `[GATED]` **012-CONTRACT** OpenAPI slice is **authored** in this PR — no longer awaiting approval.)_
 
@@ -102,8 +102,7 @@ contract obligations (the version-pin gate deferred to 012);
 `posting-feed.yaml` contract (+ the 019 `stock-view.yaml` **already shipped** + optional 023 command
 contracts) — most of the remaining 020–025 buildable slices are blocked here (epic #524);
 **(c)** dispatch each remaining spec's `[GATED]` SCHEMA/CONTRACT slices as their
-gates clear (**019 CLOSED + LIVE-VALIDATED**; 021 cross-system, blocked on #524; 020 self-contained; 023
-PLAN-ONLY pending a confirmed need at its T005 gate; 025 over 015/017 now).
+gates clear (**019 CLOSED + LIVE-VALIDATED; 020 SHIPPED #534; 021 SHIPPED #534** (live ERPNext-item read deferred, `021-ITEM-VIEW-CONTRACT` #524); **025 CLOSED #527+#535**; 023 PLAN-ONLY pending a confirmed need at its T005 gate #521).
 
 ---
 
