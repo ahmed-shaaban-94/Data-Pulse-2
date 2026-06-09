@@ -59,6 +59,8 @@ services:
       METRICS_PORT: "9464"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
+      # Migration-status gauge reads the drizzle SQL dir (shipped into the image).
+      DB_MIGRATIONS_DIR: /packages/db/drizzle
       # Clerk POS-operator JWT verification — CLERK_SECRET_KEY is required in production.
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?CLERK_SECRET_KEY required (Clerk backend key)}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}

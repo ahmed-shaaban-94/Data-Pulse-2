@@ -49,6 +49,10 @@ COPY --from=build /out/api ./
 #   /app/dist/openapi/loader.js -> ../../../../packages/contracts/openapi == /packages/contracts/openapi
 # The pruned bundle has no such tree, so place the static contract YAMLs there.
 COPY --from=build /repo/packages/contracts/openapi /packages/contracts/openapi
+# The migration-status gauge (app.module.ts countMigrationFiles) reads the drizzle
+# SQL dir; without it the pruned image reports db_migration_status pending forever.
+# Ship the migrations and point DB_MIGRATIONS_DIR at them (set in compose).
+COPY --from=build /repo/packages/db/drizzle /packages/db/drizzle
 ENV NODE_ENV=production
 # 3000 = HTTP API, 9464 = Prometheus metrics (also used as the liveness probe)
 EXPOSE 3000 9464
