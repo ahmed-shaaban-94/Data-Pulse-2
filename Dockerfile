@@ -35,9 +35,11 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 # compile every workspace package (tsc -> dist/)
 RUN pnpm -r run build
 # produce self-contained, prod-only bundles for each runtime target
-RUN pnpm --filter=@data-pulse-2/api    deploy --prod --legacy /out/api
-RUN pnpm --filter=@data-pulse-2/worker deploy --prod --legacy /out/worker
-RUN pnpm --filter=@data-pulse-2/db     deploy --prod --legacy /out/db
+# workspace deps resolved via npm_config_inject_workspace_packages (set in base);
+# pnpm 9.15 `deploy` has no --legacy flag — the env handles injection.
+RUN pnpm --filter=@data-pulse-2/api    deploy --prod /out/api
+RUN pnpm --filter=@data-pulse-2/worker deploy --prod /out/worker
+RUN pnpm --filter=@data-pulse-2/db     deploy --prod /out/db
 
 # ---- api runtime --------------------------------------------------------------
 FROM base AS api
