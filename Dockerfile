@@ -22,8 +22,12 @@ WORKDIR /repo
 
 # ---- build: install full workspace, compile, prune per-app --------------------
 FROM base AS build
-# lockfile + workspace manifest first for better layer caching
-COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
+# lockfile + workspace manifest + shared tsconfig first for better layer caching.
+# tsconfig.base.json is REQUIRED: every package extends ../../tsconfig.base.json
+# (it carries skipLibCheck + shared compiler options). Omitting it makes every
+# package's `extends` resolve to a missing file, silently dropping skipLibCheck
+# and breaking `tsc` on transitive .d.ts (e.g. @clerk/shared optional deps).
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
