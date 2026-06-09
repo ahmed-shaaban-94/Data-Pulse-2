@@ -59,6 +59,10 @@ services:
       METRICS_PORT: "9464"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
+      # Clerk POS-operator JWT verification — CLERK_SECRET_KEY is required in production.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?CLERK_SECRET_KEY required (Clerk backend key)}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+      CLERK_JWT_AUDIENCE: ${CLERK_JWT_AUDIENCE:-}
     networks: [dp2]
     expose:
       - "3000"
@@ -91,8 +95,10 @@ services:
       NODE_ENV: production
     networks: [dp2]
     healthcheck:
-      # Worker has no HTTP server; verify the main process is alive.
-      test: ["CMD-SHELL", "pgrep -f 'dist/main.js' >/dev/null || exit 1"]
+      # Worker has no HTTP server, and the slim image has no procps (no pgrep).
+      # Use node (always present) to verify the worker can reach Redis — its job
+      # source and real lifeline. A live worker that can dial redis:6379 is healthy.
+      test: ["CMD-SHELL", "node -e \"const u=new URL(process.env.REDIS_URL||'redis://redis:6379');const s=require('net').connect(+u.port||6379,u.hostname);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""]
       interval: 20s
       timeout: 5s
       retries: 5

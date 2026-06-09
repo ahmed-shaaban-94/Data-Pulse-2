@@ -45,6 +45,10 @@ RUN pnpm --filter=@data-pulse-2/db     deploy --prod /out/db
 FROM base AS api
 WORKDIR /app
 COPY --from=build /out/api ./
+# The OpenAPI loader resolves contracts relative to the monorepo layout:
+#   /app/dist/openapi/loader.js -> ../../../../packages/contracts/openapi == /packages/contracts/openapi
+# The pruned bundle has no such tree, so place the static contract YAMLs there.
+COPY --from=build /repo/packages/contracts/openapi /packages/contracts/openapi
 ENV NODE_ENV=production
 # 3000 = HTTP API, 9464 = Prometheus metrics (also used as the liveness probe)
 EXPOSE 3000 9464
