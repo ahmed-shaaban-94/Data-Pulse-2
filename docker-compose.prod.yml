@@ -1,0 +1,131 @@
+# Data-Pulse-2 — P-0 preprod production stack.
+#
+# Postgres is the MANAGED DigitalOcean cluster `ezaby` (PG16) — NOT a container here.
+# Bring up (on the droplet), secrets injected in-memory by 1Password:
+#   op run --env-file=deploy/prod.env -- docker compose -f docker-compose.prod.yml up -d --build
+#
+# `op run` resolves the op:// references in deploy/prod.env into these env vars at
+# launch time; values live only in process memory, never on disk.
+#
+# Service order: migrate (one-shot) -> api + worker (wait for migrate success) ; redis + caddy alongside.
+
+name: dp2-preprod
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: dp2-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - dp2_redis_data:/data
+    networks: [dp2]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    image: dp2-migrate:preprod
+    container_name: dp2-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required (op run must inject it)}
+      NODE_ENV: production
+    networks: [dp2]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    image: dp2-api:preprod
+    container_name: dp2-api
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      PORT: "3000"
+      METRICS_PORT: "9464"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+      # Migration-status gauge reads the drizzle SQL dir (shipped into the image).
+      DB_MIGRATIONS_DIR: /packages/db/drizzle
+      # Clerk POS-operator JWT verification — CLERK_SECRET_KEY is required in production.
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:?CLERK_SECRET_KEY required (Clerk backend key)}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+      CLERK_JWT_AUDIENCE: ${CLERK_JWT_AUDIENCE:-}
+    networks: [dp2]
+    expose:
+      - "3000"
+    healthcheck:
+      # No public /health route yet; the unauthenticated Prometheus metrics
+      # listener on 9464 proves the process is up. (Follow-up: add GET /health.)
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9464/metrics').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    image: dp2-worker:preprod
+    container_name: dp2-worker
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    networks: [dp2]
+    healthcheck:
+      # Worker has no HTTP server, and the slim image has no procps (no pgrep).
+      # Use node (always present) to verify the worker can reach Redis — its job
+      # source and real lifeline. A live worker that can dial redis:6379 is healthy.
+      test: ["CMD-SHELL", "node -e \"const u=new URL(process.env.REDIS_URL||'redis://redis:6379');const s=require('net').connect(+u.port||6379,u.hostname);s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: dp2-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - dp2_caddy_data:/data
+      - dp2_caddy_config:/config
+    networks: [dp2]
+
+networks:
+  dp2:
+    driver: bridge
+
+volumes:
+  dp2_redis_data:
+  dp2_caddy_data:
+  dp2_caddy_config:

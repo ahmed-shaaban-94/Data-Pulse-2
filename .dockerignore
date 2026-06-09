@@ -1,0 +1,29 @@
+# Keep the build context lean and reproducible.
+# Source + manifests are copied explicitly in the Dockerfile; everything below
+# would only bloat the context or poison the in-image install.
+
+**/node_modules
+**/dist
+**/coverage
+**/.turbo
+**/*.tsbuildinfo
+
+# local/dev and VCS noise
+.git
+.github
+.claude
+.deploy-worktree
+**/.env
+**/.env.*
+*.log
+
+# docs / specs / tests not needed in the runtime image build context
+specs
+docs
+loadtests
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+
+# never ship compose/dev artifacts into the image context
+docker-compose.dev.yml
