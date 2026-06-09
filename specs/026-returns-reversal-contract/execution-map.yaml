@@ -1,0 +1,108 @@
+# 026-returns-reversal-contract — Execution Map (Agent OS v1)
+#
+# Authoritative state for Maestro dispatch.
+#
+# 026 is a DETERMINATION spec (Arc A S2), in the 023 PARKED posture: it frames the
+# DP2 returns/reversal surface as a G2-verified CONTRACT QUESTION and collects the
+# CHECKPOINT-2 evidence (Questions A & B). It authors NO contract YAML, NO service
+# code, NO migration. The forward-feed reversal surface ALREADY EXISTS (012
+# posting-feed.yaml kind=reversal + reversalOf; 015 US3-REVERSAL emit; S1 connector
+# reversal-apply @ bc768ad). This spec does NOT redesign it.
+#
+# G2 is the OWNER's both-sides sign-off at CHECKPOINT-2 — NOT marked satisfied here
+# (SC-09). End-to-end reversal is NOT proven: (a) S1 apply leg merged
+# bench-unverified; (b) Question A wire-anchor mismatch (code-logic finding).
+#
+# NO dispatchable contract-authoring slice exists in this map. Any A-fix or
+# remaining-qty surface is a FUTURE [GATED] slice that opens ONLY after the
+# CHECKPOINT-2 owner gate clears.
+#
+# Updated: 2026-06-09 — initial determination authoring.
+
+version: 1
+spec: 026-returns-reversal-contract
+base: origin/main            # @ 4997b49
+posture: determination-open  # mirrors 023 parked-determination; not an impl slice
+
+# ============================================================================
+# findings  (traced, cited — see spec.md §3 / both-sides-review.md)
+# ============================================================================
+
+findings:
+  - id: WIRE-ANCHOR-MISMATCH        # Question A
+    severity: blocker-open
+    note: >
+      DP2's per-reversal cardinality anchor (source_ref_id) is NEVER placed on the
+      wire. buildWorkItem sets the wire top-level externalId from the SALES row
+      (the original sale's external_id) for BOTH sale_post and reversal
+      (posting-work-item.projection.ts ~L206-224; consumer INSERT ~L98-122 pulls
+      s.source_system/s.external_id). The connector keys idempotency on
+      (sourceSystem, externalId) with NO kind component (contracts.py ~L198-200;
+      idempotency.py) and writes rt_external_id = work_item.external_id
+      (reversal_builder.py ~L100-105), ASSUMING per-reversal distinctness. On
+      current merged code a reversal shares its own sale_post's anchor -> replay_guard
+      short-circuits -> the reversing document is never built. Anchors do NOT
+      correspond. RESOLUTION is OPEN (owner at CHECKPOINT-2 / T004). Caveat: S1's
+      concrete IdempotencyStore is a deferred [GATED] T020 Frappe adapter
+      (bench-unverified) — the runtime short-circuit is code-logic-traced but not
+      bench-proven across the boundary.
+  - id: REMAINING-QTY-ABSENT        # Question B
+    severity: candidate-gap
+    note: >
+      DP2 has NO remaining-returnable-quantity tracking (zero matches). Concurrent
+      partial returns could over-return. RECOMMENDATION (T005): keep POS-local +
+      reconciliation detection; do NOT author a DP2 remaining-qty endpoint/state/
+      migration in this arc. B is GATED ON A (N partial reversals are
+      indistinguishable on the wire until A is resolved). Owner decides.
+  - id: E2E-REVERSAL-NOT-PROVEN
+    severity: status-honesty
+    note: >
+      Two INDEPENDENT reasons (do not merge): (a) S1 apply leg merged
+      bench-unverified; (b) WIRE-ANCHOR-MISMATCH (code-logic). "015 + S1 merged" does
+      NOT mean returns work end-to-end.
+
+# ============================================================================
+# slices
+# ============================================================================
+# NO slice in this spec authors contract YAML / code / migration. The only work on
+# THIS branch is the determination docs (already authored). Future slices are GATED
+# and open ONLY after CHECKPOINT-2.
+
+slices:
+  - id: 026-DETERMINATION
+    status: authored-this-branch
+    dispatchable: false        # docs-only determination; nothing to dispatch
+    allowed_files:
+      - specs/026-returns-reversal-contract/**
+    validation:
+      - "git diff origin/main...HEAD --name-only lists ONLY specs/026-returns-reversal-contract/**"
+      - "no assertion of 'G2 satisfied' / 'cardinality handled' / 'returns work e2e'"
+    notes: spec.md + plan.md + tasks.md + this map + wave-status.md + both-sides-review.md
+
+  - id: 026-CONTRACT
+    status: future-gated         # opens ONLY after T004 verdict
+    gate: CHECKPOINT-2 / T004 (owner)
+    dispatchable: false
+    note: >
+      The Question A fix (propagate terminal-row provenance to wire anchor for
+      reversals, or a kind-aware connector key). Would touch posting-feed.yaml +
+      emit/consumer/projection. RED conformance test first. OUT OF SCOPE here (SC-06/11).
+
+  - id: 026-RETURNS-QTY
+    status: future-gated         # opens ONLY IFF T005 confirms a need AND A resolved
+    gate: CHECKPOINT-2 / T005 (owner)
+    dispatchable: false
+    note: >
+      A DP2 remaining-returnable-quantity surface. Recommended AGAINST in this arc.
+      OUT OF SCOPE here (no endpoint/state/migration authored).
+
+# ============================================================================
+# gates
+# ============================================================================
+
+gates:
+  G2:
+    owner: true
+    status: NOT-CERTIFIED        # owner-only at CHECKPOINT-2 (SC-09); this spec collects evidence
+    evidence: both-sides-review.md (Questions A & B)
+    precondition_for_close: WIRE-ANCHOR-MISMATCH (Question A) resolved
