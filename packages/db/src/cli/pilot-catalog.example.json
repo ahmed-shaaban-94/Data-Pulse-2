@@ -1,0 +1,21 @@
+{
+  "_comment": "Example shape for PILOT_CATALOG_FILE (seed-catalog.ts). NOT real pilot data — export the curated ~50-100 rows from index_demo.xlsx into a file of this shape (do NOT commit the real file). Per Golden-Catalog decisions: name cleaned of marker glyphs; category is flat; price is a DecimalAmount string numeric(19,4); skus are internal Material codes (incl. 10-digit); barcodes MUST be 12/13/14-digit numeric (the ~5 qualifying rows). tax_category is forced to 'standard' by the script; no stock; RX encoded in name/category only.",
+  "products": [
+    {
+      "name": "Paracetamol 500mg Tablets",
+      "category": "OTC Analgesics",
+      "price": "12.5000",
+      "currencyCode": "EGP",
+      "description": "Pilot sample row",
+      "skus": ["1000012345"],
+      "barcodes": ["6223000000001"]
+    },
+    {
+      "name": "Amoxicillin 500mg Capsules (RX)",
+      "category": "RX Antibiotics",
+      "price": "45.0000",
+      "skus": ["1000067890"],
+      "barcodes": []
+    }
+  ]
+}
