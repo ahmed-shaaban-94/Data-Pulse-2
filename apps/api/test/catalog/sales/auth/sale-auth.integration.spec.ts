@@ -268,12 +268,8 @@ beforeAll(async () => {
           ): PgOperatorContextResolver => new PgOperatorContextResolver(p, v, d),
           inject: [PG_POOL, CLERK_VERIFIER, DeviceRepository],
         },
-        {
-          provide: PosOperatorSaleAuthGuard,
-          useFactory: (r: PgOperatorContextResolver): PosOperatorSaleAuthGuard =>
-            new PosOperatorSaleAuthGuard(r),
-          inject: [OPERATOR_CONTEXT_RESOLVER],
-        },
+        // Bare class — Nest resolves the guard's @Inject(OPERATOR_CONTEXT_RESOLVER).
+        PosOperatorSaleAuthGuard,
       ],
     }).compile();
 

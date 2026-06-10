@@ -42,6 +42,7 @@ import {
 } from "../../../../src/idempotency/in-progress-marker";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
+import { OPERATOR_CONTEXT_RESOLVER } from "../../../../src/auth/operator-context-resolver";
 import type { ResolvedContext } from "../../../../src/context/types";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 
@@ -210,6 +211,16 @@ export async function startCaptureHarness(
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
+      // PosOperatorSaleAuthGuard is overridden to a no-op below, but Nest still
+      // validates the provider graph at compile time — the guard's
+      // @Inject(OPERATOR_CONTEXT_RESOLVER) dependency must be resolvable or the
+      // whole module fails to build (breaking every harness-importing spec).
+      // This stub satisfies the graph; its `resolve` is never called because
+      // the guard's canActivate is overridden.
+      {
+        provide: OPERATOR_CONTEXT_RESOLVER,
+        useValue: { resolve: async () => ({ kind: "refused", reason: "device_invalid" }) },
+      },
     ];
     if (opts.auditEnqueuer) {
       // Opt-in audit wiring (US6 / T072): RequestIdInterceptor stamps the

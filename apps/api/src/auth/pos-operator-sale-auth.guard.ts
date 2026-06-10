@@ -37,18 +37,29 @@
 import {
   type CanActivate,
   type ExecutionContext,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
 
-import type { OperatorContextResolver } from "./operator-context-resolver";
+import {
+  OPERATOR_CONTEXT_RESOLVER,
+  type OperatorContextResolver,
+} from "./operator-context-resolver";
 import type { TenantContextRequest } from "../context/types";
 
 const BEARER_PREFIX = "bearer ";
 
 @Injectable()
 export class PosOperatorSaleAuthGuard implements CanActivate {
-  constructor(private readonly resolver: OperatorContextResolver) {}
+  // The resolver is a string-token seam (interface, not a class), so it MUST
+  // be injected with an explicit @Inject — otherwise Nest, instantiating this
+  // guard by class for @UseGuards(PosOperatorSaleAuthGuard), reads the erased
+  // constructor type (Object) and fails to resolve the dependency.
+  constructor(
+    @Inject(OPERATOR_CONTEXT_RESOLVER)
+    private readonly resolver: OperatorContextResolver,
+  ) {}
 
   async canActivate(execCtx: ExecutionContext): Promise<boolean> {
     const request = execCtx.switchToHttp().getRequest<TenantContextRequest>();

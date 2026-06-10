@@ -76,12 +76,11 @@ import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guar
         new PgOperatorContextResolver(pool, verifier, devices),
       inject: [PG_POOL, CLERK_VERIFIER, DeviceRepository],
     },
-    {
-      provide: PosOperatorSaleAuthGuard,
-      useFactory: (resolver: PgOperatorContextResolver): PosOperatorSaleAuthGuard =>
-        new PosOperatorSaleAuthGuard(resolver),
-      inject: [OPERATOR_CONTEXT_RESOLVER],
-    },
+    // Bare-class provider: Nest reads the guard's @Inject(OPERATOR_CONTEXT_RESOLVER)
+    // metadata to resolve its dependency, even when it instantiates the guard by
+    // class for @UseGuards(PosOperatorSaleAuthGuard). Mirrors ReadDownModule's
+    // bare PosDeviceAuthGuard provider.
+    PosOperatorSaleAuthGuard,
   ],
   exports: [SalesService],
 })
