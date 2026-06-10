@@ -57,7 +57,6 @@ describe("T055 — recordRefund happy path (separate terminal event, sale unchan
       .post(`/api/pos/v1/sales/${saleRef}/refund`)
       .set("Idempotency-Key", idempKey("rk1"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "refund-evt-001",
         posRefundAmount: "12.5000",

@@ -169,11 +169,12 @@ describe("PgOperatorContextResolver — refusals (security branches)", () => {
 });
 
 describe("PgOperatorContextResolver — happy path", () => {
-  it("eligible store_manager, access=all → ok with context scoped FROM the device row", async () => {
+  it("eligible store_manager, access=all → ok with context + deviceId scoped FROM the device row", async () => {
     const r = build({}); // all defaults: valid user, active device, store_manager/all
     const result = await r.resolve("jwt", "att");
     expect(result).toEqual({
       kind: "ok",
+      deviceId: DEVICE_ID,
       context: {
         userId: USER_ID,
         tenantId: TENANT_ID,

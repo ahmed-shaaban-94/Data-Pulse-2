@@ -57,7 +57,7 @@ export type ResolveOperatorRefusalReason =
   | "store_not_in_access_set";
 
 export type ResolveOperatorResult =
-  | { kind: "ok"; context: ResolvedContext }
+  | { kind: "ok"; context: ResolvedContext; deviceId: string }
   | { kind: "refused"; reason: ResolveOperatorRefusalReason };
 
 /**
@@ -84,12 +84,18 @@ interface MembershipLookupRow {
   role_code: string;
 }
 
+/** Minimal structured-logger surface (pino-compatible); optional. */
+export interface ResolverLogger {
+  warn(obj: object, msg: string): void;
+}
+
 @Injectable()
 export class PgOperatorContextResolver implements OperatorContextResolver {
   constructor(
     private readonly pool: Pool,
     private readonly clerkVerifier: ClerkVerifier,
     private readonly deviceRepository: DeviceRepository,
+    private readonly logger?: ResolverLogger,
   ) {}
 
   async resolve(rawJwt: string, rawAttestation: string): Promise<ResolveOperatorResult> {
@@ -97,7 +103,15 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
     let claims;
     try {
       claims = await this.clerkVerifier.verify(rawJwt);
-    } catch {
+    } catch (err) {
+      // Collapse to a generic refusal at the boundary (no factor disclosure),
+      // but record the underlying cause server-side so operators can debug
+      // Clerk connectivity / config / outage. The raw JWT is NEVER logged
+      // (FR-POS-AUTH-10) — only the error.
+      this.logger?.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        "operator-context-resolver: Clerk JWT verification failed",
+      );
       return { kind: "refused", reason: "clerk_jwt_invalid" };
     }
 
@@ -134,7 +148,11 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
       isPlatformAdmin: false,
       source: "token",
     };
-    return { kind: "ok", context };
+    // deviceId is returned so the guard can populate `request.principal`
+    // (the audit interceptor reads `principal.userId` for actor_user_id, and
+    // a token principal carries the device id as `tokenId` — mirrors the
+    // read-down device principal).
+    return { kind: "ok", context, deviceId: deviceRow.id };
   }
 
   private async findUserByClerkSubject(sub: string): Promise<UserLookupRow | null> {

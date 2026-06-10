@@ -58,7 +58,6 @@ describe("T062 — provenance retained across sale / void / refund", () => {
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("pvoid"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "prov-void",
       });
@@ -69,7 +68,6 @@ describe("T062 — provenance retained across sale / void / refund", () => {
       .post(`/api/pos/v1/sales/${saleRef}/refund`)
       .set("Idempotency-Key", idempKey("pref"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "prov-refund",
         posRefundAmount: "1.0000",

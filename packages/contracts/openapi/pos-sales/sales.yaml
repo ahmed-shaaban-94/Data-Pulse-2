@@ -92,6 +92,7 @@ paths:
         `(tenant, sourceSystem, externalId)` (FR-050) — replays return the same
         stable sale reference deterministically (FR-100), with no double-apply.
       parameters:
+        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -177,6 +178,7 @@ paths:
         with no duplicate record (FR-013).
       parameters:
         - $ref: "#/components/parameters/SaleRef"
+        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -235,6 +237,7 @@ paths:
         refund (same provenance) is not double-applied (FR-013).
       parameters:
         - $ref: "#/components/parameters/SaleRef"
+        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -288,6 +291,21 @@ components:
         JWKS error. The token is not propagated past the verifier.
 
   parameters:
+    DeviceAttestation:
+      name: X-Device-Attestation
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+      description: >
+        008 Option Y — terminal-side proof of possession of the paired device
+        token (per 001/002), carried in a dedicated header (NOT the body, which
+        is hashed into `payload_hash` + the idempotency fingerprint). With the
+        `Authorization: Bearer <clerk-jwt>`, it authenticates the sale via the
+        same identity/eligibility pipeline as operator sign-in and resolves the
+        canonical `(tenant_id, store_id)` scope. Never logged or persisted
+        (FR-POS-AUTH-2).
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -333,6 +351,16 @@ components:
         Exact-decimal monetary amount as a string (gate A.6 — never a float).
         Up to 4 fractional digits, stored as `numeric(19,4)`. Always paired
         with a `currency_code`.
+    NonNegativeDecimalAmount:
+      type: string
+      pattern: '^[0-9]{1,15}(\.[0-9]{1,4})?$'
+      description: >
+        Exact-decimal monetary amount as a string, constrained NON-NEGATIVE (no
+        leading `-`). Used for refund amounts — the DB enforces
+        `pos_refund_amount >= 0`, so the contract rejects negatives at the
+        boundary to match the DTO (RecordRefundRequestSchema) and avoid a 500
+        on a CHECK violation. Up to 4 fractional digits, stored as
+        `numeric(19,4)`.
     CurrencyCode:
       type: string
       pattern: '^[A-Z]{3}$'
@@ -345,7 +373,7 @@ components:
       type: object
       additionalProperties: false
       required:
-        [deviceTokenAttestation, sourceSystem, externalId, currencyCode, posTotal, occurredAt, lines]
+        [sourceSystem, externalId, currencyCode, posTotal, occurredAt, lines]
       description: >
         A completed POS sale. `tenant_id` / `store_id` / `created_by` /
         `received_at` / `business_date` / `processed_at` / `mismatch_flag` are
@@ -355,19 +383,14 @@ components:
 
         Auth (008 Option Y): the operator's Clerk JWT is presented in
         `Authorization: Bearer <jwt>` (component `clerkJwt`); the paired
-        terminal's `deviceTokenAttestation` is supplied in this body. The two
-        together authenticate the sale via the same identity/eligibility
-        pipeline as operator sign-in (`pos-operators.openapi.yaml`). The
-        resolved `(tenant_id, store_id, actor)` come from the device row +
-        membership — never from the body.
+        terminal's device attestation is supplied in the `X-Device-Attestation`
+        header (parameter `DeviceAttestation`), NOT the body — the body is
+        hashed into the sale `payload_hash` and the idempotency fingerprint, so
+        an auth credential must never ride in it. The two together authenticate
+        the sale via the same identity/eligibility pipeline as operator sign-in
+        (`pos-operators.openapi.yaml`). The resolved `(tenant_id, store_id,
+        actor)` come from the device row + membership — never from the body.
       properties:
-        deviceTokenAttestation:
-          type: string
-          minLength: 1
-          description: >
-            Terminal-side proof of possession of the paired device token (per
-            001/002). Resolves the canonical `(tenant_id, store_id)` scope for
-            the sale. Never logged or persisted (FR-POS-AUTH-2).
         sourceSystem:
           type: string
           minLength: 1
@@ -442,19 +465,14 @@ components:
     RecordVoidRequest:
       type: object
       additionalProperties: false
-      required: [deviceTokenAttestation, sourceSystem, externalId]
+      required: [sourceSystem, externalId]
       description: >
         Void terminal event. `voidedAt` / tenant / store / actor resolve
         server-side and are rejected if body-supplied (FR-061). Provenance is
         the event's own dedup key (FR-013). Auth (008 Option Y): Clerk JWT in
-        `Authorization` + `deviceTokenAttestation` in this body.
+        `Authorization` + the device attestation in the `X-Device-Attestation`
+        header (not the body).
       properties:
-        deviceTokenAttestation:
-          type: string
-          minLength: 1
-          description: >
-            Terminal-side proof of possession of the paired device token (per
-            001/002). Resolves the canonical scope. Never logged or persisted.
         sourceSystem:
           type: string
           minLength: 1
@@ -466,19 +484,14 @@ components:
     RecordRefundRequest:
       type: object
       additionalProperties: false
-      required: [deviceTokenAttestation, sourceSystem, externalId, posRefundAmount, currencyCode]
+      required: [sourceSystem, externalId, posRefundAmount, currencyCode]
       description: >
         Refund terminal event. Records ONLY the POS-reported refund amount —
         no tender / payment data (gate A.5). `refundedAt` / tenant / store /
         actor resolve server-side (FR-061). Auth (008 Option Y): Clerk JWT in
-        `Authorization` + `deviceTokenAttestation` in this body.
+        `Authorization` + the device attestation in the `X-Device-Attestation`
+        header (not the body).
       properties:
-        deviceTokenAttestation:
-          type: string
-          minLength: 1
-          description: >
-            Terminal-side proof of possession of the paired device token (per
-            001/002). Resolves the canonical scope. Never logged or persisted.
         sourceSystem:
           type: string
           minLength: 1
@@ -488,7 +501,7 @@ components:
           minLength: 1
           maxLength: 200
         posRefundAmount:
-          $ref: "#/components/schemas/DecimalAmount"
+          $ref: "#/components/schemas/NonNegativeDecimalAmount"
         currencyCode:
           $ref: "#/components/schemas/CurrencyCode"
 

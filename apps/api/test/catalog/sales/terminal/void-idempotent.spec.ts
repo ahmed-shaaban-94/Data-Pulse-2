@@ -47,7 +47,7 @@ describe("T051 — recordVoid is idempotent on provenance", () => {
       .send(captureBody({ externalId: "ext-void-idem" }));
     expect(cap.status).toBe(201);
     const saleRef = cap.body.saleRef;
-    const voidBody = { deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-idem" };
+    const voidBody = { sourceSystem: "pos-1", externalId: "void-evt-idem" };
 
     const first = await h.harness
       .http()
@@ -89,7 +89,7 @@ describe("T051 — recordVoid is idempotent on provenance", () => {
     expect(capB.status).toBe(201);
     const saleA = capA.body.saleRef;
     const saleB = capB.body.saleRef;
-    const prov = { deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-coll" };
+    const prov = { sourceSystem: "pos-1", externalId: "void-evt-coll" };
 
     const v1 = await h.harness
       .http()

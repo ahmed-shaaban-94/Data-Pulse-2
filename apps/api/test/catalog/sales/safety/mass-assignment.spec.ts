@@ -87,10 +87,7 @@ describe("T070 — terminal events reject body-supplied authority fields", () =>
       .http()
       .post(`/api/pos/v1/sales/${cap.body.saleRef}/void`)
       .set("Idempotency-Key", idempKey("mav1"))
-      // Attestation present so the ONLY rejection cause is the forbidden
-      // tenant_id (008 Option Y added attestation as a required body field).
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "ma-void",
         tenant_id: "x",
@@ -117,7 +114,6 @@ describe("T070 — terminal events reject body-supplied authority fields", () =>
       .post(`/api/pos/v1/sales/${cap.body.saleRef}/refund`)
       .set("Idempotency-Key", idempKey("mar1"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "ma-refund",
         posRefundAmount: "1.0000",

@@ -54,7 +54,6 @@ describe("T056 — recordRefund preserves the POS amount verbatim", () => {
       .post(`/api/pos/v1/sales/${saleRef}/refund`)
       .set("Idempotency-Key", idempKey("rf1"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "refund-evt-partial",
         posRefundAmount: "7.3300",
@@ -86,7 +85,6 @@ describe("T056 — recordRefund preserves the POS amount verbatim", () => {
       .post(`/api/pos/v1/sales/${cap.body.saleRef}/refund`)
       .set("Idempotency-Key", idempKey("rfn1"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "refund-evt-norm",
         posRefundAmount: "7.3",
@@ -111,7 +109,6 @@ describe("T056 — recordRefund preserves the POS amount verbatim", () => {
       .post(`/api/pos/v1/sales/${cap.body.saleRef}/refund`)
       .set("Idempotency-Key", idempKey("rfneg1"))
       .send({
-        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "refund-evt-neg",
         posRefundAmount: "-5.0000",

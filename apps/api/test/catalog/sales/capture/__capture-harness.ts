@@ -41,8 +41,10 @@ import {
   InProgressMarker,
 } from "../../../../src/idempotency/in-progress-marker";
 import { PG_POOL } from "../../../../src/auth/auth.module";
+import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
 import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
 import { OPERATOR_CONTEXT_RESOLVER } from "../../../../src/auth/operator-context-resolver";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 
@@ -245,7 +247,17 @@ export async function startCaptureHarness(
       controllers: [SalesController],
       providers,
     })
+      // Write routes (capture/void/refund) use PosOperatorSaleAuthGuard; the
+      // readSale GET still uses PosOperatorAuthGuard + TenantContextGuard. All
+      // three are overridden to no-ops here — these specs exercise the sale
+      // data path, not auth; req.context comes from the global
+      // ConfigurableContextGuard. Auth is covered by the guard/resolver unit
+      // specs + the sale-auth integration spec.
       .overrideGuard(PosOperatorSaleAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PosOperatorAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TenantContextGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -292,9 +304,9 @@ export function resetHarness(h: HarnessHandle): void {
 /** A valid 2-line capture request body matching the OpenAPI CaptureSaleRequest. */
 export function captureBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    // 008 Option Y — required by CaptureSaleRequest (.strict). Consumed by the
-    // sale-auth guard (no-op'd in this harness); inert in the write-path.
-    deviceTokenAttestation: "harness-device-attestation",
+    // 008 Option Y — device attestation rides in the X-Device-Attestation
+    // HEADER, never the body (kept out of payload_hash + idempotency). The
+    // sale-auth guard is no-op'd in this harness, so no header is needed here.
     sourceSystem: "pos-1",
     externalId: "ext-cap-001",
     currencyCode: "USD",
@@ -322,20 +334,18 @@ export function captureBody(overrides: Record<string, unknown> = {}): Record<str
   };
 }
 
-/** A valid recordVoid body (008 Option Y — carries the device attestation). */
+/** A valid recordVoid body (008 Option Y — attestation is a header, not body). */
 export function voidBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    deviceTokenAttestation: "harness-device-attestation",
     sourceSystem: "pos-1",
     externalId: "void-evt-001",
     ...overrides,
   };
 }
 
-/** A valid recordRefund body (008 Option Y — carries the device attestation). */
+/** A valid recordRefund body (008 Option Y — attestation is a header, not body). */
 export function refundBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    deviceTokenAttestation: "harness-device-attestation",
     sourceSystem: "pos-1",
     externalId: "refund-evt-001",
     posRefundAmount: "5.0000",

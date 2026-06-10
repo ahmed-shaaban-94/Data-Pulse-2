@@ -7,9 +7,10 @@
  * (raw JWT → Clerk subject) so no traffic reaches Clerk's JWKS.
  *
  * This is the proof the resolver's hand-written SQL is valid against the live
- * schema AND that Express has populated `request.body` by guard-time (the guard
- * reads `request.body.deviceTokenAttestation` directly, before the Zod pipe).
- * The docker-free unit specs cover the decision branches; this covers the wire.
+ * schema, that the sale write runs under RLS (env.app pool + tenant GUC), and
+ * that the guard reads the `X-Device-Attestation` header end-to-end through the
+ * real HTTP stack. The docker-free unit specs cover the decision branches; this
+ * covers the wire.
  *
  * Seeding mirrors `test/pos-operators/pos-operators.controller.spec.ts`
  * verbatim (the sign-in surface runs the same identity/eligibility resolution),
@@ -132,7 +133,6 @@ function http() {
 
 function captureBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    deviceTokenAttestation: DEVICE_ATTESTATION,
     sourceSystem: "saleauth-pos",
     externalId: "saleauth-ext-001",
     currencyCode: "USD",
@@ -243,7 +243,13 @@ beforeAll(async () => {
       new FakeMarker() as unknown as InProgressMarker,
     );
 
-    const appPool = pool;
+    // RLS-real pool for the app (SalesService write runs under RLS via the
+    // tenant GUC, exactly like __capture-harness uses env.app). The admin pool
+    // (`pool`) is used ONLY for seeding + cleanup above/below. The resolver's
+    // identity lookups (users/memberships/store_access/devices) have no RLS, so
+    // they read fine under env.app — mirroring how production sign-in reads them
+    // on the shared pool before any tenant context exists.
+    const appPool = env.app;
     const moduleRef = await Test.createTestingModule({
       controllers: [SalesController],
       providers: [
@@ -302,12 +308,15 @@ afterEach(async () => {
   }
 });
 
+const ATT = "X-Device-Attestation";
+
 describe("captureSale auth (Option Y) — happy path", () => {
-  it("eligible store_manager + valid Clerk JWT + device attestation → 201, sale scoped to device store", async () => {
+  it("eligible store_manager + valid Clerk JWT + device attestation header → 201, sale scoped to device store", async () => {
     if (maybeSkip()) return;
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-mgr")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
 
@@ -315,7 +324,7 @@ describe("captureSale auth (Option Y) — happy path", () => {
     expect(res.body.storeId).toBe(STORE_ID);
     expect(res.body.posTotal).toBe("5.0000");
 
-    // Persisted under the device tenant.
+    // Persisted under the device tenant (write ran under RLS via the tenant GUC).
     const n = await pool!.query<{ n: string }>(
       `SELECT COUNT(*)::text AS n FROM sales WHERE tenant_id = $1 AND source_system = 'saleauth-pos'`,
       [TENANT_ID],
@@ -329,20 +338,19 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     if (maybeSkip()) return;
     const res = await http()
       .post("/api/pos/v1/sales")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
     expect(res.status).toBe(401);
   });
 
-  it("missing body attestation → 401", async () => {
+  it("missing X-Device-Attestation header → 401", async () => {
     if (maybeSkip()) return;
-    const body = captureBody();
-    delete body.deviceTokenAttestation;
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-mgr")
       .set("Idempotency-Key", idemKey())
-      .send(body);
+      .send(captureBody());
     expect(res.status).toBe(401);
   });
 
@@ -351,6 +359,7 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-unmapped")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
     expect(res.status).toBe(401);
@@ -361,6 +370,7 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-deleted")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
     expect(res.status).toBe(401);
@@ -371,8 +381,9 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-mgr")
+      .set(ATT, DEVICE_REVOKED_ATTESTATION)
       .set("Idempotency-Key", idemKey())
-      .send(captureBody({ deviceTokenAttestation: DEVICE_REVOKED_ATTESTATION }));
+      .send(captureBody());
     expect(res.status).toBe(401);
   });
 
@@ -381,6 +392,7 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-staff")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
     expect(res.status).toBe(401);
@@ -391,6 +403,7 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-specific")
+      .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
     expect(res.status).toBe(401);

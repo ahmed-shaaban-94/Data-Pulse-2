@@ -42,7 +42,6 @@ afterEach(async () => {
 
 function refundBody(externalId: string): Record<string, unknown> {
   return {
-    deviceTokenAttestation: "harness-device-attestation",
     sourceSystem: "pos-1",
     externalId,
     posRefundAmount: "1.0000",

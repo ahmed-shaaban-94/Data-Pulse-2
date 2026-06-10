@@ -39,13 +39,11 @@ function makeCtx(req: object): ExecutionContext {
   } as unknown as ExecutionContext;
 }
 
-function makeRequest(opts: { bearer?: string; body?: unknown }): Record<string, unknown> {
-  const req: Record<string, unknown> = { headers: {} as Record<string, string> };
-  if (opts.bearer !== undefined) {
-    (req.headers as Record<string, string>)["authorization"] = opts.bearer;
-  }
-  if (opts.body !== undefined) req.body = opts.body;
-  return req;
+function makeRequest(opts: { bearer?: string; attestation?: string }): Record<string, unknown> {
+  const headers: Record<string, string> = {};
+  if (opts.bearer !== undefined) headers["authorization"] = opts.bearer;
+  if (opts.attestation !== undefined) headers["x-device-attestation"] = opts.attestation;
+  return { headers };
 }
 
 function makeResolver(result: ResolveOperatorResult): {
@@ -56,8 +54,11 @@ function makeResolver(result: ResolveOperatorResult): {
   return { resolver: { resolve } as unknown as OperatorContextResolver, resolve };
 }
 
+const DEVICE_ID = "0a000000-0000-7000-8000-0000000dev01";
+
 const OK_RESULT: ResolveOperatorResult = {
   kind: "ok",
+  deviceId: DEVICE_ID,
   context: {
     userId: USER_ID,
     tenantId: TENANT_ID,
@@ -68,19 +69,28 @@ const OK_RESULT: ResolveOperatorResult = {
 };
 
 describe("PosOperatorSaleAuthGuard — happy path", () => {
-  it("SALE1: valid Clerk JWT + body attestation → true and publishes req.context from the device/membership", async () => {
+  it("SALE1: valid Clerk JWT + X-Device-Attestation header → true; publishes context + token principal", async () => {
     const { resolver, resolve } = makeResolver(OK_RESULT);
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
     const req = makeRequest({
       bearer: "Bearer clerk.jwt.value",
-      body: { deviceTokenAttestation: "device-attestation-xyz" },
+      attestation: "device-attestation-xyz",
     });
     const ok = await guard.canActivate(makeCtx(req));
 
     expect(ok).toBe(true);
     expect(resolve).toHaveBeenCalledWith("clerk.jwt.value", "device-attestation-xyz");
     expect((req as { context?: unknown }).context).toEqual(OK_RESULT.context);
+    // Principal published for the audit interceptor (actor_user_id).
+    expect((req as { principal?: unknown }).principal).toEqual({
+      kind: "token",
+      tokenId: DEVICE_ID,
+      tenantId: TENANT_ID,
+      userId: USER_ID,
+      storeId: STORE_ID,
+      scope: "pos_operator",
+    });
   });
 });
 
@@ -89,7 +99,7 @@ describe("PosOperatorSaleAuthGuard — refusals collapse to 401", () => {
     const { resolver, resolve } = makeResolver(OK_RESULT);
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
-    const req = makeRequest({ body: { deviceTokenAttestation: "x" } });
+    const req = makeRequest({ attestation: "x" });
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
     expect(resolve).not.toHaveBeenCalled();
   });
@@ -98,44 +108,37 @@ describe("PosOperatorSaleAuthGuard — refusals collapse to 401", () => {
     const { resolver } = makeResolver(OK_RESULT);
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
-    const req = makeRequest({ bearer: "Basic abc", body: { deviceTokenAttestation: "x" } });
+    const req = makeRequest({ bearer: "Basic abc", attestation: "x" });
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it("SALE4: missing body attestation → 401, resolver not called", async () => {
+  it("SALE4: missing attestation header → 401, resolver not called", async () => {
     const { resolver, resolve } = makeResolver(OK_RESULT);
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
-    const req = makeRequest({ bearer: "Bearer clerk.jwt", body: {} });
+    const req = makeRequest({ bearer: "Bearer clerk.jwt" });
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("SALE5: empty-string attestation → 401", async () => {
+  it("SALE5: empty/whitespace attestation header → 401", async () => {
     const { resolver } = makeResolver(OK_RESULT);
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
-    const req = makeRequest({ bearer: "Bearer clerk.jwt", body: { deviceTokenAttestation: "" } });
+    const req = makeRequest({ bearer: "Bearer clerk.jwt", attestation: "   " });
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it("SALE6: resolver refuses (invalid jwt / unmapped / revoked device / ineligible role / store mismatch) → 401", async () => {
+  it("SALE6: resolver refuses (invalid jwt / unmapped / revoked device / ineligible role / store mismatch) → 401, no context/principal", async () => {
     const { resolver } = makeResolver({ kind: "refused", reason: "clerk_jwt_invalid" });
     const guard = new PosOperatorSaleAuthGuard(resolver);
 
     const req = makeRequest({
       bearer: "Bearer clerk.jwt",
-      body: { deviceTokenAttestation: "device-attestation-xyz" },
+      attestation: "device-attestation-xyz",
     });
     await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
     expect((req as { context?: unknown }).context).toBeUndefined();
-  });
-
-  it("SALE7: absent body object entirely → 401", async () => {
-    const { resolver } = makeResolver(OK_RESULT);
-    const guard = new PosOperatorSaleAuthGuard(resolver);
-
-    const req = makeRequest({ bearer: "Bearer clerk.jwt" });
-    await expect(guard.canActivate(makeCtx(req))).rejects.toBeInstanceOf(UnauthorizedException);
+    expect((req as { principal?: unknown }).principal).toBeUndefined();
   });
 });
