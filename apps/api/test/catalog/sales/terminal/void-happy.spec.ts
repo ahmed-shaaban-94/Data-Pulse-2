@@ -60,7 +60,7 @@ describe("T050 — recordVoid happy path (separate terminal event, sale unchange
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("vk1"))
-      .send({ sourceSystem: "pos-1", externalId: "void-evt-001" });
+      .send({ deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-001" });
 
     expect(res.status).toBe(201);
     expect(res.body.kind).toBe("void");

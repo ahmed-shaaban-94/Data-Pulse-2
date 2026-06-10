@@ -24,18 +24,65 @@
  *   - ContextModule     — provides TenantContextGuard.
  */
 import { Module } from "@nestjs/common";
+import type { Pool } from "pg";
 
 import { AuditModule } from "../../audit/audit.module";
-import { AuthModule } from "../../auth/auth.module";
+import { AuthModule, PG_POOL } from "../../auth/auth.module";
 import { ContextModule } from "../../context/context.module";
 import { IdempotencyModule } from "../../idempotency/idempotency.module";
 import { SalesController } from "./sales.controller";
 import { SalesService } from "./sales.service";
+import {
+  CLERK_VERIFIER,
+  type ClerkVerifier,
+  clerkVerifierFactory,
+} from "../../pos-operators/clerk-verifier";
+import { DeviceRepository } from "../../pos-operators/device.repository";
+import {
+  OPERATOR_CONTEXT_RESOLVER,
+  PgOperatorContextResolver,
+} from "../../auth/operator-context-resolver";
+import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guard";
 
+/**
+ * 008 Option Y wiring: the sale routes authenticate via Clerk JWT + device
+ * attestation through PosOperatorSaleAuthGuard → PgOperatorContextResolver,
+ * reusing the same ClerkVerifier + DeviceRepository the operator sign-in
+ * surface uses (constructed here against the shared PG_POOL; no cross-module
+ * provider mutation). The guard publishes req.context, so TenantContextGuard
+ * is no longer needed on the write routes.
+ */
 @Module({
   imports: [AuthModule, IdempotencyModule, AuditModule, ContextModule],
   controllers: [SalesController],
-  providers: [SalesService],
+  providers: [
+    SalesService,
+    {
+      provide: CLERK_VERIFIER,
+      useFactory: clerkVerifierFactory,
+    },
+    {
+      provide: DeviceRepository,
+      useFactory: (pool: Pool): DeviceRepository => new DeviceRepository(pool),
+      inject: [PG_POOL],
+    },
+    {
+      provide: OPERATOR_CONTEXT_RESOLVER,
+      useFactory: (
+        pool: Pool,
+        verifier: ClerkVerifier,
+        devices: DeviceRepository,
+      ): PgOperatorContextResolver =>
+        new PgOperatorContextResolver(pool, verifier, devices),
+      inject: [PG_POOL, CLERK_VERIFIER, DeviceRepository],
+    },
+    {
+      provide: PosOperatorSaleAuthGuard,
+      useFactory: (resolver: PgOperatorContextResolver): PosOperatorSaleAuthGuard =>
+        new PosOperatorSaleAuthGuard(resolver),
+      inject: [OPERATOR_CONTEXT_RESOLVER],
+    },
+  ],
   exports: [SalesService],
 })
 export class SalesModule {}

@@ -58,7 +58,7 @@ describe("T052 — recordVoid object-safety (non-disclosing 404, no record)", ()
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("vs1"))
-      .send({ sourceSystem: "pos-1", externalId: "void-evt-xstore" });
+      .send({ deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-xstore" });
     expect(res.status).toBe(404);
 
     const voids = await h.harness.env.admin.query<{ n: string }>(
@@ -75,7 +75,7 @@ describe("T052 — recordVoid object-safety (non-disclosing 404, no record)", ()
       .http()
       .post(`/api/pos/v1/sales/${unknown}/void`)
       .set("Idempotency-Key", idempKey("vs2"))
-      .send({ sourceSystem: "pos-1", externalId: "void-evt-unknown" });
+      .send({ deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-unknown" });
     expect(res.status).toBe(404);
 
     const voids = await h.harness.env.admin.query<{ n: string }>(
@@ -103,7 +103,7 @@ describe("T052 — recordVoid object-safety (non-disclosing 404, no record)", ()
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("vs3"))
-      .send({ sourceSystem: "pos-1", externalId: "void-evt-xtenant" });
+      .send({ deviceTokenAttestation: "harness-device-attestation", sourceSystem: "pos-1", externalId: "void-evt-xtenant" });
     expect(res.status).toBe(404);
 
     const voids = await h.harness.env.admin.query<{ n: string }>(

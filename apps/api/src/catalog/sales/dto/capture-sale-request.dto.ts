@@ -44,6 +44,11 @@ export const CaptureSaleLineSchema = z
 
 export const CaptureSaleRequestSchema = z
   .object({
+    // 008 Option Y — terminal-side device-token proof. An AUTH credential
+    // consumed by PosOperatorSaleAuthGuard (resolves tenant/store scope), NOT
+    // sale data: the service never persists it. Declared here so the strict
+    // body boundary accepts it (otherwise additionalProperties:false → 400).
+    deviceTokenAttestation: z.string().min(1),
     sourceSystem: z.string().min(1).max(100),
     externalId: z.string().min(1).max(200),
     currencyCode,

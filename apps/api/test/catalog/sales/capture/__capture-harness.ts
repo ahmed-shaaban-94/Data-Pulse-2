@@ -41,8 +41,7 @@ import {
   InProgressMarker,
 } from "../../../../src/idempotency/in-progress-marker";
 import { PG_POOL } from "../../../../src/auth/auth.module";
-import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
-import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
+import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 
@@ -224,13 +223,18 @@ export async function startCaptureHarness(
       );
     }
 
+    // The write routes (capture/void/refund) are guarded by
+    // PosOperatorSaleAuthGuard (008 Option Y). These capture specs exercise the
+    // sale WRITE-PATH, not the auth derivation, so the guard is overridden to a
+    // no-op here; req.context is injected by the global ConfigurableContextGuard
+    // below. The guard's real Clerk-JWT + attestation auth is covered by its own
+    // unit spec (test/auth/pos-operator-sale-auth.guard.unit.spec.ts) and the
+    // resolver integration spec.
     const moduleRef = await Test.createTestingModule({
       controllers: [SalesController],
       providers,
     })
-      .overrideGuard(PosOperatorAuthGuard)
-      .useValue({ canActivate: () => true })
-      .overrideGuard(TenantContextGuard)
+      .overrideGuard(PosOperatorSaleAuthGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -277,6 +281,9 @@ export function resetHarness(h: HarnessHandle): void {
 /** A valid 2-line capture request body matching the OpenAPI CaptureSaleRequest. */
 export function captureBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    // 008 Option Y — required by CaptureSaleRequest (.strict). Consumed by the
+    // sale-auth guard (no-op'd in this harness); inert in the write-path.
+    deviceTokenAttestation: "harness-device-attestation",
     sourceSystem: "pos-1",
     externalId: "ext-cap-001",
     currencyCode: "USD",
@@ -300,6 +307,28 @@ export function captureBody(overrides: Record<string, unknown> = {}): Record<str
         unit: "ea",
       },
     ],
+    ...overrides,
+  };
+}
+
+/** A valid recordVoid body (008 Option Y — carries the device attestation). */
+export function voidBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    deviceTokenAttestation: "harness-device-attestation",
+    sourceSystem: "pos-1",
+    externalId: "void-evt-001",
+    ...overrides,
+  };
+}
+
+/** A valid recordRefund body (008 Option Y — carries the device attestation). */
+export function refundBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    deviceTokenAttestation: "harness-device-attestation",
+    sourceSystem: "pos-1",
+    externalId: "refund-evt-001",
+    posRefundAmount: "5.0000",
+    currencyCode: "USD",
     ...overrides,
   };
 }

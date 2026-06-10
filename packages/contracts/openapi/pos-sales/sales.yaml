@@ -345,14 +345,29 @@ components:
       type: object
       additionalProperties: false
       required:
-        [sourceSystem, externalId, currencyCode, posTotal, occurredAt, lines]
+        [deviceTokenAttestation, sourceSystem, externalId, currencyCode, posTotal, occurredAt, lines]
       description: >
         A completed POS sale. `tenant_id` / `store_id` / `created_by` /
         `received_at` / `business_date` / `processed_at` / `mismatch_flag` are
         intentionally absent — they resolve server-side and are rejected if
         present (FR-061). `additionalProperties: false` enforces the strict
         mass-assignment boundary at the contract level (FR-062).
+
+        Auth (008 Option Y): the operator's Clerk JWT is presented in
+        `Authorization: Bearer <jwt>` (component `clerkJwt`); the paired
+        terminal's `deviceTokenAttestation` is supplied in this body. The two
+        together authenticate the sale via the same identity/eligibility
+        pipeline as operator sign-in (`pos-operators.openapi.yaml`). The
+        resolved `(tenant_id, store_id, actor)` come from the device row +
+        membership — never from the body.
       properties:
+        deviceTokenAttestation:
+          type: string
+          minLength: 1
+          description: >
+            Terminal-side proof of possession of the paired device token (per
+            001/002). Resolves the canonical `(tenant_id, store_id)` scope for
+            the sale. Never logged or persisted (FR-POS-AUTH-2).
         sourceSystem:
           type: string
           minLength: 1
@@ -427,12 +442,19 @@ components:
     RecordVoidRequest:
       type: object
       additionalProperties: false
-      required: [sourceSystem, externalId]
+      required: [deviceTokenAttestation, sourceSystem, externalId]
       description: >
         Void terminal event. `voidedAt` / tenant / store / actor resolve
         server-side and are rejected if body-supplied (FR-061). Provenance is
-        the event's own dedup key (FR-013).
+        the event's own dedup key (FR-013). Auth (008 Option Y): Clerk JWT in
+        `Authorization` + `deviceTokenAttestation` in this body.
       properties:
+        deviceTokenAttestation:
+          type: string
+          minLength: 1
+          description: >
+            Terminal-side proof of possession of the paired device token (per
+            001/002). Resolves the canonical scope. Never logged or persisted.
         sourceSystem:
           type: string
           minLength: 1
@@ -444,12 +466,19 @@ components:
     RecordRefundRequest:
       type: object
       additionalProperties: false
-      required: [sourceSystem, externalId, posRefundAmount, currencyCode]
+      required: [deviceTokenAttestation, sourceSystem, externalId, posRefundAmount, currencyCode]
       description: >
         Refund terminal event. Records ONLY the POS-reported refund amount —
         no tender / payment data (gate A.5). `refundedAt` / tenant / store /
-        actor resolve server-side (FR-061).
+        actor resolve server-side (FR-061). Auth (008 Option Y): Clerk JWT in
+        `Authorization` + `deviceTokenAttestation` in this body.
       properties:
+        deviceTokenAttestation:
+          type: string
+          minLength: 1
+          description: >
+            Terminal-side proof of possession of the paired device token (per
+            001/002). Resolves the canonical scope. Never logged or persisted.
         sourceSystem:
           type: string
           minLength: 1

@@ -13,6 +13,9 @@ import { z } from "zod";
 
 export const RecordVoidRequestSchema = z
   .object({
+    // 008 Option Y — device-token proof; consumed by the sale-auth guard,
+    // never persisted by the service (see capture-sale-request.dto.ts).
+    deviceTokenAttestation: z.string().min(1),
     sourceSystem: z.string().min(1).max(100),
     externalId: z.string().min(1).max(200),
   })
