@@ -147,12 +147,15 @@ export class PairingRepository {
       async (
         client: PoolClient,
       ): Promise<{ kind: "ok"; rawToken: string } | "lost_race" | "already_provisioned"> => {
-        // Guarded burn: only the row still `pending` transitions. A loser in a
-        // same-code race updates 0 rows → lost_race → 410 at the controller.
+        // Guarded burn: only a row still `pending` AND not-yet-expired transitions.
+        // The `expires_at > now()` predicate is in the SAME atomic UPDATE so a code
+        // that crosses its expiry between the service's isSpent() pre-check and this
+        // transaction cannot still be burned/provisioned (Codex P2): an expired (or
+        // already-burned) row updates 0 rows → lost_race → 410 EXPIRED_CODE.
         const burn = await client.query<{ id: string }>(
           `UPDATE pairing_codes
               SET status = 'used', used_at = now()
-            WHERE id = $1 AND status = 'pending'
+            WHERE id = $1 AND status = 'pending' AND expires_at > now()
           RETURNING id`,
           [input.codeId],
         );

@@ -230,7 +230,7 @@ describe("0024 — constraints", () => {
     await expect(insertCode(e, { comPort: "  " })).rejects.toMatchObject({ code: "23514" });
   });
 
-  it("FK store_id -> stores RESTRICT — a dangling store is rejected (23503)", async () => {
+  it("composite FK (tenant_id, store_id) -> stores — a dangling store is rejected (23503)", async () => {
     if (skip()) return;
     const e = guard();
     await expect(
@@ -238,12 +238,26 @@ describe("0024 — constraints", () => {
     ).rejects.toMatchObject({ code: "23503" });
   });
 
-  it("FK device_id -> devices RESTRICT — a dangling device is rejected (23503)", async () => {
+  it("composite FK rejects a store from a DIFFERENT tenant (cross-tenant scope, 23503)", async () => {
     if (skip()) return;
     const e = guard();
+    // STORE_A belongs to TENANT_A. Pairing it under TENANT_B must be rejected by the
+    // (tenant_id, store_id) composite FK — (TENANT_B, STORE_A) is not a real store —
+    // so consume can never mint a cross-tenant device scope (Codex P2).
+    await expect(
+      insertCode(e, { tenant: TENANT_B, store: STORE_A }),
+    ).rejects.toMatchObject({ code: "23503" });
+  });
+
+  it("device_id is NOT a FK to devices — a dangling value is accepted (deliberate decoupling)", async () => {
+    if (skip()) return;
+    const e = guard();
+    // device_id is an audit-link UUID, NOT a FK: a later-migration FK to devices
+    // would break 0001's isolated down-migration test (cannot drop table devices).
+    // The value equals the minted devices.id at runtime; the DB does not enforce it.
     await expect(
       insertCode(e, { deviceId: "0a900000-0000-7000-8000-0000000000ee" }),
-    ).rejects.toMatchObject({ code: "23503" });
+    ).resolves.toBeDefined();
   });
 });
 

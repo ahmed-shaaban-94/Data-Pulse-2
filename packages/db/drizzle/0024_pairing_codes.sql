@@ -40,7 +40,11 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS pairing_codes (
   id                          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id                   UUID         NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
-  store_id                    UUID         NOT NULL REFERENCES stores(id)  ON DELETE RESTRICT,
+  -- store_id is FK'd via the COMPOSITE (tenant_id, store_id) -> stores(tenant_id, id)
+  -- (the stores_tenant_id_uk key), NOT bare stores(id): this REJECTS at insert any
+  -- row whose store belongs to a different tenant than tenant_id, so consume can
+  -- never mint a devices row with a cross-tenant (tenant_id, store_id) scope.
+  store_id                    UUID         NOT NULL,
   -- The one-time pairing code, SHA-256 hashed (hashToken). UNIQUE = single index
   -- probe at consume; never plaintext.
   code_hash                   BYTEA        NOT NULL UNIQUE,
@@ -67,8 +71,12 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
   attempt_count               INTEGER      NOT NULL DEFAULT 0,
   last_attempt_at             TIMESTAMPTZ,
   -- The device minted on the success that burned this code (audit trail; NULL
-  -- while pending).
-  device_id                   UUID         REFERENCES devices(id) ON DELETE RESTRICT,
+  -- while pending). Deliberately NOT a FK to devices(id): a later-migration table
+  -- must not pin the droppability of devices (0001) — an FK here breaks 0001's
+  -- isolated down-migration test (`cannot drop table devices`). The value equals
+  -- the minted devices.id (== terminal_id); the audit link is preserved without
+  -- the cross-migration dependency.
+  device_id                   UUID,
   used_at                     TIMESTAMPTZ,
   created_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -89,7 +97,11 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
   CONSTRAINT pairing_codes_status_valid
     CHECK (status IN ('pending', 'used', 'cancelled')),
   CONSTRAINT pairing_codes_attempt_count_non_negative
-    CHECK (attempt_count >= 0)
+    CHECK (attempt_count >= 0),
+  -- Composite FK: the store MUST belong to tenant_id (rejects cross-tenant scope
+  -- at insert). Targets the stores_tenant_id_uk (tenant_id, id) unique key.
+  CONSTRAINT pairing_codes_store_tenant_fk FOREIGN KEY (tenant_id, store_id)
+    REFERENCES stores (tenant_id, id) ON DELETE RESTRICT
 );
 
 -- Pending-code lookup acceleration (the consume probes by code_hash, already
