@@ -33,6 +33,7 @@
     "migrate:up": "node dist/cli/migrate.js up",
     "migrate:down": "node dist/cli/migrate.js down",
     "migrate:status": "node dist/cli/migrate.js status",
+    "bootstrap:pilot": "node dist/cli/bootstrap-pilot.js",
     "lint": "echo \"db: lint runs at the repo root\""
   },
   "dependencies": {
