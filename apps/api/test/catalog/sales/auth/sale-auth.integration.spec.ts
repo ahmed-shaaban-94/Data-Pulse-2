@@ -48,6 +48,8 @@ import {
   PgOperatorContextResolver,
 } from "../../../../src/auth/operator-context-resolver";
 import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
+import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
+import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
 import { ZodValidationPipe } from "../../../../src/common/zod-validation.pipe";
@@ -277,7 +279,17 @@ beforeAll(async () => {
         // Bare class — Nest resolves the guard's @Inject(OPERATOR_CONTEXT_RESOLVER).
         PosOperatorSaleAuthGuard,
       ],
-    }).compile();
+    })
+      // SalesController also has the readSale GET (PosOperatorAuthGuard +
+      // TenantContextGuard). This spec only exercises the WRITE routes, so
+      // override those two to no-ops — otherwise Nest must resolve AuthGuard's
+      // SessionRepository/AuthTokenRepository, which this hand-built module
+      // does not provide (it would fail to compile before any test runs).
+      .overrideGuard(PosOperatorAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(TenantContextGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     app = moduleRef.createNestApplication({ bufferLogs: true });
     app.useGlobalFilters(new GlobalExceptionFilter());
