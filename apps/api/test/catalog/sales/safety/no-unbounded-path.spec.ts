@@ -29,6 +29,8 @@ const BULK_SYNC_CEILING_BINDING_WHEN_BULK_SHIPS = 500;
 
 describe("T091: capture body is single-sale — rejects an unbounded array (FR-080/SI-011)", () => {
   const singleValidBody = {
+    // 008 Option Y — now a required field on CaptureSaleRequest.
+    deviceTokenAttestation: "test-device-attestation",
     sourceSystem: "pos-x",
     externalId: "ext-1",
     currencyCode: "USD",

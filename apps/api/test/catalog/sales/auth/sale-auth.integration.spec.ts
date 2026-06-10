@@ -28,7 +28,8 @@
 import "reflect-metadata";
 
 import { INestApplication } from "@nestjs/common";
-import { APP_INTERCEPTOR, Reflector, Test } from "@nestjs/core";
+import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
+import { Test } from "@nestjs/testing";
 import { hashToken } from "@data-pulse-2/auth";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 import { Pool } from "pg";

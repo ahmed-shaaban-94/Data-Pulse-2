@@ -373,7 +373,11 @@ describe("sales-sweep §B.1 — capture/read object-safety (HTTP) [T036]", () =>
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("swb2v1"))
-      .send({ sourceSystem: "pos-1", externalId: "sweep-void-evt" });
+      .send({
+        deviceTokenAttestation: "harness-device-attestation",
+        sourceSystem: "pos-1",
+        externalId: "sweep-void-evt",
+      });
     expect(res.status).toBe(404);
     expect(JSON.stringify(res.body)).not.toContain(saleRef);
     const n = await hb.harness.env.admin.query<{ n: string }>(
@@ -399,6 +403,7 @@ describe("sales-sweep §B.1 — capture/read object-safety (HTTP) [T036]", () =>
       .post(`/api/pos/v1/sales/${saleRef}/refund`)
       .set("Idempotency-Key", idempKey("swb2r1"))
       .send({
+        deviceTokenAttestation: "harness-device-attestation",
         sourceSystem: "pos-1",
         externalId: "sweep-refund-evt",
         posRefundAmount: "1.0000",
