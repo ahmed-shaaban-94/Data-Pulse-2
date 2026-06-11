@@ -56,7 +56,7 @@
 
 ## Forbidden-files / process compliance
 
-- [x] **No forbidden files edited** — only files under `docs/specs/drafts/028-followups/d3-dp2-identity-link/` were created. No `apps/**`, `packages/**`, migrations, OpenAPI YAML, package/lock, CI, generated, secrets, env, deployment in any repo. No README/CLAUDE.md touched.
+- [x] **No forbidden files edited** — only the spec artifacts now placed at `specs/029-dp2-provider-neutral-identity-link/` were created (originally authored as the Orchestrator draft `d3-dp2-identity-link`). No `apps/**`, `packages/**`, migrations, OpenAPI YAML, package/lock, CI, generated, secrets, env, deployment in any repo. No README/CLAUDE.md touched.
 - [x] **No sibling-repo edit** — Data-Pulse-2, POS-Pulse, Console, Connector were read **read-only** via `git -C … show origin/main:…` / `ls-tree` / `log`; never checked out, pulled, or written. (SC-04/SC-05 honored.)
 - [x] **No existing Orchestrator file edited** — `docs/gates/**`, `docs/kernel/**`, `docs/status/**`, the 028/029 specs, README, CLAUDE.md are unmodified; D3 only creates new files in its own draft folder.
 - [x] **No git side effects** — nothing staged, committed, pushed, or PR'd; no `git add -A`/`git add .`; no branch switch. Authored manually (no `.specify/` tooling in the Orchestrator).
