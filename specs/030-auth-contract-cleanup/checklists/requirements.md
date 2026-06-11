@@ -53,7 +53,7 @@
 
 ## Forbidden-files / process compliance
 
-- [x] **No forbidden files edited** — only created files under `docs/specs/drafts/028-followups/d4-dp2-auth-contract-cleanup/` (spec.md, this checklist, plan.md, tasks.md). No sibling-repo file created or edited (SC-04/SC-05). No `docs/gates/**`, `docs/kernel/**`, `docs/status/**`, 028/029 specs, README, or CLAUDE.md touched.
+- [x] **No forbidden files edited** — only the spec artifacts now placed at `specs/030-auth-contract-cleanup/` (spec.md, this checklist, plan.md, tasks.md) were created (originally authored as the Orchestrator draft `d4-dp2-auth-contract-cleanup`). No application code, migrations, OpenAPI YAML, package/lock, CI, generated, secrets, env, or deployment file created or edited. No README or CLAUDE.md touched.
 - [x] **Sibling repos read-only** — DP-2/POS/Console/Connector accessed only via `git show origin/main:` and `ls-tree`/`log`; no checkout/pull/merge/reset/stash; working trees not read.
 - [x] **No git side effects** — nothing staged, committed, pushed, or PR'd; no `git add -A`/`git add .`; no branch switch (authored manually — no `.specify/` tooling exists here).
 - [x] **No secrets** — no raw tokens/keys/passwords in any output; credential *names* and *shapes* only.
