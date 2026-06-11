@@ -245,13 +245,19 @@ beforeAll(async () => {
       new FakeMarker() as unknown as InProgressMarker,
     );
 
-    // RLS-real pool for the app (SalesService write runs under RLS via the
-    // tenant GUC, exactly like __capture-harness uses env.app). The admin pool
-    // (`pool`) is used ONLY for seeding + cleanup above/below. The resolver's
-    // identity lookups (users/memberships/store_access/devices) have no RLS, so
-    // they read fine under env.app — mirroring how production sign-in reads them
-    // on the shared pool before any tenant context exists.
+    // SPLIT POOLS — faithful to the architecture, not a test hack:
+    //  - SalesService gets PG_POOL = env.app (RLS-ENFORCED): the sale WRITE runs
+    //    under RLS via the tenant GUC (runWithTenantContext), so tenant isolation
+    //    on the write is genuinely exercised (mirrors __capture-harness).
+    //  - The resolver + DeviceRepository get the ADMIN pool: their identity
+    //    lookups (memberships/store_access/roles are FORCE RLS, tenant-GUC-gated)
+    //    run BEFORE any tenant context exists — the resolver is what ESTABLISHES
+    //    that context. Production runs these on the RLS-exempt shared pool, and
+    //    sign-in's DeviceRepository is documented as "direct against the admin
+    //    pool: at sign-in time the request has no established tenant context".
+    //    Under env.app with no GUC, the RLS policies would filter every row → 401.
     const appPool = env.app;
+    const adminPool = pool!;
     const moduleRef = await Test.createTestingModule({
       controllers: [SalesController],
       providers: [
@@ -264,17 +270,16 @@ beforeAll(async () => {
         { provide: CLERK_VERIFIER, useValue: new StubClerkVerifier(verifierMap) },
         {
           provide: DeviceRepository,
-          useFactory: (p: Pool): DeviceRepository => new DeviceRepository(p),
-          inject: [PG_POOL],
+          useFactory: (): DeviceRepository => new DeviceRepository(adminPool),
         },
         {
           provide: OPERATOR_CONTEXT_RESOLVER,
           useFactory: (
-            p: Pool,
             v: ClerkVerifier,
             d: DeviceRepository,
-          ): PgOperatorContextResolver => new PgOperatorContextResolver(p, v, d),
-          inject: [PG_POOL, CLERK_VERIFIER, DeviceRepository],
+          ): PgOperatorContextResolver =>
+            new PgOperatorContextResolver(adminPool, v, d),
+          inject: [CLERK_VERIFIER, DeviceRepository],
         },
         // Bare class — Nest resolves the guard's @Inject(OPERATOR_CONTEXT_RESOLVER).
         PosOperatorSaleAuthGuard,
