@@ -57,7 +57,10 @@ describe("T062 — provenance retained across sale / void / refund", () => {
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("pvoid"))
-      .send({ sourceSystem: "pos-1", externalId: "prov-void" });
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "prov-void",
+      });
     expect(voided.status).toBe(201);
 
     const refunded = await h.harness

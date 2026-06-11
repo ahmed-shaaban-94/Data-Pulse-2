@@ -42,6 +42,8 @@ import {
 } from "../../../../src/idempotency/in-progress-marker";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
+import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
+import { OPERATOR_CONTEXT_RESOLVER } from "../../../../src/auth/operator-context-resolver";
 import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
 import { IdempotencyKeyStore } from "@data-pulse-2/shared";
@@ -211,6 +213,16 @@ export async function startCaptureHarness(
       { provide: INFLIGHT_REDIS, useValue: fakeRedis },
       { provide: InProgressMarker, useValue: fakeMarker },
       { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
+      // PosOperatorSaleAuthGuard is overridden to a no-op below, but Nest still
+      // validates the provider graph at compile time — the guard's
+      // @Inject(OPERATOR_CONTEXT_RESOLVER) dependency must be resolvable or the
+      // whole module fails to build (breaking every harness-importing spec).
+      // This stub satisfies the graph; its `resolve` is never called because
+      // the guard's canActivate is overridden.
+      {
+        provide: OPERATOR_CONTEXT_RESOLVER,
+        useValue: { resolve: async () => ({ kind: "refused", reason: "device_invalid" }) },
+      },
     ];
     if (opts.auditEnqueuer) {
       // Opt-in audit wiring (US6 / T072): RequestIdInterceptor stamps the
@@ -224,10 +236,25 @@ export async function startCaptureHarness(
       );
     }
 
+    // The write routes (capture/void/refund) are guarded by
+    // PosOperatorSaleAuthGuard (008 Option Y). These capture specs exercise the
+    // sale WRITE-PATH, not the auth derivation, so the guard is overridden to a
+    // no-op here; req.context is injected by the global ConfigurableContextGuard
+    // below. The guard's real Clerk-JWT + attestation auth is covered by its own
+    // unit spec (test/auth/pos-operator-sale-auth.guard.unit.spec.ts) and the
+    // resolver integration spec.
     const moduleRef = await Test.createTestingModule({
       controllers: [SalesController],
       providers,
     })
+      // Write routes (capture/void/refund) use PosOperatorSaleAuthGuard; the
+      // readSale GET still uses PosOperatorAuthGuard + TenantContextGuard. All
+      // three are overridden to no-ops here — these specs exercise the sale
+      // data path, not auth; req.context comes from the global
+      // ConfigurableContextGuard. Auth is covered by the guard/resolver unit
+      // specs + the sale-auth integration spec.
+      .overrideGuard(PosOperatorSaleAuthGuard)
+      .useValue({ canActivate: () => true })
       .overrideGuard(PosOperatorAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TenantContextGuard)
@@ -277,6 +304,9 @@ export function resetHarness(h: HarnessHandle): void {
 /** A valid 2-line capture request body matching the OpenAPI CaptureSaleRequest. */
 export function captureBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
+    // 008 Option Y — device attestation rides in the X-Device-Attestation
+    // HEADER, never the body (kept out of payload_hash + idempotency). The
+    // sale-auth guard is no-op'd in this harness, so no header is needed here.
     sourceSystem: "pos-1",
     externalId: "ext-cap-001",
     currencyCode: "USD",
@@ -300,6 +330,26 @@ export function captureBody(overrides: Record<string, unknown> = {}): Record<str
         unit: "ea",
       },
     ],
+    ...overrides,
+  };
+}
+
+/** A valid recordVoid body (008 Option Y — attestation is a header, not body). */
+export function voidBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sourceSystem: "pos-1",
+    externalId: "void-evt-001",
+    ...overrides,
+  };
+}
+
+/** A valid recordRefund body (008 Option Y — attestation is a header, not body). */
+export function refundBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sourceSystem: "pos-1",
+    externalId: "refund-evt-001",
+    posRefundAmount: "5.0000",
+    currencyCode: "USD",
     ...overrides,
   };
 }

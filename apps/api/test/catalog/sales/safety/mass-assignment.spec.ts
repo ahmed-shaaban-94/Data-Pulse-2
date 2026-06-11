@@ -87,7 +87,11 @@ describe("T070 — terminal events reject body-supplied authority fields", () =>
       .http()
       .post(`/api/pos/v1/sales/${cap.body.saleRef}/void`)
       .set("Idempotency-Key", idempKey("mav1"))
-      .send({ sourceSystem: "pos-1", externalId: "ma-void", tenant_id: "x" });
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "ma-void",
+        tenant_id: "x",
+      });
     expect(res.status).toBe(400);
 
     const n = await h.harness.env.admin.query<{ n: string }>(

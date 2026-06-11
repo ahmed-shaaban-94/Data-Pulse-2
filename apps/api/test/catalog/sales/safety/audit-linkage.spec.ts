@@ -84,7 +84,10 @@ describe("T072 — audit linkage across capture / void / refund", () => {
       .http()
       .post(`/api/pos/v1/sales/${saleRef}/void`)
       .set("Idempotency-Key", idempKey("aud-void"))
-      .send({ sourceSystem: "pos-1", externalId: "audit-void" });
+      .send({
+        sourceSystem: "pos-1",
+        externalId: "audit-void",
+      });
     expect(voided.status).toBe(201);
 
     const refunded = await h.harness
