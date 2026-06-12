@@ -12,6 +12,23 @@
 
 Define the Data-Pulse-2 contract for the POS cashier sale's **server leg**: how a captured sale is received, deduplicated, given an authoritative server-side status, and how sync failures are classified for retry vs. operator repair. DP-2 is the contract/orchestration boundary (POS → DP-2 → Connector → ERPNext). POS constructs and sends the capture; DP-2 owns persistence, idempotency, authorization-refusal, status, and dead-letter classification. **POS never decides sale finality; the Console (later) consumes DP-2's status/repair surface.**
 
+## Clarifications
+
+> Append-only. These entries resolve **scoping** ambiguities only and route design/mechanism detail forward to `plan.md` / `data-model.md`. They do **not** re-decide any §13 owner decision; all four §13 items remain OPEN and are listed below as Deferred. No existing §-body text (especially §8 and §13) is altered by this session.
+
+### Session 2026-06-12
+
+- Q: What does the `sale.captured` consumer (§6) own — does DP-2's scope extend to downstream posting/forwarding to the Connector? → A: No. In-scope = verify the producer is bound and emits `sale.captured` in-transaction (F-5), plus a drain that advances the server-authoritative sale-status (§7). Any downstream posting/forwarding to the Connector/ERPNext is Connector-owned and OUT of scope here. (Scope-preserving; preserves the architecture invariant.)
+- Q: Is the server-authoritative sale-status (§7) a persisted server-owned field or a derived projection of POS-local outbox state? → A: A persisted, server-owned status that DP-2 sets (the terminal observes, DP-2 decides — §7). Exact column/enum/transition modeling is deferred to `data-model.md`, not fixed in this spec. (Conservative; consistent with Constitution Principle III backend authority + IX source-of-truth.)
+- Q: How is the failed-sync / NEEDS_REPAIR read list (§9) bounded for the later Console? → A: Tenant- and store-scoped, newest-first, with stable keyset/cursor pagination; generated-client only, consumed later by Console. Exact page-size/cursor shape is deferred to `plan.md` / contract design. (Conservative; honors Constitution per-tenant resource isolation + safe-404 cross-tenant semantics.)
+
+**Deferred to owner (NOT decided here — see §13; both alternatives preserved verbatim):**
+
+- AlreadyApplied 422 vs keep-409 (F-3): must not regress the live provenance-conflict 409. Owner decision; left OPEN.
+- L1 Idempotency-Key engagement scope: capture-only vs all POS write ops. Owner decision; left OPEN.
+- Repair authority: Console-mediated only, no POS-local override v1 (029 Q11 / 028 OQ-2 OPEN). Owner decision; left OPEN.
+- `sales.yaml` ops authored contract-first vs alongside service work. Owner decision; left OPEN.
+
 ## 2. Verified runtime facts this spec builds on (DP-2 origin/main; re-verify at dispatch)
 
 > Orchestrator Spec 030's evidence was pinned at DP-2 `6588e86`; current `origin/main` is `5212355`. Migrations still run through `0024_pairing_codes` → next-free slot `0025`. Re-verify against a re-fetched `origin/main` + open PRs before any code.
