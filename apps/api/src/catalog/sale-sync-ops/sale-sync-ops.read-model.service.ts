@@ -2,7 +2,7 @@
  * SaleSyncOpsReadModelService — 032 §9 read/repair model (T016/T017/T019/T020).
  *
  * The server-authoritative sale-sync READ/REPAIR model the later Console
- * consumes. Reads the 0012 `sales` row's 032 `sync_status` column + the 0025
+ * consumes. Reads the 0012 `sales` row's 032 `sync_status` column + the 0026
  * `sale_sync_deadletters` quarantine in place, tenant-scoped under
  * `runWithTenantContext` (RLS fail-closed). The ONLY write is the
  * server-mediated repair (§9): it touches the SaaS-owned `sync_status` + the
@@ -10,6 +10,14 @@
  * `sales` / `sale_lines` / terminal-event rows are untouched) and there is NO
  * POS-local override path (repair authority is Console-mediated only — DP3 /
  * §13 item 3; 028 OQ-2).
+ *
+ * DATA ACCESS — raw parameterized SQL under `runWithTenantContext`, matching
+ * the DIRECT sibling this surface mirrors (`ErpnextSyncOpsReadModelService`,
+ * 025) and the rest of the sync-ops family. CodeRabbit suggested a Drizzle
+ * conversion; that was declined to stay consistent with the 025 sibling (which
+ * is raw SQL) — converting only this file would be the inconsistent move, and
+ * Drizzle's positional rowMode would also move this service's Docker-free
+ * branch coverage onto Testcontainers. See the slice notes.
  *
  * Invariants:
  *   - Object-level authz: a sale outside the (tenant, store) scope reads as
@@ -125,6 +133,7 @@ interface SaleStatusRow {
   source_system: string;
   external_id: string;
   processed_at: Date | null;
+  received_at: Date;
 }
 
 interface DeadLetterRow {
@@ -247,9 +256,11 @@ export class SaleSyncOpsReadModelService {
    * T019 — the read-only correlation/audit timeline for one sale. Object-level
    * authz first (non-disclosing 404), then a redacted timeline built from the
    * server-owned facts available without disclosing raw payload (Principle
-   * XIII/XIV): capture (processed/captured), and any dead-letter quarantine /
-   * resolution events. The full 028 audit-event join is a follow-up; this
-   * surfaces the sync-lifecycle entries the Console needs without leaking.
+   * XIII/XIV): the initial CAPTURE event (always present — the sale's
+   * server-received clock), the synced transition, and any dead-letter
+   * quarantine / resolution events. The full 028 audit-event join is a
+   * follow-up; this surfaces the sync-lifecycle entries the Console needs
+   * without leaking.
    */
   async getSaleAuditTimeline(
     tenantId: string,
@@ -261,9 +272,6 @@ export class SaleSyncOpsReadModelService {
       async (client) => {
         const row = await this.readSaleStatusRow(client, saleId);
         const entries: AuditTimelineEntry[] = [];
-        // The sale exists in scope → a capture entry is always present. The
-        // capture time is the sale's created/received clock; we use processed_at
-        // when present for the synced entry.
         const deadletters = await client.query<{
           classification: string;
           quarantined_at: Date;
@@ -276,6 +284,15 @@ export class SaleSyncOpsReadModelService {
             ORDER BY quarantined_at ASC`,
           [saleId],
         );
+        // The sale exists in scope → a CAPTURE entry is ALWAYS present, stamped
+        // on the sale's server-received clock (`received_at`, NOT NULL). A
+        // capture-only sale (never processed, never dead-lettered) therefore
+        // returns a one-entry timeline rather than an empty one (CodeRabbit #2).
+        entries.push({
+          at: row.received_at.toISOString(),
+          event: "sale.captured",
+          correlationId: null,
+        });
         if (row.processed_at) {
           entries.push({
             at: row.processed_at.toISOString(),
@@ -316,6 +333,10 @@ export class SaleSyncOpsReadModelService {
    * Anything not in the repairable state → `RepairConflictError` (409,
    * deterministic, no side effect). An out-of-scope/absent sale →
    * `SaleSyncNotFoundError` (404).
+   *
+   * Atomicity: `runWithTenantContext` wraps the whole callback in ONE
+   * transaction (BEGIN/COMMIT), so the deadletter resolution + the `sales`
+   * status mutation commit or roll back together.
    */
   async repairSaleSync(
     tenantId: string,
@@ -375,10 +396,12 @@ export class SaleSyncOpsReadModelService {
     saleId: string,
   ): Promise<SaleStatusRow> {
     // RLS scopes the tenant; the sale id is tenant-unique, so a tenant-scoped
-    // `WHERE id = $1` is the complete object-safety boundary. The store is
-    // returned in the row, never required as a predicate.
+    // `WHERE id = $1` is the complete object-safety boundary. The store +
+    // received_at (the capture clock for the audit timeline) are returned in
+    // the row, never required as a predicate.
     const r = await client.query<SaleStatusRow>(
-      `SELECT id, store_id, sync_status, source_system, external_id, processed_at
+      `SELECT id, store_id, sync_status, source_system, external_id,
+              processed_at, received_at
          FROM sales WHERE id = $1`,
       [saleId],
     );

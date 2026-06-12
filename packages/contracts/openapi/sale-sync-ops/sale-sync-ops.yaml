@@ -369,6 +369,11 @@ components:
       properties:
         items:
           type: array
+          # Bounded to mirror the `page_size` maximum (200): the server returns
+          # at most one page_size of items, so a conforming page can never carry
+          # more than the upper page bound. Gives generated clients an explicit
+          # cap rather than an unbounded array.
+          maxItems: 200
           items:
             $ref: "#/components/schemas/NeedsRepairItem"
         nextCursor:
