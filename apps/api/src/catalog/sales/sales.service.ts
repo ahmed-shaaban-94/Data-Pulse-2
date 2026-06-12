@@ -41,6 +41,7 @@ import { PG_POOL } from "../../auth/auth.module";
 import type { CaptureSaleRequestDto } from "./dto/capture-sale-request.dto";
 import type { RecordVoidRequestDto } from "./dto/record-void-request.dto";
 import type { RecordRefundRequestDto } from "./dto/record-refund-request.dto";
+import { SALE_SYNC_STATUS, type SaleSyncStatus } from "./sale-sync-status";
 
 /**
  * Optional outbox producer seam — OBSOLETE DEAD CODE.
@@ -81,6 +82,8 @@ export interface SaleProjection {
   readonly sourceSystem: string;
   readonly externalId: string;
   readonly mismatchFlag: boolean;
+  /** 032 §7 — DP-2's server-authoritative sale-status (the terminal observes, DP-2 decides). */
+  readonly syncStatus: SaleSyncStatus;
   readonly lines: ReadonlyArray<SaleLineProjection>;
 }
 
@@ -148,6 +151,7 @@ interface SaleRow {
   source_system: string;
   external_id: string;
   mismatch_flag: boolean | null;
+  sync_status: SaleSyncStatus;
 }
 
 interface SaleLineRow {
@@ -249,13 +253,19 @@ export class SalesService {
         // double-insert or surface a 500; it falls through to the deterministic
         // resolve below (zero rows returned ⇒ the row already exists).
         const inserted = await client.query<{ id: string }>(
+          // 032 §7: `sync_status` is set to 'captured' IN the capture
+          // transaction (server-authoritative; POS never supplies it). The
+          // column also DEFAULTs to 'captured' in 0025, but it is bound
+          // explicitly here so the capture write is self-documenting and does
+          // not silently depend on the default. The off-request drain advances
+          // it to 'synced' (see SaleProcessingProcessor).
           `INSERT INTO sales
              (id, tenant_id, store_id, currency_code, pos_total, occurred_at,
               business_date, source_clock_at, source_system, external_id,
-              payload_hash, mismatch_flag, created_by)
+              payload_hash, mismatch_flag, created_by, sync_status)
            VALUES ($1, $2, $3, $4, $5::numeric, $6::timestamptz,
                    ($6::timestamptz AT TIME ZONE $13)::date, $7::timestamptz,
-                   $8, $9, $10, $11, $12)
+                   $8, $9, $10, $11, $12, $14)
            ON CONFLICT (tenant_id, source_system, external_id) DO NOTHING
            RETURNING id`,
           [
@@ -272,6 +282,7 @@ export class SalesService {
             mismatchFlag,
             actorUserId,
             storeTimezone,
+            SALE_SYNC_STATUS.CAPTURED,
           ],
         );
 
@@ -378,7 +389,7 @@ export class SalesService {
           `SELECT id, store_id, currency_code, pos_total, occurred_at,
                   received_at, business_date::text AS business_date,
                   processed_at, source_clock_at,
-                  source_system, external_id, mismatch_flag
+                  source_system, external_id, mismatch_flag, sync_status
              FROM sales WHERE id = $1 AND store_id = $2`,
           [saleId, storeId],
         );
@@ -675,6 +686,7 @@ function toBody(row: SaleRow, lines: ReadonlyArray<SaleLineRow>): SaleProjection
     sourceSystem: row.source_system,
     externalId: row.external_id,
     mismatchFlag: row.mismatch_flag ?? false,
+    syncStatus: row.sync_status,
     lines: lines.map((l) => ({
       lineName: l.line_name,
       unitPrice: l.unit_price,

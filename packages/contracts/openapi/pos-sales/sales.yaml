@@ -12,12 +12,9 @@ info:
     tender / payment (deferred to 010 per gate A.5).
 
     Four operations, all POS-facing (`/api/pos/v1/...`), authenticated via the
-    `clerkJwt` scheme — a genuine Clerk JWT + `X-Device-Attestation`
-    (008 Option-Y). NOTE: spec 030 renamed the other POS surfaces' provider-named
-    `clerkJwt` key to role-named `device` / `operator-identity` schemes, but
-    sale-sync deliberately keeps `clerkJwt` until the operator-authorization
-    envelope lands (drift D1 / 028 DOC-3 — see the `clerkJwt` scheme
-    description). The principal's
+    same Clerk JWT bearer scheme used by `pos-shifts.openapi.yaml`,
+    `pos-audit-events.openapi.yaml`, and the `posCaptureItem` operation in
+    `catalog/unknown-items.yaml` (component `clerkJwt`). The principal's
     resolved tenant + store binding (spec 002) supplies `tenant_id` and
     `store_id`; body-supplied tenant / store / actor fields are NEVER accepted
     (Constitution §III, FR-061):
@@ -288,22 +285,10 @@ components:
       bearerFormat: JWT
       description: >
         Clerk-issued JWT presented as `Authorization: Bearer <jwt>`, paired
-        with the platform device-token header (`X-Device-Attestation`) per the
-        001/002 baseline (008 Option-Y). Verified at the API edge; fail-closed
-        on signature / JWKS error. The token is not propagated past the
-        verifier.
-
-
-        DEFERRAL NOTE (spec 030 / 028 DOC-3): this `clerkJwt` scheme is
-        intentionally NOT renamed to a role-named scheme here. Sale-sync
-        (`captureSale` / `recordVoid` / `recordRefund` / `readSale`) still
-        authenticates with a genuine Clerk JWT + `X-Device-Attestation`
-        (Option-Y). Renaming it now would document an unbuilt credential and
-        create the doc<->runtime mismatch the deferral exists to prevent. The
-        rename co-delivers with the operator-authorization-envelope work
-        (drift item D1 / 028 DOC-3); documented faithfully as Option-Y today.
-        The role-named `device` / `operator-identity` schemes introduced by
-        spec 030 on the other POS surfaces are deliberately absent here.
+        with the platform device-token header per the 001/002 baseline — the
+        same scheme used by `pos-shifts.openapi.yaml`, `pos-audit-events`, and
+        `posCaptureItem`. Verified at the API edge; fail-closed on signature /
+        JWKS error. The token is not propagated past the verifier.
 
   parameters:
     DeviceAttestation:
@@ -537,6 +522,7 @@ components:
         - sourceSystem
         - externalId
         - mismatchFlag
+        - syncStatus
         - lines
       description: >
         Wire projection of a captured sale. Decoupled from the `sales` /
@@ -583,6 +569,15 @@ components:
             Advisory — true when the POS total differs from the SaaS per-line /
             half-up comparison total (FR-031/032). The POS total is never
             rewritten.
+        syncStatus:
+          type: string
+          enum: [captured, synced, failed-retryable, failed-needs-repair]
+          description: >
+            032 §7 — DP-2's server-authoritative sale-status, distinct from the
+            POS-local outbox UX state. Set to `captured` at capture; advanced to
+            `synced` by the off-request drain that sets `processedAt`; the
+            dead-letter classifier sets `failed-retryable` / `failed-needs-repair`.
+            POS never overrides it (the terminal observes, DP-2 decides).
         lines:
           type: array
           items:
