@@ -37,6 +37,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
+import { z } from "zod";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { DashboardAuthGuard } from "../../auth/dashboard-auth.guard";
@@ -72,8 +73,7 @@ import {
  * that does not resolve in the operator's scope — where 404 and "absent" must
  * be indistinguishable (FR-063/102).
  */
-const SALE_REF_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SaleRefSchema = z.string().uuid();
 
 @Controller()
 @UseGuards(DashboardAuthGuard, TenantContextGuard)
@@ -95,7 +95,7 @@ export class SaleSyncOpsController {
    * 404 — the two cases are deliberately distinct.
    */
   private assertSaleRef(saleRef: string): void {
-    if (!SALE_REF_RE.test(saleRef)) {
+    if (!SaleRefSchema.safeParse(saleRef).success) {
       throw new BadRequestException({
         code: "validation_failure",
         message: "saleRef must be a valid UUID.",

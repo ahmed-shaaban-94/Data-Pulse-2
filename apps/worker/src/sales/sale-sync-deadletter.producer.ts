@@ -175,11 +175,15 @@ export class SaleSyncDeadletterProducer {
             input,
             classification,
           );
-          const statusAdvanced = await this.advanceStatus(
-            client,
-            input,
-            classification,
-          );
+          // Advance status ONLY when THIS call wrote a fresh quarantine row. On
+          // an open-row conflict (`quarantined === false`) the FIRST
+          // classification stands (see docstring) — a re-delivery carrying a
+          // DIFFERENT condition must not rewrite `sales.sync_status` while the
+          // original open deadletter row is left unchanged, which would drift
+          // status away from the open row's recorded classification.
+          const statusAdvanced = quarantined
+            ? await this.advanceStatus(client, input, classification)
+            : false;
 
           return {
             saleId: input.saleId,
@@ -310,6 +314,15 @@ export class SaleSyncDeadletterProducer {
     if (typeof input.externalId !== "string" || input.externalId.length === 0) {
       throw new Error(
         "SaleSyncDeadletterProducer: externalId must be a non-empty string",
+      );
+    }
+    // `correlation_id` is a UUID-typed column AND is logged as `correlation_id`
+    // on failure (§XIV PII boundary): reject a malformed value HERE so a
+    // non-UUID neither reaches the INSERT as a `22P02` nor leaks arbitrary
+    // free text into the worker log. null is allowed (the column is nullable).
+    if (input.correlationId != null && !UUID_RE.test(input.correlationId)) {
+      throw new Error(
+        "SaleSyncDeadletterProducer: correlationId must be a UUID string or null",
       );
     }
   }

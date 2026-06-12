@@ -147,11 +147,10 @@ describe("032 §8 — quarantine producer (T027 non-retryable)", () => {
     }
   });
 
-  it("is idempotent — a re-delivery hitting the open-row conflict is a no-op insert", async () => {
+  it("is idempotent — a re-delivery hitting the open-row conflict is a no-op insert AND no status rewrite", async () => {
     clientQuery
       .mockResolvedValueOnce({ rows: [{ id: SALE }] }) // in scope
-      .mockResolvedValueOnce({ rows: [] }) // INSERT ... DO NOTHING → no row
-      .mockResolvedValueOnce({ rows: [{ id: SALE }] }); // status still set
+      .mockResolvedValueOnce({ rows: [] }); // INSERT ... DO NOTHING → no row
 
     const producer = new SaleSyncDeadletterProducer({} as never);
     const result = await producer.quarantine({
@@ -159,7 +158,13 @@ describe("032 §8 — quarantine producer (T027 non-retryable)", () => {
       condition: SYNC_FAILURE_CONDITION.VALIDATION_FAILURE,
     });
     expect(result.quarantined).toBe(false);
+    // The FIRST classification stands: an open-row conflict must NOT advance
+    // `sales.sync_status`, or a re-delivery carrying a different condition could
+    // drift status away from the unchanged open deadletter row's classification.
+    expect(result.statusAdvanced).toBe(false);
     expect(result.classification.classification).toBe("needs-repair");
+    // Only the object-safety read + the no-op INSERT ran — NO UPDATE issued.
+    expect(clientQuery).toHaveBeenCalledTimes(2);
   });
 
   it("throws QuarantineSaleNotFoundError for an absent/out-of-scope sale (no write)", async () => {
