@@ -374,6 +374,9 @@ describe("PosOperatorsService.signIn", () => {
       operator_session: {
         id: sessionId,
         issued_at: issuedAt.toISOString(),
+        // 031 D1: a fresh sign-in returns the client-presentable envelope (the
+        // opaque raw token generated in issueOperatorSessionRow, not a row field).
+        envelope: expect.any(String),
       },
     });
   });
