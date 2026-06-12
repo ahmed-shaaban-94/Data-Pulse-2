@@ -21,8 +21,8 @@
  *     collides with or renames a shipped 005/007/008 operationId").
  *
  *   * Verifies structural conventions shared with the other contracts: OpenAPI
- *     3.1 of record, `clerkJwt` POS security scheme defined + referenced on both
- *     ops, opaque cursor + `next_page_token`, decimal-money `price { amount,
+ *     3.1 of record, the role-named `device` security scheme defined + referenced
+ *     on both ops (spec 030; was `clerkJwt`), opaque cursor + `next_page_token`, decimal-money `price { amount,
  *     currency_code }`, the `toBody()` sellable-row shape (no raw DB entity), and
  *     the closed error set incl. `snapshot_required` riding the canonical `Error`
  *     envelope.
@@ -194,8 +194,18 @@ describe("catalog/read-down.yaml — loadability", () => {
     expect(readDownDoc.info?.version).toEqual(expect.stringMatching(/-draft$/));
   });
 
-  it("declares the clerkJwt POS security scheme (mirrors posCaptureItem)", () => {
-    expect(readDownDoc.components?.securitySchemes?.["clerkJwt"]).toBeDefined();
+  it("declares the role-named device security scheme, NO bearerFormat JWT (spec 030)", () => {
+    // Spec 030 retired the provider-named `clerkJwt` key here and introduced
+    // the role-named `device` scheme — an opaque device token, so
+    // `bearerFormat: JWT` is deliberately omitted.
+    const scheme = readDownDoc.components?.securitySchemes?.["device"] as
+      | { type?: string; scheme?: string; bearerFormat?: string }
+      | undefined;
+    expect(scheme).toBeDefined();
+    expect(scheme?.type).toBe("http");
+    expect(scheme?.scheme).toBe("bearer");
+    expect(scheme?.bearerFormat).toBeUndefined();
+    expect(readDownDoc.components?.securitySchemes?.["clerkJwt"]).toBeUndefined();
   });
 });
 
@@ -235,9 +245,10 @@ describe("catalog/read-down.yaml — operations", () => {
     }
   });
 
-  it("secures every operation with clerkJwt (POS-namespace auth)", () => {
+  it("secures every operation with the role-named device scheme (spec 030)", () => {
     for (const { op } of readDownOperations()) {
-      expect(op.security).toContainEqual({ clerkJwt: [] });
+      expect(op.security).toContainEqual({ device: [] });
+      expect(op.security).not.toContainEqual({ clerkJwt: [] });
     }
   });
 });

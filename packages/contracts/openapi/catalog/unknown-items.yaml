@@ -871,6 +871,19 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >
+        POS bearer for `posCaptureItem`. DEFERRAL NOTE (spec 030 / 028 DOC-3):
+        this scheme is intentionally NOT renamed to a role-named scheme. Tracing
+        the wired guard (`PosOperatorAuthGuard`) shows the runtime requires a
+        `pos_operator`-scoped OPAQUE operator-session token — neither the opaque
+        device pairing token (the `device` scheme used by read-down) nor a
+        verified provider-identity JWT (the `operator-identity` scheme). It is
+        also entangled with the 028 D2 phantom-`pos_operator` drift (the
+        operator-session token sign-in does not currently issue). Because no
+        role-named scheme matches the credential the runtime verifies today,
+        the rename is DEFERRED (G-6 additive guarantee; ambiguity ⇒ DEFER),
+        co-delivering with the D1/D2 operator-authorization-envelope work. The
+        tenant-admin dashboard ops keep the document-level `cookieAuth` default.
 
   schemas:
 

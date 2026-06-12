@@ -7,10 +7,12 @@ info:
     sign-out) + Wave 3 (roster, takeover confirm, active-session).
 
 
-    All endpoints authenticate the caller via the Clerk JWT in
-    `Authorization: Bearer <jwt>`, paired with the platform device-token
-    header (per the existing 001/002 baseline). Both endpoints fail closed:
-    every refusal returns the same generic
+    All endpoints authenticate the caller via the role-named `operator-identity`
+    security scheme — a provider-identity JWT in `Authorization: Bearer <jwt>`
+    (spec 030 / 028 DOC-1; previously named `clerkJwt`), paired with the platform
+    device-token header (per the existing 001/002 baseline). The JWT is identity
+    proof only — NOT business authorization (028 §6 CM-1). Both endpoints fail
+    closed: every refusal returns the same generic
     `{ error: { code, message, request_id } }` envelope and does not
     enumerate causes.
 
@@ -45,7 +47,7 @@ paths:
       operationId: posOperatorSignIn
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -98,7 +100,7 @@ paths:
       operationId: posOperatorSignOut
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -141,7 +143,7 @@ paths:
       operationId: posOperatorRoster
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       parameters:
         - name: branch_id
           in: query
@@ -196,7 +198,7 @@ paths:
       operationId: posOperatorTakeoverConfirm
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -246,7 +248,7 @@ paths:
       operationId: posOperatorActiveSession
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       parameters:
         - name: branch_id
           in: query
@@ -290,16 +292,26 @@ paths:
                 $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
-    clerkJwt:
+    # `operator-identity` is the role-named provider-identity scheme
+    # (spec 030 / 028 DOC-1). It replaces the provider-named `clerkJwt` key: the
+    # credential is the operator's identity-proof JWT presented at sign-in /
+    # subsequent calls. Identity proof ONLY — NOT business authorization
+    # (028 §6 CM-1). The provider (Clerk, today) is named only in prose, never
+    # in the scheme key. Doc<->runtime-honest: the runtime already verifies this
+    # provider-identity JWT; only the contract name changes.
+    operator-identity:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: >
-        Clerk-issued JWT, presented as `Authorization: Bearer <jwt>`.
-        Verified at the API edge against Clerk's JWKS (signature, `iss`,
-        `aud`, `exp`, `nbf`, `iat`). Fail-closed on JWKS fetch error or
-        signature mismatch — no allow-list shortcut, no cached
-        last-known-good. The token is not propagated past the verifier.
+        Provider-identity JWT (spec 030 / 028 §6 CM-1), presented as
+        `Authorization: Bearer <jwt>`. Identity proof / sign-in evidence ONLY —
+        it is NOT business authorization. Verified at the API edge against the
+        identity provider's JWKS (signature, `iss`, `aud`, `exp`, `nbf`, `iat`).
+        Fail-closed on JWKS fetch error or signature mismatch — no allow-list
+        shortcut, no cached last-known-good. The provider is Clerk today, named
+        only as the current implementation; the scheme name is provider-neutral.
+        The token is not propagated past the verifier.
   schemas:
     # -------------------------------------------------------------------
     # Sign-in request

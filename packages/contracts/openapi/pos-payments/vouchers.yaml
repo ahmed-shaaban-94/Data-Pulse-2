@@ -36,8 +36,11 @@ info:
     `/api/v1/pos/vouchers` and is owned by a separate prior contract.
 
     Authentication boundary: all three operations are POS-authenticated
-    via the same Clerk JWT bearer scheme used by `pos-shifts.openapi.yaml`
-    and `pos-audit-events.openapi.yaml` (component `clerkJwt`). The
+    via the role-named `operator-identity` security scheme — a
+    provider-identity JWT bearer (spec 030 / 028 DOC-1; previously the
+    provider-named `clerkJwt` key, the same scheme used by
+    `pos-operators.openapi.yaml` and `pos-shifts.openapi.yaml`). Identity proof
+    only — NOT business authorization (028 §6 CM-1). The
     principal's resolved store binding (per spec 002) supplies `store_id`;
     rejected with 400 `store_context_required` if absent. The submitting
     POS device's authenticated principal supplies both `tenant_id` and
@@ -76,7 +79,7 @@ paths:
       x-idempotency: required
       tags: [pos-payments-vouchers]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       description: >
         Resolve the submitted voucher `code` against the tenant's active
         voucher set. On success, return a short-lived
@@ -193,7 +196,7 @@ paths:
       x-idempotency: required
       tags: [pos-payments-vouchers]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       description: >
         Consume a `redemption_intent_token` issued by an earlier
         `posValidateVoucher` call. On success, the voucher transitions
@@ -298,7 +301,7 @@ paths:
       x-idempotency: required
       tags: [pos-payments-vouchers]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       description: >
         Reverse a `redemption_id` issued by `posRedeemVoucher`. The
         voucher's balance is restored atomically and the voucher status
@@ -396,10 +399,39 @@ paths:
 
 components:
   securitySchemes:
-    clerkJwt:
+    # `operator-identity` is the role-named provider-identity scheme
+    # (spec 030 / 028 DOC-1), replacing the provider-named `clerkJwt` key.
+    # Identity proof only — NOT business authorization (028 §6 CM-1). These
+    # voucher operations are NON-SALE (they tender against an in-flight payment
+    # attempt; they are not the sale-sync envelope, which stays on `clerkJwt`).
+    operator-identity:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >
+        Provider-identity JWT (spec 030 / 028 §6 CM-1), presented as
+        `Authorization: Bearer <jwt>`. Identity proof / sign-in evidence ONLY —
+        it is NOT business authorization. The provider is Clerk today, named
+        only as the current implementation; the scheme name is provider-neutral.
+        The declared/intended verification is at the API edge, fail-closed, with
+        the token not propagated past the verifier.
+
+
+        HANDOFF NOTE (D1 / 028 DOC-3): this `operator-identity` classification is
+        a CONTRACT-ONLY assertion. These voucher operations have NO wired runtime
+        guard today, so the G-6 additive guarantee (the role-named scheme must
+        match the credential the guard actually verifies) cannot yet be confirmed
+        by guard-tracing — it rests on the declared `bearerFormat: JWT` and the
+        sibling JWT-verified surfaces (`pos-operators.openapi.yaml`,
+        `pos-shifts.openapi.yaml`) this contract cross-references. The risk: if
+        vouchers later lands on `PosOperatorAuthGuard` — the same guard as
+        `posCaptureItem`, which was DEFERRED precisely because it verifies an
+        opaque `pos_operator`-scoped operator-session token rather than a JWT —
+        then `operator-identity` would become a DOC-3 doc↔runtime lie. WHEN
+        WIRING THE VOUCHERS GUARD (D1 / operator-authorization-envelope work):
+        confirm the guard actually verifies a provider-identity JWT, OR
+        re-classify this surface to the scheme matching the credential it
+        verifies, BEFORE SHIPPING.
 
   schemas:
 
@@ -626,4 +658,4 @@ components:
               description: Server-assigned correlation id.
 
 security:
-  - clerkJwt: []
+  - operator-identity: []

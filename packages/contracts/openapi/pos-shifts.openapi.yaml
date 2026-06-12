@@ -13,9 +13,12 @@ info:
     Clerk subject, auth-token IDs) are present in any response.
 
 
-    Authentication: Clerk JWT bearer (manager / admin roles only).
-    Caller must have branch access (same store_access_kind rules as
-    sign-in). store_staff is refused.
+    Authentication: the role-named `operator-identity` scheme — a
+    provider-identity JWT bearer (spec 030 / 028 DOC-1; previously `clerkJwt`),
+    manager / admin roles only. Identity proof only — NOT business authorization
+    (028 §6 CM-1); role eligibility is enforced server-side. Caller must have
+    branch access (same store_access_kind rules as sign-in). store_staff is
+    refused.
 
 
     Cross-cutting conventions live in
@@ -38,7 +41,7 @@ paths:
       operationId: posShiftsGetStuck
       tags: [pos-shifts]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       parameters:
         - name: branch_id
           in: query
@@ -73,10 +76,20 @@ paths:
                 $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
-    clerkJwt:
+    # `operator-identity` is the role-named provider-identity scheme
+    # (spec 030 / 028 DOC-1), replacing the provider-named `clerkJwt` key.
+    # Identity proof only — NOT business authorization (028 §6 CM-1).
+    operator-identity:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >
+        Provider-identity JWT (spec 030 / 028 §6 CM-1), presented as
+        `Authorization: Bearer <jwt>`. Identity proof / sign-in evidence ONLY —
+        it is NOT business authorization; role eligibility (manager / admin) is
+        enforced server-side. The provider is Clerk today, named only as the
+        current implementation; the scheme name is provider-neutral. Verified at
+        the API edge; fail-closed. The token is not propagated past the verifier.
   schemas:
     StuckShift:
       type: object
