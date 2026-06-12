@@ -441,16 +441,17 @@ components:
           description: Internal `store_id`, surfaced as `branch_id` to POS callers.
     PosOperatorSessionSummary:
       type: object
-      required: [id, issued_at]
+      required: [id, issued_at, envelope]
       additionalProperties: false
       description: >
-        Wave 1 operator-session payload. The backend operator session is
-        server-side state in Wave 1 — POS-Pulse does **not** receive a
-        bearer token to authenticate subsequent calls. Instead, the
-        `id` returned here is the handle POS-Pulse passes back as
-        `session_id` on the sign-out body when the operator signs out.
-        Subsequent authenticated calls continue to carry the Clerk JWT
-        + the platform device-token header per the existing baseline.
+        Operator-session payload. The `id` is the handle POS-Pulse passes
+        back as `session_id` on sign-out. As of 031 (D1), this payload also
+        carries the client-presentable operator-authorization `envelope` —
+        the opaque `pos_operator` bearer the POS client presents on the
+        sale-sync routes (capture / void / refund), which the backend
+        resolves via the canonical operator-authorization scheme. This
+        supersedes the earlier Wave-1 posture in which the operator session
+        was server-side state only and no bearer was returned.
       properties:
         id:
           type: string
@@ -461,6 +462,18 @@ components:
         issued_at:
           type: string
           format: date-time
+        envelope:
+          type: string
+          nullable: true
+          description: >
+            The client-presentable operator-authorization envelope (031 D1):
+            an opaque `pos_operator` bearer presented as
+            `Authorization: Bearer <envelope>` on the sale-sync routes.
+            Non-null on a fresh issue (sign-in and first takeover-confirm).
+            **Null on an idempotent takeover-confirm replay** — the credential
+            is hash-once and not recoverable from the stored row; a replay is
+            the original client retrying and it already holds the envelope from
+            the first response.
     # -------------------------------------------------------------------
     # Wave 3 — Roster
     # -------------------------------------------------------------------

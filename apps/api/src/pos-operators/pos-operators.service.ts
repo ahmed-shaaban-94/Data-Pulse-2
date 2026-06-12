@@ -392,6 +392,7 @@ export class PosOperatorsService {
       operator_session: {
         id: session.id,
         issued_at: session.issuedAt.toISOString(),
+        envelope: session.envelope,
       },
     };
   }
@@ -503,6 +504,12 @@ export class PosOperatorsService {
         operator_session: {
           id: session.id,
           issued_at: session.issued_at.toISOString(),
+          // Idempotent replay: the raw envelope is hash-once and not
+          // recoverable from the stored row. The original confirm returned it
+          // to this same client; a replay does not re-mint (would break the
+          // hash-once invariant). Null signals "use the envelope you already
+          // hold from the first confirm."
+          envelope: null,
         },
       };
     }
@@ -567,6 +574,7 @@ export class PosOperatorsService {
       operator_session: {
         id: session.id,
         issued_at: session.issuedAt.toISOString(),
+        envelope: session.envelope,
       },
     };
   }
@@ -1000,13 +1008,15 @@ export class PosOperatorsService {
     storeId: string;
     userId: string;
     deviceId: string;
-  }): Promise<{ id: string; issuedAt: Date }> {
+  }): Promise<{ id: string; issuedAt: Date; envelope: string }> {
     const id = newId();
-    // The token_hash column is NOT NULL UNIQUE. Wave 1 stores a server-
-    // generated opaque hash here as session-state storage only — the raw
-    // value is never returned to the client (ADR D8). Generating a fresh
-    // raw value per row guarantees uniqueness without coupling row id and
-    // token material.
+    // The token_hash column is NOT NULL UNIQUE. We generate an opaque raw
+    // token, store ONLY its hash here, and return the raw as the client-
+    // presentable operator-authorization ENVELOPE (031 D1, OQ-1 = 1-A-i;
+    // supersedes the ADR-D8 "never returned" posture). The hash/`revoked_at`
+    // model is unchanged: the envelope resolves back via the canonical
+    // `AuthGuard.findActiveByRawToken` hash lookup, and sign-out / takeover
+    // revocation invalidate it exactly as before. The raw is never logged.
     const opaqueRaw = generateRawToken();
     const tokenHash = hashToken(opaqueRaw);
     const expiresAt = new Date(Date.now() + OPERATOR_SESSION_TTL_MS);
@@ -1020,7 +1030,7 @@ export class PosOperatorsService {
     );
     const row = r.rows[0];
     if (!row) throw new Error("PosOperatorsService.issueOperatorSessionRow: insert returned no row");
-    return { id: row.id, issuedAt: row.issued_at };
+    return { id: row.id, issuedAt: row.issued_at, envelope: opaqueRaw };
   }
 }
 

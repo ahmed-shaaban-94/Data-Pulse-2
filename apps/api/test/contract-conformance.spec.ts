@@ -1184,6 +1184,8 @@ function makeSignedInResult(): PosOperatorSignInResponseBody {
     operator_session: {
       id: FAKE_POS_SIGN_IN_SESSION_ID,
       issued_at: new Date("2026-01-15T10:00:00.000Z").toISOString(),
+      // 031 D1: a fresh issue returns the client-presentable envelope.
+      envelope: "fake-operator-authorization-envelope-raw-token",
     },
   };
 }
