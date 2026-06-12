@@ -198,20 +198,19 @@ const FULLY_MIGRATED_CONTRACTS: Array<[string[], string]> = [
 
 // DEFER surfaces (T7) — STAY on `clerkJwt`, each with a deferral note.
 // [dir parts, contract id, operationIds...]
-const SALES_OPS = ["captureSale", "recordVoid", "recordRefund", "readSale"];
 const DEFER_SURFACES: Array<{
   dirParts: string[];
   id: string;
   ops: string[];
   reason: RegExp;
 }> = [
-  // Sale-sync: genuine Clerk JWT + X-Device-Attestation (Option-Y), D1/DOC-3.
-  {
-    dirParts: ["pos-sales"],
-    id: "sales",
-    ops: SALES_OPS,
-    reason: /option-y/,
-  },
+  // NOTE: pos-sales/sales was a DEFER surface in 030 (sale-sync stayed on
+  // `clerkJwt` pending the D1 operator-authorization envelope). Spec 031 (D1+D2)
+  // LANDED that envelope — the sale routes now use `operatorAuthorization` — so
+  // sales is no longer a clerkJwt DEFER surface and is removed from this fence.
+  // Its post-031 scheme is asserted by
+  // test/catalog/sales/contract/sales.contract.spec.ts. (DOC-3 co-travel: 031
+  // resolves 030's deferral, so 031 updates 030's deferral fence.)
   // unknown-items posCaptureItem: opaque `pos_operator` operator-session token
   // (PosOperatorAuthGuard), 028 D2 phantom-scope drift — ambiguous, DEFER.
   {
@@ -380,7 +379,8 @@ describe("030 — clerkJwt scheme retired from fully-migrated POS contracts (T9)
 });
 
 // ===========================================================================
-// T7 — DEFER fence: sales + unknown-items + audit-events stay on clerkJwt
+// T7 — DEFER fence: unknown-items + audit-events stay on clerkJwt
+// (sales migrated to operatorAuthorization in 031 — no longer a DEFER surface)
 // ===========================================================================
 describe("030 — DEFER surfaces stay on clerkJwt (T7 negative fence)", () => {
   it.each(
@@ -426,17 +426,19 @@ describe("030 — DEFER surfaces stay on clerkJwt (T7 negative fence)", () => {
     },
   );
 
-  it("sales.yaml carries the D1 / 028 DOC-3 operator-authorization-envelope handoff note", () => {
+  it("sales.yaml resolved the D1 / 028 DOC-3 deferral — now on operatorAuthorization, NOT clerkJwt (031)", () => {
+    // 030 originally asserted sales carried a DEFER handoff note (sale-sync
+    // stays on clerkJwt pending D1). Spec 031 LANDED D1 — sale-sync now uses the
+    // operator-authorization envelope. So the post-031 invariant is the inverse:
+    // sales no longer defines clerkJwt, and defines operatorAuthorization.
     const doc = loadDoc(["pos-sales"], "sales");
-    const haystack = [
-      doc.info?.description ?? "",
-      doc.components?.securitySchemes?.["clerkJwt"]?.description ?? "",
-    ]
-      .join("\n")
-      .toLowerCase();
-    expect(haystack).toContain("option-y");
-    expect(haystack).toMatch(/d1|doc-3/);
-    expect(haystack).toContain("operator-authorization-envelope");
+    const defined = definedSchemeNames(doc);
+    expect(defined.has("clerkJwt")).toBe(false);
+    expect(defined.has("operatorAuthorization")).toBe(true);
+    // The header prose records the resolution (DOC-3 co-travel), not a deferral.
+    const desc = (doc.info?.description ?? "").toLowerCase();
+    expect(desc).toContain("operatorauthorization");
+    expect(desc).toMatch(/031|d1/);
   });
 
   it("unknown-items KEEPS both `clerkJwt` (posCaptureItem) and `cookieAuth` (dashboard ops)", () => {
@@ -523,14 +525,19 @@ describe("030 — exactly two new role-named schemes, no orphan refs (T10)", () 
       }
     }
     // Pre-existing POS schemes 030 must NOT invent/remove wholesale:
-    //   clerkJwt (kept on sales + unknown-items + pos-audit-events, the DEFER
-    //   surfaces) and cookieAuth (kept on unknown-items dashboard ops).
+    //   clerkJwt (kept on unknown-items + pos-audit-events, the remaining DEFER
+    //   surfaces; sales migrated to operatorAuthorization in 031) and cookieAuth
+    //   (kept on unknown-items dashboard ops).
     expect(allDefined.has("clerkJwt")).toBe(true);
     expect(allDefined.has("cookieAuth")).toBe(true);
-    // The two and only two NEW role-named schemes:
+    // The two role-named schemes 030 introduced:
     expect(allDefined.has(DEVICE_SCHEME)).toBe(true);
     expect(allDefined.has(OPERATOR_SCHEME)).toBe(true);
-    // No speculative third scheme:
+    // 031 (D1+D2) additionally introduced the sale-sync authorization envelope
+    // scheme on pos-sales/sales — a real, expected scheme (NOT 030's, NOT
+    // speculative). It is distinct from operator-identity (identity-proof-only).
+    expect(allDefined.has("operatorAuthorization")).toBe(true);
+    // No speculative `service` scheme (the one 030 explicitly refused):
     expect(allDefined.has("service")).toBe(false);
   });
 });
