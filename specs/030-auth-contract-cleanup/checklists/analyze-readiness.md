@@ -1,6 +1,6 @@
 # Analyze-Readiness Checklist — Draft D4 DP-2 Auth Contract Cleanup (Role-Named Security Schemes, additive)
 
-> **DRAFT — NOT DISPATCHED.** Readiness checklist under the docs-only Orchestrator. Distinct from the specify-time `requirements.md` (which validates the draft was *scoped/evidence-grounded*); this checklist validates the spec is *internally coherent and dispatch-ready* — coverage-matrix completeness, gate-tag correctness, deferral-fence integrity, evidence anchors **actually re-verified against `origin/main`**, and forbidden-surface compliance. A checked box cites the proof. Companion to [../ANALYSIS.md](../ANALYSIS.md).
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #551 `33515a6`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Created:** 2026-06-12.  **Mode:** SPECIFY-ONLY / DRAFT.  **Spec:** [../spec.md](../spec.md).  **Branch:** `docs/028-followups-analyze` (off `origin/main`).
 
@@ -64,4 +64,4 @@
 
 **Readiness verdict (this checklist): READY** — sections A-F all pass; section G items are LOW recommendations and gate preconditions, none blocking internal dispatch-readiness. Dispatch remains gated on **G10 + scoped owner approval**.
 
-> **Docs-only record (DRAFT — NOT DISPATCHED).**
+> **Docs-only record (SHIPPED — MERGED to `main` 2026-06-12, PR #551 `33515a6`).**

@@ -1,6 +1,6 @@
 # Requirements Checklist — Draft D4 DP-2 Auth Contract Cleanup (Role-Named Security Schemes, additive)
 
-> **DRAFT — NOT DISPATCHED.** Planning artifact under docs-only Orchestrator. No implementation, no contract, no migration, no gate mutation. Requires explicit scoped owner approval + G10 verification before any sibling-repo dispatch.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #551 `33515a6`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Purpose:** Validate that the D4 draft is scoped to the *additive* cleanup, evidence-grounded against DP-2 `origin/main`, correctly fences out the D1 sale-sync rename, and is free of forbidden side effects.
 **Created:** 2026-06-11
