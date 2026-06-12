@@ -47,6 +47,9 @@ import {
   OPERATOR_CONTEXT_RESOLVER,
   PgOperatorContextResolver,
 } from "../../../../src/auth/operator-context-resolver";
+import {
+  ClerkIdentityProviderAdapter,
+} from "../../../../src/auth/clerk-identity-provider.adapter";
 import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
 import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
 import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
@@ -83,11 +86,16 @@ const SPECIFIC_USER_ID = "0d000000-0000-4000-8000-00000000cc03";
 const SPECIFIC_SUB = "user_clerk_specific_saleauth";
 const DELETED_USER_ID = "0d000000-0000-4000-8000-00000000cc04";
 const DELETED_SUB = "user_clerk_deleted_saleauth";
+// 029 D3: a fully eligible manager whose ONLY identity link is DISABLED — proves
+// the resolver join's `status = 'active'` clause refuses a disabled link.
+const DISABLED_LINK_USER_ID = "0d000000-0000-4000-8000-00000000cc05";
+const DISABLED_LINK_SUB = "user_clerk_disabledlink_saleauth";
 
 const MGR_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd01";
 const STAFF_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd02";
 const SPECIFIC_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd03";
 const DELETED_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd04";
+const DISABLED_LINK_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd05";
 
 const DEVICE_ID = "0d000000-0000-4000-8000-00000000ee01";
 const DEVICE_REVOKED_ID = "0d000000-0000-4000-8000-00000000ee02";
@@ -184,27 +192,58 @@ beforeAll(async () => {
     );
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES
-         ($1, 'mgr@saleauth.example',      'Mgr',      $2),
-         ($3, 'staff@saleauth.example',    'Staff',    $4),
-         ($5, 'specific@saleauth.example', 'Specific', $6)`,
-      [MGR_USER_ID, MGR_SUB, STAFF_USER_ID, STAFF_SUB, SPECIFIC_USER_ID, SPECIFIC_SUB],
+         ($1, 'mgr@saleauth.example',          'Mgr',          $2),
+         ($3, 'staff@saleauth.example',        'Staff',        $4),
+         ($5, 'specific@saleauth.example',     'Specific',     $6),
+         ($7, 'disabledlink@saleauth.example', 'DisabledLink', $8)`,
+      [
+        MGR_USER_ID, MGR_SUB, STAFF_USER_ID, STAFF_SUB,
+        SPECIFIC_USER_ID, SPECIFIC_SUB, DISABLED_LINK_USER_ID, DISABLED_LINK_SUB,
+      ],
     );
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id, deleted_at)
          VALUES ($1, 'deleted@saleauth.example', 'Deleted', $2, now())`,
       [DELETED_USER_ID, DELETED_SUB],
     );
+    // 029 D3: the resolver now joins external_identity_links (NOT clerk_user_id).
+    // The 0025 backfill only maps users that existed at migration time; these
+    // test users are inserted afterwards, so seed their ACTIVE 'clerk' links
+    // explicitly (the analogue of the prior clerk_user_id mapping). The deleted
+    // user still gets a link so the refusal is decided by deleted_at, not by a
+    // missing link (proves user_disabled, not user_unmapped collapses to 401).
+    await pool.query(
+      `INSERT INTO external_identity_links
+         (provider_key, issuer, subject, user_id, status, disabled_at) VALUES
+         ('clerk', 'https://clerk.dp2.local', $1, $2, 'active', NULL),
+         ('clerk', 'https://clerk.dp2.local', $3, $4, 'active', NULL),
+         ('clerk', 'https://clerk.dp2.local', $5, $6, 'active', NULL),
+         ('clerk', 'https://clerk.dp2.local', $7, $8, 'active', NULL),
+         ('clerk', 'https://clerk.dp2.local', $9, $10, 'disabled', now())`,
+      [
+        MGR_SUB, MGR_USER_ID,
+        STAFF_SUB, STAFF_USER_ID,
+        SPECIFIC_SUB, SPECIFIC_USER_ID,
+        DELETED_SUB, DELETED_USER_ID,
+        // The disabled-link manager is otherwise fully eligible (active
+        // membership, all-store access, valid device store) — the ONLY thing
+        // refusing them is the link's status='disabled'.
+        DISABLED_LINK_SUB, DISABLED_LINK_USER_ID,
+      ],
+    );
     await pool.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES
          ($1, $2, $3, $4, 'all'),
          ($5, $2, $6, $7, 'all'),
          ($8, $2, $9, $4, 'specific'),
-         ($10, $2, $11, $4, 'all')`,
+         ($10, $2, $11, $4, 'all'),
+         ($12, $2, $13, $4, 'all')`,
       [
         MGR_MEMBERSHIP_ID, TENANT_ID, MGR_USER_ID, MANAGER_ROLE_ID,
         STAFF_MEMBERSHIP_ID, STAFF_USER_ID, STAFF_ROLE_ID,
         SPECIFIC_MEMBERSHIP_ID, SPECIFIC_USER_ID,
         DELETED_MEMBERSHIP_ID, DELETED_USER_ID,
+        DISABLED_LINK_MEMBERSHIP_ID, DISABLED_LINK_USER_ID,
       ],
     );
     // The "specific" manager is granted access to the OTHER store only — so a
@@ -229,6 +268,7 @@ beforeAll(async () => {
       ["jwt-staff", STAFF_SUB],
       ["jwt-specific", SPECIFIC_SUB],
       ["jwt-deleted", DELETED_SUB],
+      ["jwt-disabledlink", DISABLED_LINK_SUB],
       ["jwt-unmapped", "user_clerk_unmapped_saleauth"],
     ]);
 
@@ -278,7 +318,15 @@ beforeAll(async () => {
             v: ClerkVerifier,
             d: DeviceRepository,
           ): PgOperatorContextResolver =>
-            new PgOperatorContextResolver(adminPool, v, d),
+            // 029 D3: wrap the deterministic StubClerkVerifier in the REAL
+            // ClerkIdentityProviderAdapter so the provider-neutral seam + the
+            // external_identity_links join are exercised end-to-end (only Clerk's
+            // JWKS network call is stubbed — the adapter mapping is real).
+            new PgOperatorContextResolver(
+              adminPool,
+              new ClerkIdentityProviderAdapter(v, adminPool, "https://clerk.dp2.local"),
+              d,
+            ),
           inject: [CLERK_VERIFIER, DeviceRepository],
         },
         // Bare class — Nest resolves the guard's @Inject(OPERATOR_CONTEXT_RESOLVER).
@@ -376,6 +424,20 @@ describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
     const res = await http()
       .post("/api/pos/v1/sales")
       .set("Authorization", "Bearer jwt-unmapped")
+      .set(ATT, DEVICE_ATTESTATION)
+      .set("Idempotency-Key", idemKey())
+      .send(captureBody());
+    expect(res.status).toBe(401);
+  });
+
+  it("subject whose only external_identity_links row is DISABLED → 401 (029 D3 active-clause)", async () => {
+    if (maybeSkip()) return;
+    // Fully eligible operator (active membership, all-store access, valid device)
+    // — refused SOLELY because their identity link is status='disabled'. Locks
+    // the resolver join's `AND l.status = 'active'` clause.
+    const res = await http()
+      .post("/api/pos/v1/sales")
+      .set("Authorization", "Bearer jwt-disabledlink")
       .set(ATT, DEVICE_ATTESTATION)
       .set("Idempotency-Key", idemKey())
       .send(captureBody());
