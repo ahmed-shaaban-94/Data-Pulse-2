@@ -11,8 +11,11 @@
  */
 import { z } from "zod";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The cursor is the last page's last sale `id`, which is a UUIDv7 (time-ordered).
+// Reject non-v7 cursors so a v1/v4 value can't drive an arbitrary page boundary —
+// the version nibble must be `7` and the variant nibble must be 8/9/a/b.
+const UUID_V7_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** NEEDS_REPAIR list: optional store filter + UUID keyset cursor + page size. */
 export const NeedsRepairListQuerySchema = z
@@ -22,7 +25,7 @@ export const NeedsRepairListQuerySchema = z
       .string()
       .min(1)
       .max(36, "cursor exceeds the maximum length")
-      .regex(UUID_RE, "cursor must be an opaque sale-reference token")
+      .regex(UUID_V7_RE, "cursor must be a UUIDv7 sale-reference token")
       .optional(),
     page_size: z.coerce.number().int().min(1).max(200).optional(),
   })

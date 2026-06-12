@@ -255,7 +255,7 @@ export class SalesService {
         const inserted = await client.query<{ id: string }>(
           // 032 §7: `sync_status` is set to 'captured' IN the capture
           // transaction (server-authoritative; POS never supplies it). The
-          // column also DEFAULTs to 'captured' in 0025, but it is bound
+          // column also DEFAULTs to 'captured' in 0026, but it is bound
           // explicitly here so the capture write is self-documenting and does
           // not silently depend on the default. The off-request drain advances
           // it to 'synced' (see SaleProcessingProcessor).

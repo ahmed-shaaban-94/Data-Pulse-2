@@ -60,7 +60,7 @@ const posReq = (): never =>
   ({ context: { tenantId: TENANT, storeId: "s1", userId: "u1" } }) as never;
 
 describe("032 §7 — sale sync-status vocabulary + transitions (T005)", () => {
-  it("exposes exactly the four 0025-CHECK values", () => {
+  it("exposes exactly the four 0026-CHECK values", () => {
     expect(SALE_SYNC_STATUS_VALUES).toEqual([
       "captured",
       "synced",

@@ -537,7 +537,6 @@ components:
         - sourceSystem
         - externalId
         - mismatchFlag
-        - syncStatus
         - lines
       description: >
         Wire projection of a captured sale. Decoupled from the `sales` /
