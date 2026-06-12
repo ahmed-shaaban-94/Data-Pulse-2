@@ -132,7 +132,7 @@ The delta is deliberately small and **framed as "return + re-wire," not "build f
 - **A-5.** Sale provenance and audit are unchanged: `sale.captured/voided/refunded` still record a real `actor_user_id` and the resolved `(tenant,store,user,device)` scope.
 - **A-6.** The envelope carries no Clerk-specific field; verifying it does not require the provider, and the operator-resolution join key is unchanged (D3 untouched).
 - **A-7.** Failure posture preserved: every refusal collapses to the same generic `401`; no enumeration; no token/secret in logs (028 SR-2/SR-6).
-- **A-8.** No envelope wire-format, TTL-value, or refresh-model decision is asserted as final — those remain Open Questions for the owning repo's plan phase.
+- **A-8.** The envelope wire-format (opaque, 1-A-i) and TTL (8h) are **resolved** by owner ratification (Clarifications 2026-06-12); only the **refresh-model (OQ-3) and multi-terminal policy (OQ-4)** remain open — owner-confirmed **deferred to the 028 boundary**, v1 fallback = no-refresh + inherited single-session. No DP-2-local decision is left unasserted.
 - **A-9.** No implementation, contract, or migration was authored in this draft (Orchestrator docs-only).
 
 ## Dependencies & sequencing
