@@ -1,6 +1,6 @@
 # Draft D4 — DP-2 Auth Contract Cleanup: Role-Named Security Schemes (additive)
 
-> **DRAFT — NOT DISPATCHED.** Planning artifact under docs-only Orchestrator. No implementation, no contract, no migration, no gate mutation. Requires explicit scoped owner approval + G10 verification before any sibling-repo dispatch.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #551 `33515a6`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Status:** SPECIFY-ONLY / DRAFT — for owner review.  **Date:** 2026-06-11.  **Owning repo:** Data-Pulse-2.  **Deciders:** Owner (Ahmed Shaaban).
 
@@ -151,4 +151,4 @@ Each in-scope POS operation's `security:` list is re-pointed from `clerkJwt` to 
 
 ---
 
-> **Docs-only record (DRAFT — NOT DISPATCHED).** This draft records the additive contract-cleanup target and the verified current runtime; it implements nothing, edits no contract, and mutates no gate or kernel node. No implementation is dispatched from it without explicit, scoped owner approval after G10 verification.
+> **Docs-only record (SHIPPED — MERGED to `main` 2026-06-12, PR #551 `33515a6`).** This draft records the additive contract-cleanup target and the verified current runtime as-built.

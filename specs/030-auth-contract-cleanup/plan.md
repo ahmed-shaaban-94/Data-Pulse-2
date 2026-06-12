@@ -1,6 +1,6 @@
 # Plan — Draft D4 DP-2 Auth Contract Cleanup (Role-Named Security Schemes, additive)
 
-> **DRAFT — NOT DISPATCHED.** Planning artifact under docs-only Orchestrator. No implementation, no contract, no migration, no gate mutation. Requires explicit scoped owner approval + G10 verification before any sibling-repo dispatch.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #551 `33515a6`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Status:** SPECIFY-ONLY / DRAFT — for owner review.  **Date:** 2026-06-11.  **Owning repo:** Data-Pulse-2.  **Deciders:** Owner (Ahmed Shaaban).
 **Spec:** [./spec.md](./spec.md)  ·  **Drift item:** D4 (`docs/roadmap/auth-028-drift-map.md`).

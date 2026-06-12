@@ -1,6 +1,6 @@
 # Tasks — Draft D3 DP-2 Provider-Neutral Identity Link & IdentityProviderPort
 
-> **DRAFT — NOT DISPATCHED.** Planning artifact under docs-only Orchestrator. No implementation, no contract, no migration, no gate mutation. Requires explicit scoped owner approval + G10 verification before any sibling-repo dispatch.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #550 `0af392e`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **For:** Data-Pulse-2 to execute **POST-dispatch**.  **Date:** 2026-06-11.  **No code, SQL, or contract is authored here** — this is an ordered task list at planning altitude that the owning repo would carry out under its own review after dispatch.
 

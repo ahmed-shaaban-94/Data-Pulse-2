@@ -1,6 +1,6 @@
 # Analysis — Draft D4 DP-2 Auth Contract Cleanup (Role-Named Security Schemes, additive)
 
-> **DRAFT — NOT DISPATCHED.** Readiness analysis artifact under the docs-only Orchestrator. This file performs the per-spec speckit-analyze readiness pass (internal spec<->plan<->tasks consistency + requirement->task coverage). It implements nothing, edits no contract, mutates no gate or kernel node, and authorizes no dispatch. Dispatch remains **gated: G10 verification + scoped owner approval**.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #551 `33515a6`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Status:** SPECIFY-ONLY / DRAFT — for owner review.  **Analysis date:** 2026-06-12.  **Owning repo:** Data-Pulse-2.
 **Spec:** [./spec.md](./spec.md)  ·  **Plan:** [./plan.md](./plan.md)  ·  **Tasks:** [./tasks.md](./tasks.md)  ·  **Requirements checklist:** [./checklists/requirements.md](./checklists/requirements.md)
@@ -132,4 +132,4 @@ The four findings (F-1...F-4) are all **LOW** doc-hygiene / wording items that d
 
 ---
 
-> **Docs-only record (DRAFT — NOT DISPATCHED).** This analysis records readiness only. It implements nothing, edits no contract, and mutates no gate or kernel node.
+> **Docs-only record (SHIPPED — MERGED to `main` 2026-06-12, PR #551 `33515a6`).** This analysis is the as-built readiness record.
