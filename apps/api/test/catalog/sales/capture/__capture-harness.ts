@@ -42,7 +42,7 @@ import {
 } from "../../../../src/idempotency/in-progress-marker";
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
-import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
+import { PosOperatorEnvelopeSaleGuard } from "../../../../src/auth/pos-operator-envelope-sale.guard";
 import { OPERATOR_CONTEXT_RESOLVER } from "../../../../src/auth/operator-context-resolver";
 import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
@@ -247,13 +247,14 @@ export async function startCaptureHarness(
       controllers: [SalesController],
       providers,
     })
-      // Write routes (capture/void/refund) use PosOperatorSaleAuthGuard; the
-      // readSale GET still uses PosOperatorAuthGuard + TenantContextGuard. All
-      // three are overridden to no-ops here — these specs exercise the sale
-      // data path, not auth; req.context comes from the global
-      // ConfigurableContextGuard. Auth is covered by the guard/resolver unit
-      // specs + the sale-auth integration spec.
-      .overrideGuard(PosOperatorSaleAuthGuard)
+      // Write routes (capture/void/refund) use PosOperatorEnvelopeSaleGuard
+      // (031 D1+D2); the readSale GET uses PosOperatorAuthGuard +
+      // TenantContextGuard. All are overridden to no-ops here — these specs
+      // exercise the sale data path, not auth; req.context comes from the
+      // global ConfigurableContextGuard. Auth + the G-4 live predicate are
+      // covered by the guard/resolver unit specs + the sale-auth integration
+      // spec.
+      .overrideGuard(PosOperatorEnvelopeSaleGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(PosOperatorAuthGuard)
       .useValue({ canActivate: () => true })

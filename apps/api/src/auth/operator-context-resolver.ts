@@ -83,6 +83,35 @@ export interface OperatorContextResolver {
   resolve(rawJwt: string, rawAttestation: string): Promise<ResolveOperatorResult>;
 }
 
+/**
+ * Live re-verification seam (031 G-4, Option B). The envelope sale guard
+ * depends on this to re-evaluate the operator's LIVE eligibility per sale
+ * request — the legs the canonical token check does NOT re-resolve. This is
+ * why the envelope re-wire does not weaken the composed predicate vs Option-Y.
+ *
+ * Keyed by the resolved IDs the envelope principal already carries (userId,
+ * storeId) plus the device_id recovered from the auth_tokens row — NOT by a
+ * JWT/attestation (the envelope path has neither).
+ */
+export interface OperatorReverifier {
+  /**
+   * Recover the operator session's bound `device_id` from its `auth_tokens`
+   * row id (`principal.tokenId`). The canonical `Principal` does not expose
+   * deviceId; the row does. Returns null if the row is gone / not pos_operator.
+   */
+  recoverDeviceId(tokenId: string): Promise<string | null>;
+  /**
+   * Re-evaluate membership-active + device-active + role-eligibility +
+   * store-access LIVE for an already-authenticated operator session. Mirrors
+   * `resolve` steps 3–5 but keyed by IDs.
+   */
+  reverify(
+    userId: string,
+    deviceId: string,
+    storeId: string,
+  ): Promise<{ kind: "ok" } | { kind: "refused"; reason: ResolveOperatorRefusalReason }>;
+}
+
 /** DI token for the resolver. */
 export const OPERATOR_CONTEXT_RESOLVER = "OPERATOR_CONTEXT_RESOLVER";
 
@@ -226,5 +255,62 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
       [membershipId, storeId],
     );
     return r.rows.length > 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // 031 G-4 (Option B) — live re-verification for the envelope sale path.
+  // Reuses the steps-3–5 checks above, keyed by IDs instead of JWT/attestation.
+  // -------------------------------------------------------------------------
+
+  async recoverDeviceId(tokenId: string): Promise<string | null> {
+    // The envelope's auth_tokens row carries the bound device_id (the
+    // pos_operator invariant guarantees it is non-null). Re-read it by the
+    // token row id the canonical principal exposes as `tokenId`.
+    const r = await this.pool.query<{ device_id: string | null }>(
+      `SELECT device_id FROM auth_tokens
+        WHERE id = $1 AND scope = 'pos_operator' LIMIT 1`,
+      [tokenId],
+    );
+    return r.rows[0]?.device_id ?? null;
+  }
+
+  async reverify(
+    userId: string,
+    deviceId: string,
+    storeId: string,
+  ): Promise<{ kind: "ok" } | { kind: "refused"; reason: ResolveOperatorRefusalReason }> {
+    // Device still active? (revoked devices are excluded.)
+    const device = await this.findActiveDeviceById(deviceId);
+    if (!device) return { kind: "refused", reason: "device_invalid" };
+
+    // Membership in the device's tenant still active + role still eligible?
+    const membership = await this.findActiveMembership(device.tenantId, userId);
+    if (!membership) return { kind: "refused", reason: "membership_missing" };
+    if (membership.revoked_at !== null || membership.deleted_at !== null) {
+      return { kind: "refused", reason: "membership_revoked" };
+    }
+    if (!ELIGIBLE_INTERNAL_ROLES.has(membership.role_code)) {
+      return { kind: "refused", reason: "role_ineligible" };
+    }
+
+    // Store access still granted? ('all' → unconditional; 'specific' → in set.)
+    if (membership.store_access_kind === "specific") {
+      const ok = await this.storeIsInAccessSet(membership.id, storeId);
+      if (!ok) return { kind: "refused", reason: "store_not_in_access_set" };
+    }
+
+    return { kind: "ok" };
+  }
+
+  private async findActiveDeviceById(
+    deviceId: string,
+  ): Promise<{ id: string; tenantId: string } | null> {
+    const r = await this.pool.query<{ id: string; tenant_id: string }>(
+      `SELECT id, tenant_id FROM devices
+        WHERE id = $1 AND revoked_at IS NULL LIMIT 1`,
+      [deviceId],
+    );
+    const row = r.rows[0];
+    return row ? { id: row.id, tenantId: row.tenant_id } : null;
   }
 }

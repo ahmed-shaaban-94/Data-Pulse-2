@@ -42,7 +42,9 @@ import {
   type IdentityProviderPort,
 } from "../../auth/identity-provider.port";
 import { clerkIdentityProviderFactory } from "../../auth/clerk-identity-provider.adapter";
-import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guard";
+import { PosOperatorEnvelopeSaleGuard } from "../../auth/pos-operator-envelope-sale.guard";
+import { SessionRepository } from "../../auth/session.repository";
+import { AuthTokenRepository } from "../../auth/auth-token.repository";
 
 /**
  * 008 Option Y wiring, 029 D3 re-pointed: the sale routes authenticate via a
@@ -79,11 +81,23 @@ import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guar
         new PgOperatorContextResolver(pool, identityProvider, devices),
       inject: [PG_POOL, IDENTITY_PROVIDER_PORT, DeviceRepository],
     },
-    // Bare-class provider: Nest reads the guard's @Inject(OPERATOR_CONTEXT_RESOLVER)
-    // metadata to resolve its dependency, even when it instantiates the guard by
-    // class for @UseGuards(PosOperatorSaleAuthGuard). Mirrors ReadDownModule's
-    // bare PosDeviceAuthGuard provider.
-    PosOperatorSaleAuthGuard,
+    // 031 (D1+D2, Option B): the sale-write routes are guarded by
+    // PosOperatorEnvelopeSaleGuard — canonical envelope auth (bearer →
+    // pos_operator principal) PLUS live per-request re-verification of
+    // membership/device/store-access (G-4). The reverifier is the same
+    // PgOperatorContextResolver registered above (it implements both
+    // OperatorContextResolver and OperatorReverifier). Option-Y's
+    // PosOperatorSaleAuthGuard is retired (no parallel path).
+    {
+      provide: PosOperatorEnvelopeSaleGuard,
+      useFactory: (
+        sessions: SessionRepository,
+        authTokens: AuthTokenRepository,
+        reverifier: PgOperatorContextResolver,
+      ): PosOperatorEnvelopeSaleGuard =>
+        new PosOperatorEnvelopeSaleGuard(sessions, authTokens, reverifier),
+      inject: [SessionRepository, AuthTokenRepository, OPERATOR_CONTEXT_RESOLVER],
+    },
   ],
   exports: [SalesService],
 })
