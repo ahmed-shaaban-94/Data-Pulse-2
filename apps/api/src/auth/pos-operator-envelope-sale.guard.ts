@@ -36,10 +36,10 @@ import {
 } from "@nestjs/common";
 
 import { AuthGuard } from "./auth.guard";
-import type { AuthedRequest } from "./auth.guard";
 import type { SessionRepository } from "./session.repository";
 import type { AuthTokenRepository } from "./auth-token.repository";
 import type { OperatorReverifier } from "./operator-context-resolver";
+import type { TenantContextRequest } from "../context/types";
 
 @Injectable()
 export class PosOperatorEnvelopeSaleGuard extends AuthGuard {
@@ -55,7 +55,7 @@ export class PosOperatorEnvelopeSaleGuard extends AuthGuard {
     // Layer 1 — canonical bearer auth (attaches request.principal).
     await super.canActivate(context);
 
-    const request = context.switchToHttp().getRequest<AuthedRequest>();
+    const request = context.switchToHttp().getRequest<TenantContextRequest>();
     const principal = request.principal;
 
     // Only an internal pos_operator token principal may enter the sale path.
@@ -80,6 +80,21 @@ export class PosOperatorEnvelopeSaleGuard extends AuthGuard {
       principal.storeId,
     );
     if (verdict.kind !== "ok") throw new UnauthorizedException("Unauthorized");
+
+    // Publish the resolved scope onto request.context — behavioural parity with
+    // the retired Option-Y guard (which set request.context = result.context).
+    // The sale controllers read request.context for (tenant_id, store_id,
+    // actor) and 401 if it is absent; this guard runs WITHOUT TenantContextGuard
+    // (it is a single guard on the write routes), so it must populate context
+    // itself. Scope comes from the envelope principal's server-side binding,
+    // NEVER from the request body (mass-assignment ban).
+    request.context = {
+      userId: principal.userId,
+      tenantId: principal.tenantId,
+      storeId: principal.storeId,
+      isPlatformAdmin: false,
+      source: "token",
+    };
 
     return true;
   }

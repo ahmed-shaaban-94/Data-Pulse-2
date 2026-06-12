@@ -106,6 +106,26 @@ describe("PosOperatorEnvelopeSaleGuard — live predicate (G-4)", () => {
     expect(reverify).toHaveBeenCalledWith(USER_ID, DEVICE_ID, STORE_ID);
   });
 
+  it("CTX: publishes request.context (tenant/store/user) so the controller's ctx check passes", async () => {
+    // Behavioural parity with the retired Option-Y guard, which set
+    // request.context = result.context. The sale controllers read
+    // `request.context` and 401 if it is absent — the envelope guard MUST
+    // populate it from the resolved principal after reverify succeeds.
+    const { reverifier } = makeReverifier({ result: { kind: "ok" } });
+    const guard = makeGuard(reverifier);
+    const req = makeAuthedRequest();
+
+    await guard.canActivate(makeCtx(req));
+
+    expect((req as { context?: unknown }).context).toEqual({
+      userId: USER_ID,
+      tenantId: TENANT_ID,
+      storeId: STORE_ID,
+      isPlatformAdmin: false,
+      source: "token",
+    });
+  });
+
   it("G4-MEMBERSHIP: membership revoked mid-session → 401 even with a valid envelope", async () => {
     const { reverifier } = makeReverifier({ result: { kind: "refused", reason: "membership_revoked" } });
     const guard = makeGuard(reverifier);
