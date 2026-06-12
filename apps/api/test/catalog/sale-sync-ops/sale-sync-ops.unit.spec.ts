@@ -12,6 +12,7 @@
  * assertion that the live POS provenance-conflict 409 is unchanged in shape.
  */
 import {
+  BadRequestException,
   ConflictException,
   NotFoundException,
   UnauthorizedException,
@@ -144,6 +145,7 @@ describe("032 §9 — read-model branches (T016/T020)", () => {
             source_system: "pos",
             external_id: "x1",
             processed_at: null,
+            received_at: new Date("2026-06-11T00:00:00Z"),
           },
         ],
       })
@@ -165,6 +167,67 @@ describe("032 §9 — read-model branches (T016/T020)", () => {
     expect(body.deadLetter?.reasonCode).toBe("auth_revoked");
   });
 
+  it("audit timeline emits the initial CAPTURE event for a capture-only sale (CodeRabbit #2)", async () => {
+    clientQuery
+      // 1. sale read → captured, never processed
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: VALID_REF,
+            store_id: "s1",
+            sync_status: "captured",
+            source_system: "pos",
+            external_id: "x1",
+            processed_at: null,
+            received_at: new Date("2026-06-11T00:00:00Z"),
+          },
+        ],
+      })
+      // 2. deadletters → none
+      .mockResolvedValueOnce({ rows: [] });
+    const svc = new SaleSyncOpsReadModelService({} as never);
+    const tl = await svc.getSaleAuditTimeline(TENANT, VALID_REF);
+    // Previously empty; now the capture entry is always present.
+    expect(tl.entries).toHaveLength(1);
+    expect(tl.entries[0]?.event).toBe("sale.captured");
+    expect(tl.entries[0]?.at).toBe("2026-06-11T00:00:00.000Z");
+  });
+
+  it("audit timeline orders capture → synced → quarantine → resolve", async () => {
+    clientQuery
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: VALID_REF,
+            store_id: "s1",
+            sync_status: "failed-retryable",
+            source_system: "pos",
+            external_id: "x1",
+            processed_at: new Date("2026-06-11T01:00:00Z"),
+            received_at: new Date("2026-06-11T00:00:00Z"),
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            classification: "needs-repair",
+            quarantined_at: new Date("2026-06-11T02:00:00Z"),
+            resolved_at: new Date("2026-06-11T03:00:00Z"),
+            correlation_id: null,
+          },
+        ],
+      });
+    const svc = new SaleSyncOpsReadModelService({} as never);
+    const tl = await svc.getSaleAuditTimeline(TENANT, VALID_REF);
+    expect(tl.entries.map((e) => e.event)).toEqual([
+      "sale.captured",
+      "sync.synced",
+      "sync.needs_repair",
+      "repair.resolved",
+    ]);
+  });
+
   it("repairSaleSync 409s (RepairConflictError) when the sale is not needs-repair", async () => {
     clientQuery.mockResolvedValueOnce({
       rows: [
@@ -175,6 +238,7 @@ describe("032 §9 — read-model branches (T016/T020)", () => {
           source_system: "pos",
           external_id: "x1",
           processed_at: new Date(),
+          received_at: new Date(),
         },
       ],
     });
@@ -196,6 +260,7 @@ describe("032 §9 — read-model branches (T016/T020)", () => {
             source_system: "pos",
             external_id: "x1",
             processed_at: null,
+            received_at: new Date("2026-06-11T00:00:00Z"),
           },
         ],
       })
@@ -213,6 +278,7 @@ describe("032 §9 — read-model branches (T016/T020)", () => {
             source_system: "pos",
             external_id: "x1",
             processed_at: null,
+            received_at: new Date("2026-06-11T00:00:00Z"),
           },
         ],
       })
@@ -236,13 +302,36 @@ describe("032 §9 — controller guard / rethrow (T016/T020)", () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
-  it("maps a malformed saleRef to a non-disclosing 404 before any DB hit", async () => {
-    const c = makeController({
-      getSaleSyncStatus: jest.fn(),
-    });
+  it("maps a malformed saleRef to a 400 validation_failure before any DB hit (CodeRabbit #1)", async () => {
+    // A syntactically malformed ref is a request-shape error → 400, NOT a
+    // safe-404 (the safe-404 is reserved for valid-but-out-of-scope refs, which
+    // could otherwise disclose existence). The check runs before any DB hit, so
+    // the injected service method is never called.
+    const getSaleSyncStatus = jest.fn();
+    const c = makeController({ getSaleSyncStatus });
     await expect(c.getStatus(ctxReq(), "not-a-uuid")).rejects.toBeInstanceOf(
-      NotFoundException,
+      BadRequestException,
     );
+    await expect(
+      c.getStatus(ctxReq(), "not-a-uuid"),
+    ).rejects.toMatchObject({
+      response: { code: "validation_failure" },
+    });
+    expect(getSaleSyncStatus).not.toHaveBeenCalled();
+  });
+
+  it("applies the malformed-ref 400 on audit-timeline and repair too (all three sites)", async () => {
+    const getSaleAuditTimeline = jest.fn();
+    const repairSaleSync = jest.fn();
+    const c = makeController({ getSaleAuditTimeline, repairSaleSync });
+    await expect(
+      c.getAuditTimeline(ctxReq(), "bad"),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(c.repair(ctxReq(), "bad")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(getSaleAuditTimeline).not.toHaveBeenCalled();
+    expect(repairSaleSync).not.toHaveBeenCalled();
   });
 
   it("maps SaleSyncNotFoundError → 404 on status read", async () => {

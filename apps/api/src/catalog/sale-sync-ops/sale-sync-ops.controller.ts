@@ -25,6 +25,7 @@
  * 409 (F-3) and invents no server settlement (F-2).
  */
 import {
+  BadRequestException,
   ConflictException,
   Controller,
   Get,
@@ -60,7 +61,17 @@ import {
   type SaleSyncStatusBody,
 } from "./sale-sync-ops.read-model.service";
 
-/** Canonical UUID shape — a saleRef that fails this never hits the DB. */
+/**
+ * Canonical UUID shape — a saleRef that fails this never hits the DB.
+ *
+ * A saleRef that does not match is a MALFORMED request-shape error → 400
+ * `validation_failure` (NOT a safe-404). This is not a non-disclosure concern:
+ * the check runs BEFORE any DB hit, so it reveals nothing about whether a
+ * resource exists. The non-disclosing 404 is reserved for the
+ * exists-but-out-of-scope / cross-tenant / genuinely-absent trio — a VALID ref
+ * that does not resolve in the operator's scope — where 404 and "absent" must
+ * be indistinguishable (FR-063/102).
+ */
 const SALE_REF_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -75,6 +86,21 @@ export class SaleSyncOpsController {
       throw new UnauthorizedException("Unauthorized");
     }
     return ctx.tenantId;
+  }
+
+  /**
+   * Reject a syntactically MALFORMED saleRef with a 400 `validation_failure`
+   * BEFORE any DB hit (a request-shape error, discloses nothing). A
+   * VALID-but-out-of-scope ref is left to the service layer's non-disclosing
+   * 404 — the two cases are deliberately distinct.
+   */
+  private assertSaleRef(saleRef: string): void {
+    if (!SALE_REF_RE.test(saleRef)) {
+      throw new BadRequestException({
+        code: "validation_failure",
+        message: "saleRef must be a valid UUID.",
+      });
+    }
   }
 
   private async assertStore(tenantId: string, storeId?: string): Promise<void> {
@@ -98,9 +124,7 @@ export class SaleSyncOpsController {
     @Param("saleRef") saleRef: string,
   ): Promise<SaleSyncStatusBody> {
     const tenantId = this.requireTenant(request);
-    if (!SALE_REF_RE.test(saleRef)) {
-      throw new NotFoundException({ code: "not_found", message: "Not found." });
-    }
+    this.assertSaleRef(saleRef);
     return this.withNotFound(() =>
       this.service.getSaleSyncStatus(tenantId, saleRef),
     );
@@ -136,9 +160,7 @@ export class SaleSyncOpsController {
     @Param("saleRef") saleRef: string,
   ): Promise<SaleAuditTimelineBody> {
     const tenantId = this.requireTenant(request);
-    if (!SALE_REF_RE.test(saleRef)) {
-      throw new NotFoundException({ code: "not_found", message: "Not found." });
-    }
+    this.assertSaleRef(saleRef);
     return this.withNotFound(() =>
       this.service.getSaleAuditTimeline(tenantId, saleRef),
     );
@@ -155,9 +177,7 @@ export class SaleSyncOpsController {
     @Param("saleRef") saleRef: string,
   ): Promise<SaleSyncStatusBody> {
     const tenantId = this.requireTenant(request);
-    if (!SALE_REF_RE.test(saleRef)) {
-      throw new NotFoundException({ code: "not_found", message: "Not found." });
-    }
+    this.assertSaleRef(saleRef);
     try {
       return await this.service.repairSaleSync(tenantId, saleRef);
     } catch (err) {
