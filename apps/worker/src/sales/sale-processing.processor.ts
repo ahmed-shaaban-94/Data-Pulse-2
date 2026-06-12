@@ -138,6 +138,15 @@ export class SaleProcessingProcessor {
           // no-op and processed_at does not drift. We then read back the
           // authoritative (mismatch_flag, processed_at) regardless of whether
           // this run wrote, so the result is identical across runs.
+          // 032 §7 / spec clarify Q1: the DP-2 sale-processing drain is the
+          // transition that advances the server-authoritative sale-status to
+          // 'synced'. It is set in the SAME UPDATE that sets processed_at, under
+          // the SAME `processed_at IS NULL` guard, so the status advance is
+          // idempotent and converges identically to processed_at (a re-run is a
+          // no-op). This is NOT gated on any ERPNext posting outcome — the
+          // posting feed is a separate downstream concern (Connector-owned;
+          // architecture boundary POS → DP-2 → Connector → ERPNext). Crossing
+          // that wire would violate the invariant.
           const updated = await client.query<ProcessRow>(
             `UPDATE sales AS s
                 SET mismatch_flag = (
@@ -151,7 +160,8 @@ export class SaleProcessingProcessor {
                         4
                       ) <> s.pos_total::numeric
                     ),
-                    processed_at = now()
+                    processed_at = now(),
+                    sync_status = 'synced'
               WHERE s.id = $1
                 AND s.store_id = $2
                 AND s.processed_at IS NULL

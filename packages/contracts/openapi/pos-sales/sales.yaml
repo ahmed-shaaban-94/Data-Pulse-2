@@ -583,6 +583,15 @@ components:
             Advisory — true when the POS total differs from the SaaS per-line /
             half-up comparison total (FR-031/032). The POS total is never
             rewritten.
+        syncStatus:
+          type: string
+          enum: [captured, synced, failed-retryable, failed-needs-repair]
+          description: >
+            032 §7 — DP-2's server-authoritative sale-status, distinct from the
+            POS-local outbox UX state. Set to `captured` at capture; advanced to
+            `synced` by the off-request drain that sets `processedAt`; the
+            dead-letter classifier sets `failed-retryable` / `failed-needs-repair`.
+            POS never overrides it (the terminal observes, DP-2 decides).
         lines:
           type: array
           items:

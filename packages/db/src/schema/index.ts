@@ -30,5 +30,6 @@ export * from "./catalog/erpnext-product-reconciliation";
 export * from "./sales/sales";
 export * from "./sales/sale-lines";
 export * from "./sales/sale-terminal-events";
+export * from "./sales/sale-sync-deadletters";
 export * from "./inventory/stock-movements";
 export * from "./connector-health";

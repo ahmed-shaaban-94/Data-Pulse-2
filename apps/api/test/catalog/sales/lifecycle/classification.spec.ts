@@ -79,6 +79,7 @@ const BUSINESS_CLASS_COLUMNS: ReadonlyArray<{
       "external_id",
       "payload_hash",
       "mismatch_flag",
+      "sync_status",
       "created_by",
       "created_at",
     ],

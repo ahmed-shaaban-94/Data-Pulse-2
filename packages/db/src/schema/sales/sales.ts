@@ -62,6 +62,14 @@ export const sales = pgTable(
     businessDate: date("business_date").notNull(),
     // SaaS-owned processing state — nullable until set off-request (§V, FR-071).
     processedAt: timestamp("processed_at", { withTimezone: true }),
+    // 032 §7 — server-authoritative sync-status. DP-2 owns it; POS never
+    // overrides. NOT NULL with a 'captured' default (set in the capture INSERT
+    // and advanced to 'synced' by the SAME drain UPDATE that sets processed_at —
+    // spec clarify Q1: the DP-2 sale-processing drain, NOT the ERPNext posting
+    // path). Allowed values are enforced by the `sales_sync_status_valid` CHECK
+    // in 0026_sale_sync_status.sql. Rides the existing `sales` tenant UPDATE
+    // policy (no new RLS) — the same SaaS-owned-mutable posture as processed_at.
+    syncStatus: text("sync_status").notNull().default("captured"),
     // POS-reported clock, preserved as provenance; NEVER a security clock (FR-022).
     sourceClockAt: timestamp("source_clock_at", { withTimezone: true }),
     sourceSystem: text("source_system").notNull(),
@@ -95,6 +103,12 @@ export const sales = pgTable(
     index("idx_sales_unprocessed")
       .on(t.tenantId)
       .where(sql`${t.processedAt} IS NULL`),
+    // 032 §9 — NEEDS_REPAIR queue read acceleration. Tenant+store scoped,
+    // newest-first (UUIDv7 id keyset), filtered to the failed-needs-repair
+    // state. Mirrors the idx_sales_unprocessed partial-index pattern.
+    index("idx_sales_needs_repair")
+      .on(t.tenantId, t.storeId, t.id.desc())
+      .where(sql`${t.syncStatus} = 'failed-needs-repair'`),
   ],
 );
 
