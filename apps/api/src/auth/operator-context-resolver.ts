@@ -13,9 +13,15 @@
  * `pos_operator` bearer that sign-in never issues to clients.
  *
  * Derivation (mirrors PosOperatorsService.runPipeline steps 1–5):
- *   1. Verify the Clerk JWT (signature, iss, aud, exp) → { sub }.
- *   2. Resolve the local user by `users.clerk_user_id = sub`; reject if
- *      missing or soft-deleted.
+ *   1. Verify the provider token at the trust boundary via
+ *      `IdentityProviderPort.verifyIdentityToken` → a provider-NEUTRAL verified
+ *      subject `{ providerKey, issuer, subject }` (029 D3 / PI-3). The concrete
+ *      Clerk verification stays behind the adapter — this resolver never reads a
+ *      Clerk-typed claim.
+ *   2. Resolve the local user by JOINing the provider-neutral subject onto the
+ *      `external_identity_links` ACTIVE link (NOT `users.clerk_user_id = sub` —
+ *      029 D3 / G-3); reject if there is no active link (`user_unmapped`) or the
+ *      user is soft-deleted (`user_disabled`).
  *   3. Resolve the device by attestation hash (active rows only); the device
  *      row carries the canonical `(tenant_id, store_id)`.
  *   4. Resolve the operator's membership in the device's tenant; role MUST be
@@ -29,15 +35,24 @@
  * logged server-side by the caller and collapsed to a generic 401 at the
  * boundary (no factor disclosure).
  *
- * The Clerk JWT and device attestation are never logged, persisted, or
+ * The provider token and device attestation are never logged, persisted, or
  * returned (FR-POS-AUTH-10 / ADR D3).
+ *
+ * 029 D3 NOTE: this resolver is the sale-sync identity trust core. It was
+ * re-pointed (PI-3) from the direct Clerk verifier + `WHERE clerk_user_id = $1`
+ * to the provider-neutral `IdentityProviderPort` + an `external_identity_links`
+ * join. The operator/sale-sync CREDENTIAL (the Option Y envelope) and the
+ * membership/store/eligibility logic are UNCHANGED — D3 re-anchors only "who the
+ * human is" (N-2). The sign-in service path (`pos-operators.service.ts`) is a
+ * SEPARATE slice and still joins `clerk_user_id`; after backfill both resolve the
+ * same user.
  */
 import { Injectable } from "@nestjs/common";
 import type { Pool } from "pg";
 
-import type { ClerkVerifier } from "../pos-operators/clerk-verifier";
 import { DeviceRepository } from "../pos-operators/device.repository";
 import type { ResolvedContext } from "../context/types";
+import type { IdentityProviderPort } from "./identity-provider.port";
 
 /**
  * Internal roles eligible for the POS manager/admin surface. Mirrors
@@ -93,30 +108,31 @@ export interface ResolverLogger {
 export class PgOperatorContextResolver implements OperatorContextResolver {
   constructor(
     private readonly pool: Pool,
-    private readonly clerkVerifier: ClerkVerifier,
+    private readonly identityProvider: IdentityProviderPort,
     private readonly deviceRepository: DeviceRepository,
     private readonly logger?: ResolverLogger,
   ) {}
 
   async resolve(rawJwt: string, rawAttestation: string): Promise<ResolveOperatorResult> {
-    // 1. Clerk JWT verification.
-    let claims;
+    // 1. Provider-neutral token verification at the trust boundary (PI-3).
+    let verified;
     try {
-      claims = await this.clerkVerifier.verify(rawJwt);
+      verified = await this.identityProvider.verifyIdentityToken(rawJwt);
     } catch (err) {
       // Collapse to a generic refusal at the boundary (no factor disclosure),
       // but record the underlying cause server-side so operators can debug
-      // Clerk connectivity / config / outage. The raw JWT is NEVER logged
+      // provider connectivity / config / outage. The raw token is NEVER logged
       // (FR-POS-AUTH-10) — only the error.
       this.logger?.warn(
         { err: err instanceof Error ? err.message : String(err) },
-        "operator-context-resolver: Clerk JWT verification failed",
+        "operator-context-resolver: identity token verification failed",
       );
       return { kind: "refused", reason: "clerk_jwt_invalid" };
     }
 
-    // 2. Map Clerk subject → local user.
-    const userRow = await this.findUserByClerkSubject(claims.sub);
+    // 2. Map the provider-neutral verified subject → local user via the ACTIVE
+    //    external_identity_links row (NOT clerk_user_id — 029 D3 / G-3).
+    const userRow = await this.findUserByExternalIdentity(verified.providerKey, verified.subject);
     if (!userRow) return { kind: "refused", reason: "user_unmapped" };
     if (userRow.deleted_at !== null) return { kind: "refused", reason: "user_disabled" };
 
@@ -155,10 +171,33 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
     return { kind: "ok", context, deviceId: deviceRow.id };
   }
 
-  private async findUserByClerkSubject(sub: string): Promise<UserLookupRow | null> {
+  /**
+   * Resolve the local user by JOINing the provider-neutral verified subject onto
+   * the ACTIVE external_identity_links row (029 D3 / G-3). The join keys on
+   * (provider_key, subject) for the active link — NOT issuer: v1 has a single
+   * issuer, and keying on issuer would couple the runtime path to the
+   * backfill-vs-adapter issuer-string contract (a mismatch would fail-close every
+   * operator). issuer is stored + unique on the link for forward-compat
+   * (multi-issuer dual-link), not used as the runtime join key.
+   *
+   * This is the PI-3 re-point: the resolver no longer reads `users.clerk_user_id`
+   * as the join key. A verified subject with no ACTIVE link returns null → the
+   * caller refuses `user_unmapped` (the same fail-closed, non-enumerating
+   * refusal mig 0001 ADR D4 mandates).
+   */
+  private async findUserByExternalIdentity(
+    providerKey: string,
+    subject: string,
+  ): Promise<UserLookupRow | null> {
     const r = await this.pool.query<UserLookupRow>(
-      `SELECT id, deleted_at FROM users WHERE clerk_user_id = $1 LIMIT 1`,
-      [sub],
+      `SELECT u.id, u.deleted_at
+         FROM external_identity_links l
+         JOIN users u ON u.id = l.user_id
+        WHERE l.provider_key = $1
+          AND l.subject = $2
+          AND l.status = 'active'
+        LIMIT 1`,
+      [providerKey, subject],
     );
     return r.rows[0] ?? null;
   }
