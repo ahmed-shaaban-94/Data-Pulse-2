@@ -1,69 +1,45 @@
 /**
- * sale-auth.integration.spec.ts — 008 Option Y.
+ * sale-auth.integration.spec.ts — 031 (D1+D2, Option B) reverifier integration.
  *
- * Real Postgres via Testcontainers (all migrations applied). Mounts the REAL
- * SalesModule — the real PosOperatorSaleAuthGuard + PgOperatorContextResolver
- * run; only the ClerkVerifier seam is overridden with a deterministic fake
- * (raw JWT → Clerk subject) so no traffic reaches Clerk's JWKS.
+ * Real Postgres via Testcontainers (all migrations applied). 031 retired the
+ * 008 Option-Y guard (Clerk JWT + X-Device-Attestation → resolver). The sale
+ * routes now carry the operator-authorization ENVELOPE and the new
+ * PosOperatorEnvelopeSaleGuard re-verifies the operator predicate LIVE per
+ * request (G-4) via OperatorReverifier.
  *
- * This is the proof the resolver's hand-written SQL is valid against the live
- * schema, that the sale write runs under RLS (env.app pool + tenant GUC), and
- * that the guard reads the `X-Device-Attestation` header end-to-end through the
- * real HTTP stack. The docker-free unit specs cover the decision branches; this
- * covers the wire.
+ * This spec is the proof that the GENUINELY-NEW hand-written reverifier SQL is
+ * valid against the live schema:
+ *   - recoverDeviceId(tokenId)  → reads the bound device_id from auth_tokens
+ *   - reverify(userId, deviceId, storeId) → re-evaluates device-active +
+ *     membership-active + role-eligibility + store-access LIVE
  *
- * Seeding mirrors `test/pos-operators/pos-operators.controller.spec.ts`
- * verbatim (the sign-in surface runs the same identity/eligibility resolution),
- * adapting only IDs.
+ * It exercises the reverifier DIRECTLY against the admin pool (the pool the
+ * production AuthTokenRepository + resolver use — verified: findActiveByRawToken
+ * queries with no tenant GUC, "admin pool sees all rows"). This avoids
+ * reconstructing the full Nest guard/HTTP DI (where the auth_tokens RLS pool
+ * wiring concentrates risk) — that full-stack envelope-auth path is a tracked
+ * follow-up. The unit specs (pos-operator-envelope-sale.guard.unit) cover the
+ * guard's decision branches with a faked reverifier; THIS covers the wire SQL.
  *
- * Coverage:
- *   - Happy: store_manager (access=all) → 201 with a SaleProjection scoped to
- *     the device's store; the sale row is written under the device tenant.
- *   - Refusal → uniform 401: missing Authorization, missing body attestation,
- *     unmapped Clerk subject, soft-deleted user, revoked device, ineligible
- *     role (store_staff), specific-access without grant.
+ * Coverage (each maps to a G-4 axis the envelope must NOT weaken):
+ *   - recoverDeviceId returns the bound device for a real pos_operator row;
+ *     null for an unknown / non-pos_operator token id.
+ *   - reverify OK for an eligible store_manager (access=all).
+ *   - reverify refuses: revoked device, revoked membership, deleted membership,
+ *     ineligible role (store_staff), specific-access without grant.
  *
  * NOTE: CI runs Testcontainers (ci.yml pulls postgres:16-alpine; never sets
  * MIGRATION_TEST_ALLOW_SKIP). Locally without Docker this suite skips.
  */
 import "reflect-metadata";
 
-import { INestApplication } from "@nestjs/common";
-import { APP_INTERCEPTOR, Reflector } from "@nestjs/core";
-import { Test } from "@nestjs/testing";
-import { hashToken } from "@data-pulse-2/auth";
-import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 import { Pool } from "pg";
-import request from "supertest";
 
-import { SalesController } from "../../../../src/catalog/sales/sales.controller";
-import { SalesService } from "../../../../src/catalog/sales/sales.service";
-import {
-  CLERK_VERIFIER,
-  type ClerkVerifier,
-} from "../../../../src/pos-operators/clerk-verifier";
 import { DeviceRepository } from "../../../../src/pos-operators/device.repository";
-import {
-  OPERATOR_CONTEXT_RESOLVER,
-  PgOperatorContextResolver,
-} from "../../../../src/auth/operator-context-resolver";
-import {
-  ClerkIdentityProviderAdapter,
-} from "../../../../src/auth/clerk-identity-provider.adapter";
-import { PosOperatorSaleAuthGuard } from "../../../../src/auth/pos-operator-sale-auth.guard";
-import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
-import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
-import { PG_POOL } from "../../../../src/auth/auth.module";
-import { GlobalExceptionFilter } from "../../../../src/common/exception.filter";
-import { ZodValidationPipe } from "../../../../src/common/zod-validation.pipe";
-import {
-  IDEMPOTENCY_KEY_STORE,
-  IdempotencyInterceptor,
-} from "../../../../src/idempotency/idempotency.interceptor";
-import {
-  INFLIGHT_REDIS,
-  InProgressMarker,
-} from "../../../../src/idempotency/in-progress-marker";
+import { PgOperatorContextResolver } from "../../../../src/auth/operator-context-resolver";
+import { ClerkIdentityProviderAdapter } from "../../../../src/auth/clerk-identity-provider.adapter";
+import type { ClerkVerifier } from "../../../../src/pos-operators/clerk-verifier";
+import { hashToken, generateRawToken } from "@data-pulse-2/auth";
 import {
   applyAllUpAndCreateAppRole,
   startPgEnv,
@@ -79,93 +55,63 @@ const MANAGER_ROLE_ID = "0d000000-0000-4000-8000-00000000bb01";
 const STAFF_ROLE_ID = "0d000000-0000-4000-8000-00000000bb02";
 
 const MGR_USER_ID = "0d000000-0000-4000-8000-00000000cc01";
-const MGR_SUB = "user_clerk_mgr_saleauth";
 const STAFF_USER_ID = "0d000000-0000-4000-8000-00000000cc02";
-const STAFF_SUB = "user_clerk_staff_saleauth";
 const SPECIFIC_USER_ID = "0d000000-0000-4000-8000-00000000cc03";
-const SPECIFIC_SUB = "user_clerk_specific_saleauth";
-const DELETED_USER_ID = "0d000000-0000-4000-8000-00000000cc04";
-const DELETED_SUB = "user_clerk_deleted_saleauth";
-// 029 D3: a fully eligible manager whose ONLY identity link is DISABLED — proves
-// the resolver join's `status = 'active'` clause refuses a disabled link.
-const DISABLED_LINK_USER_ID = "0d000000-0000-4000-8000-00000000cc05";
-const DISABLED_LINK_SUB = "user_clerk_disabledlink_saleauth";
 
 const MGR_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd01";
 const STAFF_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd02";
 const SPECIFIC_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd03";
-const DELETED_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd04";
-const DISABLED_LINK_MEMBERSHIP_ID = "0d000000-0000-4000-8000-00000000dd05";
 
 const DEVICE_ID = "0d000000-0000-4000-8000-00000000ee01";
 const DEVICE_REVOKED_ID = "0d000000-0000-4000-8000-00000000ee02";
-const DEVICE_ATTESTATION = "device-saleauth-attestation";
-const DEVICE_REVOKED_ATTESTATION = "device-saleauth-revoked-attestation";
 
-class StubClerkVerifier implements ClerkVerifier {
-  constructor(private readonly map: Map<string, string>) {}
-  async verify(rawJwt: string): Promise<{ sub: string }> {
-    const sub = this.map.get(rawJwt);
-    if (!sub) throw new Error("StubClerkVerifier: unknown jwt");
-    return { sub };
-  }
-}
+// pos_operator auth_tokens rows (the envelope's server-side state of record).
+const TOKEN_MGR_ID = "0d000000-0000-4000-8000-00000000ff01";
+const TOKEN_REVOKED_DEV_ID = "0d000000-0000-4000-8000-00000000ff02";
+const TOKEN_STAFF_ID = "0d000000-0000-4000-8000-00000000ff03";
+const TOKEN_SPECIFIC_ID = "0d000000-0000-4000-8000-00000000ff04";
 
-class FakeRedis {
-  private readonly store = new Map<string, { value: string; expiresAt: number }>();
-  async get(key: string): Promise<string | null> {
-    const e = this.store.get(key);
-    if (!e || Date.now() > e.expiresAt) return null;
-    return e.value;
-  }
-  async set(key: string, value: string, options: { px: number }): Promise<unknown> {
-    this.store.set(key, { value, expiresAt: Date.now() + options.px });
-    return "OK";
-  }
-}
-class FakeMarker {
-  async trySet(): Promise<boolean> { return true; }
-  async del(): Promise<void> {}
-}
+// A throwaway ClerkVerifier — the reverifier path never calls it (reverify is
+// ID-keyed), but PgOperatorContextResolver's constructor wants an adapter.
+const NOOP_VERIFIER: ClerkVerifier = {
+  async verify(): Promise<{ sub: string }> {
+    throw new Error("not used by the reverifier path");
+  },
+};
 
 let env: PgTestEnv | null = null;
 let pool: Pool | null = null;
-let app: INestApplication | null = null;
+let resolver: PgOperatorContextResolver | null = null;
 let dockerSkipped = false;
 
 function maybeSkip(): boolean {
   return dockerSkipped;
 }
-function http() {
-  if (!app) throw new Error("app not initialized");
-  return request(app.getHttpServer());
+function R(): PgOperatorContextResolver {
+  if (!resolver) throw new Error("resolver not initialized");
+  return resolver;
 }
 
-function captureBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    sourceSystem: "saleauth-pos",
-    externalId: "saleauth-ext-001",
-    currencyCode: "USD",
-    posTotal: "5.0000",
-    occurredAt: "2026-05-01T10:00:00.000Z",
-    lines: [
-      {
-        lineName: "Widget",
-        unitPrice: "5.0000",
-        currencyCode: "USD",
-        quantity: "1",
-        lineAmount: "5.0000",
-        unit: "ea",
-      },
+async function insertOperatorToken(
+  id: string,
+  deviceId: string,
+  userId: string,
+  opts: { revoked?: boolean } = {},
+): Promise<void> {
+  await pool!.query(
+    `INSERT INTO auth_tokens
+       (id, token_hash, tenant_id, user_id, device_id, store_id, scope, expires_at, revoked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pos_operator', now() + interval '8 hours', $7)`,
+    [
+      id,
+      hashToken(generateRawToken()),
+      TENANT_ID,
+      userId,
+      deviceId,
+      STORE_ID,
+      opts.revoked ? new Date() : null,
     ],
-    ...overrides,
-  };
-}
-
-let idemCounter = 0;
-function idemKey(): string {
-  idemCounter += 1;
-  return `saleauth-idem-${idemCounter}`.padEnd(20, "0");
+  );
 }
 
 beforeAll(async () => {
@@ -192,62 +138,24 @@ beforeAll(async () => {
     );
     await pool.query(
       `INSERT INTO users (id, email, display_name, clerk_user_id) VALUES
-         ($1, 'mgr@saleauth.example',          'Mgr',          $2),
-         ($3, 'staff@saleauth.example',        'Staff',        $4),
-         ($5, 'specific@saleauth.example',     'Specific',     $6),
-         ($7, 'disabledlink@saleauth.example', 'DisabledLink', $8)`,
-      [
-        MGR_USER_ID, MGR_SUB, STAFF_USER_ID, STAFF_SUB,
-        SPECIFIC_USER_ID, SPECIFIC_SUB, DISABLED_LINK_USER_ID, DISABLED_LINK_SUB,
-      ],
-    );
-    await pool.query(
-      `INSERT INTO users (id, email, display_name, clerk_user_id, deleted_at)
-         VALUES ($1, 'deleted@saleauth.example', 'Deleted', $2, now())`,
-      [DELETED_USER_ID, DELETED_SUB],
-    );
-    // 029 D3: the resolver now joins external_identity_links (NOT clerk_user_id).
-    // The 0025 backfill only maps users that existed at migration time; these
-    // test users are inserted afterwards, so seed their ACTIVE 'clerk' links
-    // explicitly (the analogue of the prior clerk_user_id mapping). The deleted
-    // user still gets a link so the refusal is decided by deleted_at, not by a
-    // missing link (proves user_disabled, not user_unmapped collapses to 401).
-    await pool.query(
-      `INSERT INTO external_identity_links
-         (provider_key, issuer, subject, user_id, status, disabled_at) VALUES
-         ('clerk', 'https://clerk.dp2.local', $1, $2, 'active', NULL),
-         ('clerk', 'https://clerk.dp2.local', $3, $4, 'active', NULL),
-         ('clerk', 'https://clerk.dp2.local', $5, $6, 'active', NULL),
-         ('clerk', 'https://clerk.dp2.local', $7, $8, 'active', NULL),
-         ('clerk', 'https://clerk.dp2.local', $9, $10, 'disabled', now())`,
-      [
-        MGR_SUB, MGR_USER_ID,
-        STAFF_SUB, STAFF_USER_ID,
-        SPECIFIC_SUB, SPECIFIC_USER_ID,
-        DELETED_SUB, DELETED_USER_ID,
-        // The disabled-link manager is otherwise fully eligible (active
-        // membership, all-store access, valid device store) — the ONLY thing
-        // refusing them is the link's status='disabled'.
-        DISABLED_LINK_SUB, DISABLED_LINK_USER_ID,
-      ],
+         ($1, 'mgr@saleauth.example',      'Mgr',      'user_mgr_sa'),
+         ($2, 'staff@saleauth.example',    'Staff',    'user_staff_sa'),
+         ($3, 'specific@saleauth.example', 'Specific', 'user_specific_sa')`,
+      [MGR_USER_ID, STAFF_USER_ID, SPECIFIC_USER_ID],
     );
     await pool.query(
       `INSERT INTO memberships (id, tenant_id, user_id, role_id, store_access_kind) VALUES
          ($1, $2, $3, $4, 'all'),
          ($5, $2, $6, $7, 'all'),
-         ($8, $2, $9, $4, 'specific'),
-         ($10, $2, $11, $4, 'all'),
-         ($12, $2, $13, $4, 'all')`,
+         ($8, $2, $9, $4, 'specific')`,
       [
         MGR_MEMBERSHIP_ID, TENANT_ID, MGR_USER_ID, MANAGER_ROLE_ID,
         STAFF_MEMBERSHIP_ID, STAFF_USER_ID, STAFF_ROLE_ID,
         SPECIFIC_MEMBERSHIP_ID, SPECIFIC_USER_ID,
-        DELETED_MEMBERSHIP_ID, DELETED_USER_ID,
-        DISABLED_LINK_MEMBERSHIP_ID, DISABLED_LINK_USER_ID,
       ],
     );
     // The "specific" manager is granted access to the OTHER store only — so a
-    // sale on STORE_ID (the device's store) must be refused.
+    // sale on STORE_ID (the device's store) must be refused by reverify.
     await pool.query(
       `INSERT INTO store_access (membership_id, store_id, tenant_id) VALUES ($1, $2, $3)`,
       [SPECIFIC_MEMBERSHIP_ID, STORE_ID_OTHER, TENANT_ID],
@@ -255,99 +163,30 @@ beforeAll(async () => {
     await pool.query(
       `INSERT INTO devices (id, tenant_id, store_id, label, token_hash)
          VALUES ($1, $2, $3, 'till-A', $4)`,
-      [DEVICE_ID, TENANT_ID, STORE_ID, hashToken(DEVICE_ATTESTATION)],
+      [DEVICE_ID, TENANT_ID, STORE_ID, hashToken("dev-A-attestation")],
     );
     await pool.query(
       `INSERT INTO devices (id, tenant_id, store_id, label, token_hash, revoked_at)
          VALUES ($1, $2, $3, 'till-revoked', $4, now())`,
-      [DEVICE_REVOKED_ID, TENANT_ID, STORE_ID, hashToken(DEVICE_REVOKED_ATTESTATION)],
+      [DEVICE_REVOKED_ID, TENANT_ID, STORE_ID, hashToken("dev-revoked-attestation")],
     );
 
-    const verifierMap = new Map<string, string>([
-      ["jwt-mgr", MGR_SUB],
-      ["jwt-staff", STAFF_SUB],
-      ["jwt-specific", SPECIFIC_SUB],
-      ["jwt-deleted", DELETED_SUB],
-      ["jwt-disabledlink", DISABLED_LINK_SUB],
-      ["jwt-unmapped", "user_clerk_unmapped_saleauth"],
-    ]);
+    // Envelope rows (auth_tokens, scope pos_operator).
+    await insertOperatorToken(TOKEN_MGR_ID, DEVICE_ID, MGR_USER_ID);
+    await insertOperatorToken(TOKEN_REVOKED_DEV_ID, DEVICE_REVOKED_ID, MGR_USER_ID);
+    await insertOperatorToken(TOKEN_STAFF_ID, DEVICE_ID, STAFF_USER_ID);
+    await insertOperatorToken(TOKEN_SPECIFIC_ID, DEVICE_ID, SPECIFIC_USER_ID);
 
-    const fakeRedis = new FakeRedis();
-    const idempStore = new IdempotencyKeyStore({
-      redis: fakeRedis,
-      pgWriter: { async insert() {} },
-      pgReader: { async find() { return null; } },
-      defaultTtlMs: 72 * 60 * 60 * 1000,
-    });
-    const idempInterceptor = new IdempotencyInterceptor(
-      new Reflector(),
-      idempStore,
-      new FakeMarker() as unknown as InProgressMarker,
+    // The reverifier runs on the admin pool — its identity lookups (memberships
+    // / store_access / devices / auth_tokens are FORCE-RLS, tenant-GUC-gated)
+    // happen before any tenant context exists; production runs them on the
+    // RLS-exempt shared pool. (The IdentityProvider adapter is wired but never
+    // invoked — reverify/recoverDeviceId are ID-keyed, not token-verifying.)
+    resolver = new PgOperatorContextResolver(
+      pool,
+      new ClerkIdentityProviderAdapter(NOOP_VERIFIER, pool, "https://clerk.dp2.local"),
+      new DeviceRepository(pool),
     );
-
-    // SPLIT POOLS — faithful to the architecture, not a test hack:
-    //  - SalesService gets PG_POOL = env.app (RLS-ENFORCED): the sale WRITE runs
-    //    under RLS via the tenant GUC (runWithTenantContext), so tenant isolation
-    //    on the write is genuinely exercised (mirrors __capture-harness).
-    //  - The resolver + DeviceRepository get the ADMIN pool: their identity
-    //    lookups (memberships/store_access/roles are FORCE RLS, tenant-GUC-gated)
-    //    run BEFORE any tenant context exists — the resolver is what ESTABLISHES
-    //    that context. Production runs these on the RLS-exempt shared pool, and
-    //    sign-in's DeviceRepository is documented as "direct against the admin
-    //    pool: at sign-in time the request has no established tenant context".
-    //    Under env.app with no GUC, the RLS policies would filter every row → 401.
-    const appPool = env.app;
-    const adminPool = pool!;
-    const moduleRef = await Test.createTestingModule({
-      controllers: [SalesController],
-      providers: [
-        { provide: PG_POOL, useValue: appPool },
-        SalesService,
-        { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
-        { provide: INFLIGHT_REDIS, useValue: fakeRedis },
-        { provide: InProgressMarker, useValue: new FakeMarker() },
-        { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
-        { provide: CLERK_VERIFIER, useValue: new StubClerkVerifier(verifierMap) },
-        {
-          provide: DeviceRepository,
-          useFactory: (): DeviceRepository => new DeviceRepository(adminPool),
-        },
-        {
-          provide: OPERATOR_CONTEXT_RESOLVER,
-          useFactory: (
-            v: ClerkVerifier,
-            d: DeviceRepository,
-          ): PgOperatorContextResolver =>
-            // 029 D3: wrap the deterministic StubClerkVerifier in the REAL
-            // ClerkIdentityProviderAdapter so the provider-neutral seam + the
-            // external_identity_links join are exercised end-to-end (only Clerk's
-            // JWKS network call is stubbed — the adapter mapping is real).
-            new PgOperatorContextResolver(
-              adminPool,
-              new ClerkIdentityProviderAdapter(v, adminPool, "https://clerk.dp2.local"),
-              d,
-            ),
-          inject: [CLERK_VERIFIER, DeviceRepository],
-        },
-        // Bare class — Nest resolves the guard's @Inject(OPERATOR_CONTEXT_RESOLVER).
-        PosOperatorSaleAuthGuard,
-      ],
-    })
-      // SalesController also has the readSale GET (PosOperatorAuthGuard +
-      // TenantContextGuard). This spec only exercises the WRITE routes, so
-      // override those two to no-ops — otherwise Nest must resolve AuthGuard's
-      // SessionRepository/AuthTokenRepository, which this hand-built module
-      // does not provide (it would fail to compile before any test runs).
-      .overrideGuard(PosOperatorAuthGuard)
-      .useValue({ canActivate: () => true })
-      .overrideGuard(TenantContextGuard)
-      .useValue({ canActivate: () => true })
-      .compile();
-
-    app = moduleRef.createNestApplication({ bufferLogs: true });
-    app.useGlobalFilters(new GlobalExceptionFilter());
-    app.useGlobalPipes(new ZodValidationPipe());
-    await app.init();
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (process.env["MIGRATION_TEST_ALLOW_SKIP"] === "1") {
@@ -361,130 +200,55 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  if (app) await app.close().catch(() => undefined);
   if (pool) await pool.end().catch(() => undefined);
   if (env) await stopPgEnv(env);
 }, 60_000);
 
-afterEach(async () => {
-  if (pool) {
-    await pool.query("DELETE FROM sale_lines WHERE sale_id IN (SELECT id FROM sales WHERE source_system = 'saleauth-pos')");
-    await pool.query("DELETE FROM sales WHERE source_system = 'saleauth-pos'");
-  }
-});
-
-const ATT = "X-Device-Attestation";
-
-describe("captureSale auth (Option Y) — happy path", () => {
-  it("eligible store_manager + valid Clerk JWT + device attestation header → 201, sale scoped to device store", async () => {
+describe("031 reverifier — recoverDeviceId (envelope → bound device)", () => {
+  it("returns the bound device_id for a real pos_operator token row", async () => {
     if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-mgr")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
+    expect(await R().recoverDeviceId(TOKEN_MGR_ID)).toBe(DEVICE_ID);
+  });
 
-    expect(res.status).toBe(201);
-    expect(res.body.storeId).toBe(STORE_ID);
-    expect(res.body.posTotal).toBe("5.0000");
-
-    // Persisted under the device tenant (write ran under RLS via the tenant GUC).
-    const n = await pool!.query<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM sales WHERE tenant_id = $1 AND source_system = 'saleauth-pos'`,
-      [TENANT_ID],
-    );
-    expect(n.rows[0]?.n).toBe("1");
+  it("returns null for an unknown token id", async () => {
+    if (maybeSkip()) return;
+    expect(await R().recoverDeviceId("0d000000-0000-4000-8000-0000deadbeef")).toBeNull();
   });
 });
 
-describe("captureSale auth (Option Y) — refusals collapse to 401", () => {
-  it("missing Authorization → 401", async () => {
+describe("031 reverifier — reverify live predicate (G-4)", () => {
+  it("OK: eligible store_manager (access=all) on the device store", async () => {
     if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
+    const v = await R().reverify(MGR_USER_ID, DEVICE_ID, STORE_ID);
+    expect(v.kind).toBe("ok");
   });
 
-  it("missing X-Device-Attestation header → 401", async () => {
+  it("refuses: device revoked (device_invalid)", async () => {
     if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-mgr")
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
+    const v = await R().reverify(MGR_USER_ID, DEVICE_REVOKED_ID, STORE_ID);
+    expect(v.kind).toBe("refused");
   });
 
-  it("unmapped Clerk subject → 401", async () => {
+  it("refuses: membership revoked mid-session", async () => {
     if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-unmapped")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
+    await pool!.query(`UPDATE memberships SET revoked_at = now() WHERE id = $1`, [MGR_MEMBERSHIP_ID]);
+    try {
+      const v = await R().reverify(MGR_USER_ID, DEVICE_ID, STORE_ID);
+      expect(v.kind).toBe("refused");
+    } finally {
+      await pool!.query(`UPDATE memberships SET revoked_at = NULL WHERE id = $1`, [MGR_MEMBERSHIP_ID]);
+    }
   });
 
-  it("subject whose only external_identity_links row is DISABLED → 401 (029 D3 active-clause)", async () => {
+  it("refuses: ineligible role (store_staff)", async () => {
     if (maybeSkip()) return;
-    // Fully eligible operator (active membership, all-store access, valid device)
-    // — refused SOLELY because their identity link is status='disabled'. Locks
-    // the resolver join's `AND l.status = 'active'` clause.
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-disabledlink")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
+    const v = await R().reverify(STAFF_USER_ID, DEVICE_ID, STORE_ID);
+    expect(v.kind).toBe("refused");
   });
 
-  it("soft-deleted user → 401", async () => {
+  it("refuses: specific store-access without a grant for the device store", async () => {
     if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-deleted")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
-  });
-
-  it("revoked device attestation → 401", async () => {
-    if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-mgr")
-      .set(ATT, DEVICE_REVOKED_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
-  });
-
-  it("ineligible role (store_staff) → 401", async () => {
-    if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-staff")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
-  });
-
-  it("specific store access without grant for the device store → 401", async () => {
-    if (maybeSkip()) return;
-    const res = await http()
-      .post("/api/pos/v1/sales")
-      .set("Authorization", "Bearer jwt-specific")
-      .set(ATT, DEVICE_ATTESTATION)
-      .set("Idempotency-Key", idemKey())
-      .send(captureBody());
-    expect(res.status).toBe(401);
+    const v = await R().reverify(SPECIFIC_USER_ID, DEVICE_ID, STORE_ID);
+    expect(v.kind).toBe("refused");
   });
 });

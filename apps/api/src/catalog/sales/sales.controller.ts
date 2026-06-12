@@ -40,7 +40,7 @@ import type { Response } from "express";
 
 import { Auditable } from "../../audit/auditable.decorator";
 import { PosOperatorAuthGuard } from "../../auth/pos-operator-auth.guard";
-import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guard";
+import { PosOperatorEnvelopeSaleGuard } from "../../auth/pos-operator-envelope-sale.guard";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
@@ -74,7 +74,7 @@ export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
   @Post("api/pos/v1/sales")
-  @UseGuards(PosOperatorSaleAuthGuard)
+  @UseGuards(PosOperatorEnvelopeSaleGuard)
   @Idempotent("required")
   @Auditable("sale.captured")
   async captureSale(
@@ -146,7 +146,7 @@ export class SalesController {
   }
 
   @Post("api/pos/v1/sales/:saleRef/void")
-  @UseGuards(PosOperatorSaleAuthGuard)
+  @UseGuards(PosOperatorEnvelopeSaleGuard)
   @Idempotent("required")
   @Auditable("sale.voided")
   async recordVoid(
@@ -197,7 +197,7 @@ export class SalesController {
   }
 
   @Post("api/pos/v1/sales/:saleRef/refund")
-  @UseGuards(PosOperatorSaleAuthGuard)
+  @UseGuards(PosOperatorEnvelopeSaleGuard)
   @Idempotent("required")
   @Auditable("sale.refunded")
   async recordRefund(
