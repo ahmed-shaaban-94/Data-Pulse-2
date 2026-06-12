@@ -67,7 +67,7 @@ export const sales = pgTable(
     // and advanced to 'synced' by the SAME drain UPDATE that sets processed_at —
     // spec clarify Q1: the DP-2 sale-processing drain, NOT the ERPNext posting
     // path). Allowed values are enforced by the `sales_sync_status_valid` CHECK
-    // in 0025_sale_sync_status.sql. Rides the existing `sales` tenant UPDATE
+    // in 0026_sale_sync_status.sql. Rides the existing `sales` tenant UPDATE
     // policy (no new RLS) — the same SaaS-owned-mutable posture as processed_at.
     syncStatus: text("sync_status").notNull().default("captured"),
     // POS-reported clock, preserved as provenance; NEVER a security clock (FR-022).

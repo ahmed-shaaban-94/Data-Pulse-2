@@ -1,6 +1,6 @@
--- 0025_sale_sync_status.down.sql
+-- 0026_sale_sync_status.down.sql
 --
--- Rollback for 0025_sale_sync_status.sql. Removes the dead-letter quarantine
+-- Rollback for 0026_sale_sync_status.sql. Removes the dead-letter quarantine
 -- table (with its policies, indexes, trigger, CHECK constraints) and the
 -- server-authoritative `sync_status` column + its CHECK + partial index from
 -- `sales`. The backfill UPDATE (processed → 'synced') wrote only into the

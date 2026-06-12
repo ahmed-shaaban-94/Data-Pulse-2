@@ -137,6 +137,7 @@ describe("data-pulse-migrate CLI", () => {
     "0023_erpnext_product_reconciliation",
     "0024_pairing_codes",
     "0025_external_identity_links",
+    "0026_sale_sync_status",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;

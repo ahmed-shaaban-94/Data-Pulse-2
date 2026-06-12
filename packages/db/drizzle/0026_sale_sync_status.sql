@@ -1,4 +1,4 @@
--- 0025_sale_sync_status.sql
+-- 0026_sale_sync_status.sql
 --
 -- Spec 032 — POS Sale Capture / Sync-Status / Idempotency Contract.
 -- Authors the server-authoritative sale-status (§7) + the dead-letter /
@@ -51,7 +51,7 @@
 -- failure classification + a redacted reason; NO money, NO line amounts, NO PII,
 -- NO plaintext secret. Retention inherits the 0012 long-horizon fact posture.
 --
--- Reversibility: 0025_sale_sync_status.down.sql.
+-- Reversibility: 0026_sale_sync_status.down.sql.
 
 BEGIN;
 

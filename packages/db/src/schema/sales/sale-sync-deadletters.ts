@@ -21,7 +21,7 @@
  *   - One OPEN row per sale (unique on (sale_id, resolved_at)) — a sale may
  *     re-fail after a repair; resolved rows are retained for audit.
  *   - RLS-enabled + FORCE, fail-closed by tenant_id. Policies live in
- *     `0025_sale_sync_status.sql`.
+ *     `0026_sale_sync_status.sql`.
  *
  * Server clocks only (Principle X). No money, no line amounts, no PII, no
  * plaintext secret (BUSINESS-class, §XIV).
