@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-13
 
-**Status**: SPECIFY-ONLY / DRAFT — for owner review. Authored under an explicit, scoped, owner-approved cross-repo dispatch from the Retail Tower Orchestrator (SPECIFY-only: `spec.md` + clarifications; STOP before plan/tasks/code/contract). **gated — implementation requires a SEPARATE owner-approved dispatch + G10 re-verify.**
+**Status**: PLANNING — owner cleared the Materialize Stop Gate on 2026-06-13 (clarify → plan → tasks → analyze → review chain authorized). G10 re-verified against `origin/main` code at plan-start (E-1/E-3/E-4 confirmed in `dto.ts` + `pos-operators.service.ts`; `user_id` is identity data, not a credential/scope token). Planning chain is **docs-only** — no code, contract YAML, or migration is authored here; the implementation dispatch remains a separate step. (Originally SPECIFY-ONLY / DRAFT under a scoped Retail Tower Orchestrator dispatch.)
 
 **Input**: Surface the DP-2 provider-neutral `user_id` (= `users.id`, the 028 §16 identity key) on the POS-facing sign-in / operator-session response, so the POS terminal can re-anchor its offline-PIN store (POS-017) off a provider-neutral identifier instead of the provider-coupled `clerk_user_id`.
 
@@ -61,12 +61,13 @@ A cashier or manager signs in on a paired POS terminal. The DP-2 sign-in respons
 
 A POS client built before this change (e.g. the feat(016) client that reads `id`/`envelope`) continues to function unchanged when the response gains a `user_id` field.
 
-**Why this priority**: Backward compatibility is required to ship without coordinating a POS release; the field is additive.
+**Why this priority**: The field is additive at the application level (no existing field changes meaning). **Caveat (analyze/review finding):** the `PosOperatorSummary` schema declares `additionalProperties: false` (and the contract comments note strictness is enforced on both sides). A consumer that validates strictly against the *old pinned schema* would reject a response carrying `user_id` as a disallowed property — even though it never reads the field. Backward-compatibility therefore holds for **lenient** consumers; for a **strict** consumer it requires a coordinated contract-pin bump (the schema bump + the POS-Pulse pin update land together — a minor coordinated release, not a code-behavior break). This is dispositioned in plan §OQ-033-2 and scoped into tasks T1/T4.
 
-**Independent test**: Deserialize the new response with the pre-existing POS client contract; assert no break (unknown field ignored).
+**Independent test**: Validate the new response against the *actual old `PosOperatorSummary` schema* (5 required fields, `additionalProperties: false`) to characterize the strict-mode boundary, AND deserialize with a lenient pre-change client to confirm the field is ignored.
 
 **Acceptance Scenarios**:
-1. **Given** a client that reads only `id`, `display_name`, `role`, `tenant_id`, `branch_id`, **When** it receives a response carrying the new `user_id`, **Then** it parses successfully and ignores the new field.
+1. **Given** a lenient client that reads only `id`, `display_name`, `role`, `tenant_id`, `branch_id`, **When** it receives a response carrying the new `user_id`, **Then** it parses successfully and ignores the new field.
+2. **Given** a strict validator pinned to the *old* `PosOperatorSummary` schema (`additionalProperties: false`), **When** it validates a response carrying `user_id`, **Then** it rejects — which is why the contract bump and the POS-Pulse pin update are a coordinated pair (T1).
 
 ### Edge Cases
 
@@ -106,7 +107,7 @@ A POS client built before this change (e.g. the feat(016) client that reads `id`
 
 - **SC-033-1**: A signed-in operator's response carries `user_id == users.id` (verified by test against a seeded row), distinct from `clerk_user_id`.
 - **SC-033-2**: `user_id` is present and non-null on all four `signed_in` response paths (sign-in, admin, takeover-fresh, takeover-replay).
-- **SC-033-3**: The change is additive and backward-compatible — a pre-change POS client contract still deserializes the response.
+- **SC-033-3**: The change is additive at the application level (no existing field changes meaning) and backward-compatible for **lenient** consumers — a pre-change POS client that ignores unknown fields still deserializes the response. For **strict** consumers, the `PosOperatorSummary` schema's `additionalProperties: false` means the contract-pin bump and the POS-Pulse pin update ship as a coordinated pair (see User Story 2 caveat + plan §OQ-033-2). No code-behavior break either way.
 - **SC-033-4**: No schema migration is introduced (G3 untriggered); no envelope-content change; no resolution-path change.
 - **SC-033-5**: POS-017's `user_id`-delivery dependency is satisfied — the neutral key now reaches the terminal as readable response data.
 
@@ -119,4 +120,4 @@ A POS client built before this change (e.g. the feat(016) client that reads `id`
 - **G3** (Migration): NOT triggered. No schema change.
 - **G9** (Rollout): not a rollout; not required for implementation/merge.
 
-> **STOP — SPECIFY phase boundary.** This document is `spec.md` + clarifications only. No `plan.md`, `tasks.md`, code, contract YAML, or migration is authored. Advancing to plan/tasks/implementation requires a separate, explicit, scoped owner approval + G10 re-verify, per the Orchestrator's DP-033 queue item and the Materialize Stop Gate.
+> **Materialize Stop Gate — CLEARED (2026-06-13).** The SPECIFY phase boundary that originally halted this document has been lifted by explicit owner approval; `plan.md` and `tasks.md` are now authored alongside this spec (clarify → plan → tasks → analyze → review chain). G10 was re-verified against `origin/main` code at plan-start (plan §G10). **The planning chain remains docs-only — no code, contract YAML, or migration is authored.** The implementation dispatch (executing `tasks.md`, including the `[GATED]` T1 contract edit) is still a separate step, subject to the standing gates and a final G10 re-confirm at execution, per the Orchestrator's DP-033 queue item.
