@@ -41,11 +41,14 @@ Do not duplicate standing-rules content here. When in doubt about an operating r
   030 (auth-contract cleanup) + **031 (operator-authorization envelope, the keystone)** all
   SHIPPED 2026-06-12. **032** (sale sync-status + read/repair + dead-letter) MVP + US4 SHIPPED.
   **033** (surface provider-neutral `user_id` on the POS operator response — the §16 chain's
-  last hop, unblocks POS-017 offline-PIN re-anchor): SPECIFY (#564) + full planning chain
-  (#565, `102934f`) SHIPPED 2026-06-13. **Docs-only — implementation (T1–T6) still owner-gated.**
-  Review caught `additionalProperties:false` ⇒ the additive field needs a coordinated
-  DP2/POS-Pulse contract-pin pair; open dispatch input: confirm POS-Pulse strict-vs-lenient
-  validation.
+  last hop, unblocks POS-017 offline-PIN re-anchor): SPECIFY (#564) → planning (#565) →
+  **IMPLEMENTED & SHIPPED #567 (`c5e1c5d`) 2026-06-13.** `user_id` (= `users.id`) is now an
+  additive `required` field on `PosOperatorSummary` at all 3 `signed_in` emit-sites (incl.
+  takeover replay); `[GATED]` contract `additionalProperties:false` retained. unit 48/48 +
+  integration 47/47 GREEN; no migration/envelope/resolution change. **Open cross-side input
+  (not a blocker):** POS-Pulse must confirm strict-vs-lenient response validation — if strict,
+  the POS-Pulse contract-pin update must accompany this `additionalProperties:false` schema
+  bump. (DP-2 raised it to POS-Pulse — note on their `017` spec dir, PR #388.)
 - **Open follow-ups (non-blocking):** #524 (ERPNext live-leg epic), #529 (OTel boot hang),
   #531 (019 multi-window), #523 (020 dark-detection); 032's live drain-trigger wiring + US5
   422-path (gated). See each spec's `wave-status.md`.
