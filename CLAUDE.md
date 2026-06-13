@@ -40,6 +40,12 @@ Do not duplicate standing-rules content here. When in doubt about an operating r
 - **028 auth-boundary arc (D3/D4 + keystone D1/D2):** 029 (provider-neutral identity link) +
   030 (auth-contract cleanup) + **031 (operator-authorization envelope, the keystone)** all
   SHIPPED 2026-06-12. **032** (sale sync-status + read/repair + dead-letter) MVP + US4 SHIPPED.
+  **033** (surface provider-neutral `user_id` on the POS operator response — the §16 chain's
+  last hop, unblocks POS-017 offline-PIN re-anchor): SPECIFY (#564) + full planning chain
+  (#565, `102934f`) SHIPPED 2026-06-13. **Docs-only — implementation (T1–T6) still owner-gated.**
+  Review caught `additionalProperties:false` ⇒ the additive field needs a coordinated
+  DP2/POS-Pulse contract-pin pair; open dispatch input: confirm POS-Pulse strict-vs-lenient
+  validation.
 - **Open follow-ups (non-blocking):** #524 (ERPNext live-leg epic), #529 (OTel boot hang),
   #531 (019 multi-window), #523 (020 dark-detection); 032's live drain-trigger wiring + US5
   422-path (gated). See each spec's `wave-status.md`.
