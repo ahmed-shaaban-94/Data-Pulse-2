@@ -526,6 +526,8 @@ describe("PosOperatorsService.takeoverConfirm", () => {
       kind: "signed_in",
       operator: {
         id: OPERATOR_CLERK_SUB,
+        // 033 (SC-033-2): takeover-confirm fresh path carries the neutral key.
+        user_id: USER_ID,
         role: "manager",
         tenant_id: TENANT_ID,
         branch_id: STORE_ID,

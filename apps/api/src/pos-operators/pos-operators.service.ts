@@ -383,6 +383,9 @@ export class PosOperatorsService {
       kind: "signed_in",
       operator: {
         id: userRow.clerk_user_id ?? "",
+        // 033: provider-neutral identity key (users.id), surfaced alongside the
+        // clerk_user_id bridge. Already loaded on userRow; no new query.
+        user_id: userRow.id,
         display_name: userRow.display_name ?? userRow.email,
         role: posRole,
         tenant_id: deviceRow.tenantId,
@@ -496,6 +499,10 @@ export class PosOperatorsService {
         kind: "signed_in",
         operator: {
           id: userRow.clerk_user_id ?? "",
+          // 033: provider-neutral identity key (users.id). Present even on an
+          // idempotent replay (envelope is null here, but user_id is identity,
+          // not a hash-once secret) — SC-033-2 path 4.
+          user_id: userRow.id,
           display_name: userRow.display_name ?? userRow.email,
           role: posRole,
           tenant_id: deviceRow.tenantId,
@@ -566,6 +573,9 @@ export class PosOperatorsService {
       kind: "signed_in",
       operator: {
         id: userRow.clerk_user_id ?? "",
+        // 033: provider-neutral identity key (users.id), surfaced alongside the
+        // clerk_user_id bridge. Already loaded on userRow; no new query.
+        user_id: userRow.id,
         display_name: userRow.display_name ?? userRow.email,
         role: posRole,
         tenant_id: deviceRow.tenantId,

@@ -327,7 +327,8 @@ describe("POST /api/pos/v1/operators/sign-in (happy paths)", () => {
     expect(res.status).toBe(200);
     expect(res.body.kind).toBe("signed_in");
     expect(res.body.operator).toEqual({
-      id: ADMIN_CLERK_SUB,                // <- Clerk subject, not ADMIN_USER_ID
+      id: ADMIN_CLERK_SUB,                // <- Clerk subject (v1 bridge), not ADMIN_USER_ID
+      user_id: ADMIN_USER_ID,             // <- 033: provider-neutral users.id (SC-033-1)
       display_name: "Admin User",
       role: "admin",                      // <- mapped from internal tenant_admin
       tenant_id: TENANT_ID,

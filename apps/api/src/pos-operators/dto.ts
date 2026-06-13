@@ -46,8 +46,14 @@ export type PosOperatorRole = "manager" | "admin";
 
 /** Conforms to OpenAPI `PosOperatorSummary`. */
 export interface PosOperatorSummaryBody {
-  /** `users.clerk_user_id` (Clerk subject), NOT `users.id` (ADR D4). */
+  /** `users.clerk_user_id` (Clerk subject), NOT `users.id` (ADR D4). v1 bridge. */
   id: string;
+  /**
+   * Provider-neutral identity key = `users.id` (028 §16). Distinct from `id`
+   * (= `clerk_user_id`, the v1 bridge). Surfaced so POS can anchor local
+   * operator-scoped records on a provider-independent identifier (033 / POS-017).
+   */
+  user_id: string;
   display_name: string;
   role: PosOperatorRole;
   /** Tenant UUID (server-internal IDs are visible here, but `branch_id` is the only POS-facing branch identifier). */
