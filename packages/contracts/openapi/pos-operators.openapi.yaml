@@ -406,13 +406,17 @@ components:
     # -------------------------------------------------------------------
     PosOperatorSummary:
       type: object
-      required: [id, display_name, role, tenant_id, branch_id]
+      required: [id, user_id, display_name, role, tenant_id, branch_id]
       additionalProperties: false
       description: >
-        Wave 1 operator payload. Carries only what POS-Pulse needs to
-        render the operator in-shift: id (Clerk subject), display_name,
-        role, tenant_id, and branch_id. No email, no platform-admin
-        flag, no membership detail.
+        Wave 1 operator payload. Carries what POS-Pulse needs to render and
+        anchor the operator in-shift: id (Clerk subject, v1 bridge), user_id
+        (provider-neutral users.id, 028 §16), display_name, role, tenant_id,
+        and branch_id. No email, no platform-admin flag, no membership detail.
+        NOTE (033): `user_id` is an additive field, but this schema is
+        `additionalProperties: false` and is pinned on both sides — a strict
+        POS-Pulse validator on the OLD schema rejects it, so the schema bump
+        and the POS-Pulse pin update ship as a coordinated pair.
       properties:
         id:
           type: string
@@ -420,8 +424,18 @@ components:
             Clerk subject of the operator (`users.clerk_user_id`). This
             is the same identifier POS-Pulse sees in roster, takeover,
             and active-session endpoints — preserving identity
-            continuity across the POS surface. Not the local `users.id`
-            (which is a UUID and is server-internal).
+            continuity across the POS surface. This is the provider-coupled
+            v1 bridge; `user_id` is the provider-neutral key to prefer.
+        user_id:
+          type: string
+          format: uuid
+          description: >
+            Provider-neutral identity key (`users.id`, the 028 §16 identity
+            key). Distinct from `id` (= `clerk_user_id`, the v1 bridge).
+            Surfaced so POS terminals can anchor local operator-scoped records
+            (e.g. POS-017 offline-PIN re-anchor) on a provider-independent
+            identifier. Always present on a signed-in response, including an
+            idempotent takeover-confirm replay.
         display_name:
           type: string
           description: Operator display name (already resolved server-side).

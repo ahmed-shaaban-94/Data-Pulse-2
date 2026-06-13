@@ -365,7 +365,10 @@ describe("PosOperatorsService.signIn", () => {
     expect(r).toEqual({
       kind: "signed_in",
       operator: {
-        id: "user_clerk_admin", // Clerk subject, not USER_ID
+        id: "user_clerk_admin", // Clerk subject (v1 bridge), not USER_ID
+        // 033 (FR-033-1, SC-033-1): the provider-neutral key = users.id,
+        // distinct from the Clerk subject `id`.
+        user_id: USER_ID,
         display_name: "Tenant Admin",
         role: "admin",
         tenant_id: TENANT_ID,
