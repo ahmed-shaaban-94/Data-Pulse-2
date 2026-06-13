@@ -1,0 +1,487 @@
+openapi: 3.1.0
+info:
+  title: Data-Pulse-2 — Sale Sync-Ops Read / Repair API
+  version: "1.0.0-draft"
+  description: >
+    Spec 032 §9 — the server-authoritative sale-sync READ/REPAIR surface the
+    later Retail Tower Console consumes. DP-2 owns the authoritative sale-status
+    (§7) and the dead-letter / NEEDS_REPAIR classification (§8); this contract
+    is the generated-client surface over them. It is consumed later by the
+    Console sync-ops UI — there is NO POS-facing route here.
+
+      1. `consoleGetSaleSyncStatus`  — read one sale's server-authoritative
+         sync-status (captured / synced / failed-retryable / failed-needs-repair)
+         + minimal provenance. Object-level authz: a sale outside the operator's
+         (tenant, store) scope is a non-disclosing 404.
+      2. `consoleListNeedsRepair`    — the NEEDS_REPAIR queue: tenant+store
+         scoped, newest-first, opaque keyset/cursor pagination (spec clarify
+         2026-06-12). Open `failed-needs-repair` items only.
+      3. `consoleGetSaleAuditTimeline` — the read-only correlation/audit
+         timeline for one sale (028 provenance), redacted at the emitter
+         (Principle XIII/XIV).
+      4. `consoleRepairSaleSync`     — the SERVER-MEDIATED repair/retry op. Acts
+         ONLY on a DP-2-classified NEEDS_REPAIR item, is audited, performs NO
+         sale-fact rewrite, and has NO POS-local override path (repair authority
+         is Console-mediated only — owner decision DP3 / §13 item 3; 028 OQ-2).
+
+    SETTLEMENT EXCLUDED (F-2): there is NO payments.confirm / settled_at /
+    tender-settlement op here — that endpoint does not exist and is not invented.
+    The live provenance-conflict 409 (F-3) is owned by the POS `recordVoid` /
+    `recordRefund` surface (`pos-sales/sales.yaml`) and is NOT regressed or
+    re-shaped here; the AlreadyApplied-422 path is an OPEN owner decision and is
+    NOT authored (DP1: keep-409, 422 deferred).
+
+    AUTH: the HUMAN `cookieAuth` (httpOnly `dp2_session`) scheme — gated by
+    `DashboardAuthGuard` + `RolesGuard` (human-operator-only), matching
+    `console-sync-ops.yaml`. NOT the POS `clerkJwt` device scheme, NOT the
+    machine `connectorBearer` / `dashboard_api` bearer. 401/403 auth semantics
+    are owned by 028 (bound by reference; G10) and are NOT re-decided here.
+
+    PROJECTIONS (§IV): every response is an explicit `toBody` wire shape with
+    `additionalProperties: false` — no raw `sales` / `sale_sync_deadletters` DB
+    entity, no `tenant_id` (implicit in the session scope), no `payload_hash`,
+    no `created_by`, no money/line amounts on the status/queue surface.
+
+    Error envelope: the canonical `{ error: { code, message, request_id } }`,
+    identical to the shared shape (`auth` / `outbox` / `pos-sales` /
+    `console-sync-ops`). Status mapping: 400 validation, 401 unauthenticated,
+    403 insufficient-role, 404 not-found / cross-tenant (non-disclosing,
+    safe-404), 409 repair conflict (item not in a repairable state), 500
+    internal.
+
+servers:
+  - url: https://api.example.com
+
+tags:
+  - name: sale-sync-ops
+    description: >
+      Console-facing read/repair surface over the server-authoritative
+      sale-status (§7) + dead-letter classification (§8). Spec 032 §9.
+
+security:
+  - cookieAuth: []
+
+paths:
+  /api/v1/catalog/sale-sync-ops/sales/{saleRef}/status:
+    get:
+      summary: Read one sale's server-authoritative sync-status.
+      operationId: consoleGetSaleSyncStatus
+      tags: [sale-sync-ops]
+      description: >
+        Resolve a single sale's DP-2-owned sync-status. Object-level authz: a
+        sale outside the operator's (tenant, store) scope returns a
+        non-disclosing 404, identical to genuinely-absent (FR-063/102).
+      parameters:
+        - $ref: "#/components/parameters/SaleRef"
+      responses:
+        "200":
+          description: The sale's sync-status projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleSyncStatus"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/catalog/sale-sync-ops/needs-repair:
+    get:
+      summary: List the NEEDS_REPAIR queue (newest-first, keyset paginated).
+      operationId: consoleListNeedsRepair
+      tags: [sale-sync-ops]
+      description: >
+        The dead-letter NEEDS_REPAIR queue: tenant-scoped (RLS) and optionally
+        store-filtered, newest-first by the time-ordered sale reference, opaque
+        keyset/cursor paginated (spec clarify 2026-06-12). Open
+        `failed-needs-repair` items only — resolved items are retained for audit
+        but not listed. Never a silent drop (Principle V/XIII).
+      parameters:
+        - $ref: "#/components/parameters/StoreIdQuery"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A page of NEEDS_REPAIR items, newest-first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NeedsRepairPage"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/catalog/sale-sync-ops/sales/{saleRef}/audit-timeline:
+    get:
+      summary: Read the correlation/audit timeline for one sale (028 provenance).
+      operationId: consoleGetSaleAuditTimeline
+      tags: [sale-sync-ops]
+      description: >
+        The read-only correlation/audit timeline for one sale — 028 provenance,
+        redacted at the emitter (Principle XIII/XIV). Object-level authz +
+        non-disclosing 404, identical to the status read.
+      parameters:
+        - $ref: "#/components/parameters/SaleRef"
+      responses:
+        "200":
+          description: The sale's audit timeline.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleAuditTimeline"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+  /api/v1/catalog/sale-sync-ops/sales/{saleRef}/repair:
+    post:
+      summary: Server-mediated repair/retry of a NEEDS_REPAIR sale sync.
+      operationId: consoleRepairSaleSync
+      x-idempotency: required
+      tags: [sale-sync-ops]
+      description: >
+        Issue a SERVER-MEDIATED repair/retry for a DP-2-classified NEEDS_REPAIR
+        sale. The op is audited, acts ONLY on a `failed-needs-repair` item, and
+        performs NO sale-fact rewrite (no change to the immutable `sales` /
+        `sale_lines` / terminal-event rows — only the SaaS-owned sync-status and
+        the deadletter resolution are touched). There is NO POS-local override
+        path (repair authority is Console-mediated only — DP3 / §13 item 3).
+
+        An item not currently in a repairable (`failed-needs-repair`, open)
+        state returns 409 `repair_conflict` — deterministic, no side effect.
+        `Idempotency-Key` is REQUIRED (reuses the existing IdempotencyInterceptor).
+      parameters:
+        - $ref: "#/components/parameters/SaleRef"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: >
+            Repair accepted — the item was re-queued for sync. Returns the
+            sale's updated sync-status projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleSyncStatus"
+        "400":
+          $ref: "#/components/responses/ValidationFailure"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/RepairConflict"
+        "500":
+          $ref: "#/components/responses/SystemFailure"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: dp2_session
+      description: >
+        The human dashboard session cookie (httpOnly `dp2_session`), verified by
+        `DashboardAuthGuard`. The ONLY accepted credential on this surface — a
+        machine bearer or a POS `clerkJwt` is rejected. `RolesGuard` + `@Roles`
+        gate the routes (default deny). 401/403 semantics owned by 028 (G10).
+
+  parameters:
+    SaleRef:
+      name: saleRef
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Stable server-issued sale reference (= `sales.id`). Resolves only within
+        the operator's (tenant, store) scope — out-of-scope refs are
+        non-disclosing 404s (FR-063/102).
+    StoreIdQuery:
+      name: store_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: >
+        Optional in-scope store filter. Validated against the operator's
+        accessible stores; an out-of-scope id is a non-disclosing 404.
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+      description: >
+        Opaque keyset pagination cursor from a prior page's `nextCursor`. Opaque
+        — do not decode or construct. Omit for the first page.
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+      description: Maximum items per page (bounded). The server MAY return fewer.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 255
+      description: >
+        REQUIRED on the repair write. Reuses the existing IdempotencyInterceptor
+        — identical retry replays the stored response; key-reuse with a
+        different logical payload returns 409 `idempotency_key_conflict`.
+
+  schemas:
+    SyncStatusValue:
+      type: string
+      enum: [captured, synced, failed-retryable, failed-needs-repair]
+      description: >
+        The server-authoritative sale-status vocabulary (§7). DP-2 sets it; POS
+        never overrides (the terminal observes, DP-2 decides).
+    SaleSyncStatus:
+      type: object
+      additionalProperties: false
+      required: [saleRef, storeId, syncStatus, sourceSystem, externalId]
+      description: >
+        Wire projection of a sale's server-authoritative sync-status. Carries no
+        `tenant_id` (implicit in the session scope), no money, no line amounts,
+        no `payload_hash`, no `created_by`.
+      properties:
+        saleRef:
+          type: string
+          format: uuid
+        storeId:
+          type: string
+          format: uuid
+        syncStatus:
+          $ref: "#/components/schemas/SyncStatusValue"
+        sourceSystem:
+          type: string
+        externalId:
+          type: string
+        processedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Null until the off-request drain sets it (FR-071).
+        deadLetter:
+          description: >
+            Present (non-null) when the sale has an OPEN dead-letter row — the
+            §8 classification + redacted reason + retry accounting. Null
+            otherwise.
+          anyOf:
+            - $ref: "#/components/schemas/DeadLetterDetail"
+            - type: "null"
+    DeadLetterDetail:
+      type: object
+      additionalProperties: false
+      required: [classification, reasonCode, retryCount, quarantinedAt]
+      description: >
+        The §8 dead-letter classification for a quarantined sale-sync. Provenance
+        is on the parent `SaleSyncStatus`; the reason is a REDACTED machine label,
+        never a raw upstream error body (Principle XIII/XIV).
+      properties:
+        classification:
+          type: string
+          enum: [retryable, needs-repair]
+        reasonCode:
+          type: string
+          description: Redacted machine label (e.g. auth_revoked, validation_failure).
+        retryCount:
+          type: integer
+          minimum: 0
+        quarantinedAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Set when a server-mediated repair resolved the item; null while open.
+    NeedsRepairItem:
+      type: object
+      additionalProperties: false
+      required:
+        - saleRef
+        - storeId
+        - syncStatus
+        - sourceSystem
+        - externalId
+        - reasonCode
+        - quarantinedAt
+      description: A single NEEDS_REPAIR queue row (newest-first list projection).
+      properties:
+        saleRef:
+          type: string
+          format: uuid
+        storeId:
+          type: string
+          format: uuid
+        syncStatus:
+          $ref: "#/components/schemas/SyncStatusValue"
+        sourceSystem:
+          type: string
+        externalId:
+          type: string
+        reasonCode:
+          type: string
+          description: Redacted machine label.
+        retryCount:
+          type: integer
+          minimum: 0
+        quarantinedAt:
+          type: string
+          format: date-time
+    NeedsRepairPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      description: A keyset page of NEEDS_REPAIR items, newest-first.
+      properties:
+        items:
+          type: array
+          # Bounded to mirror the `page_size` maximum (200): the server returns
+          # at most one page_size of items, so a conforming page can never carry
+          # more than the upper page bound. Gives generated clients an explicit
+          # cap rather than an unbounded array.
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/NeedsRepairItem"
+        nextCursor:
+          type: [string, "null"]
+          description: Opaque cursor for the next page; null on the last page.
+    SaleAuditTimeline:
+      type: object
+      additionalProperties: false
+      required: [saleRef, entries]
+      description: >
+        The read-only correlation/audit timeline for one sale (028 provenance).
+        Entries are redacted at the emitter — no raw payload, no money, no PII.
+      properties:
+        saleRef:
+          type: string
+          format: uuid
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditTimelineEntry"
+    AuditTimelineEntry:
+      type: object
+      additionalProperties: false
+      required: [at, event]
+      description: One redacted audit/correlation event in the sale's timeline.
+      properties:
+        at:
+          type: string
+          format: date-time
+        event:
+          type: string
+          description: Stable machine event label (e.g. sale.captured, sync.failed, repair.requested).
+        correlationId:
+          type: [string, "null"]
+          format: uuid
+
+    # -----------------------------------------------------------------------
+    # Canonical Error envelope (mirrors auth / outbox / pos-sales / console-sync-ops)
+    # -----------------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      description: >
+        Canonical error envelope, identical to the shared shape. Cross-tenant /
+        out-of-scope refusals are non-disclosing (§II/§XII) — they never
+        enumerate the underlying cause.
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable error code.
+            message:
+              type: string
+              description: Human-readable summary. No sensitive data, no cause enumeration.
+            request_id:
+              type: string
+              format: uuid
+              description: Server-side correlation id; the actual cause is recorded server-side.
+
+  responses:
+    ValidationFailure:
+      description: validation_failure (400) — malformed query/path, unknown key (strict), bad cursor.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: >
+        Unauthenticated (401) — missing/invalid session cookie, or a non-cookie
+        credential (machine bearer / POS clerkJwt) rejected. Non-disclosing. 401
+        semantics owned by 028 (G10).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: >
+        Insufficient role (403) — authenticated but the operator lacks the
+        required role. 403 semantics owned by 028 (G10).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: >
+        not_found (404) — the sale ref does not resolve within the operator's
+        (tenant, store) scope. Non-disclosing: identical for cross-tenant,
+        out-of-scope, and genuinely-absent ids (FR-102, SI-004, §II/§XII).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RepairConflict:
+      description: >
+        repair_conflict (409) — the targeted item is not in a repairable
+        (open `failed-needs-repair`) state. Deterministic, no side effect. This
+        is DISTINCT from the live provenance-conflict 409 on the POS terminal
+        surface (F-3), which is NOT touched by this contract.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SystemFailure:
+      description: system_failure (500) — unexpected server error; cause recorded server-side by request_id.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

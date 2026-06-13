@@ -63,3 +63,6 @@ CLAUDE.md.backup
 
 # Graphify tooling output (not part of any slice)
 graphify-out/
+
+# Self-hosted GitHub Actions runner installs (local-only, not part of any slice)
+actions-runner*/

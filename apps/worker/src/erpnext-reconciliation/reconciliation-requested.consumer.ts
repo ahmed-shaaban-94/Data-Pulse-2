@@ -17,12 +17,15 @@
  * added safety. The consumer takes a `Pool`; the processor establishes its own
  * tenant context via `runWithTenantContext`.
  *
- * Stub-tolerant Bin read (R3): the connector ERPNext-Bin view is NOT live (the
- * future [GATED] `017-STOCK-VIEW-CONTRACT`). v1 wires `EMPTY_BIN_VIEW`, so a run
- * over a tenant with DP2 on-hand classes every confirmed item as `dp2_only` (the
- * connector hasn't reported) — correct, observable, and a real advance from
- * `running`. This consumer makes the DP2-INTERNAL run live; it does NOT make the
- * cross-system connector→ERPNext leg live.
+ * Stub-tolerant Bin read (R3): the seam is injected. Production wires the LIVE
+ * `ReportBackedBinView` (019-T041, PR #528 — resolved the `017-STOCK-VIEW-CONTRACT`
+ * deferral), so the processor reads the connector-reported Bin snapshot from
+ * `erpnext_reconciliation_run.summary.bin_view_report` and classifies against real
+ * ERPNext on-hand. The `EMPTY_BIN_VIEW` default below is the stub-tolerant
+ * fallback (no report → every confirmed item is `dp2_only`, correct and a real
+ * advance from `running`). Either way the connector reports the snapshot — DP2
+ * still makes NO outbound ERPNext HTTP (§IX / ADR-0008); this consumer makes the
+ * DP2-INTERNAL run live, not the cross-system connector→ERPNext leg.
  *
  * Idempotency (at-least-once): if the drainer crashes after the processor's
  * terminal `UPDATE … WHERE status='running'` but before marking the event

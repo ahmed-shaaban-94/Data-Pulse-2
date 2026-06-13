@@ -1,6 +1,6 @@
 # Analyze-Readiness Checklist — Draft D3 DP-2 Provider-Neutral Identity Link & IdentityProviderPort
 
-> **DRAFT — NOT DISPATCHED.** SPECIFY-time `/speckit-checklist`-equivalent. Focused **dispatch-readiness** quality gate — distinct from the specify-time [requirements.md](./requirements.md) (scope/evidence/gate framing) and from the cross-repo collision report. Planning artifact under docs-only Orchestrator. **Readiness != dispatch-authorization.**
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #550 `0af392e`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Spec:** [../spec.md](../spec.md) - **Analysis:** [../ANALYSIS.md](../ANALYSIS.md)
 **Created:** 2026-06-12. **Mode:** SPECIFY-ONLY / DRAFT.

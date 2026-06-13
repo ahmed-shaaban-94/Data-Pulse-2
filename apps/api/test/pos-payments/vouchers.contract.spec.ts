@@ -187,23 +187,28 @@ describe("pos-payments/vouchers.yaml — loadability", () => {
     expect(vouchersDoc.info?.version).toEqual(expect.any(String));
   });
 
-  it("declares the clerkJwt security scheme (POS-authenticated surface)", () => {
+  it("declares the role-named operator-identity security scheme (spec 030; was clerkJwt)", () => {
+    // Spec 030 retired the provider-named `clerkJwt` key on this surface and
+    // re-pointed every (non-sale) voucher operation to the role-named
+    // `operator-identity` scheme (a provider-identity JWT, identity proof only).
     const schemes = vouchersDoc.components?.securitySchemes ?? {};
-    expect(schemes["clerkJwt"]).toBeDefined();
+    expect(schemes["operator-identity"]).toBeDefined();
+    expect(schemes["clerkJwt"]).toBeUndefined();
   });
 
   it("does NOT declare cookieAuth (this surface is POS-only; no dashboard endpoints)", () => {
     // Voucher CRUD for tenant admins already lives under the existing
     // `/api/v1/pos/vouchers` surface in another contract. This V-A
     // contract is strictly the POS terminal → backend voucher-authority
-    // surface and uses clerkJwt exclusively.
+    // surface and uses the role-named `operator-identity` scheme exclusively.
     const schemes = vouchersDoc.components?.securitySchemes ?? {};
     expect(schemes["cookieAuth"]).toBeUndefined();
   });
 
-  it("declares clerkJwt as the document-level default security", () => {
+  it("declares operator-identity as the document-level default security (spec 030)", () => {
     expect(vouchersDoc.security).toBeDefined();
-    expect(vouchersDoc.security).toContainEqual({ clerkJwt: [] });
+    expect(vouchersDoc.security).toContainEqual({ "operator-identity": [] });
+    expect(vouchersDoc.security).not.toContainEqual({ clerkJwt: [] });
   });
 
   it("declares the pos-payments-vouchers tag (matches the operation tag)", () => {
@@ -262,13 +267,14 @@ describe("pos-payments/vouchers.yaml — Slice 4 operationIds", () => {
   });
 
   it.each(SLICE_4_OPERATION_IDS)(
-    "%s uses clerkJwt security (POS-Pulse JWT bearer scheme)",
+    "%s uses operator-identity security (spec 030; provider-identity JWT bearer)",
     (operationId) => {
       const found = newContractOperations().find(
         ({ op }) => op.operationId === operationId,
       );
       expect(found).toBeDefined();
-      expect(found?.op.security).toContainEqual({ clerkJwt: [] });
+      expect(found?.op.security).toContainEqual({ "operator-identity": [] });
+      expect(found?.op.security).not.toContainEqual({ clerkJwt: [] });
     },
   );
 });

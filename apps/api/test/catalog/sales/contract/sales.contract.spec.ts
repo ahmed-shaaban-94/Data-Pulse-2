@@ -194,9 +194,19 @@ describe("pos-sales/sales.yaml — loadability", () => {
     expect(salesDoc.info?.version).toEqual(expect.stringMatching(/-draft$/));
   });
 
-  it("declares the clerkJwt POS security scheme (mirrors posCaptureItem)", () => {
+  it("declares the operatorAuthorization scheme (031 D1+D2 envelope; NOT clerkJwt)", () => {
     const schemes = salesDoc.components?.securitySchemes ?? {};
-    expect(schemes["clerkJwt"]).toBeDefined();
+    // 031 retired clerkJwt on the sale routes in favour of the opaque
+    // operator-authorization envelope; the old Clerk-JWT scheme is gone.
+    expect(schemes["operatorAuthorization"]).toBeDefined();
+    expect(schemes["clerkJwt"]).toBeUndefined();
+    // The envelope is opaque, not a JWT — no bearerFormat.
+    const scheme = schemes["operatorAuthorization"] as { type?: string; scheme?: string; bearerFormat?: string };
+    expect(scheme.type).toBe("http");
+    expect(scheme.scheme).toBe("bearer");
+    expect(scheme.bearerFormat).toBeUndefined();
+    // MUST NOT reuse spec 030's identity-proof-only scheme.
+    expect(schemes["operator-identity"]).toBeUndefined();
   });
 });
 
@@ -226,9 +236,9 @@ describe("pos-sales/sales.yaml — operations", () => {
     }
   });
 
-  it("secures every operation with clerkJwt (POS-namespace auth)", () => {
+  it("secures every operation with the operatorAuthorization envelope (031 D1+D2)", () => {
     for (const { op } of salesOperations()) {
-      expect(op.security).toContainEqual({ clerkJwt: [] });
+      expect(op.security).toContainEqual({ operatorAuthorization: [] });
     }
   });
 });

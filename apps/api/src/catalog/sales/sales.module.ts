@@ -32,25 +32,28 @@ import { ContextModule } from "../../context/context.module";
 import { IdempotencyModule } from "../../idempotency/idempotency.module";
 import { SalesController } from "./sales.controller";
 import { SalesService } from "./sales.service";
-import {
-  CLERK_VERIFIER,
-  type ClerkVerifier,
-  clerkVerifierFactory,
-} from "../../pos-operators/clerk-verifier";
 import { DeviceRepository } from "../../pos-operators/device.repository";
 import {
   OPERATOR_CONTEXT_RESOLVER,
   PgOperatorContextResolver,
 } from "../../auth/operator-context-resolver";
-import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guard";
+import {
+  IDENTITY_PROVIDER_PORT,
+  type IdentityProviderPort,
+} from "../../auth/identity-provider.port";
+import { clerkIdentityProviderFactory } from "../../auth/clerk-identity-provider.adapter";
+import { PosOperatorEnvelopeSaleGuard } from "../../auth/pos-operator-envelope-sale.guard";
+import { SessionRepository } from "../../auth/session.repository";
+import { AuthTokenRepository } from "../../auth/auth-token.repository";
 
 /**
- * 008 Option Y wiring: the sale routes authenticate via Clerk JWT + device
- * attestation through PosOperatorSaleAuthGuard → PgOperatorContextResolver,
- * reusing the same ClerkVerifier + DeviceRepository the operator sign-in
- * surface uses (constructed here against the shared PG_POOL; no cross-module
- * provider mutation). The guard publishes req.context, so TenantContextGuard
- * is no longer needed on the write routes.
+ * 008 Option Y wiring, 029 D3 re-pointed: the sale routes authenticate via a
+ * provider token + device attestation through PosOperatorSaleAuthGuard →
+ * PgOperatorContextResolver, which now verifies the token via the
+ * provider-neutral IdentityProviderPort (v1 Clerk adapter, constructed against
+ * the shared PG_POOL; `@clerk/backend` stays contained behind the adapter) and
+ * resolves the operator via the external_identity_links join. The guard
+ * publishes req.context, so TenantContextGuard is not needed on the write routes.
  */
 @Module({
   imports: [AuthModule, IdempotencyModule, AuditModule, ContextModule],
@@ -58,8 +61,10 @@ import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guar
   providers: [
     SalesService,
     {
-      provide: CLERK_VERIFIER,
-      useFactory: clerkVerifierFactory,
+      provide: IDENTITY_PROVIDER_PORT,
+      useFactory: (pool: Pool): IdentityProviderPort =>
+        clerkIdentityProviderFactory(pool),
+      inject: [PG_POOL],
     },
     {
       provide: DeviceRepository,
@@ -70,17 +75,29 @@ import { PosOperatorSaleAuthGuard } from "../../auth/pos-operator-sale-auth.guar
       provide: OPERATOR_CONTEXT_RESOLVER,
       useFactory: (
         pool: Pool,
-        verifier: ClerkVerifier,
+        identityProvider: IdentityProviderPort,
         devices: DeviceRepository,
       ): PgOperatorContextResolver =>
-        new PgOperatorContextResolver(pool, verifier, devices),
-      inject: [PG_POOL, CLERK_VERIFIER, DeviceRepository],
+        new PgOperatorContextResolver(pool, identityProvider, devices),
+      inject: [PG_POOL, IDENTITY_PROVIDER_PORT, DeviceRepository],
     },
-    // Bare-class provider: Nest reads the guard's @Inject(OPERATOR_CONTEXT_RESOLVER)
-    // metadata to resolve its dependency, even when it instantiates the guard by
-    // class for @UseGuards(PosOperatorSaleAuthGuard). Mirrors ReadDownModule's
-    // bare PosDeviceAuthGuard provider.
-    PosOperatorSaleAuthGuard,
+    // 031 (D1+D2, Option B): the sale-write routes are guarded by
+    // PosOperatorEnvelopeSaleGuard — canonical envelope auth (bearer →
+    // pos_operator principal) PLUS live per-request re-verification of
+    // membership/device/store-access (G-4). The reverifier is the same
+    // PgOperatorContextResolver registered above (it implements both
+    // OperatorContextResolver and OperatorReverifier). Option-Y's
+    // PosOperatorSaleAuthGuard is retired (no parallel path).
+    {
+      provide: PosOperatorEnvelopeSaleGuard,
+      useFactory: (
+        sessions: SessionRepository,
+        authTokens: AuthTokenRepository,
+        reverifier: PgOperatorContextResolver,
+      ): PosOperatorEnvelopeSaleGuard =>
+        new PosOperatorEnvelopeSaleGuard(sessions, authTokens, reverifier),
+      inject: [SessionRepository, AuthTokenRepository, OPERATOR_CONTEXT_RESOLVER],
+    },
   ],
   exports: [SalesService],
 })

@@ -1,6 +1,6 @@
 # Analysis — Draft D3 DP-2 Provider-Neutral Identity Link & IdentityProviderPort
 
-> **DRAFT — NOT DISPATCHED.** SPECIFY-time internal-consistency readiness pass (`/speckit-analyze`-equivalent). Planning artifact under docs-only Orchestrator. No implementation, no contract, no migration, no gate mutation. **Readiness != dispatch-authorization** — dispatch requires explicit scoped owner approval + verified G10.
+> **SHIPPED — MERGED to `main` 2026-06-12** (PR #550 `0af392e`). This artifact is the as-built record; the original SPECIFY/DRAFT framing is superseded.
 
 **Spec:** [spec.md](./spec.md) - [plan.md](./plan.md) - [tasks.md](./tasks.md) - [checklists/requirements.md](./checklists/requirements.md)
 **Mode:** SPECIFY-ONLY / DRAFT. **Date:** 2026-06-12. **Reviewer pass:** per-spec analyze + checklist (distinct from the cross-repo collision report).

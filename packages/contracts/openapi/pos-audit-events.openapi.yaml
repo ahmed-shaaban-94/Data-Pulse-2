@@ -118,6 +118,17 @@ components:
         Clerk JWT. Fail-closed on JWKS fetch error or signature mismatch
         when the header is present. The token is not propagated past the
         verifier and never appears in response payloads.
+
+
+        DEFERRAL NOTE (spec 030 / 028 DOC-3): this `Authorization: Bearer`
+        credential is a GENUINE Clerk JWT (verified via JWKS above), so
+        `bearerFormat: JWT` is already honest and the scheme is intentionally
+        NOT renamed to the role-named `device` scheme — that would falsely
+        document an opaque non-JWT token (a DOC-3 doc<->runtime mismatch). The
+        authoritative DEVICE gate on this endpoint is the BODY field
+        `device_token_attestation`, which no OpenAPI security scheme represents.
+        A role-named rename (if ever warranted) co-delivers with the D1
+        operator-authorization-envelope work; documented faithfully today.
   schemas:
     # -------------------------------------------------------------------
     # Top-level request

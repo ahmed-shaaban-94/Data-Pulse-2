@@ -12,9 +12,15 @@ info:
     tender / payment (deferred to 010 per gate A.5).
 
     Four operations, all POS-facing (`/api/pos/v1/...`), authenticated via the
-    same Clerk JWT bearer scheme used by `pos-shifts.openapi.yaml`,
-    `pos-audit-events.openapi.yaml`, and the `posCaptureItem` operation in
-    `catalog/unknown-items.yaml` (component `clerkJwt`). The principal's
+    `operatorAuthorization` scheme — the opaque DP-2-issued operator-authorization
+    ENVELOPE presented as `Authorization: Bearer <envelope>` (031 D1+D2). This
+    REPLACES the prior 008 Option-Y auth (a genuine Clerk JWT +
+    `X-Device-Attestation`): the envelope is minted + returned at operator
+    sign-in, and the backend re-evaluates the full operator predicate
+    (membership / device / store-access / role / expiry) LIVE per request (G-4).
+    The 028 DOC-3 deferral is now resolved — this is the role-named authorization
+    scheme the rename waited on (distinct from spec 030's identity-proof-only
+    `operator-identity`). The principal's
     resolved tenant + store binding (spec 002) supplies `tenant_id` and
     `store_id`; body-supplied tenant / store / actor fields are NEVER accepted
     (Constitution §III, FR-061):
@@ -74,7 +80,7 @@ paths:
       x-idempotency: required
       tags: [pos-sales]
       security:
-        - clerkJwt: []
+        - operatorAuthorization: []
       description: >
         Create the immutable `sales` header + frozen `sale_lines` snapshot from
         a completed POS sale. The authenticated principal supplies `tenant_id`
@@ -92,7 +98,6 @@ paths:
         `(tenant, sourceSystem, externalId)` (FR-050) — replays return the same
         stable sale reference deterministically (FR-100), with no double-apply.
       parameters:
-        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -136,7 +141,7 @@ paths:
       operationId: readSale
       tags: [pos-sales]
       security:
-        - clerkJwt: []
+        - operatorAuthorization: []
       description: >
         Resolve a single sale for void/refund or duplicate-replay confirmation.
         Object-level authz: a sale outside the caller's resolved (tenant, store)
@@ -164,7 +169,7 @@ paths:
       x-idempotency: required
       tags: [pos-sales]
       security:
-        - clerkJwt: []
+        - operatorAuthorization: []
       description: >
         Create a void terminal event referencing the sale, stamping `voidedAt`
         from the server clock. The original `sales` row and its `sale_lines`
@@ -178,7 +183,6 @@ paths:
         with no duplicate record (FR-013).
       parameters:
         - $ref: "#/components/parameters/SaleRef"
-        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -224,7 +228,7 @@ paths:
       x-idempotency: required
       tags: [pos-sales]
       security:
-        - clerkJwt: []
+        - operatorAuthorization: []
       description: >
         Create a refund terminal event referencing the sale, stamping
         `refundedAt` from the server clock and preserving the POS-reported
@@ -237,7 +241,6 @@ paths:
         refund (same provenance) is not double-applied (FR-013).
       parameters:
         - $ref: "#/components/parameters/SaleRef"
-        - $ref: "#/components/parameters/DeviceAttestation"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -279,33 +282,41 @@ paths:
 
 components:
   securitySchemes:
-    clerkJwt:
+    operatorAuthorization:
       type: http
       scheme: bearer
-      bearerFormat: JWT
       description: >
-        Clerk-issued JWT presented as `Authorization: Bearer <jwt>`, paired
-        with the platform device-token header per the 001/002 baseline — the
-        same scheme used by `pos-shifts.openapi.yaml`, `pos-audit-events`, and
-        `posCaptureItem`. Verified at the API edge; fail-closed on signature /
-        JWKS error. The token is not propagated past the verifier.
+        The operator-authorization ENVELOPE (031 D1+D2): an opaque, revocable,
+        DP-2-issued `pos_operator` bearer presented as
+        `Authorization: Bearer <envelope>`. Minted and returned to the POS
+        client at operator sign-in / takeover-confirm
+        (`PosOperatorSessionSummary.envelope`), it is the durable sale-sync
+        credential the backend resolves via the canonical operator-authorization
+        path. It carries NO Clerk/provider-specific claim and is verified by
+        DP-2 independent of the provider (the provider JWT is identity proof at
+        sign-in only).
+
+
+        AUTHORIZATION SEMANTICS: this is an *authorization* credential, NOT an
+        identity proof — it deliberately does NOT reuse spec 030's
+        `operator-identity` scheme (which is identity-proof-only, JWT). Beyond
+        the bearer, the backend re-evaluates the full operator predicate
+        (membership-active, device-active, store-access, role-eligibility,
+        non-expiry) LIVE on every sale request, so a mid-session revocation
+        stops further sales immediately (G-4). Every refusal — missing /
+        invalid / revoked / expired envelope or a failed live re-verification —
+        collapses to the same generic 401 (no factor disclosure).
+
+
+        Note: `bearerFormat` is intentionally omitted — the envelope is an
+        opaque token, not a JWT.
 
   parameters:
-    DeviceAttestation:
-      name: X-Device-Attestation
-      in: header
-      required: true
-      schema:
-        type: string
-        minLength: 1
-      description: >
-        008 Option Y — terminal-side proof of possession of the paired device
-        token (per 001/002), carried in a dedicated header (NOT the body, which
-        is hashed into `payload_hash` + the idempotency fingerprint). With the
-        `Authorization: Bearer <clerk-jwt>`, it authenticates the sale via the
-        same identity/eligibility pipeline as operator sign-in and resolves the
-        canonical `(tenant_id, store_id)` scope. Never logged or persisted
-        (FR-POS-AUTH-2).
+    # DeviceAttestation (X-Device-Attestation) was the 008 Option-Y device
+    # proof-of-possession header. 031 (D1+D2) retired it from the sale routes:
+    # the operator-authorization envelope is bound to its `auth_tokens` row
+    # which already carries `device_id`, recovered server-side — the client no
+    # longer presents an attestation header on capture/void/refund.
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -381,15 +392,15 @@ components:
         present (FR-061). `additionalProperties: false` enforces the strict
         mass-assignment boundary at the contract level (FR-062).
 
-        Auth (008 Option Y): the operator's Clerk JWT is presented in
-        `Authorization: Bearer <jwt>` (component `clerkJwt`); the paired
-        terminal's device attestation is supplied in the `X-Device-Attestation`
-        header (parameter `DeviceAttestation`), NOT the body — the body is
-        hashed into the sale `payload_hash` and the idempotency fingerprint, so
-        an auth credential must never ride in it. The two together authenticate
-        the sale via the same identity/eligibility pipeline as operator sign-in
-        (`pos-operators.openapi.yaml`). The resolved `(tenant_id, store_id,
-        actor)` come from the device row + membership — never from the body.
+        Auth (031 D1+D2): the operator-authorization envelope is presented in
+        `Authorization: Bearer <envelope>` (component `operatorAuthorization`),
+        NOT the body — the body is hashed into the sale `payload_hash` and the
+        idempotency fingerprint, so an auth credential must never ride in it.
+        The envelope resolves to the operator session whose bound
+        `(tenant_id, store_id, device_id, user_id)` supply the scope + actor; the
+        backend re-verifies membership / device / store-access / role LIVE per
+        request (G-4). The resolved `(tenant_id, store_id, actor)` come from the
+        session binding + membership — never from the body.
       properties:
         sourceSystem:
           type: string
@@ -469,9 +480,9 @@ components:
       description: >
         Void terminal event. `voidedAt` / tenant / store / actor resolve
         server-side and are rejected if body-supplied (FR-061). Provenance is
-        the event's own dedup key (FR-013). Auth (008 Option Y): Clerk JWT in
-        `Authorization` + the device attestation in the `X-Device-Attestation`
-        header (not the body).
+        the event's own dedup key (FR-013). Auth (031 D1+D2): the
+        operator-authorization envelope in `Authorization: Bearer <envelope>`
+        (`operatorAuthorization`); predicate re-verified live per request (G-4).
       properties:
         sourceSystem:
           type: string
@@ -488,9 +499,9 @@ components:
       description: >
         Refund terminal event. Records ONLY the POS-reported refund amount —
         no tender / payment data (gate A.5). `refundedAt` / tenant / store /
-        actor resolve server-side (FR-061). Auth (008 Option Y): Clerk JWT in
-        `Authorization` + the device attestation in the `X-Device-Attestation`
-        header (not the body).
+        actor resolve server-side (FR-061). Auth (031 D1+D2): the
+        operator-authorization envelope in `Authorization: Bearer <envelope>`
+        (`operatorAuthorization`); predicate re-verified live per request (G-4).
       properties:
         sourceSystem:
           type: string
@@ -568,6 +579,15 @@ components:
             Advisory — true when the POS total differs from the SaaS per-line /
             half-up comparison total (FR-031/032). The POS total is never
             rewritten.
+        syncStatus:
+          type: string
+          enum: [captured, synced, failed-retryable, failed-needs-repair]
+          description: >
+            032 §7 — DP-2's server-authoritative sale-status, distinct from the
+            POS-local outbox UX state. Set to `captured` at capture; advanced to
+            `synced` by the off-request drain that sets `processedAt`; the
+            dead-letter classifier sets `failed-retryable` / `failed-needs-repair`.
+            POS never overrides it (the terminal observes, DP-2 decides).
         lines:
           type: array
           items:

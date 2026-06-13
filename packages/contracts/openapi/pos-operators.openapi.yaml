@@ -7,10 +7,12 @@ info:
     sign-out) + Wave 3 (roster, takeover confirm, active-session).
 
 
-    All endpoints authenticate the caller via the Clerk JWT in
-    `Authorization: Bearer <jwt>`, paired with the platform device-token
-    header (per the existing 001/002 baseline). Both endpoints fail closed:
-    every refusal returns the same generic
+    All endpoints authenticate the caller via the role-named `operator-identity`
+    security scheme — a provider-identity JWT in `Authorization: Bearer <jwt>`
+    (spec 030 / 028 DOC-1; previously named `clerkJwt`), paired with the platform
+    device-token header (per the existing 001/002 baseline). The JWT is identity
+    proof only — NOT business authorization (028 §6 CM-1). Both endpoints fail
+    closed: every refusal returns the same generic
     `{ error: { code, message, request_id } }` envelope and does not
     enumerate causes.
 
@@ -45,7 +47,7 @@ paths:
       operationId: posOperatorSignIn
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -98,7 +100,7 @@ paths:
       operationId: posOperatorSignOut
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -141,7 +143,7 @@ paths:
       operationId: posOperatorRoster
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       parameters:
         - name: branch_id
           in: query
@@ -196,7 +198,7 @@ paths:
       operationId: posOperatorTakeoverConfirm
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       requestBody:
         required: true
         content:
@@ -246,7 +248,7 @@ paths:
       operationId: posOperatorActiveSession
       tags: [pos-operators]
       security:
-        - clerkJwt: []
+        - operator-identity: []
       parameters:
         - name: branch_id
           in: query
@@ -290,16 +292,26 @@ paths:
                 $ref: "#/components/schemas/Error"
 components:
   securitySchemes:
-    clerkJwt:
+    # `operator-identity` is the role-named provider-identity scheme
+    # (spec 030 / 028 DOC-1). It replaces the provider-named `clerkJwt` key: the
+    # credential is the operator's identity-proof JWT presented at sign-in /
+    # subsequent calls. Identity proof ONLY — NOT business authorization
+    # (028 §6 CM-1). The provider (Clerk, today) is named only in prose, never
+    # in the scheme key. Doc<->runtime-honest: the runtime already verifies this
+    # provider-identity JWT; only the contract name changes.
+    operator-identity:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: >
-        Clerk-issued JWT, presented as `Authorization: Bearer <jwt>`.
-        Verified at the API edge against Clerk's JWKS (signature, `iss`,
-        `aud`, `exp`, `nbf`, `iat`). Fail-closed on JWKS fetch error or
-        signature mismatch — no allow-list shortcut, no cached
-        last-known-good. The token is not propagated past the verifier.
+        Provider-identity JWT (spec 030 / 028 §6 CM-1), presented as
+        `Authorization: Bearer <jwt>`. Identity proof / sign-in evidence ONLY —
+        it is NOT business authorization. Verified at the API edge against the
+        identity provider's JWKS (signature, `iss`, `aud`, `exp`, `nbf`, `iat`).
+        Fail-closed on JWKS fetch error or signature mismatch — no allow-list
+        shortcut, no cached last-known-good. The provider is Clerk today, named
+        only as the current implementation; the scheme name is provider-neutral.
+        The token is not propagated past the verifier.
   schemas:
     # -------------------------------------------------------------------
     # Sign-in request
@@ -394,13 +406,17 @@ components:
     # -------------------------------------------------------------------
     PosOperatorSummary:
       type: object
-      required: [id, display_name, role, tenant_id, branch_id]
+      required: [id, user_id, display_name, role, tenant_id, branch_id]
       additionalProperties: false
       description: >
-        Wave 1 operator payload. Carries only what POS-Pulse needs to
-        render the operator in-shift: id (Clerk subject), display_name,
-        role, tenant_id, and branch_id. No email, no platform-admin
-        flag, no membership detail.
+        Wave 1 operator payload. Carries what POS-Pulse needs to render and
+        anchor the operator in-shift: id (Clerk subject, v1 bridge), user_id
+        (provider-neutral users.id, 028 §16), display_name, role, tenant_id,
+        and branch_id. No email, no platform-admin flag, no membership detail.
+        NOTE (033): `user_id` is an additive field, but this schema is
+        `additionalProperties: false` and is pinned on both sides — a strict
+        POS-Pulse validator on the OLD schema rejects it, so the schema bump
+        and the POS-Pulse pin update ship as a coordinated pair.
       properties:
         id:
           type: string
@@ -408,8 +424,18 @@ components:
             Clerk subject of the operator (`users.clerk_user_id`). This
             is the same identifier POS-Pulse sees in roster, takeover,
             and active-session endpoints — preserving identity
-            continuity across the POS surface. Not the local `users.id`
-            (which is a UUID and is server-internal).
+            continuity across the POS surface. This is the provider-coupled
+            v1 bridge; `user_id` is the provider-neutral key to prefer.
+        user_id:
+          type: string
+          format: uuid
+          description: >
+            Provider-neutral identity key (`users.id`, the 028 §16 identity
+            key). Distinct from `id` (= `clerk_user_id`, the v1 bridge).
+            Surfaced so POS terminals can anchor local operator-scoped records
+            (e.g. POS-017 offline-PIN re-anchor) on a provider-independent
+            identifier. Always present on a signed-in response, including an
+            idempotent takeover-confirm replay.
         display_name:
           type: string
           description: Operator display name (already resolved server-side).
@@ -429,16 +455,17 @@ components:
           description: Internal `store_id`, surfaced as `branch_id` to POS callers.
     PosOperatorSessionSummary:
       type: object
-      required: [id, issued_at]
+      required: [id, issued_at, envelope]
       additionalProperties: false
       description: >
-        Wave 1 operator-session payload. The backend operator session is
-        server-side state in Wave 1 — POS-Pulse does **not** receive a
-        bearer token to authenticate subsequent calls. Instead, the
-        `id` returned here is the handle POS-Pulse passes back as
-        `session_id` on the sign-out body when the operator signs out.
-        Subsequent authenticated calls continue to carry the Clerk JWT
-        + the platform device-token header per the existing baseline.
+        Operator-session payload. The `id` is the handle POS-Pulse passes
+        back as `session_id` on sign-out. As of 031 (D1), this payload also
+        carries the client-presentable operator-authorization `envelope` —
+        the opaque `pos_operator` bearer the POS client presents on the
+        sale-sync routes (capture / void / refund), which the backend
+        resolves via the canonical operator-authorization scheme. This
+        supersedes the earlier Wave-1 posture in which the operator session
+        was server-side state only and no bearer was returned.
       properties:
         id:
           type: string
@@ -449,6 +476,18 @@ components:
         issued_at:
           type: string
           format: date-time
+        envelope:
+          type: string
+          nullable: true
+          description: >
+            The client-presentable operator-authorization envelope (031 D1):
+            an opaque `pos_operator` bearer presented as
+            `Authorization: Bearer <envelope>` on the sale-sync routes.
+            Non-null on a fresh issue (sign-in and first takeover-confirm).
+            **Null on an idempotent takeover-confirm replay** — the credential
+            is hash-once and not recoverable from the stored row; a replay is
+            the original client retrying and it already holds the envelope from
+            the first response.
     # -------------------------------------------------------------------
     # Wave 3 — Roster
     # -------------------------------------------------------------------

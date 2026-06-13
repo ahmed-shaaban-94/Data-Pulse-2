@@ -1,11 +1,17 @@
 /**
- * operator-context-resolver.unit.spec.ts — 008 Option Y.
+ * operator-context-resolver.unit.spec.ts — 008 Option Y, 029 D3 re-pointed.
  *
  * Docker-free unit coverage for PgOperatorContextResolver — the security core
- * of the sale-auth path. Every branch of the Clerk-verify → user → device →
+ * of the sale-auth path. Every branch of the verify → user → device →
  * membership → role/store eligibility derivation is asserted with fakes for
- * `pool.query`, the ClerkVerifier, and the DeviceRepository. No NestJS module,
- * no Testcontainers, no network.
+ * `pool.query`, the IdentityProviderPort, and the DeviceRepository. No NestJS
+ * module, no Testcontainers, no network.
+ *
+ * 029 D3: the resolver now verifies via the provider-neutral IdentityProviderPort
+ * (returning a neutral subject) and resolves the local user via the
+ * external_identity_links join — NOT clerk_user_id. The refusal taxonomy + the
+ * happy-path scoping are UNCHANGED; this spec passing unchanged (modulo the seam
+ * swap) is the N-2 regression proof.
  *
  * The end-to-end SQL-against-real-schema proof lives in the testcontainer
  * integration spec (sale-auth.integration.spec.ts); this spec proves the
@@ -19,7 +25,10 @@ import type { DeviceRow } from "@data-pulse-2/db/schema";
 import {
   PgOperatorContextResolver,
 } from "../../src/auth/operator-context-resolver";
-import type { ClerkVerifier } from "../../src/pos-operators/clerk-verifier";
+import type {
+  IdentityProviderPort,
+  VerifiedSubject,
+} from "../../src/auth/identity-provider.port";
 import type { DeviceRepository } from "../../src/pos-operators/device.repository";
 
 const SUB = "user_clerk_sub_123";
@@ -55,6 +64,13 @@ interface MembershipRow {
  * Build a resolver with scripted dependencies. `userRow` / `membershipRow`
  * drive the two `pool.query` calls (user lookup, membership lookup); a third
  * query (store_access) returns `storeAccessRows`.
+ *
+ * 029 D3: the identity seam is now the provider-neutral IdentityProviderPort.
+ * `verify` is expressed as the verifier-style `() => { sub }` for parity with
+ * the prior spec and wrapped into a neutral VerifiedSubject; the user-lookup
+ * query branch now matches the external_identity_links join (FROM
+ * external_identity_links), proving the resolver reads the link, not
+ * clerk_user_id.
  */
 function build(opts: {
   verify?: () => Promise<{ sub: string }>;
@@ -63,9 +79,14 @@ function build(opts: {
   membershipRow?: MembershipRow | null;
   storeAccessRows?: Array<{ one: number }>;
 }) {
-  const verifier: ClerkVerifier = {
-    verify: opts.verify ?? (async () => ({ sub: SUB })),
-  };
+  const verifyFn = opts.verify ?? (async () => ({ sub: SUB }));
+  const identityProvider = {
+    verifyIdentityToken: async (raw: string): Promise<VerifiedSubject> => {
+      const { sub } = await verifyFn();
+      void raw;
+      return { providerKey: "clerk", issuer: "https://issuer.example", subject: sub };
+    },
+  } as unknown as IdentityProviderPort;
   const deviceRepository = {
     findActiveByAttestation: jest.fn().mockResolvedValue(
       opts.device === undefined ? makeDevice() : opts.device,
@@ -74,7 +95,7 @@ function build(opts: {
 
   const query = jest.fn((sql: string) => {
     const text = String(sql);
-    if (text.includes("FROM users")) {
+    if (text.includes("FROM external_identity_links")) {
       return Promise.resolve({
         rows: opts.userRow === undefined
           ? [{ id: USER_ID, deleted_at: null }]
@@ -105,16 +126,16 @@ function build(opts: {
   });
   const pool = { query } as unknown as Pool;
 
-  return new PgOperatorContextResolver(pool, verifier, deviceRepository);
+  return new PgOperatorContextResolver(pool, identityProvider, deviceRepository);
 }
 
 describe("PgOperatorContextResolver — refusals (security branches)", () => {
-  it("clerk verify throws → clerk_jwt_invalid", async () => {
+  it("token verify throws → clerk_jwt_invalid", async () => {
     const r = build({ verify: async () => { throw new Error("bad jwt"); } });
     expect(await r.resolve("jwt", "att")).toEqual({ kind: "refused", reason: "clerk_jwt_invalid" });
   });
 
-  it("no local user for sub → user_unmapped", async () => {
+  it("no ACTIVE external_identity_links row for subject → user_unmapped", async () => {
     const r = build({ userRow: null });
     expect(await r.resolve("jwt", "att")).toEqual({ kind: "refused", reason: "user_unmapped" });
   });

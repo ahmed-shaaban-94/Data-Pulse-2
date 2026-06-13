@@ -46,8 +46,14 @@ export type PosOperatorRole = "manager" | "admin";
 
 /** Conforms to OpenAPI `PosOperatorSummary`. */
 export interface PosOperatorSummaryBody {
-  /** `users.clerk_user_id` (Clerk subject), NOT `users.id` (ADR D4). */
+  /** `users.clerk_user_id` (Clerk subject), NOT `users.id` (ADR D4). v1 bridge. */
   id: string;
+  /**
+   * Provider-neutral identity key = `users.id` (028 §16). Distinct from `id`
+   * (= `clerk_user_id`, the v1 bridge). Surfaced so POS can anchor local
+   * operator-scoped records on a provider-independent identifier (033 / POS-017).
+   */
+  user_id: string;
   display_name: string;
   role: PosOperatorRole;
   /** Tenant UUID (server-internal IDs are visible here, but `branch_id` is the only POS-facing branch identifier). */
@@ -60,6 +66,16 @@ export interface PosOperatorSummaryBody {
 export interface PosOperatorSessionSummaryBody {
   id: string;
   issued_at: string;
+  /**
+   * The client-presentable operator-authorization ENVELOPE (031 D1, OQ-1 =
+   * 1-A-i): the opaque `pos_operator` bearer the POS client presents on the
+   * sale-sync routes; it resolves via the canonical `PosOperatorAuthGuard`.
+   * Present on a fresh issue (sign-in + first takeover-confirm). **Null on an
+   * idempotent takeover-confirm replay** — the raw token is hash-once and not
+   * recoverable from the stored row, and a replay is the original client
+   * retrying (it already holds the envelope from the first response).
+   */
+  envelope: string | null;
 }
 
 /** Conforms to OpenAPI `PosOperatorSignInSucceeded`. */

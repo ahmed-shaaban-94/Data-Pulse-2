@@ -30,6 +30,17 @@
 - Q: Does this slice change the operator-resolution join key (`clerk_user_id`) or introduce the provider-neutral identity link? → A: **No — that is drift D3 (foundation), out of scope here** — the resolver continues to join on `clerk_user_id` for this slice (E-4); "provider-neutral" in this draft refers to the *client-presentable envelope*, not the server-side resolution path. D3 is recommended-first sequencing, **not** a hard gate on D1 (see Dependencies & sequencing).
 - Q: Does this slice modify POS-Pulse, offline-PIN, or device-attestation behavior? → A: **No** — POS adoption of the envelope is drift **D5** (POS half of the keystone, downstream of D1); offline-PIN re-anchor is **D6**; the device-token-reverts-to-device-scoped change is **D7**. This draft is the DP-2 issuance↔use reconciliation only.
 
+### Session 2026-06-12 — owner ratification of the carried Open Questions
+
+> The OQ decision-options brief (`oq-decision-options.md`, PR #554) was reviewed by the owner. The DP-2-local OQs are **RESOLVED** as below; the two 028-boundary mirrors are **owner-confirmed DEFERRED to the 028 boundary** (not resolved here). This ratification authorizes advancing 031 from specify/clarify to **plan only** — it does **not** authorize implementation. G10 boundary is signed (planning precondition); gate clearance for dispatch remains an Orchestrator-side check.
+
+- Q (OQ-1, format): Opaque revocable bearer, signed/structured token, or a new representation? → A: **RESOLVED — opaque revocable bearer.** Reuses the existing verification path (`AuthGuard` → `findActiveByRawToken` → `pos_operator` principal) and the existing `auth_tokens` hash/revocation model; no signing-key management; matches the stack's house pattern. The signed-token alternative was rejected (breaks DB-backed revocation, adds key management).
+- Q (OQ-1 sub-fork): Return the currently-discarded raw token (1-A-i), or mint a distinct presentable opaque (1-A-ii)? → A: **RESOLVED — 1-A-i.** Return the raw value `issueOperatorSessionRow` already generates via `generateRawToken()` and currently discards after hashing; keep the existing `auth_tokens` hash + `revoked_at` revocation model unchanged. (Spec N-5 is hereby satisfied for this sub-fork.)
+- Q (OQ-2, TTL): Reuse the existing 8h operator-session TTL, or a shorter envelope TTL? → A: **RESOLVED — reuse the existing 8h `OPERATOR_SESSION_TTL_MS`.** A shorter TTL only pays off with refresh (OQ-3); since refresh is deferred, 8h is the self-consistent choice.
+- Q (OQ-3, refresh) = 028 OQ-9: Is the envelope refreshable; does POS store a refresh credential? → A: **DEFERRED to the 028 boundary (owner-confirmed).** Fallback for this slice = **no refresh** (today's `FR-POS-AUTH-5` behavior). The plan plans *around* this with an explicit "pending 028" placeholder; it is NOT resolved here.
+- Q (OQ-4, multi-terminal) = 028 OQ-4: One operator across multiple terminals, or single-session? → A: **DEFERRED to the 028 boundary (owner-confirmed).** This slice inherits only the existing `takeover_required` / single-session-per-`(device, store)` behavior; the multi-distinct-device question stays upstream. NOT resolved here.
+- Q (OQ-5, transport/scheme): Header/transport for the envelope on the sale routes? → A: **RESOLVED — `Authorization: Bearer <envelope>`** (the path `readBearerToken` already serves). The DOC-3 sale-route scheme **MUST** be a **new, distinct authorization-credential scheme** (e.g. `operator-authorization` / `pos-operator-envelope`) — it **MUST NOT** reuse 030's `operator-identity` scheme, which is identity-proof-only; reusing it would re-create the 028 §19 DOC-3 contract↔runtime mismatch.
+
 ## Evidence basis (verified this session, `origin/main`, 2026-06-11)
 
 | Repo | `origin/main` HEAD | What was read |
@@ -121,7 +132,7 @@ The delta is deliberately small and **framed as "return + re-wire," not "build f
 - **A-5.** Sale provenance and audit are unchanged: `sale.captured/voided/refunded` still record a real `actor_user_id` and the resolved `(tenant,store,user,device)` scope.
 - **A-6.** The envelope carries no Clerk-specific field; verifying it does not require the provider, and the operator-resolution join key is unchanged (D3 untouched).
 - **A-7.** Failure posture preserved: every refusal collapses to the same generic `401`; no enumeration; no token/secret in logs (028 SR-2/SR-6).
-- **A-8.** No envelope wire-format, TTL-value, or refresh-model decision is asserted as final — those remain Open Questions for the owning repo's plan phase.
+- **A-8.** The envelope wire-format (opaque, 1-A-i) and TTL (8h) are **resolved** by owner ratification (Clarifications 2026-06-12); only the **refresh-model (OQ-3) and multi-terminal policy (OQ-4)** remain open — owner-confirmed **deferred to the 028 boundary**, v1 fallback = no-refresh + inherited single-session. No DP-2-local decision is left unasserted.
 - **A-9.** No implementation, contract, or migration was authored in this draft (Orchestrator docs-only).
 
 ## Dependencies & sequencing
@@ -133,17 +144,17 @@ The delta is deliberately small and **framed as "return + re-wire," not "build f
 - **Downstream consumers (out of scope here):** **D5** (POS adopts/presents the envelope) is hard-gated on D1; **D7** (device token reverts to device-scoped) follows D5; **D6** (POS offline-PIN re-anchor) needs D3 **and** the D1/D5 envelope carrying `user_id` (the DAG's surfaced new edge).
 - **Parallelizable, not gated on this item:** **D4** (DP-2 contract cleanup, DOC-1/2/4) is additive and startable now (D1→D4 was adversarially **refuted**); the DOC-3 sale-route rename co-travels with this slice only.
 
-## Open questions (carried — NOT decided here)
+## Open questions (status after owner ratification, Session 2026-06-12)
 
-> Genuinely-open 028/plan-phase questions. Auto-resolution was deliberately **not** applied to any of these; they belong to the owning repo's plan phase under G10.
+> The DP-2-local OQs were **RESOLVED** by owner ratification (Clarifications Session 2026-06-12); the two 028-boundary mirrors are **owner-confirmed DEFERRED** to the 028 boundary. The plan phase consumes the resolved answers and plans *around* the deferred ones with explicit "pending 028" placeholders.
 
-- **OQ-1 (envelope wire format).** Opaque revocable bearer (re-using the existing `auth_tokens` material) vs a signed/structured token vs a new representation. Today `issueOperatorSessionRow` generates an opaque raw value, hashes it, and discards the raw; whether to return that raw, a new opaque, or a structured token is **undecided**. *(Plan-phase; do not assume "return the discarded raw token.")*
-- **OQ-2 (TTL).** The envelope's lifetime vs today's `OPERATOR_SESSION_TTL_MS`; whether sale-sync TTL differs from sign-in session TTL. *(Plan-phase.)*
-- **OQ-3 (refresh model) — = 028 OQ-9.** Whether the envelope is refreshable and whether POS ever stores a refresh credential locally. Carried directly from 028 OQ-9 (unresolved).
-- **OQ-4 (multi-terminal / takeover) — = 028 OQ-4.** Whether one operator may hold a live envelope on multiple terminals or whether takeover forces single-session. The sign-in service already implements `takeover_required` detection per `(device, store)`; the envelope's interaction with that is plan-phase.
-- **OQ-5 (transport).** Header name / transport for the envelope on the sale routes (e.g. a role-named scheme replacing `clerkJwt`); ties to 028 §19 DOC-1/3 and is contract-phase.
-- **Referenced 028-open, non-blocking for this slice:** OQ-2 (offline manager override), OQ-3 (PIN retry-lock), OQ-11 (break-glass for pilot) remain open at the 028 boundary and do not gate this DP-2 issuance↔use reconciliation.
+- **OQ-1 (envelope wire format) — RESOLVED.** Opaque revocable bearer, **sub-fork 1-A-i**: return the raw value `issueOperatorSessionRow` already generates via `generateRawToken()` and currently discards after hashing; keep the existing `auth_tokens` hash + `revoked_at` revocation model unchanged. (See Clarifications 2026-06-12.)
+- **OQ-2 (TTL) — RESOLVED.** Reuse the existing 8h `OPERATOR_SESSION_TTL_MS`; one TTL governs both the sign-in session and the presented envelope. (Revisit toward a shorter TTL only if OQ-3 later adopts refresh.)
+- **OQ-3 (refresh model) — = 028 OQ-9 — DEFERRED to the 028 boundary (owner-confirmed).** Slice fallback = **no refresh** (today's `FR-POS-AUTH-5`). Still genuinely open upstream; the plan carries it as a "pending 028" placeholder, NOT resolved.
+- **OQ-4 (multi-terminal / takeover) — = 028 OQ-4 — DEFERRED to the 028 boundary (owner-confirmed).** This slice inherits only the existing `takeover_required` / single-session-per-`(device, store)` behavior; the multi-distinct-device question stays upstream, NOT resolved.
+- **OQ-5 (transport / scheme) — RESOLVED.** `Authorization: Bearer <envelope>` (the path `readBearerToken` already serves). The DOC-3 sale-route scheme **MUST** be a **new, distinct authorization-credential scheme** (e.g. `operator-authorization` / `pos-operator-envelope`) and **MUST NOT** reuse 030's identity-proof-only `operator-identity` scheme. (Contract-phase work, gated G2.)
+- **Referenced 028-open, non-blocking for this slice:** 028 OQ-2 (offline manager override), 028 OQ-3 (PIN retry-lock), 028 OQ-11 (break-glass for pilot) remain open at the 028 boundary and do not gate this DP-2 issuance↔use reconciliation.
 
 ---
 
-> **Docs-only draft (SPECIFY+CLARIFY only).** This artifact records and reconciles a boundary-consuming follow-up; it does not implement, define a contract, or create a migration. No `plan.md`/`tasks.md` is authored (GATED item). No implementation is dispatched from it without explicit, scoped owner approval after G10 verification and the carried Open Questions are addressed in the owning repo's plan phase.
+> **Docs-only (SPECIFY + CLARIFY + PLAN).** This artifact records and reconciles a boundary-consuming follow-up; it does not implement, define a contract, or create a migration. The OQs are resolved/deferred by owner ratification (Clarifications Session 2026-06-12), which authorized advancing to **plan only** — see [`plan.md`](./plan.md). `tasks.md` is **not** authored and no implementation is dispatched without a further explicit, scoped owner approval after G10 dispatch-clearance.

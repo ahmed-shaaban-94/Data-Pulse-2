@@ -136,6 +136,8 @@ describe("data-pulse-migrate CLI", () => {
     "0022_connector_health",
     "0023_erpnext_product_reconciliation",
     "0024_pairing_codes",
+    "0025_external_identity_links",
+    "0026_sale_sync_status",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
@@ -160,6 +162,37 @@ describe("data-pulse-migrate CLI", () => {
       WHERE table_schema = 'public' AND table_name = ANY($1::text[])
     `, [["tenants", "devices", "shifts"]]);
     expect(tables.rows[0]?.count).toBe("3");
+
+    // 0026_sale_sync_status artifacts are present after up (CodeRabbit #6):
+    // (a) the sales.sync_status column, (b) the idx_sales_needs_repair partial
+    // index, (c) the sale_sync_deadletters table, (d) its three RLS policies.
+    const syncCol = await env.admin.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'sales'
+        AND column_name = 'sync_status'
+    `);
+    expect(syncCol.rows[0]?.count).toBe("1");
+
+    const needsRepairIdx = await env.admin.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM pg_indexes
+      WHERE schemaname = 'public' AND indexname = 'idx_sales_needs_repair'
+    `);
+    expect(needsRepairIdx.rows[0]?.count).toBe("1");
+
+    const deadletterTable = await env.admin.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'sale_sync_deadletters'
+    `);
+    expect(deadletterTable.rows[0]?.count).toBe("1");
+
+    const deadletterPolicies = await env.admin.query<{ count: string }>(`
+      SELECT COUNT(*)::text AS count FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = 'sale_sync_deadletters'
+    `);
+    // tenant_select + tenant_insert + tenant_update (no DELETE — resolved rows
+    // are retained for audit).
+    expect(deadletterPolicies.rows[0]?.count).toBe("3");
   });
 
   it("up is idempotent on a second run", async () => {
@@ -202,6 +235,44 @@ describe("data-pulse-migrate CLI", () => {
       expect(ledger.rows.map((row) => row.id)).toEqual(
         EXPECTED_MIGRATIONS.slice(0, -1),
       );
+
+      // LATEST_MIGRATION is 0026_sale_sync_status, so this single down fully
+      // reverses it (CodeRabbit #6): the sync_status column, the
+      // idx_sales_needs_repair index, the sale_sync_deadletters table, and its
+      // RLS policies are all ABSENT afterwards.
+      const syncColAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sales'
+          AND column_name = 'sync_status'
+      `);
+      expect(syncColAfter.rows[0]?.count).toBe("0");
+
+      const needsRepairIdxAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM pg_indexes
+        WHERE schemaname = 'public' AND indexname = 'idx_sales_needs_repair'
+      `);
+      expect(needsRepairIdxAfter.rows[0]?.count).toBe("0");
+
+      const deadletterTableAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'sale_sync_deadletters'
+      `);
+      expect(deadletterTableAfter.rows[0]?.count).toBe("0");
+
+      // Dropping the table drops its policies — pg_policies has no rows for it.
+      const deadletterPoliciesAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = 'sale_sync_deadletters'
+      `);
+      expect(deadletterPoliciesAfter.rows[0]?.count).toBe("0");
+
+      // The `sales` table itself survives (only the 0026 column is dropped).
+      const salesTableAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'sales'
+      `);
+      expect(salesTableAfter.rows[0]?.count).toBe("1");
 
       // Rolling back the latest migration does not touch the catalog: all seven
       // catalog tables introduced by 0007 are still present afterwards.
