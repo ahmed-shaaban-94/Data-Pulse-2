@@ -80,12 +80,17 @@
 # (PR #511) registered erpnext.reconciliation.requested in the [GATED] outbox
 # registry, made triggerRun emit it in-transaction, and registered the
 # ReconciliationRequestedConsumer in worker.module's drainer seam — a triggered run
-# now advances running->completed DP2-internally (over EMPTY_BIN_VIEW, stub-tolerant;
-# no connector/ERPNext call). 017-VERIFY (PR #510) recorded the DP2-side
-# verification (75/75 in-repo). The two REMAINING items are NOT 017 v1 and stay
-# non-dispatchable: 017-STOCK-VIEW-CONTRACT (live ERPNext-Bin read — future [GATED],
-# needs the connector repo) + 017-SCHEDULED-RUNS (later wiring over the same
-# processor). 017 is CLOSED as far as anything buildable in this repo.
+# now advances running->completed DP2-internally. 017-VERIFY (PR #510) recorded the
+# DP2-side verification (75/75 in-repo).
+#
+# RECONCILED 2026-06-13 — the live ERPNext-Bin read (017-STOCK-VIEW-CONTRACT) is
+# RESOLVED by spec 019: 019-T041 (PR #528) replaced EMPTY_BIN_VIEW with
+# ReportBackedBinView in worker.module.ts, so a wired run now classifies against the
+# connector-reported Bin snapshot (run-scoped in run.summary.bin_view_report); the
+# full stock-recon loop is LIVE-VALIDATED 2026-06-08. DP2 still makes NO outbound
+# ERPNext HTTP. The ONE remaining non-dispatchable item is 017-SCHEDULED-RUNS (later
+# wiring over the same processor — R5 on-demand v1). 017 is CLOSED as far as anything
+# buildable in this repo.
 
 version: 1
 spec: 017-erpnext-reconciliation-and-repair
@@ -116,15 +121,19 @@ findings:
       read-projection over erpnext_posting_status WHERE status='permanently_rejected'
       (research R2; data-model §1).
   - id: STOCK-VIEW-CONNECTOR-SEAM
-    severity: open-deferred
+    severity: resolved
     note: >
-      The live ERPNext-Bin read (US3 stock compare) is the connector's machinery
-      behind the fixed 012 boundary; the connector repo is not built yet. v1 is
-      STUB-TOLERANT (the ERPNext-Bin view is an injected seam; an absent view ->
-      reported erpnext_only/unavailable, never a run failure) so 017's DP2-side
-      run + report + repair ship independently. The live read activates via a
-      FUTURE [GATED] connector->DP2 view contract (research R3) — NOT a 017 v1
-      slice.
+      (Spec-time finding, RESOLVED by spec 019 — 2026-06-13 reconcile.) The live
+      ERPNext-Bin read (US3 stock compare) is the connector's machinery behind the
+      fixed 012 boundary. 017 v1 shipped STUB-TOLERANT (the ERPNext-Bin view is an
+      injected seam; an absent view -> reported erpnext_only/unavailable, never a
+      run failure) so 017's DP2-side run + report + repair shipped independently of
+      the connector repo. The live read activated via spec 019's [GATED]
+      connector->DP2 Bin-view read contract (#526) + 019-T041 (#528), which replaced
+      the EMPTY_BIN_VIEW stub with ReportBackedBinView in worker.module.ts; the full
+      stock-recon loop is LIVE-VALIDATED 2026-06-08. DP2 still makes no outbound
+      ERPNext HTTP — the connector reports the snapshot run-scoped into
+      erpnext_reconciliation_run.summary.bin_view_report (research R3).
 
 # ============================================================================
 # slices
@@ -526,24 +535,33 @@ slices:
     task_ids: [T100]
     type: feat
     # The LIVE connector->DP2 ERPNext-Bin view contract that activates US3's live
-    # stock read. A FUTURE [GATED] 012-style packages/contracts slice authored
-    # WITH the connector repo (separate, ADR 0008). 017 v1 ships against the
-    # stub-tolerant seam (STOCK-VIEW-CONNECTOR-SEAM / R3); this is its activation.
-    # NOT dispatchable from this map — the connector repo + the view contract do
-    # not exist yet. Traceability only.
-    status: proposed
+    # stock read. 017 v1 shipped against the stub-tolerant seam
+    # (STOCK-VIEW-CONNECTOR-SEAM / R3); this slice was its planned activation.
+    # RESOLVED by spec 019 (erpnext-stock-view-contract) — the capability shipped
+    # under 019's number, not as a 017 slice, which is why this entry stayed
+    # `proposed` until the 2026-06-13 docs reconcile.
+    status: resolved-by-019
     approval_required: true   # a new [GATED] packages/contracts surface + connector coordination
-    depends_on: [017-US3-STOCK, "connector-repo-erpnext-bin-read"]   # neither exists yet — hard non-dispatchable
+    depends_on: [017-US3-STOCK]
     blocks: []
     agent: sonnet-contract
-    allowed_files: []   # authored with the connector arc, not 017 v1
+    allowed_files: []   # authored under the 019 spec, not 017 v1
+    resolution:
+      by_spec: 019-erpnext-stock-view-contract
+      prs: ["#526 ([GATED] Bin-view read CONTRACT)", "#528 (T040 runtime + T041 017-rewire)", "connector #25 (Bin-view client)"]
+      note: >-
+        019 T041 replaced `EMPTY_BIN_VIEW` with `ReportBackedBinView` in
+        worker.module.ts; the full stock-recon loop is LIVE-VALIDATED 2026-06-08
+        (empty-Bin -> completed {}; ERPNext 10 / DP2 10 -> completed {match: 1}).
+        DP2 still makes no outbound ERPNext HTTP — the connector reports the Bin
+        snapshot run-scoped into `erpnext_reconciliation_run.summary.bin_view_report`.
     validation:
-      - command: "(deferred — authored with the future connector ERPNext-Bin read contract)"
-        expected: a [GATED] connector->DP2 ERPNext valuation-view contract lets the 017 run read live ERPNext-Bin data behind the 012 boundary; DP2 still makes no outbound ERPNext HTTP.
+      - command: "(resolved under spec 019 — see specs/019-erpnext-stock-view-contract/)"
+        expected: a [GATED] connector->DP2 ERPNext Bin-view read contract lets the 017 run read live ERPNext-Bin data behind the 012 boundary; DP2 still makes no outbound ERPNext HTTP. SHIPPED + LIVE-VALIDATED via 019 (#526 + #528).
         docker_required: true
     stop:
       - standing-rules universal stops
-      - "stop — NOT a 017 v1 slice. The live ERPNext-Bin read is the connector's machinery; v1 is stub-tolerant. Do NOT author until the connector repo + a [GATED] view contract are on the table."
+      - "stop — RESOLVED by 019. Do NOT re-author here; the live ERPNext-Bin read shipped under spec 019 (#526 + #528) + connector PR #25."
     report_fields: [changed_files, validation_results, forbidden_path_check, confirmation_no_unauthorized_git_ops]
     parallel_safety: unknown
 
