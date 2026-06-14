@@ -1551,6 +1551,9 @@ describe("GET /api/pos/v1/operators/roster — contract conformance (T300)", () 
         cashiers: [
           {
             id: "user_fake_clerk_sub",
+            // 034: provider-neutral users.id (§16), required on
+            // PosRosterCashierEntry. Distinct from id (= clerk_user_id).
+            user_id: "0195b400-0000-7000-8000-0000000a0099",
             display_name: "Test Cashier",
             role: "cashier",
           },
