@@ -566,10 +566,20 @@ describe("GET /api/pos/v1/operators/roster", () => {
     expect(Array.isArray(res.body.cashiers)).toBe(true);
     const cashierIds = res.body.cashiers.map((c: { id: string }) => c.id);
     expect(cashierIds).toContain(STAFF_CLERK_SUB);
-    // Entries must only have id, display_name, role
+    // Entries must only have id, user_id, display_name, role (034: user_id
+    // = provider-neutral users.id, distinct from id = clerk_user_id).
     for (const c of res.body.cashiers) {
-      expect(c).toEqual({ id: expect.any(String), display_name: expect.any(String), role: "cashier" });
+      expect(c).toEqual({
+        id: expect.any(String),
+        user_id: expect.any(String),
+        display_name: expect.any(String),
+        role: "cashier",
+      });
     }
+    // The staff cashier's user_id is its users.id, distinct from its Clerk subject.
+    const staff = res.body.cashiers.find((c: { id: string }) => c.id === STAFF_CLERK_SUB);
+    expect(staff.user_id).toBe(STAFF_USER_ID);
+    expect(staff.user_id).not.toBe(staff.id);
   });
 
   it("401 when Authorization header is missing", async () => {

@@ -798,12 +798,18 @@ export class PosOperatorsService {
   private async findCashiersByStore(
     storeId: string,
     tenantId: string,
-  ): Promise<Array<{ id: string; display_name: string; role: "cashier" }>> {
+  ): Promise<
+    Array<{ id: string; user_id: string; display_name: string; role: "cashier" }>
+  > {
     const r = await this.pool.query<{
+      id: string;
       clerk_user_id: string;
       display_name: string;
     }>(
-      `SELECT u.clerk_user_id, u.display_name
+      // 034: also project u.id (the provider-neutral users.id, §16) so the
+      // roster entry can carry user_id alongside the clerk_user_id bridge.
+      // u.id is already the JOIN key — no new join, no new query.
+      `SELECT u.id, u.clerk_user_id, u.display_name
          FROM memberships m
          JOIN roles r ON r.id = m.role_id
          JOIN users u ON u.id = m.user_id
@@ -826,6 +832,7 @@ export class PosOperatorsService {
     );
     return r.rows.map((row) => ({
       id: row.clerk_user_id,
+      user_id: row.id,
       display_name: row.display_name,
       role: "cashier" as const,
     }));

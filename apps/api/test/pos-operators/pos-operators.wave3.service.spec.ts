@@ -187,8 +187,16 @@ describe("PosOperatorsService.roster", () => {
       [VALID_USER_ROW],
       [{ ...MANAGER_MEMBERSHIP_ROW, store_access_kind: "all" }],
       [
-        { clerk_user_id: "user_staff_1", display_name: "Alice" },
-        { clerk_user_id: "user_staff_2", display_name: "Bob" },
+        {
+          id: "0195b400-0000-7000-8000-0000000a0001",
+          clerk_user_id: "user_staff_1",
+          display_name: "Alice",
+        },
+        {
+          id: "0195b400-0000-7000-8000-0000000a0002",
+          clerk_user_id: "user_staff_2",
+          display_name: "Bob",
+        },
       ],
     ]);
     const svc = new PosOperatorsService(
@@ -199,10 +207,22 @@ describe("PosOperatorsService.roster", () => {
     );
 
     const r = await svc.roster("jwt", { branch_id: STORE_ID }, "rid-5");
+    // 034: each entry carries the provider-neutral user_id (= users.id),
+    // distinct from id (= clerk_user_id, the v1 bridge).
     expect(r).toEqual({
       cashiers: [
-        { id: "user_staff_1", display_name: "Alice", role: "cashier" },
-        { id: "user_staff_2", display_name: "Bob", role: "cashier" },
+        {
+          id: "user_staff_1",
+          user_id: "0195b400-0000-7000-8000-0000000a0001",
+          display_name: "Alice",
+          role: "cashier",
+        },
+        {
+          id: "user_staff_2",
+          user_id: "0195b400-0000-7000-8000-0000000a0002",
+          display_name: "Bob",
+          role: "cashier",
+        },
       ],
     });
   });

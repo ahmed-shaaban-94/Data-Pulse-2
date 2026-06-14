@@ -136,7 +136,15 @@ export type PosRosterQueryInput = z.infer<typeof PosRosterQuerySchema>;
 
 /** Conforms to OpenAPI `PosRosterCashierEntry`. */
 export interface PosRosterCashierEntry {
+  /** `users.clerk_user_id` (Clerk subject), the v1 bridge identifier. */
   id: string;
+  /**
+   * Provider-neutral identity key = `users.id` (028 §16). Distinct from `id`
+   * (= `clerk_user_id`, the v1 bridge). Surfaced so POS can key local
+   * cashier-scoped records (offline-PIN provisioning, POS-019/017) on a
+   * provider-independent identifier.
+   */
+  user_id: string;
   display_name: string;
   role: "cashier";
 }

@@ -509,14 +509,15 @@ components:
             branch has no active cashier-role members.
     PosRosterCashierEntry:
       type: object
-      required: [id, display_name, role]
+      required: [id, user_id, display_name, role]
       additionalProperties: false
       description: >
         Minimum-disclosure cashier record. Carries only what POS-Pulse
-        needs to render the cashier picker — no email, no phone number,
-        no PIN, no credential fragment. The `id` is the Clerk subject
-        (`users.clerk_user_id`) for identity continuity across POS
-        endpoints.
+        needs to render the cashier picker and key local cashier-scoped
+        records — no email, no phone number, no PIN, no credential
+        fragment. The `id` is the Clerk subject (`users.clerk_user_id`,
+        v1 bridge); `user_id` is the provider-neutral key (`users.id`,
+        028 §16) preferred for local keying.
       properties:
         id:
           type: string
@@ -525,6 +526,13 @@ components:
             Clerk subject of the cashier (`users.clerk_user_id`). Same
             identifier used in `active-session` and audit-event
             `acting_operator_id` fields — preserves identity continuity.
+        user_id:
+          type: string
+          format: uuid
+          description: >
+            Provider-neutral identity key = `users.id` (028 §16). Distinct
+            from `id` (= `clerk_user_id`, the v1 bridge). POS keys local
+            cashier-scoped records (offline-PIN provisioning) on this.
         display_name:
           type: string
           description: Cashier display name (resolved server-side).
