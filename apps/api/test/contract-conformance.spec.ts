@@ -1176,6 +1176,9 @@ function makeSignedInResult(): PosOperatorSignInResponseBody {
     kind: "signed_in",
     operator: {
       id: "user_fake_clerk_sub",
+      // 033: provider-neutral users.id (§16), required on PosOperatorSummary.
+      // Distinct from `id` (= clerk_user_id, the v1 bridge).
+      user_id: "0195b400-0000-7000-8000-000000000099",
       display_name: "Test Operator",
       role: "manager",
       tenant_id: FAKE_POS_SIGN_IN_TENANT_ID,
