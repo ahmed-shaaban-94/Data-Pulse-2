@@ -34,6 +34,8 @@
 - Q: Is `id` (the Clerk subject) removed from the roster entry? → A: **No.** `id` (= `clerk_user_id`) is retained as the v1 bridge / identity-continuity field (used in `active-session` + audit `acting_operator_id`); `user_id` is added alongside it. Additive and backward-compatible for lenient consumers.
 - Q: Requiredness of the new field? → A: `user_id` SHOULD be `required` on `PosRosterCashierEntry` for v1 (every rostered cashier resolves to a `users` row, so `u.id` is always present). The strict-consumer / contract-pin coordination is a plan-phase note (mirrors 033 OQ-033-2), not a spec blocker — POS-Pulse validates the operator/roster path leniently (allowlist reader), so the additive field is wire-safe.
 
+**`/speckit-clarify` pass (2026-06-13): no further critical ambiguities.** A structured ambiguity scan (scope, data model, identity, interaction, non-functional, integration, edge cases, constraints, terminology, completion) found all categories Clear except the strict-vs-lenient consumer coordination, which is already dispositioned above as a plan-phase release-ordering note (not a spec decision). No new questions asked; the 5 Q/A above (auto-resolved from the shipped 033 precedent) stand.
+
 ---
 
 ## User Scenarios & Testing *(mandatory)*
