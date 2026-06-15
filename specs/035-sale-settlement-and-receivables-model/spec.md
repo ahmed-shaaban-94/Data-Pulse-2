@@ -17,9 +17,10 @@ tests, package/lock, CI, generated clients, or child-repo specs. It defines the
 downstream POS, Console, and Connector features will later consume. The three carried
 open questions (OQ-2/OQ-4/OQ-7) are **RESOLVED** (§11) — the **non-reversal** G2
 contract **draft** may proceed; reversal-compatibility fields stay deferred on DP-026.
-It still does **not** mark gate **G2** satisfied/approved (G2 needs the authored
-OpenAPI contract + owner both-sides approval — see §13 Claim Ceiling and §10 Gate
-Mapping).
+Gate **G2 is RATIFIED** (2026-06-15, T012): the contract `settlement.yaml` is authored,
+merged (PR #574, `cb4a7e5`), and owner-approved — the five children are unblocked. The
+non-reversal carve, connector posting, tax, and DP-2 implementation/G3 remain gated
+(see §10 Gate Mapping and the 035-DR-SETTLEMENT G2 Ratification addendum).
 
 **Input**: Owner / program dispatch — Retail Tower OS opens a **settlement work
 package**. Before any child-repo work begins, Data-Pulse-2 must author the **parent
@@ -455,7 +456,7 @@ Tax columns, if any, are placeholders only (§6).
 
 | Gate | Meaning (this work package) | Status in this SPECIFY artifact |
 |------|------------------------------|---------------------------------|
-| **G2** | DP-2 035 **produces the contract** that children consume. | **Intent defined; NOT satisfied/approved here.** The OpenAPI contract + its G2 approval are a later, separately-gated DP-2 slice (§13). |
+| **G2** | DP-2 035 **produces the contract** that children consume. | **RATIFIED 2026-06-15 (T012).** Contract `settlement.yaml` authored + merged (PR #574, `cb4a7e5`) and owner-approved — see 035-DR-SETTLEMENT G2 Ratification addendum. The five children are UNBLOCKED. (Non-reversal surface only; reversal carve, connector posting, tax, and DP-2 impl/G3 remain gated.) |
 | **G3** | Migration / model impact identified **conceptually only**; no migrations written. | **Addressed at SPECIFY level**: model impact framed in §9; no migration authored (NG-3, FR-025). |
 | **G5** | Idempotency / replay safety specified. | **Addressed at SPECIFY level**: FR-012, FR-020; replay acceptance scenarios in §4. |
 | **G6** | Tax/fiscal is **activation-only** under ADR-0003; proceed **tax-pending**. | **Addressed at SPECIFY level**: §6, FR-023, NG-4; no VAT rules invented; OQ-2 deferred. |

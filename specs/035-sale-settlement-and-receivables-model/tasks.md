@@ -65,10 +65,12 @@
   parses via repo loader, 32/32 `$ref`s resolve. **Does NOT flip G2** — still needs
   owner both-sides approval (T012). 7-C ERPNext Payment Entry = nullable external
   ref only (no posting route; connector-owned, gated by 011-DR-POSTING-R1).
-- [ ] **T011** `[BLOCKED: G2]` Pin idempotency-key + envelope conventions on every write
-  operation in the contract (per spec FR-020; Constitution §XI).
-- [ ] **T012** `[BLOCKED: G2]` `[OWNER]` Owner **both-sides G2 approval** of the
-  contract → this is what flips G2 to satisfied and unblocks children. `[OWNER]`.
+- [x] **T011** `[DONE]` Idempotency-key + envelope conventions pinned on every write in
+  `settlement.yaml` (`Idempotency-Key` required, `x-idempotency: required`; FR-020, §XI).
+- [x] **T012** `[RATIFIED 2026-06-15]` Owner **both-sides G2 approval** of the contract —
+  **G2 RATIFIED** (035-DR-SETTLEMENT G2 Ratification addendum). Flips G2 → satisfied;
+  **the five children (T040–T044) are UNBLOCKED.** Non-reversal carve, connector posting,
+  tax, and DP-2 impl/G3 remain gated.
 
 ---
 
@@ -98,16 +100,17 @@
 
 ## Phase E — Children consume (separate repos; NOT authored by DP-2)
 
-> Consumer notes only — DP-2 does not author these (spec NG-2). Listed for sequence.
+> Consumer notes only — DP-2 does not author these (spec NG-2). **UNBLOCKED by G2
+> ratification 2026-06-15** — each proceeds through its own repo's spec chain.
 
-- [ ] **T040** `[BLOCKED: G2]` POS 020 — pos-credit-and-third-party-tender-flow (consumes
-  settlement-intent contract).
-- [ ] **T041** `[BLOCKED: G2]` Console 017 — customer-and-payer-accounts.
-- [ ] **T042** `[BLOCKED: G2]` Console 018 — receivables-and-insurance-claims.
-- [ ] **T043** `[BLOCKED: G2]` Connector 009 — receivables-and-third-party-posting-adapter
-  (later consumer; posts approved commands).
-- [ ] **T044** `[BLOCKED: G2]` **Console 019 — settlement-reconciliation (LAST)**; also
-  needs **DP-2 032 runtime wiring** before end-to-end.
+- [ ] **T040** `[UNBLOCKED — own repo]` POS 020 — pos-credit-and-third-party-tender-flow
+  (consumes settlement-intent contract).
+- [ ] **T041** `[UNBLOCKED — own repo]` Console 017 — customer-and-payer-accounts.
+- [ ] **T042** `[UNBLOCKED — own repo]` Console 018 — receivables-and-insurance-claims.
+- [ ] **T043** `[UNBLOCKED — own repo]` Connector 009 — receivables-and-third-party-posting-adapter
+  (later consumer; posts approved commands — note: ERPNext posting still gated by 011-DR-POSTING-R1).
+- [ ] **T044** `[UNBLOCKED — own repo]` **Console 019 — settlement-reconciliation (LAST)**;
+  also needs **DP-2 032 runtime wiring** before end-to-end.
 
 ---
 

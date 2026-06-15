@@ -96,7 +96,36 @@ surface on DP-026's CHECKPOINT-2 (informational; not a 035 task).
 | `tasks.md` T002 (OQ-7) | **RESOLVED — 7-C** |
 | `tasks.md` T003 (OQ-2/G6) | **RESOLVED — tax-deactivated v1** |
 | G2 contract **draft** (design input, markdown) | **AUTHORABLE NOW** (T010a) |
-| G2 contract **OpenAPI YAML** (`packages/contracts/openapi/**`) | **STILL `[GATED]`** (T010b) — needs owner dispatch + both-sides approval |
-| Gate **G2** | **NOT satisfied** — needs authored contract + owner approval |
+| G2 contract **OpenAPI YAML** (`packages/contracts/openapi/**`) | **AUTHORED + MERGED** (T010b) — `settlement.yaml` on main (PR #574, `cb4a7e5`) |
+| Gate **G2** | **RATIFIED 2026-06-15** — see the G2 Ratification addendum below (T012) |
 | Connector ERPNext Payment-Entry posting | **STILL GATED** behind 011-DR-POSTING-R1 |
 | G3 schema / migration | **STILL GATED** — conceptual only |
+
+---
+
+## G2 Ratification (T012) — **SIGNED 2026-06-15**
+
+**Owner / signer:** Ahmed Shaaban. **Decision:** the authored G2 contract
+`packages/contracts/openapi/settlement/settlement.yaml` (merged to main via PR #574,
+`cb4a7e5`) is **APPROVED**. Gate **G2 is RATIFIED.**
+
+This is the both-sides owner approval the contract draft (§13 claim ceiling) was
+waiting on. The contract is no longer a pre-approval `1.0.0-draft` design input — it
+is the **approved settlement contract of record** the downstream children consume.
+
+**What G2 ratification unblocks:** the five children may now consume the contract and
+proceed through their own spec chains —
+- **POS 020** — pos-credit-and-third-party-tender-flow
+- **Console 017** — customer-and-payer-accounts
+- **Console 018** — receivables-and-insurance-claims
+- **Connector 009** — receivables-and-third-party-posting-adapter
+- **Console 019** — settlement-reconciliation (LAST; also needs DP-2 032 runtime wiring)
+
+**What G2 ratification does NOT do (unchanged):**
+- Does **not** lift the **reversal carve** — reversal-compatibility fields stay
+  deferred until DP-026 closes (§OQ-4); the approved surface is non-reversal only.
+- Does **not** authorize **connector ERPNext Payment-Entry posting** — still gated
+  behind **011-DR-POSTING-R1** (§OQ-7).
+- Does **not** activate **tax** — tax-pending under G6/ADR-0003 (§OQ-2).
+- Does **not** author **DP-2 implementation** — controller/DTO/service + the **G3**
+  schema/migration remain separate gated slices.
