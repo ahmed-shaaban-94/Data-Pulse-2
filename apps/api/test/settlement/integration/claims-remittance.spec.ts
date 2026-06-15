@@ -59,6 +59,7 @@ import {
   SETTLEMENT_FIXTURE_IDS,
   SALE_A,
   PAYER_A_STORE,
+  PAYER_A_TENANT,
   PAYER_ABSENT,
   seedSettlementFixture,
 } from "../__support__/seed-settlement";
@@ -316,6 +317,24 @@ describe("035 T032 §2 — submit conflicts", () => {
       .send({ payerRef: PAYER_A_STORE, receivableRefs: [ref] });
     expect(res.status).toBe(409);
   });
+
+  it("a receivable owed by a DIFFERENT payer than the claim → 409 (Codex P2)", async () => {
+    if (maybeSkip()) return;
+    // Open a receivable owed by the tenant-wide payer, then try to claim it
+    // under the store payer — the claim must reject the ownership mismatch.
+    const res0 = await http()
+      .post(INTENT_URL)
+      .set("Idempotency-Key", idempKey("o2d"))
+      .send({ saleRef: SALE_A, payers: [{ payerRef: PAYER_A_TENANT, owedAmount: "50.00" }] });
+    expect(res0.status).toBe(201);
+    const ref = res0.body.receivables[0].receivableRef;
+    const res = await http()
+      .post(CLAIMS_URL)
+      .set("Idempotency-Key", idempKey("c2d"))
+      .send({ payerRef: PAYER_A_STORE, receivableRefs: [ref] });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("conflict");
+  });
 });
 
 describe("035 T032 §3 — full remittance", () => {
@@ -350,11 +369,37 @@ describe("035 T032 §4 — partial remittance", () => {
     expect(res.status).toBe(200);
     expect(res.body.outcome).toBe("partial");
     expect(res.body.variance).toMatch(/^30(\.0+)?$/);
-    const r = await env.admin.query<{ state: string }>(
-      `SELECT state FROM receivable WHERE id = $1`,
+    const r = await env.admin.query<{ state: string; outstanding_balance: string }>(
+      `SELECT state, outstanding_balance FROM receivable WHERE id = $1`,
       [ref],
     );
     expect(r.rows[0]?.state).toBe("claimed");
+    // Codex #581 P1: the BALANCE must drop by the remitted 90 → 30 remains
+    // (the remaining-balance-plus-variance contract), not stay at 120.
+    expect(r.rows[0]?.outstanding_balance).toMatch(/^30(\.0+)?$/);
+  });
+
+  it("FIFO-apportions a partial remittance across multiple claimed receivables", async () => {
+    if (maybeSkip() || !env) return;
+    // Two receivables (40 + 80 = 120 claimed); remit 50 → first fully (40),
+    // second partially (10) under FIFO-by-id; total remaining 70 = variance.
+    const refA = await openReceivable("40.00", "4ma");
+    const refB = await openReceivable("80.00", "4mb");
+    const claimRef = await submitClaim([refA, refB], "4m");
+    const res = await http()
+      .post(reconcileUrl(claimRef))
+      .set("Idempotency-Key", idempKey("r4m"))
+      .send({ remittedAmount: "50.00" });
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe("partial");
+    expect(res.body.variance).toMatch(/^70(\.0+)?$/);
+    const rows = await env.admin.query<{ id: string; outstanding_balance: string }>(
+      `SELECT id, outstanding_balance FROM receivable WHERE id = ANY($1::uuid[]) ORDER BY id`,
+      [[refA, refB]],
+    );
+    // Sum of remaining balances must equal the variance (70), regardless of split.
+    const total = rows.rows.reduce((acc, r) => acc + Number(r.outstanding_balance), 0);
+    expect(total).toBeCloseTo(70, 4);
   });
 });
 
@@ -370,11 +415,14 @@ describe("035 T032 §5 — over-remittance", () => {
     expect(res.status).toBe(200);
     expect(res.body.outcome).toBe("flagged");
     expect(res.body.variance).toMatch(/^-30(\.0+)?$/);
-    const r = await env.admin.query<{ state: string }>(
-      `SELECT state FROM receivable WHERE id = $1`,
+    const r = await env.admin.query<{ state: string; outstanding_balance: string }>(
+      `SELECT state, outstanding_balance FROM receivable WHERE id = $1`,
       [ref],
     );
     expect(r.rows[0]?.state).toBe("flagged");
+    // Codex #581 P1: over-remittance means the debt is fully paid → balance 0,
+    // not left at 100.
+    expect(r.rows[0]?.outstanding_balance).toMatch(/^0(\.0+)?$/);
   });
 });
 

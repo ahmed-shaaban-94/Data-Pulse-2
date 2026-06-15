@@ -20,7 +20,7 @@
  * interceptor's job.
  */
 import { Inject, Injectable } from "@nestjs/common";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 
 import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
@@ -57,6 +57,29 @@ export type ReconcileResult =
 
 const CLAIMABLE_STATES = ["open", "partially_applied"];
 
+// Exact-decimal money (§III, no floats): integer ten-thousandths (scale 4),
+// matching apply-payment-decision / reconcile-decision.
+const SCALE = 4;
+function toScaledInt(money: string): bigint {
+  const [whole = "0", frac = ""] = money.split(".");
+  const fracPadded = (frac + "0".repeat(SCALE)).slice(0, SCALE);
+  return BigInt(whole) * 10n ** BigInt(SCALE) + BigInt(fracPadded || "0");
+}
+function fromScaledInt(v: bigint): string {
+  const negative = v < 0n;
+  const abs = negative ? -v : v;
+  const unit = 10n ** BigInt(SCALE);
+  const whole = abs / unit;
+  const frac = (abs % unit).toString().padStart(SCALE, "0");
+  return `${negative ? "-" : ""}${whole.toString()}.${frac}`;
+}
+/** Sum scale-4 money strings exactly, returning a scale-4 string. */
+function sumScaled(amounts: readonly string[]): string {
+  let total = 0n;
+  for (const a of amounts) total += toScaledInt(a);
+  return fromScaledInt(total);
+}
+
 @Injectable()
 export class ClaimService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
@@ -81,13 +104,20 @@ export class ClaimService {
           id: string;
           state: string;
           store_id: string;
+          payer_id: string;
         }>(
-          `SELECT id, state, store_id FROM receivable
+          `SELECT id, state, store_id, payer_id FROM receivable
             WHERE id = ANY($1::uuid[]) FOR UPDATE`,
           [refs],
         );
         if (found.rows.length !== refs.length) return { kind: "conflict" };
         if (found.rows.some((r) => !CLAIMABLE_STATES.includes(r.state))) {
+          return { kind: "conflict" };
+        }
+        // Every claimed receivable MUST be owed by the claim's payer — else the
+        // claim would record payer X over payer Y's debt, and reconciliation
+        // could settle the wrong payer's balance (Codex #581 P2). Reject mismatch.
+        if (found.rows.some((r) => r.payer_id !== input.payerRef)) {
           return { kind: "conflict" };
         }
         // The claim is store-scoped to the receivables' store (they must agree).
@@ -144,7 +174,29 @@ export class ClaimService {
         // Reconcilable only while submitted | acknowledged (not already reconciled).
         if (c.status === "reconciled") return { kind: "conflict" };
 
-        const claimed = await this.sumClaimedBalances(client, input.claimRef);
+        // Lock the claim's receivables. Every line MUST still be in 'claimed'
+        // state — if one was transitioned out (settled/flagged) since submit,
+        // reconciling would touch a balance that already moved (Codex #581 P2):
+        // a no-side-effect 409. Ordered by id for deterministic FIFO apportioning.
+        const lines = await client.query<{
+          id: string;
+          state: string;
+          outstanding_balance: string;
+        }>(
+          `SELECT r.id, r.state, r.outstanding_balance
+             FROM claim_receivables cr
+             JOIN receivable r ON r.id = cr.receivable_id
+            WHERE cr.claim_id = $1::uuid
+            ORDER BY r.id
+              FOR UPDATE OF r`,
+          [input.claimRef],
+        );
+        if (lines.rows.length === 0) return { kind: "conflict" };
+        if (lines.rows.some((r) => r.state !== "claimed")) {
+          return { kind: "conflict" };
+        }
+
+        const claimed = sumScaled(lines.rows.map((r) => r.outstanding_balance));
         const decision = decideReconciliation({
           claimedAmount: claimed,
           remittedAmount: input.remittedAmount,
@@ -181,25 +233,41 @@ export class ClaimService {
           ],
         );
 
-        // Advance the claimed receivables: settled → settled (balance 0);
-        // flagged → flagged; partial leaves them 'claimed' (still owed). Then the
-        // claim itself is 'reconciled'.
-        if (decision.outcome === "settled") {
-          await client.query(
-            `UPDATE receivable SET state = 'settled', outstanding_balance = 0,
-                    version = version + 1, updated_at = now()
-              WHERE id IN (SELECT receivable_id FROM claim_receivables
-                            WHERE claim_id = $1::uuid)`,
-            [input.claimRef],
-          );
-        } else if (decision.outcome === "flagged") {
-          await client.query(
-            `UPDATE receivable SET state = 'flagged', version = version + 1,
-                    updated_at = now()
-              WHERE id IN (SELECT receivable_id FROM claim_receivables
-                            WHERE claim_id = $1::uuid)`,
-            [input.claimRef],
-          );
+        // Apply the remittance to the receivable BALANCES (Codex #581 P1 — the
+        // money must move, not only the state):
+        //   - settled  (remitted == claimed): debt cleared → balance 0, settled.
+        //   - flagged  (remitted >  claimed): over-remittance, debt fully paid →
+        //                balance 0, flagged (the variance anomaly is recorded).
+        //   - partial  (remitted <  claimed): FIFO-apply `remitted` across the
+        //                lines (by id); each line drops by min(remaining, balance);
+        //                lines stay 'claimed' (still owed) with reduced balances.
+        if (decision.outcome === "settled" || decision.outcome === "flagged") {
+          const nextState = decision.outcome === "settled" ? "settled" : "flagged";
+          for (const line of lines.rows) {
+            await client.query(
+              `UPDATE receivable SET outstanding_balance = 0, state = $2,
+                      version = version + 1, updated_at = now()
+                WHERE id = $1::uuid`,
+              [line.id, nextState],
+            );
+          }
+        } else {
+          // partial — FIFO apportion the remitted amount across the claimed lines.
+          let remaining = toScaledInt(input.remittedAmount);
+          for (const line of lines.rows) {
+            if (remaining <= 0n) break;
+            const balance = toScaledInt(line.outstanding_balance);
+            const applied = remaining < balance ? remaining : balance;
+            if (applied <= 0n) continue;
+            const newBalance = balance - applied;
+            remaining -= applied;
+            await client.query(
+              `UPDATE receivable SET outstanding_balance = $2,
+                      version = version + 1, updated_at = now()
+                WHERE id = $1::uuid`,
+              [line.id, fromScaledInt(newBalance)],
+            );
+          }
         }
         await client.query(
           `UPDATE claim SET status = 'reconciled', version = version + 1,
@@ -220,20 +288,5 @@ export class ClaimService {
         };
       },
     );
-  }
-
-  /** SUM of the claim's receivables' current outstanding balances (scale-4 string). */
-  private async sumClaimedBalances(
-    client: PoolClient,
-    claimRef: string,
-  ): Promise<string> {
-    const r = await client.query<{ total: string }>(
-      `SELECT COALESCE(SUM(r.outstanding_balance), 0)::numeric(19,4)::text AS total
-         FROM claim_receivables cr
-         JOIN receivable r ON r.id = cr.receivable_id
-        WHERE cr.claim_id = $1::uuid`,
-      [claimRef],
-    );
-    return r.rows[0]?.total ?? "0.0000";
   }
 }
