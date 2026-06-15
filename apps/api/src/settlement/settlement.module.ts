@@ -43,6 +43,7 @@ import { SessionRepository } from "../auth/session.repository";
 import { ContextModule } from "../context/context.module";
 import { IdempotencyModule } from "../idempotency/idempotency.module";
 import { DeviceRepository } from "../pos-operators/device.repository";
+import { ClaimService } from "./claim.service";
 import { ReceivableService } from "./receivable.service";
 import { SettlementController } from "./settlement.controller";
 
@@ -51,6 +52,7 @@ import { SettlementController } from "./settlement.controller";
   controllers: [SettlementController],
   providers: [
     ReceivableService,
+    ClaimService,
     {
       provide: IDENTITY_PROVIDER_PORT,
       useFactory: (pool: Pool): IdentityProviderPort =>

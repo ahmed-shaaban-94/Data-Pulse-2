@@ -49,6 +49,7 @@ import {
 import { InProgressMarker } from "../../../src/idempotency/in-progress-marker";
 import { SettlementController } from "../../../src/settlement/settlement.controller";
 import { ReceivableService } from "../../../src/settlement/receivable.service";
+import { ClaimService } from "../../../src/settlement/claim.service";
 
 import {
   applyAllUpAndCreateAppRole,
@@ -187,6 +188,7 @@ beforeAll(async () => {
   const providers: Provider[] = [
     { provide: PG_POOL, useFactory: (): Pool => localEnv.app },
     ReceivableService,
+    ClaimService,
     { provide: IDEMPOTENCY_KEY_STORE, useValue: idempStore },
     { provide: InProgressMarker, useValue: fakeMarker },
     { provide: APP_INTERCEPTOR, useValue: idempInterceptor },
