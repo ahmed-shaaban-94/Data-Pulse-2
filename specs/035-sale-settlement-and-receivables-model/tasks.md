@@ -76,10 +76,26 @@
 
 ## Phase C — G3 schema slice `[GATED]` (after T010/T012)
 
-- [ ] **T020** `[BLOCKED: G3]` `[BLOCKED: G2]` Promote the conceptual model (spec §9) to a
-  `[GATED]` migration: payer-account / receivable / payment-application / claim /
-  remittance + RLS + idempotency keys + audit columns. No table/column names committed
-  until this slice. `[GATED]` path `packages/db/**`.
+- [~] **T020** `[AUTHORED — awaiting G3 human apply/rollback gate]` `[GATED]` migration
+  `packages/db/drizzle/0027_settlement_receivables.sql` (+ `.down.sql`) — owner-dispatched
+  2026-06-15. **7 tables**: payer_account, receivable, payment_application, claim,
+  claim_receivables (join), remittance, reconciliation_result. Each tenant-scoped, RLS
+  ENABLE+FORCE + empty-GUC CASE guard (0026 precedent); composite FKs to
+  sales(id,tenant_id,store_id) + within-tenant/store; money `numeric(19,4)`; TEXT+CHECK
+  state vocab (carve-clean: receivable.state has NO `reversal_consumed`); 7-C
+  `receivable.erpnext_payment_entry_ref` nullable; tax placeholders only. 7 TS schema
+  mirrors under `src/schema/settlement/` + index exports. Guards updated:
+  migrate.spec EXPECTED_MIGRATIONS appended + down-test retargeted (RED-first); no new
+  outbox event / metric. **Design forks settled in the migration header** (receivable↔sale
+  many; payment_application child-of-receivable; claim↔receivable join; remittance+recon
+  keyed to claim; settlement_intent ephemeral). tsc clean. **G3 is the HUMAN
+  apply/rollback-on-non-prod gate — NOT satisfied by authoring.** `[GATED] packages/db/**`.
+- [x] **T020-verify** `[GREEN]` Round-trip up→down→up via WSL Testcontainers
+  (`migrate.spec.ts`) — **10/10 passed** 2026-06-15. Also: tsc clean; 0027 up→COMMIT +
+  down both applied against real postgres (dev DB restored, no drift). **Bug caught +
+  fixed by this gate** (which `fast` cannot run): composite FKs to receivable/claim
+  needed `UNIQUE (id, tenant_id, store_id)` target keys (the uq_sales_id_tenant_store
+  prerequisite) — added to both tables + TS mirrors.
 
 ---
 
