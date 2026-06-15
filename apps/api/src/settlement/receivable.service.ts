@@ -27,6 +27,7 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../auth/auth.module";
+import { decideApplication } from "./apply-payment-decision";
 import type { ReceivableRow } from "./dto/receivable.dto";
 import { INITIAL_RECEIVABLE_STATE, type ReceivableState } from "./receivable-state-machine";
 
@@ -93,6 +94,23 @@ export type OpenIntentResult =
   | { kind: "conflict" };
 
 export type GetResult = { kind: "ok"; row: ReceivableRow } | { kind: "not_found" };
+
+export interface ApplyPaymentInput {
+  readonly tenantId: string;
+  readonly receivableRef: string;
+  readonly amount: string;
+  readonly version: number;
+  readonly note?: string | null;
+}
+
+/**
+ * apply-payment (7-C): ok (updated receivable) | not_found (RLS-filtered /
+ * fabricated id) | conflict (stale version / already terminal / over-application).
+ */
+export type ApplyPaymentResult =
+  | { kind: "ok"; row: ReceivableRow }
+  | { kind: "not_found" }
+  | { kind: "conflict" };
 
 export interface ListInput {
   readonly tenantId: string;
@@ -173,6 +191,84 @@ export class ReceivableService {
           if (isPgCode(err, "23503")) return { kind: "conflict" };
           throw err;
         }
+      },
+    );
+  }
+
+  /**
+   * Apply a payment/cash against one receivable (7-C, DP-2-owned operational
+   * truth) in ONE tx. Version-guarded (§III): the row is read FOR UPDATE with
+   * the caller's expected version; a missing row is `not_found`, a wrong
+   * version OR an already-terminal (settled/flagged) row is `conflict`. The
+   * pure `decideApplication` computes the new balance + state; over-application
+   * (amount > balance) is a deterministic `conflict` (no truncation, the
+   * contract's 409) with NO write. On success: insert a `payment_application`
+   * ledger row (store_id derived from the receivable, never the body) + UPDATE
+   * the balance/state/version++. Idempotency is the HTTP interceptor's job;
+   * this is the single-shot writer.
+   */
+  async applyPayment(input: ApplyPaymentInput): Promise<ApplyPaymentResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ApplyPaymentResult> => {
+        // Lock the receivable row (RLS-filtered → cross-tenant returns 0 rows).
+        const current = await client.query<DbRow & { store_id: string }>(
+          `SELECT ${SELECT_COLS}, store_id
+             FROM receivable WHERE id = $1::uuid FOR UPDATE`,
+          [input.receivableRef],
+        );
+        const row = current.rows[0];
+        if (!row) return { kind: "not_found" };
+
+        // Stale version OR already-terminal receivable → conflict (no write).
+        if (
+          row.version !== input.version ||
+          row.state === "settled" ||
+          row.state === "flagged"
+        ) {
+          return { kind: "conflict" };
+        }
+
+        const decision = decideApplication({
+          outstandingBalance: row.outstanding_balance,
+          amount: input.amount,
+          currentState: row.state,
+        });
+        if (decision.kind === "over_application") {
+          return { kind: "conflict" };
+        }
+
+        // Append the cash-application ledger row (store_id from the receivable).
+        await client.query(
+          `INSERT INTO payment_application
+             (id, tenant_id, store_id, receivable_id, applied_amount, note)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            newId(),
+            input.tenantId,
+            row.store_id,
+            input.receivableRef,
+            input.amount,
+            input.note ?? null,
+          ],
+        );
+
+        // Reduce the balance + advance state, version++ (optimistic guard again).
+        const updated = await client.query<DbRow>(
+          `UPDATE receivable
+              SET outstanding_balance = $2,
+                  state               = $3,
+                  version             = version + 1,
+                  updated_at          = now()
+            WHERE id = $1::uuid AND version = $4
+           RETURNING ${SELECT_COLS}`,
+          [input.receivableRef, decision.newBalance, decision.newState, input.version],
+        );
+        // The FOR UPDATE lock makes a 0-row result here impossible, but guard.
+        return updated.rows[0]
+          ? { kind: "ok", row: toRow(updated.rows[0]) }
+          : { kind: "conflict" };
       },
     );
   }
