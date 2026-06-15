@@ -31,14 +31,18 @@
  */
 import {
   type ExecutionContext,
+  Inject,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
 
 import { AuthGuard } from "./auth.guard";
-import type { SessionRepository } from "./session.repository";
-import type { AuthTokenRepository } from "./auth-token.repository";
-import type { OperatorReverifier } from "./operator-context-resolver";
+import { SessionRepository } from "./session.repository";
+import { AuthTokenRepository } from "./auth-token.repository";
+import {
+  OPERATOR_CONTEXT_RESOLVER,
+  type OperatorReverifier,
+} from "./operator-context-resolver";
 import type { TenantContextRequest } from "../context/types";
 
 @Injectable()
@@ -46,6 +50,7 @@ export class PosOperatorEnvelopeSaleGuard extends AuthGuard {
   constructor(
     sessions: SessionRepository,
     authTokens: AuthTokenRepository,
+    @Inject(OPERATOR_CONTEXT_RESOLVER)
     private readonly reverifier: OperatorReverifier,
   ) {
     super(sessions, authTokens);
