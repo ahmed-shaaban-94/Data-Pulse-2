@@ -18,6 +18,9 @@
  *   §5 idempotent replay (same key + body) → replay; balance reduced exactly once.
  *   §6 cross-tenant / absent receivable ref → non-disclosing 404.
  *   §7 applying to an already-settled receivable → 409 conflict.
+ *   §8 non-positive amount ("0" / "0.0000") → 400 validation_error, no write
+ *      (bug #580: the regex admitted "0", which passed the over-application check
+ *      and hit the `payment_application_amount_positive` CHECK as an uncaught 500).
  */
 import "reflect-metadata";
 
@@ -385,5 +388,46 @@ describe("035 T031 §7 — already settled", () => {
       .send({ amount: "1.00", version: clear.body.version });
     expect(again.status).toBe(409);
     expect(again.body.error.code).toBe("conflict");
+  });
+});
+
+describe("035 T031 §8 — non-positive amount → 400 (bug #580)", () => {
+  // A zero / 0.0000 apply is a meaningless no-op write that the DB CHECK
+  // `payment_application_amount_positive (applied_amount > 0)` rejects. It MUST
+  // be caught at the boundary as a clean 400 validation_error — never reach the
+  // service and surface as an uncaught 23514 → 500. This is the apply-payment
+  // member of the positive-money family (mirrors owedAmount's existing >0 refine).
+  it("amount '0' → 400 validation_error, no ledger row, balance intact", async () => {
+    if (maybeSkip() || !env) return;
+    const { ref, version } = await openReceivable("100.00");
+    const res = await http()
+      .post(applyUrl(ref))
+      .set("Idempotency-Key", idempKey("p8a"))
+      .send({ amount: "0", version });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("validation_error");
+    // No write: no payment_application row, balance + version untouched.
+    const pa = await env.admin.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM payment_application WHERE receivable_id = $1`,
+      [ref],
+    );
+    expect(pa.rows[0]?.n).toBe("0");
+    const row = await env.admin.query<{ outstanding_balance: string; version: number }>(
+      `SELECT outstanding_balance, version FROM receivable WHERE id = $1`,
+      [ref],
+    );
+    expect(row.rows[0]?.version).toBe(version);
+    expect(row.rows[0]?.outstanding_balance).toMatch(/^100(\.0+)?$/);
+  });
+
+  it("amount '0.0000' → 400 validation_error (zero with scale)", async () => {
+    if (maybeSkip()) return;
+    const { ref, version } = await openReceivable("100.00");
+    const res = await http()
+      .post(applyUrl(ref))
+      .set("Idempotency-Key", idempKey("p8b"))
+      .send({ amount: "0.0000", version });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("validation_error");
   });
 });
