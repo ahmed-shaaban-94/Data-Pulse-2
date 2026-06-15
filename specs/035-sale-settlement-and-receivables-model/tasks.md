@@ -53,15 +53,18 @@
 
 ## Phase B — G2 contract slice `[GATED]` (the gate that unblocks all 5 children)
 
-- [~] **T010a** `[READY]` **Author the G2 contract DRAFT (markdown design input, NOT
-  OpenAPI YAML, NOT under `packages/contracts/**`)** — see
-  [`g2-contract-draft.md`](./g2-contract-draft.md). Non-reversal surface: payer
-  account, receivable + lifecycle, settlement command/outcome, payment/cash-application
-  (per 7-C), claim, remittance/reconciliation. Reversal fields **excluded** (carve).
-  *In progress this session.*
-- [ ] **T010b** `[BLOCKED: G2]` `[OWNER]` Transcribe the approved draft into the
-  **OpenAPI contract** — `[GATED]` path `packages/contracts/openapi/**`. Needs owner
-  dispatch; not authored here.
+- [x] **T010a** `[DONE]` Authored the G2 contract DRAFT (markdown design input) —
+  [`g2-contract-draft.md`](./g2-contract-draft.md). Non-reversal surface; reversal
+  fields excluded (carve).
+- [x] **T010b** `[AUTHORED — awaiting G2 approval]` Transcribed the draft into the
+  **OpenAPI contract** at `[GATED]` path
+  `packages/contracts/openapi/settlement/settlement.yaml` (owner-dispatched 2026-06-15).
+  8 operations (7 Console `cookieAuth` + 1 POS `operatorAuthorization`),
+  `1.0.0-draft`, `additionalProperties:false`, version-optimistic 409, canonical
+  error envelope; `ReceivableState` carve-clean (no `reversal_consumed`). Validated:
+  parses via repo loader, 32/32 `$ref`s resolve. **Does NOT flip G2** — still needs
+  owner both-sides approval (T012). 7-C ERPNext Payment Entry = nullable external
+  ref only (no posting route; connector-owned, gated by 011-DR-POSTING-R1).
 - [ ] **T011** `[BLOCKED: G2]` Pin idempotency-key + envelope conventions on every write
   operation in the contract (per spec FR-020; Constitution §XI).
 - [ ] **T012** `[BLOCKED: G2]` `[OWNER]` Owner **both-sides G2 approval** of the
