@@ -49,9 +49,30 @@ Do not duplicate standing-rules content here. When in doubt about an operating r
   (not a blocker):** POS-Pulse must confirm strict-vs-lenient response validation — if strict,
   the POS-Pulse contract-pin update must accompany this `additionalProperties:false` schema
   bump. (DP-2 raised it to POS-Pulse — note on their `017` spec dir, PR #388.)
+- **035 settlement/receivables arc (parent contract-producer):** SPECIFY → gated plan →
+  owner decisions (OQ-7→**7-C** DP-2-owned operational truth + ERPNext valuation projection;
+  OQ-4→**CARVE** non-reversal happy-path only, reversal deferred to DP-026 close; OQ-2→**tax
+  deactivated** v1 under ADR-0003) → signed decision record → **G2 contract** (#574) →
+  **G3 migration 0027** (#576, 7 tables incl. composite-FK UNIQUE target keys) → runtime
+  **T030–T034 ALL SHIPPED 2026-06-15**: T030 receivable open-from-intent + Console read/list
+  (#579), T031 cash application 7-C (#580), T032 claims + remittance reconciliation (#581,
+  +3 Codex fixes: balance-moves-on-partial/over, payer-ownership, re-lock-claimed), T033
+  authz/isolation (#582), T034 `settlement_receivable_total` signal (#583). **2 carried Codex
+  findings (raised on the T031/#580 + T030/#579 review threads) FIXED & SHIPPED via PR #584
+  (`2976e46`)**: (a) non-positive apply `amount` → 500 (now DTO `>0` → clean 400;
+  `remittedAmount` deliberately stays `>=0` — a 0-remittance = valid full rejection;
+  per-field-semantic, NOT blanket `>0`), (b) `claimMetadata` wrongly persisted into the
+  `tax_placeholder` column (now null; `claimMetadata` stays an accepted-but-unpersisted opaque
+  DTO field in v1 — drop-the-write, no gated migration). Full settlement suite 102/102 +
+  tsc clean. Deferred by design: reversal-compat (DP-026), connector ERPNext posting
+  (011-DR-POSTING-R1), tax/VAT (G6/ADR-0003), and the 5 downstream children (POS 020,
+  Console 017/018/019, Connector 009).
 - **Open follow-ups (non-blocking):** #524 (ERPNext live-leg epic), #529 (OTel boot hang),
   #531 (019 multi-window), #523 (020 dark-detection); 032's live drain-trigger wiring + US5
-  422-path (gated). See each spec's `wave-status.md`.
+  422-path (gated); **db-integration 57P01 infra flake** (140 per-suite containers +
+  un-closed pool killed on a sibling container stop; random unrelated victim suite; own
+  `[GATED]` infra PR pending — diagnose victim+error before re-running any red db-integration).
+  See each spec's `wave-status.md`.
 
 For slice state, always read the spec's `execution-map.yaml` and `wave-status.md` — do not rely
 on this file for task-level detail.
