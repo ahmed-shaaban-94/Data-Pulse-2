@@ -19,6 +19,10 @@
  *   §5 console get — projection; cross-tenant ref → non-disclosing 404.
  *   §6 console list — keyset page + nextCursor; state/payer filters; cross-tenant
  *      store/payer filter → non-disclosing 404.
+ *   §7 claimMetadata is opaque intent input and is NOT persisted on the receivable
+ *      in v1 (bug #579: it was wrongly written into the tax_placeholder column,
+ *      conflating payer claim metadata with the tax-pending placeholder). The
+ *      persisted tax_placeholder MUST stay null regardless of claimMetadata.
  */
 import "reflect-metadata";
 
@@ -545,5 +549,44 @@ describe("035 T030 §6 — console list receivables", () => {
     if (maybeSkip()) return;
     const res = await http().get(LIST_URL).query({ payer_ref: PAYER_B });
     expect(res.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §7 — claimMetadata is NOT persisted on the receivable (bug #579)
+// ---------------------------------------------------------------------------
+
+describe("035 T030 §7 — claimMetadata is opaque, not persisted (bug #579)", () => {
+  it("an intent carrying claimMetadata leaves tax_placeholder null", async () => {
+    if (maybeSkip() || !env) return;
+    const res = await http()
+      .post(INTENT_URL)
+      .set("Idempotency-Key", idempKey("s7"))
+      .send({
+        saleRef: SALE_A,
+        payers: [
+          {
+            payerRef: PAYER_A_STORE,
+            owedAmount: "75.00",
+            claimMetadata: { policy: "P-1", note: "covered" },
+          },
+        ],
+      });
+    expect(res.status).toBe(201);
+    const ref = res.body.receivables[0].receivableRef;
+
+    // The persisted tax_placeholder column must be NULL — claimMetadata is
+    // opaque intent input (FR-016, contract "opaque in v1"), never the tax
+    // placeholder. Read the raw column to prove the INSERT didn't conflate them.
+    const row = await env.admin.query<{ tax_placeholder: unknown }>(
+      `SELECT tax_placeholder FROM receivable WHERE id = $1`,
+      [ref],
+    );
+    expect(row.rows[0]?.tax_placeholder).toBeNull();
+
+    // The projection likewise exposes taxPlaceholder: null.
+    const got = await http().get(getUrl(ref));
+    expect(got.status).toBe(200);
+    expect(got.body.taxPlaceholder).toBeNull();
   });
 });

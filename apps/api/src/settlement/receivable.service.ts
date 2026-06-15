@@ -178,7 +178,15 @@ export class ReceivableService {
                 payer.payerRef,
                 payer.owedAmount,
                 INITIAL_RECEIVABLE_STATE,
-                payer.claimMetadata ?? null,
+                // tax_placeholder is ALWAYS null in v1 (tax deactivated, §OQ-2).
+                // `payer.claimMetadata` is OPAQUE payer claim intent (FR-016,
+                // contract "opaque in v1") — a distinct concept that is NOT
+                // persisted on the receivable in v1 (no receivable output field
+                // carries it). It was wrongly written into tax_placeholder,
+                // conflating the two (#579). Keep accepting it at the DTO; just
+                // don't store it here. A future spec that must retain it lands a
+                // dedicated column via a gated migration — never tax_placeholder.
+                null,
               ],
             );
             rows.push(toRow(inserted.rows[0]!));
