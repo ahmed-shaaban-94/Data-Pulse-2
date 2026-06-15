@@ -26,6 +26,7 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../auth/auth.module";
+import { recordSettlementReceivable } from "../observability/metrics/api.metrics";
 import { decideReconciliation } from "./reconcile-decision";
 import type {
   ClaimBody,
@@ -85,7 +86,7 @@ export class ClaimService {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   async submitClaim(input: SubmitClaimInput): Promise<SubmitClaimResult> {
-    return runWithTenantContext(
+    const result = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client): Promise<SubmitClaimResult> => {
@@ -158,10 +159,13 @@ export class ClaimService {
         };
       },
     );
+    // Post-commit signal — one increment per submitted claim (035 §7).
+    if (result.kind === "ok") recordSettlementReceivable();
+    return result;
   }
 
   async reconcileRemittance(input: ReconcileInput): Promise<ReconcileResult> {
-    return runWithTenantContext(
+    const result = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client): Promise<ReconcileResult> => {
@@ -288,5 +292,8 @@ export class ClaimService {
         };
       },
     );
+    // Post-commit signal — one increment per reconciled remittance (035 §7).
+    if (result.kind === "ok") recordSettlementReceivable();
+    return result;
   }
 }
