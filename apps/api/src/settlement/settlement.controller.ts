@@ -57,6 +57,15 @@ import {
   ApplyPaymentRequestSchema,
   type ApplyPaymentRequestDto,
 } from "./dto/apply-payment-request.dto";
+import {
+  ClaimCreateSchema,
+  type ClaimCreateDto,
+  RemittanceReconcileSchema,
+  type RemittanceReconcileDto,
+  type ClaimBody,
+  type ReconciliationResultBody,
+} from "./dto/claim-request.dto";
+import { ClaimService } from "./claim.service";
 import { toReceivable, type ReceivableBody } from "./dto/receivable.dto";
 import {
   ReceivableListQuerySchema,
@@ -85,7 +94,10 @@ interface SettlementIntentResultBody {
 
 @Controller()
 export class SettlementController {
-  constructor(private readonly service: ReceivableService) {}
+  constructor(
+    private readonly service: ReceivableService,
+    private readonly claims: ClaimService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // POS — settlement-intent capture (operator envelope; intent only)
@@ -226,6 +238,83 @@ export class SettlementController {
       throw new NotFoundException({ code: "not_found", message: "Not found." });
     }
     return toReceivable(result.row);
+  }
+
+  // -------------------------------------------------------------------------
+  // Console — claims + remittance reconciliation (FR-014)
+  // -------------------------------------------------------------------------
+
+  /**
+   * POST /claims — submit receivable(s) to a third-party payer as a claim,
+   * transitioning them → 'claimed'. Unknown payer → non-disclosing 404; an
+   * unknown / non-claimable / mixed-store receivable batch → 409 conflict.
+   */
+  @Post("api/v1/settlement/claims")
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Idempotent("required")
+  @Auditable("settlement.claim.submitted")
+  async submitClaim(
+    @Req() request: TenantContextRequest,
+    @Body(new ZodValidationPipe(ClaimCreateSchema))
+    body: ClaimCreateDto,
+  ): Promise<ClaimBody> {
+    const tenantId = this.requireTenant(request);
+    const result = await this.claims.submitClaim({
+      tenantId,
+      payerRef: body.payerRef,
+      receivableRefs: body.receivableRefs,
+    });
+    if (result.kind === "conflict") {
+      throw new ConflictException({
+        code: "conflict",
+        message:
+          "One or more receivables are unknown, not claimable (must be open " +
+          "or partially applied), or span multiple stores.",
+      });
+    }
+    if (result.kind === "not_found") {
+      throw new NotFoundException({ code: "not_found", message: "Not found." });
+    }
+    return result.claim;
+  }
+
+  /**
+   * POST /claims/:claimRef/reconcile-remittance — match a remittance against the
+   * claim, recording variance. A claim already reconciled → 409 conflict; an
+   * absent / out-of-scope claim → non-disclosing 404. Idempotent (interceptor).
+   */
+  @Post("api/v1/settlement/claims/:claimRef/reconcile-remittance")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(DashboardAuthGuard, TenantContextGuard, RolesGuard)
+  @Roles("owner", "tenant_admin")
+  @Idempotent("required")
+  @Auditable("settlement.remittance.reconciled")
+  async reconcileRemittance(
+    @Req() request: TenantContextRequest,
+    @Param("claimRef") claimRef: string,
+    @Body(new ZodValidationPipe(RemittanceReconcileSchema))
+    body: RemittanceReconcileDto,
+  ): Promise<ReconciliationResultBody> {
+    const tenantId = this.requireTenant(request);
+    this.assertUuid(claimRef, "claimRef");
+    const result = await this.claims.reconcileRemittance({
+      tenantId,
+      claimRef,
+      remittedAmount: body.remittedAmount,
+      remittanceRef: body.remittanceRef ?? null,
+    });
+    if (result.kind === "conflict") {
+      throw new ConflictException({
+        code: "conflict",
+        message: "The claim is not in a reconcilable state (already reconciled).",
+      });
+    }
+    if (result.kind === "not_found") {
+      throw new NotFoundException({ code: "not_found", message: "Not found." });
+    }
+    return result.result;
   }
 
   // -------------------------------------------------------------------------
