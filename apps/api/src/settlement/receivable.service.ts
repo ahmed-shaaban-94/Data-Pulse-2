@@ -1,0 +1,270 @@
+/**
+ * ReceivableService — 035 T030.
+ *
+ * Opens receivables from a POS settlement intent and serves the Console
+ * read/list projections. Mirrors ErpnextWarehouseMapService:
+ *   - one `runWithTenantContext(this.pool, {tenantId, isPlatformAdmin:false}, …)`
+ *     per operation (fail-closed RLS via `app.current_tenant`);
+ *   - discriminated-union results (`{kind:"ok"|"conflict"|"not_found", …}`) —
+ *     the service NEVER throws HttpException; the controller maps to HTTP;
+ *   - snake_case DbRow → camelCase via `toRow`;
+ *   - `isPgCode(err, "23503")` catch on the composite sale FK.
+ *
+ * IDEMPOTENCY: this slice's intent has NO per-row dedup key (the only UNIQUE on
+ * `receivable` is `(id, tenant_id, store_id)`), so the service cannot be
+ * idempotent on its own — a replay reaching it inserts duplicate rows.
+ * "Replay yields the same single outcome" (FR-020, G5) is delivered 100% by the
+ * HTTP `IdempotencyInterceptor` replaying the stored 201 response BEFORE the
+ * handler runs. The service is the single-shot writer.
+ *
+ * CARVE: receivables open in state 'open' only (no `reversal_consumed`, §OQ-4).
+ * The sale fact is NEVER mutated (FR-006) — this writes only `receivable` rows.
+ */
+import { Inject, Injectable } from "@nestjs/common";
+import type { Pool, PoolClient } from "pg";
+
+import { runWithTenantContext } from "@data-pulse-2/db";
+import { newId } from "@data-pulse-2/shared";
+
+import { PG_POOL } from "../auth/auth.module";
+import type { ReceivableRow } from "./dto/receivable.dto";
+import { INITIAL_RECEIVABLE_STATE, type ReceivableState } from "./receivable-state-machine";
+
+// ---------------------------------------------------------------------------
+// DB row shape (snake_case) → service row (camelCase)
+// ---------------------------------------------------------------------------
+
+interface DbRow {
+  id: string;
+  sale_id: string;
+  payer_id: string;
+  outstanding_balance: string;
+  state: ReceivableState;
+  erpnext_payment_entry_ref: string | null;
+  tax_placeholder: Record<string, unknown> | null;
+  version: number;
+}
+
+const SELECT_COLS = `id, sale_id, payer_id, outstanding_balance, state,
+  erpnext_payment_entry_ref, tax_placeholder, version`;
+
+function toRow(r: DbRow): ReceivableRow {
+  return {
+    id: r.id,
+    saleId: r.sale_id,
+    payerId: r.payer_id,
+    outstandingBalance: r.outstanding_balance,
+    state: r.state,
+    erpnextPaymentEntryRef: r.erpnext_payment_entry_ref,
+    taxPlaceholder: r.tax_placeholder,
+    version: r.version,
+  };
+}
+
+function isPgCode(err: unknown, code: string): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === code
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inputs + result discriminated unions
+// ---------------------------------------------------------------------------
+
+export interface IntentPayerInput {
+  readonly payerRef: string;
+  readonly owedAmount: string;
+  readonly claimMetadata?: Record<string, unknown> | null;
+}
+
+export interface OpenIntentInput {
+  readonly tenantId: string;
+  readonly storeId: string;
+  readonly saleRef: string;
+  readonly payers: readonly IntentPayerInput[];
+}
+
+/** open-from-intent: ok (N receivables) | conflict (unknown payer / bad sale). */
+export type OpenIntentResult =
+  | { kind: "ok"; rows: ReceivableRow[] }
+  | { kind: "conflict" };
+
+export type GetResult = { kind: "ok"; row: ReceivableRow } | { kind: "not_found" };
+
+export interface ListInput {
+  readonly tenantId: string;
+  readonly storeId?: string;
+  readonly state?: ReceivableState;
+  readonly payerRef?: string;
+  readonly cursor: string | null;
+  readonly limit: number;
+}
+
+export interface ReceivablePage {
+  readonly items: ReceivableRow[];
+  readonly nextCursor: string | null;
+}
+
+const LIST_MAX_PAGE = 200;
+
+@Injectable()
+export class ReceivableService {
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Open one receivable per payer from a captured sale's settlement intent, in
+   * ONE transaction (all-or-nothing). Each payer is scope-checked in-tenant
+   * first (RLS-filtered SELECT) — an unknown / cross-tenant payer is a
+   * deterministic `conflict` (the contract's 409 unknown-payer; the POS route
+   * has NO 404), never a silent post to the wrong account. A composite-FK
+   * violation on the sale (unknown / cross-tenant sale) raises 23503 and is
+   * likewise collapsed to `conflict` (the POS route has no 404). The sale is
+   * never mutated.
+   */
+  async openFromIntent(input: OpenIntentInput): Promise<OpenIntentResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<OpenIntentResult> => {
+        // 1. Every named payer must resolve in this tenant (RLS-filtered).
+        //    A missing one is the contract's `unknown-payer` 409 — checked up
+        //    front so we never rely on a downstream FK error for this case.
+        for (const payer of input.payers) {
+          const ok = await this.payerInScope(client, payer.payerRef);
+          if (!ok) return { kind: "conflict" };
+        }
+
+        // 2. Insert one receivable per payer in the same tx (state 'open').
+        try {
+          const rows: ReceivableRow[] = [];
+          for (const payer of input.payers) {
+            // App-generated UUIDv7 id (NOT the DB's gen_random_uuid() v4): the
+            // id is the keyset + newest-first sort key (the `idx_receivable_*
+            // (…, id DESC)` indexes), so it MUST be time-ordered. Mirrors the
+            // warehouse-map / sales `newId()` convention.
+            const inserted = await client.query<DbRow>(
+              `INSERT INTO receivable
+                 (id, tenant_id, store_id, sale_id, payer_id,
+                  outstanding_balance, state, tax_placeholder, version)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
+               RETURNING ${SELECT_COLS}`,
+              [
+                newId(),
+                input.tenantId,
+                input.storeId,
+                input.saleRef,
+                payer.payerRef,
+                payer.owedAmount,
+                INITIAL_RECEIVABLE_STATE,
+                payer.claimMetadata ?? null,
+              ],
+            );
+            rows.push(toRow(inserted.rows[0]!));
+          }
+          return { kind: "ok", rows };
+        } catch (err: unknown) {
+          // 23503 = composite FK violation: the (sale_id, tenant_id, store_id)
+          // triple does not resolve to a sale in this tenant/store (unknown /
+          // cross-tenant sale). The POS route declares no 404 — collapse to a
+          // deterministic, side-effect-free conflict (the tx rolls back).
+          if (isPgCode(err, "23503")) return { kind: "conflict" };
+          throw err;
+        }
+      },
+    );
+  }
+
+  /** Read one receivable's projection — RLS-filtered (cross-tenant → not_found). */
+  async getOne(input: { tenantId: string; receivableRef: string }): Promise<GetResult> {
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<GetResult> => {
+        const r = await client.query<DbRow>(
+          `SELECT ${SELECT_COLS} FROM receivable WHERE id = $1::uuid LIMIT 1`,
+          [input.receivableRef],
+        );
+        return r.rows[0] ? { kind: "ok", row: toRow(r.rows[0]) } : { kind: "not_found" };
+      },
+    );
+  }
+
+  /**
+   * List the tenant's receivables, newest-first, keyset paginated. Optional
+   * store_id / state / payer_ref filters. Scope (tenant) is the GUC; store is a
+   * column value + the filter `WHERE`. `nextCursor` is the last id when the page
+   * is full, else null.
+   */
+  async list(input: ListInput): Promise<ReceivablePage> {
+    const limit = Math.min(Math.max(1, input.limit), LIST_MAX_PAGE);
+    return runWithTenantContext(
+      this.pool,
+      { tenantId: input.tenantId, isPlatformAdmin: false },
+      async (client): Promise<ReceivablePage> => {
+        const r = await client.query<DbRow>(
+          `SELECT ${SELECT_COLS} FROM receivable
+            WHERE ($1::uuid IS NULL OR store_id = $1::uuid)
+              AND ($2::text IS NULL OR state = $2::text)
+              AND ($3::uuid IS NULL OR payer_id = $3::uuid)
+              AND ($4::uuid IS NULL OR id < $4::uuid)
+            ORDER BY id DESC
+            LIMIT $5`,
+          [
+            input.storeId ?? null,
+            input.state ?? null,
+            input.payerRef ?? null,
+            input.cursor,
+            limit,
+          ],
+        );
+        const items = r.rows.map(toRow);
+        const last = r.rows[r.rows.length - 1];
+        const nextCursor = r.rows.length === limit && last ? last.id : null;
+        return { items, nextCursor };
+      },
+    );
+  }
+
+  /**
+   * Assert a supplied filter `store_id` resolves in the session tenant — under
+   * RLS a cross-tenant / out-of-scope id returns no row. Returns false → the
+   * controller raises a non-disclosing 404 (contract parameter prose). Null is
+   * always in scope.
+   */
+  async storeInScope(tenantId: string, storeId?: string): Promise<boolean> {
+    if (!storeId) return true;
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client) => {
+        const r = await client.query<{ id: string }>(
+          `SELECT id FROM stores WHERE id = $1::uuid LIMIT 1`,
+          [storeId],
+        );
+        return r.rows.length > 0;
+      },
+    );
+  }
+
+  /** Same non-disclosing scope check for a filter `payer_ref`. */
+  async payerRefInScope(tenantId: string, payerRef?: string): Promise<boolean> {
+    if (!payerRef) return true;
+    return runWithTenantContext(
+      this.pool,
+      { tenantId, isPlatformAdmin: false },
+      async (client) => this.payerInScope(client, payerRef),
+    );
+  }
+
+  /** RLS-filtered existence check for a payer account in the active tenant. */
+  private async payerInScope(client: PoolClient, payerRef: string): Promise<boolean> {
+    const r = await client.query<{ id: string }>(
+      `SELECT id FROM payer_account WHERE id = $1::uuid LIMIT 1`,
+      [payerRef],
+    );
+    return r.rows.length > 0;
+  }
+}
