@@ -1,0 +1,102 @@
+# Decision Record: Sale Settlement & Receivables Model
+
+**Decision ID**: 035-DR-SETTLEMENT
+**Feature**: 035-sale-settlement-and-receivables-model
+**Status**: **SIGNED**
+**Gates**: unblocks `tasks.md` T001 (OQ-4), T002 (OQ-7), T003 (OQ-2/G6); enables the
+G2 **contract draft** (T010a). Does **not** flip gate **G2** (still needs the
+authored OpenAPI contract + owner both-sides approval), and does **not** lift
+011-DR-POSTING-R1's ERPNext posting gate.
+**Owner / signer**: Ahmed Shaaban
+**Created**: 2026-06-15
+**Signed**: 2026-06-15
+
+> **SIGNED.** The three carried open questions in [`spec.md`](../spec.md) §11
+> (OQ-2, OQ-4, OQ-7) are resolved as below, per the owner ruling. The G2 contract
+> **draft** may proceed consistent with this decision. Any deviation is a
+> STOP-and-raise condition, not a silent override. This record does **not** authorize
+> code, OpenAPI YAML, migrations, or connector posting activation — it resolves the
+> field/sequence questions that were blocking the contract draft.
+
+---
+
+## OQ-7 — Payment Entry ownership → **7-C (SIGNED)**
+
+**Question:** Which system is authoritative for the payment-entry record — DP-2,
+ERPNext (via connector), or split?
+
+**Decision: 7-C — operational/accounting split.**
+
+- **DP-2 owns the operational receivable and cash-application truth.** Cash
+  application (full/partial), receivable balance, settlement state, and reconciliation
+  outcomes are authoritative in Data-Pulse-2.
+- **ERPNext owns the accounting Payment Entry** as a **valuation / accounting
+  projection**, reconciled back to DP-2 by **external references** (not by ERPNext
+  becoming the operational source of truth).
+- **POS and Console MUST NOT call ERPNext directly.** The **Connector remains the
+  only ERPNext/Frappe adapter.** (Constitution §I trust boundary; spec §8.)
+
+**Load-bearing caveats (carry verbatim):**
+- This decision **shapes DP-2 035 fields**, but **does NOT by itself authorize
+  Connector posting activation**. Connector posting of the ERPNext Payment Entry
+  stays gated behind **011-DR-POSTING-R1** (which deferred Payment Entry and does not
+  ratify deriving it). OQ-7 finalizes 035 *fields*; R1 still gates ERPNext *posting*.
+
+**Consistency basis:** aligns with 011-DR-POSTING's signed target ("Sales Invoice +
+associated Payment Entry" in ERPNext) **and** Constitution §I/§IX (DP-2 = operational
+truth, ERPNext = valuation).
+
+---
+
+## OQ-4 — DP-026 reversal technical compatibility → **CARVE (SIGNED)**
+
+**Question:** May the 035 G2 contract proceed before DP-026's reversal determination
+closes?
+
+**Decision: CARVE — author the non-reversal happy-path now; defer reversal fields.**
+
+- Author the DP-2 035 G2 contract **now** for the **non-reversal happy path**:
+  **open / apply / settle / claim / remittance / reconciliation**.
+- **Do NOT block the entire 035 contract on DP-026.**
+- **Defer reversal-specific fields** (FR-024 reversal-compatibility carriers) to a
+  **later additive contract bump after DP-026 closes.**
+- **Do NOT create a parallel reversal model.** Void / refund / insurance-rejection
+  paths **MUST reuse DP-026 + Connector Arc A + POS-014** (spec NG-1).
+
+> **Precise framing (do not misread):** This is a **sequencing** decision, **not** a
+> technical-compatibility answer. Reversal-compatibility (FR-024) remains **genuinely
+> blocked pending DP-026's close**. "OQ-4 resolved" means *the non-reversal surface
+> may proceed*; it does **not** mean reversal compat is now defined.
+
+**Follow-on flag:** the receivable-correlation need adds weight to resolving the
+DP-026 §3.x sale-`externalId` vs per-reversal-`source_ref_id` anchor mismatch —
+surface on DP-026's CHECKPOINT-2 (informational; not a 035 task).
+
+---
+
+## OQ-2 — Egypt VAT allocation → **TAX-DEACTIVATED v1 (SIGNED)**
+
+**Question:** How does VAT apportion across payers / co-pays?
+
+**Decision: proceed tax-pending; tax-deactivated for v1.**
+
+- **Do NOT invent VAT allocation rules.** No Egypt VAT allocation, no fiscal-receipt
+  behavior, no co-pay VAT split, no tax activation in this v1.
+- Tax carriers remain **placeholders only** (spec FR-023, NG-4).
+- **G6 remains activation / rollout-only under ADR-0003** and **must be reopened
+  later** with real users + SME review.
+
+---
+
+## What this record unblocks vs what stays gated
+
+| Item | State after this record |
+|------|-------------------------|
+| `tasks.md` T001 (OQ-4) | **RESOLVED — CARVE** (non-reversal proceeds; reversal fields stay blocked on DP-026) |
+| `tasks.md` T002 (OQ-7) | **RESOLVED — 7-C** |
+| `tasks.md` T003 (OQ-2/G6) | **RESOLVED — tax-deactivated v1** |
+| G2 contract **draft** (design input, markdown) | **AUTHORABLE NOW** (T010a) |
+| G2 contract **OpenAPI YAML** (`packages/contracts/openapi/**`) | **STILL `[GATED]`** (T010b) — needs owner dispatch + both-sides approval |
+| Gate **G2** | **NOT satisfied** — needs authored contract + owner approval |
+| Connector ERPNext Payment-Entry posting | **STILL GATED** behind 011-DR-POSTING-R1 |
+| G3 schema / migration | **STILL GATED** — conceptual only |
