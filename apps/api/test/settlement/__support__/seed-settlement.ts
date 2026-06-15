@@ -18,6 +18,7 @@
 import {
   ACTOR_A,
   STORE_A_X,
+  STORE_A_Y,
   STORE_B_X,
   TENANT_A,
   TENANT_B,
@@ -35,6 +36,9 @@ export const SALE_A = "0a000000-0000-7000-8000-00000d035511";
 export const PAYER_A_STORE = "0a000000-0000-7000-8000-00000d0355a1";
 /** Tenant A — an ACTIVE tenant-wide payer account (store_id NULL). */
 export const PAYER_A_TENANT = "0a000000-0000-7000-8000-00000d0355a2";
+/** Tenant A — an ACTIVE payer scoped to a DIFFERENT store (STORE_A_Y). Used to
+ *  prove a store-A-X intent may NOT name a store-A-Y-scoped payer (T033 §IX). */
+export const PAYER_A_OTHER_STORE = "0a000000-0000-7000-8000-00000d0355a3";
 /** Tenant B — an ACTIVE payer account (the cross-tenant target). */
 export const PAYER_B = "0b000000-0000-7000-8000-00000d0355b1";
 /** A syntactically-valid id that resolves to nothing in tenant A. */
@@ -49,6 +53,7 @@ export interface SettlementFixtureIds {
   readonly saleA: string;
   readonly payerAStore: string;
   readonly payerATenant: string;
+  readonly payerAOtherStore: string;
   readonly payerB: string;
   readonly payerAbsent: string;
 }
@@ -62,6 +67,7 @@ export const SETTLEMENT_FIXTURE_IDS: SettlementFixtureIds = Object.freeze({
   saleA: SALE_A,
   payerAStore: PAYER_A_STORE,
   payerATenant: PAYER_A_TENANT,
+  payerAOtherStore: PAYER_A_OTHER_STORE,
   payerB: PAYER_B,
   payerAbsent: PAYER_ABSENT,
 });
@@ -91,15 +97,16 @@ export async function seedSettlementFixture(
     [SALE_A, TENANT_A, STORE_A_X, ACTOR_A],
   );
 
-  // ---- Tenant A: a store-scoped + a tenant-wide ACTIVE payer account --------
+  // ---- Tenant A: store-scoped (A_X) + tenant-wide + other-store (A_Y) payers -
   await admin.query(
     `INSERT INTO payer_account
        (id, tenant_id, store_id, category, display_name, status, version)
      VALUES
-       ($1, $2, $3, 'insurer',         'Acme Insurer (A/store)', 'active', 0),
-       ($4, $2, NULL, 'credit_customer','House Account (A/tenant)','active', 0)
+       ($1, $2, $3, 'insurer',         'Acme Insurer (A/store X)', 'active', 0),
+       ($4, $2, NULL, 'credit_customer','House Account (A/tenant)', 'active', 0),
+       ($5, $2, $6, 'insurer',         'Other Insurer (A/store Y)','active', 0)
      ON CONFLICT DO NOTHING`,
-    [PAYER_A_STORE, TENANT_A, STORE_A_X, PAYER_A_TENANT],
+    [PAYER_A_STORE, TENANT_A, STORE_A_X, PAYER_A_TENANT, PAYER_A_OTHER_STORE, STORE_A_Y],
   );
 
   // ---- Tenant B: an ACTIVE payer account (cross-tenant target) --------------
