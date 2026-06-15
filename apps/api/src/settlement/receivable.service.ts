@@ -27,6 +27,7 @@ import { runWithTenantContext } from "@data-pulse-2/db";
 import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../auth/auth.module";
+import { recordSettlementReceivable } from "../observability/metrics/api.metrics";
 import { decideApplication } from "./apply-payment-decision";
 import type { ReceivableRow } from "./dto/receivable.dto";
 import { INITIAL_RECEIVABLE_STATE, type ReceivableState } from "./receivable-state-machine";
@@ -143,7 +144,7 @@ export class ReceivableService {
    * never mutated.
    */
   async openFromIntent(input: OpenIntentInput): Promise<OpenIntentResult> {
-    return runWithTenantContext(
+    const result = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client): Promise<OpenIntentResult> => {
@@ -193,6 +194,10 @@ export class ReceivableService {
         }
       },
     );
+    // Signal AFTER the tx commits (post-critical-path; emission MUST NOT alter
+    // the settlement outcome). One increment per successful intent (035 §7).
+    if (result.kind === "ok") recordSettlementReceivable();
+    return result;
   }
 
   /**
@@ -208,7 +213,7 @@ export class ReceivableService {
    * this is the single-shot writer.
    */
   async applyPayment(input: ApplyPaymentInput): Promise<ApplyPaymentResult> {
-    return runWithTenantContext(
+    const result = await runWithTenantContext(
       this.pool,
       { tenantId: input.tenantId, isPlatformAdmin: false },
       async (client): Promise<ApplyPaymentResult> => {
@@ -271,6 +276,9 @@ export class ReceivableService {
           : { kind: "conflict" };
       },
     );
+    // Post-commit signal — one increment per successful cash application (035 §7).
+    if (result.kind === "ok") recordSettlementReceivable();
+    return result;
   }
 
   /** Read one receivable's projection — RLS-filtered (cross-tenant → not_found). */

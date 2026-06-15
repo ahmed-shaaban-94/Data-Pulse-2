@@ -211,6 +211,8 @@ describe("Drift contract: every signal in the catalogue is represented", () => {
     "connector_heartbeat_total",
     // ERPNext product-master reconciliation/repair — 021-POLISH (spec §VII). Unlabeled.
     "erpnext_product_reconciliation_total",
+    // Settlement & receivables domain — 035 T034 (spec section 7). Unlabeled.
+    "settlement_receivable_total",
   ];
 
   for (const name of expectedSignals) {
