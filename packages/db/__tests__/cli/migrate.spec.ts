@@ -138,6 +138,7 @@ describe("data-pulse-migrate CLI", () => {
     "0024_pairing_codes",
     "0025_external_identity_links",
     "0026_sale_sync_status",
+    "0027_settlement_receivables",
   ] as const;
 
   const LATEST_MIGRATION = EXPECTED_MIGRATIONS[EXPECTED_MIGRATIONS.length - 1]!;
@@ -236,38 +237,58 @@ describe("data-pulse-migrate CLI", () => {
         EXPECTED_MIGRATIONS.slice(0, -1),
       );
 
-      // LATEST_MIGRATION is 0026_sale_sync_status, so this single down fully
-      // reverses it (CodeRabbit #6): the sync_status column, the
-      // idx_sales_needs_repair index, the sale_sync_deadletters table, and its
-      // RLS policies are all ABSENT afterwards.
-      const syncColAfter = await env.admin.query<{ count: string }>(`
+      // LATEST_MIGRATION is 0027_settlement_receivables, so this single down
+      // fully reverses it: the six settlement tables (payer_account, receivable,
+      // payment_application, claim, claim_receivables, remittance,
+      // reconciliation_result) and their RLS policies are ABSENT afterwards.
+      const settlementTablesAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = ANY($1::text[])
+      `, [[
+        "payer_account",
+        "receivable",
+        "payment_application",
+        "claim",
+        "claim_receivables",
+        "remittance",
+        "reconciliation_result",
+      ]]);
+      expect(settlementTablesAfter.rows[0]?.count).toBe("0");
+
+      // Dropping the tables drops their policies — pg_policies has no rows.
+      const settlementPoliciesAfter = await env.admin.query<{ count: string }>(`
+        SELECT COUNT(*)::text AS count FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = ANY($1::text[])
+      `, [[
+        "payer_account",
+        "receivable",
+        "payment_application",
+        "claim",
+        "claim_receivables",
+        "remittance",
+        "reconciliation_result",
+      ]]);
+      expect(settlementPoliciesAfter.rows[0]?.count).toBe("0");
+
+      // Sanity: the 0026 artifacts SURVIVE the 0027 rollback (down reverses only
+      // the latest migration). The sync_status column and sale_sync_deadletters
+      // table remain present.
+      const syncColSurvives = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.columns
         WHERE table_schema = 'public'
           AND table_name = 'sales'
           AND column_name = 'sync_status'
       `);
-      expect(syncColAfter.rows[0]?.count).toBe("0");
+      expect(syncColSurvives.rows[0]?.count).toBe("1");
 
-      const needsRepairIdxAfter = await env.admin.query<{ count: string }>(`
-        SELECT COUNT(*)::text AS count FROM pg_indexes
-        WHERE schemaname = 'public' AND indexname = 'idx_sales_needs_repair'
-      `);
-      expect(needsRepairIdxAfter.rows[0]?.count).toBe("0");
-
-      const deadletterTableAfter = await env.admin.query<{ count: string }>(`
+      const deadletterSurvives = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'sale_sync_deadletters'
       `);
-      expect(deadletterTableAfter.rows[0]?.count).toBe("0");
+      expect(deadletterSurvives.rows[0]?.count).toBe("1");
 
-      // Dropping the table drops its policies — pg_policies has no rows for it.
-      const deadletterPoliciesAfter = await env.admin.query<{ count: string }>(`
-        SELECT COUNT(*)::text AS count FROM pg_policies
-        WHERE schemaname = 'public' AND tablename = 'sale_sync_deadletters'
-      `);
-      expect(deadletterPoliciesAfter.rows[0]?.count).toBe("0");
-
-      // The `sales` table itself survives (only the 0026 column is dropped).
+      // The `sales` table itself survives (0027 only adds new tables; it does
+      // not alter `sales`).
       const salesTableAfter = await env.admin.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM information_schema.tables
         WHERE table_schema = 'public' AND table_name = 'sales'
