@@ -151,7 +151,7 @@ export class ReceivableService {
         //    A missing one is the contract's `unknown-payer` 409 — checked up
         //    front so we never rely on a downstream FK error for this case.
         for (const payer of input.payers) {
-          const ok = await this.payerInScope(client, payer.payerRef);
+          const ok = await this.payerInScope(client, payer.payerRef, input.storeId);
           if (!ok) return { kind: "conflict" };
         }
 
@@ -355,11 +355,25 @@ export class ReceivableService {
     );
   }
 
-  /** RLS-filtered existence check for a payer account in the active tenant. */
-  private async payerInScope(client: PoolClient, payerRef: string): Promise<boolean> {
+  /**
+   * RLS-filtered existence check for a payer account in the active tenant,
+   * scoped to a store. A payer is in-scope for `storeId` iff it is tenant-wide
+   * (`store_id IS NULL`) OR scoped to that exact store — a store-X intent may
+   * NOT name a store-Y-scoped payer in the same tenant (Codex #579: payer-scope
+   * must respect store, not just tenant). When `storeId` is omitted (filter
+   * checks), any in-tenant payer is in scope.
+   */
+  private async payerInScope(
+    client: PoolClient,
+    payerRef: string,
+    storeId?: string,
+  ): Promise<boolean> {
     const r = await client.query<{ id: string }>(
-      `SELECT id FROM payer_account WHERE id = $1::uuid LIMIT 1`,
-      [payerRef],
+      `SELECT id FROM payer_account
+        WHERE id = $1::uuid
+          AND ($2::uuid IS NULL OR store_id IS NULL OR store_id = $2::uuid)
+        LIMIT 1`,
+      [payerRef, storeId ?? null],
     );
     return r.rows.length > 0;
   }
