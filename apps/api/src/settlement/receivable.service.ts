@@ -24,6 +24,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Pool, PoolClient } from "pg";
 
 import { runWithTenantContext } from "@data-pulse-2/db";
+import { newId } from "@data-pulse-2/shared";
 
 import { PG_POOL } from "../auth/auth.module";
 import type { ReceivableRow } from "./dto/receivable.dto";
@@ -140,13 +141,18 @@ export class ReceivableService {
         try {
           const rows: ReceivableRow[] = [];
           for (const payer of input.payers) {
+            // App-generated UUIDv7 id (NOT the DB's gen_random_uuid() v4): the
+            // id is the keyset + newest-first sort key (the `idx_receivable_*
+            // (…, id DESC)` indexes), so it MUST be time-ordered. Mirrors the
+            // warehouse-map / sales `newId()` convention.
             const inserted = await client.query<DbRow>(
               `INSERT INTO receivable
-                 (tenant_id, store_id, sale_id, payer_id,
+                 (id, tenant_id, store_id, sale_id, payer_id,
                   outstanding_balance, state, tax_placeholder, version)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, 0)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
                RETURNING ${SELECT_COLS}`,
               [
+                newId(),
                 input.tenantId,
                 input.storeId,
                 input.saleRef,

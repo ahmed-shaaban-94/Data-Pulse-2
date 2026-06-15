@@ -486,6 +486,28 @@ describe("035 T030 §6 — console list receivables", () => {
     expect(page3.body.nextCursor).toBeNull();
   });
 
+  it("lists newest-first (the most recently opened receivable leads)", async () => {
+    if (maybeSkip()) return;
+    // Two intents in sequence — the second opens a strictly-later UUIDv7 id.
+    const r1 = await http()
+      .post(INTENT_URL)
+      .set("Idempotency-Key", idempKey("ord1"))
+      .send({ saleRef: SALE_A, payers: [{ payerRef: PAYER_A_STORE, owedAmount: "11.00" }] });
+    const r2 = await http()
+      .post(INTENT_URL)
+      .set("Idempotency-Key", idempKey("ord2"))
+      .send({ saleRef: SALE_A, payers: [{ payerRef: PAYER_A_TENANT, owedAmount: "22.00" }] });
+    const firstRef = r1.body.receivables[0].receivableRef;
+    const secondRef = r2.body.receivables[0].receivableRef;
+
+    const page = await http().get(LIST_URL);
+    expect(page.status).toBe(200);
+    const ids = page.body.items.map((i: { receivableRef: string }) => i.receivableRef);
+    // The later-opened receivable sorts ahead of the earlier one (time-ordered).
+    expect(ids.indexOf(secondRef)).toBeLessThan(ids.indexOf(firstRef));
+    expect(page.body.items[0].receivableRef).toBe(secondRef);
+  });
+
   it("filters by state and by payer_ref", async () => {
     if (maybeSkip()) return;
     await http()
