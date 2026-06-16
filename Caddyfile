@@ -1,13 +1,14 @@
-# Caddy — automatic HTTPS for the P-0 preprod API edge.
+# Caddy — automatic HTTPS for the public API edge template.
 #
-# DNS for api-preprod.smartdatapulse.tech is grey-cloud (DNS-only) -> the origin
-# must own its TLS cert. Caddy auto-provisions + renews a Let's Encrypt cert
-# (HTTP-01 challenge over the now-open port 80) and terminates TLS, reverse-
-# proxying cleartext to the api container on the internal compose network.
+# DNS for api.example.test should point at <app-host>. Caddy auto-provisions and
+# renews a TLS certificate where the chosen hostname and CA support it, then
+# reverse-proxies cleartext to the api container on the internal compose network.
 #
-# Requires: ports 80 + 443 open (done in P2), DNS A record -> droplet (exists).
+# Real deployment hostnames belong in private ops config or the host environment,
+# not public git.
+# Requires: ports 80 + 443 open and DNS A/AAAA records pointing to <app-host>.
 
-api-preprod.smartdatapulse.tech {
+api.example.test {
 	encode gzip
 	reverse_proxy api:3000
 

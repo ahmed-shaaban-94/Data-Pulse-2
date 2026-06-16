@@ -1,56 +1,62 @@
-# Data-Pulse-2 — P-0 Preprod Deployment Runbook
+# Data-Pulse-2 Deploy Template
 
-Deploys the DP-2 backend (api + worker) onto the `Retail-Tower-OS` droplet, behind
-`api-preprod.smartdatapulse.tech`, on the managed PostgreSQL 16 cluster `ezaby`.
+Deploys the DP-2 backend (`api` + `worker`) onto `<app-host>`, behind
+`api.example.test`, using `<managed-db>` for PostgreSQL and `<redis-service>` for
+Redis.
 
-This is the artifact that closes **#349 / D-DEPLOY**.
+This public template intentionally avoids real deployment names. Real hostnames,
+service names, secret-manager references, and provider-specific values belong in
+private ops config or the host environment, not public git.
 
 ## Topology
 
 ```
-Internet ──443──▶ Caddy (TLS, Let's Encrypt) ──▶ api:3000 (NestJS)
-                                                   ├─▶ redis:6379 (BullMQ, sessions, locks)
-                                                   └─▶ ezaby (managed PG16, PRIVATE host, sslmode=require)
-worker ──▶ redis + ezaby     migrate (one-shot) ──▶ ezaby  (runs before api/worker)
+Internet -> 443 -> Caddy (TLS) -> api:3000 (NestJS)
+                                  |-> <redis-service>:6379 (BullMQ, sessions, locks)
+                                  `-> <managed-db> (PostgreSQL, SSL required)
+worker -> <redis-service> + <managed-db>
+migrate (one-shot) -> <managed-db>  (runs before api/worker)
 ```
 
-Postgres is the **managed DO cluster** `ezaby` — not a container. Redis is containerized.
+PostgreSQL is expected to be an external managed service, not a container in this
+compose stack. Redis is containerized by default.
 
-## Prerequisites (one-time, on the droplet)
+## Prerequisites
 
-1. Docker + Compose v2 (present on `Retail-Tower-OS`).
-2. Firewall: ports 80 + 443 inbound open (done in infra P2).
-3. DNS: `api-preprod.smartdatapulse.tech` A-record → droplet public IP (exists, DNS-only).
-4. The `ezaby` cluster's trusted sources include this droplet (done).
-5. **1Password CLI (`op`)** installed and authenticated via a **service-account token**:
+1. Docker + Compose v2 installed on `<app-host>`.
+2. Firewall: ports 80 + 443 inbound open where Caddy will terminate TLS.
+3. DNS: `api.example.test` points to `<app-host>`.
+4. `<managed-db>` allows connections from `<app-host>`.
+5. A secret manager or host-level environment injection mechanism is available.
+   If using 1Password CLI (`op`), authenticate it outside public git:
    ```bash
-   export OP_SERVICE_ACCOUNT_TOKEN=...   # placed on the droplet; never committed
+   export OP_SERVICE_ACCOUNT_TOKEN=...   # set on the host; never commit this value
    op whoami                              # verify
    ```
 6. A `deploy/prod.env` (copied from `deploy/prod.env.example`) containing only
-   `op://` references + non-secret config — **no secret values**.
+   secret-manager references plus non-secret config. Do not commit real values.
 
 ## Deploy
 
 ```bash
-gh repo clone ahmed-shaaban-94/Data-Pulse-2   # or: git pull on an existing clone (HTTPS/gh auth)
+gh repo clone <owner>/<repo>                    # or: git pull on an existing clone
 cd Data-Pulse-2
 git checkout <deploy-ref>                       # the reconciled origin/main commit being deployed
 
-cp deploy/prod.env.example deploy/prod.env      # then set the op:// references
+cp deploy/prod.env.example deploy/prod.env      # then set private references/values
 op run --env-file=deploy/prod.env -- \
   docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-`op run` resolves the references into the container env in memory only. The
-`migrate` service runs `migrate up` against `ezaby` and must exit 0 before
+`op run` resolves private references into the container env in memory only. The
+`migrate` service runs `migrate up` against `<managed-db>` and must exit 0 before
 `api`/`worker` start (compose `service_completed_successfully` gate).
 
 ## Verify
 
 ```bash
 docker compose -f docker-compose.prod.yml ps          # all healthy; migrate Exited(0)
-curl -sS -o /dev/null -w "%{http_code}\n" https://api-preprod.smartdatapulse.tech/
+curl -sS -o /dev/null -w "%{http_code}\n" https://api.example.test/
 # any app response (e.g. 401/404 from NestJS) proves the edge is live; TCP timeout = not live
 op run --env-file=deploy/prod.env -- \
   docker compose -f docker-compose.prod.yml run --rm migrate node dist/cli/migrate.js status
@@ -72,5 +78,5 @@ docker compose -f docker-compose.prod.yml down            # keeps volumes (redis
 - **Add a public `GET /health` route** to `apps/api`; currently healthchecks use the
   unauthenticated Prometheus metrics listener on `:9464`.
 - **Hardening:** run containers as a non-root user; add resource limits; offsite backups
-  of `ezaby`; monitoring/alerting; log shipping.
-- **Console** (`console-preprod`) is a separate later deployment.
+  for `<managed-db>`; monitoring/alerting; log shipping.
+- **Console** (`<console-host>`) is a separate later deployment.
