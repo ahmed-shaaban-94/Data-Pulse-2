@@ -1,15 +1,16 @@
-# Data-Pulse-2 — P-0 preprod production stack.
+# Data-Pulse-2 — public deploy compose template.
 #
-# Postgres is the MANAGED DigitalOcean cluster `ezaby` (PG16) — NOT a container here.
-# Bring up (on the droplet), secrets injected in-memory by 1Password:
+# PostgreSQL is expected to be an external managed service — NOT a container here.
+# Bring up on <app-host>, with secrets injected in-memory by a secret manager:
 #   op run --env-file=deploy/prod.env -- docker compose -f docker-compose.prod.yml up -d --build
 #
-# `op run` resolves the op:// references in deploy/prod.env into these env vars at
-# launch time; values live only in process memory, never on disk.
+# `op run` resolves private references in deploy/prod.env into these env vars at
+# launch time. Real deployment values belong in private ops config or the host
+# environment, not public git.
 #
 # Service order: migrate (one-shot) -> api + worker (wait for migrate success) ; redis + caddy alongside.
 
-name: dp2-preprod
+name: dp2-template
 
 services:
   redis:
@@ -31,7 +32,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: migrate
-    image: dp2-migrate:preprod
+    image: dp2-migrate:template
     container_name: dp2-migrate
     restart: "no"
     environment:
@@ -44,7 +45,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
-    image: dp2-api:preprod
+    image: dp2-api:template
     container_name: dp2-api
     restart: unless-stopped
     depends_on:
@@ -82,7 +83,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: worker
-    image: dp2-worker:preprod
+    image: dp2-worker:template
     container_name: dp2-worker
     restart: unless-stopped
     depends_on:
