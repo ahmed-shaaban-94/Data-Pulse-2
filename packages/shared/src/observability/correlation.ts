@@ -23,6 +23,9 @@ import { trace } from "@opentelemetry/api";
 /** The OpenTelemetry "invalid trace ID" sentinel — all zeros. */
 const INVALID_TRACE_ID = "00000000000000000000000000000000";
 
+/** Guard so the OTel-broken warning is emitted at most once per process. */
+let otelWarningEmitted = false;
+
 /**
  * Resolve a correlation ID. Reads the active OTel span; returns its trace
  * ID when valid, otherwise returns `fallback`. Never throws — even if the
@@ -37,9 +40,21 @@ export function getCorrelationId(fallback: string): string {
       return fallback;
     }
     return ctx.traceId;
-  } catch {
+  } catch (err: unknown) {
     // Defensive: a broken OTel install MUST NOT poison logging. The
     // request_id fallback is always available — keep logs flowing.
+    // Log once per process so ops can detect a broken OTel install.
+    if (!otelWarningEmitted) {
+      otelWarningEmitted = true;
+      process.stderr.write(
+        JSON.stringify({
+          level: "warn",
+          component: "correlation",
+          message: "OTel getActiveSpan threw; falling back to request_id",
+          errorName: err instanceof Error ? err.name || "Error" : "UnknownError",
+        }) + "\n",
+      );
+    }
     return fallback;
   }
 }
