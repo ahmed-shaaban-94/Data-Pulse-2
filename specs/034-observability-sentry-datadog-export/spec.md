@@ -112,3 +112,39 @@ As the **on-call owner**, I want DP-2's structured logs (already redacted via th
 - **Principle VII (Observable Systems):** this feature *completes* VII — it routes the mandated structured logs + metrics (error rate, latency p50/p95/p99, queue depth, sync lag) to the chosen vendors and adds the traceable-failure surface (Sentry). Redaction "at the logger boundary, not optional at call sites" is honored via the existing redaction matrix.
 - **Principle XIV (PII & Data Lifecycle):** telemetry redaction is mandatory and reuses the classification already in the redaction matrix; observability tags MUST NOT carry PII (existing label-policy enforcement); retention windows are an owner decision (OQ-2).
 - **Principle I (Reference, not source of truth):** observability output never overrides `origin/main`/kernel evidence (AD-TOOL-003 Gates).
+
+---
+
+## Setup Reconciliation (2026-06-17) — verified tool state vs. spec assumptions
+
+> **Append-only planning note.** Records the actual Sentry/Datadog onboarding state the owner reported on 2026-06-17 and reconciles it against this spec's original assumptions. **No secret/DSN/key is recorded here or anywhere in git.** This note re-scopes the user stories; it authors no code and changes no FR/SC text above.
+
+### Verified setup state (owner-reported, not yet exercised against live traffic)
+
+- **Sentry:** four projects created — `pos-pulse`, `data-pulse-2`, `rt-console`, `rt-erpnext-connector`. (This spec uses **`data-pulse-2`**.) DSNs are held outside git (1Password); none pasted into chat or committed.
+- **Datadog:** onboarding done with **Infrastructure Monitoring ONLY**. **APM = OFF · RUM = OFF · DDOT (OTLP) Collector = OFF · Agent actions/remediation = OFF.** Environment tag currently **`staging`** (onboarding default; some surfaces may show `dev` until renamed).
+
+### Impact on the user stories
+
+| Story | Original assumption | Reconciled status |
+|---|---|---|
+| **US1 — Sentry backend errors (P1)** | `data-pulse-2` Sentry project exists | ✅ **Unblocked** — project now exists. Still gated on per-slice owner approval + DSN-in-1Password before any code. No change to US1 scope. |
+| **US2 — Datadog OTLP metrics/traces (P2)** | Datadog ingests OTLP; APM on for the cross-hop sale trace | ⚠️ **BLOCKED / re-scoped.** With **APM OFF + DDOT/OTLP Collector OFF**, the `startOtel()` OTLP-exporter path and APM tracing are **not available**. US2 reduces to **Datadog Infrastructure Monitoring only** (host/CPU/mem/disk/container/Postgres via the Datadog Agent) until APM + an OTLP collector are turned on. The cross-hop sale **trace** (and SC-003's "named signals appear in Datadog via OTLP") is deferred until then. |
+| **US3 — Redacted logs + synthetics (P3)** | Datadog Logs + Synthetics | ⚠️ **Partially blocked.** Log shipping/synthetics depend on enabling the corresponding Datadog products (not part of Infra-only onboarding). Deferred until enabled. |
+
+### Environment-naming note (planning only)
+
+- Specs/AD-TOOL-003 assumed **`preprod`** as the pilot env tag; Datadog onboarding currently uses **`staging`/`dev`**. **Preferred future naming = `preprod`.** This is a reconciliation note, not a blocker — align the `env` tag at activation time; do not invent a rename here.
+
+### Net effect
+
+- **US1 (Sentry, P1) is the only currently-actionable slice** and remains the MVP. Its tasks (T005–T010) are unchanged.
+- **US2/US3 are gated on owner enabling Datadog APM / OTLP collector / Logs / Synthetics** — captured as new owner decisions below; until then, Datadog contributes **infra metrics only**.
+
+### New owner decisions (from this reconciliation)
+
+| OD | Question | Status |
+|---|---|---|
+| OD-5 | Enable Datadog **APM** (+ a DDOT/OTLP collector) so the OTel layer can drain to Datadog (US2 full scope + the cross-hop sale trace)? | OPEN — owner. Until YES, US2 = infra-metrics-only. |
+| OD-6 | Enable Datadog **Logs** + **Synthetics** for US3? | OPEN — owner. |
+| OD-7 | Rename the Datadog environment tag `staging`/`dev` → `preprod` to match the program naming, or accept the current tag? | OPEN — owner (cosmetic, non-blocking). |
