@@ -34,6 +34,7 @@
     "migrate:down": "node dist/cli/migrate.js down",
     "migrate:status": "node dist/cli/migrate.js status",
     "bootstrap:pilot": "node dist/cli/bootstrap-pilot.js",
+    "bootstrap:pairing-code": "node dist/cli/bootstrap-pairing-code.js",
     "seed:catalog": "node dist/cli/seed-catalog.js",
     "lint": "echo \"db: lint runs at the repo root\""
   },
