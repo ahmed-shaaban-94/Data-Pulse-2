@@ -33,14 +33,22 @@
  * An audit emission failure is non-fatal — it is not preferable to reject the
  * original request over it.
  *
- * Not globally registered in this slice
- * --------------------------------------
- * KNOWN GAP: This interceptor is complete and testable but is NOT added to the
- * global interceptor chain in `main.ts` and is NOT included in any module. That
- * wiring is T232/T233's responsibility (AuditModule + BullMQ-backed enqueuer).
- * Until then, `@Auditable` decorators on controller methods have no runtime
- * effect in production. Tests mount the interceptor directly on a fake
- * controller and are unaffected by this gap.
+ * Global registration (T232/T233 — SHIPPED)
+ * ------------------------------------------
+ * This interceptor IS globally registered, via the `APP_INTERCEPTOR` DI token in
+ * `AuditModule` (`audit.module.ts` → `auditInterceptorProvider`), and
+ * `AuditModule` is imported by the root `AppModule`. It is NOT constructed in
+ * `main.ts` `useGlobalInterceptors(...)` on purpose: the interceptor has a DI
+ * dependency on `AUDIT_JOB_ENQUEUER`, and `APP_INTERCEPTOR` registration keeps it
+ * DI-managed so integration tests can `overrideProvider(AUDIT_JOB_ENQUEUER)`
+ * (manual `new X(...)` in `main.ts` would bypass the container and break that).
+ * Therefore `@Auditable` decorators DO take effect at runtime.
+ *
+ * Durable emission is a separate, deployment-time concern: in non-production the
+ * bound enqueuer is `NoOpAuditJobEnqueuer`, and in production durable fan-out
+ * depends on the Scope-B audit-fanout worker being deployed (see
+ * `audit.module.ts`). The decorator wiring is not the bottleneck — the worker
+ * deployment is. Tests mount the interceptor on a fake controller directly.
  */
 import {
   type CallHandler,
