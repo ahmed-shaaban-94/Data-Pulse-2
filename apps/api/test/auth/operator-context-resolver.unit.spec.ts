@@ -232,3 +232,56 @@ describe("PgOperatorContextResolver — happy path", () => {
     }
   });
 });
+
+describe("PgOperatorContextResolver — membership lookup determinism (audit M-3)", () => {
+  // A user may have one ACTIVE membership row plus soft-deleted rows for the same
+  // (tenant_id, user_id) — the partial unique index is scoped `WHERE deleted_at IS
+  // NULL`. A bare `LIMIT 1` could return a stale row in heap order and refuse a
+  // legitimately-active operator. The query must `ORDER BY` so the active grant
+  // (revoked_at / deleted_at both NULL) sorts first.
+  it("orders the membership lookup to prefer the active grant (revoked/deleted NULLS FIRST)", async () => {
+    const seenSql: string[] = [];
+    const query = jest.fn((sql: string) => {
+      seenSql.push(String(sql));
+      const text = String(sql);
+      if (text.includes("FROM external_identity_links")) {
+        return Promise.resolve({ rows: [{ id: USER_ID, deleted_at: null }] });
+      }
+      if (text.includes("FROM memberships")) {
+        return Promise.resolve({
+          rows: [{
+            id: MEMBERSHIP_ID,
+            store_access_kind: "all",
+            revoked_at: null,
+            deleted_at: null,
+            role_code: "store_manager",
+          }],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query } as unknown as Pool;
+    const identityProvider = {
+      verifyIdentityToken: async (raw: string): Promise<VerifiedSubject> => {
+        void raw;
+        return { providerKey: "clerk", issuer: "https://issuer.example", subject: SUB };
+      },
+    } as unknown as IdentityProviderPort;
+    const deviceRepository = {
+      findActiveByAttestation: jest.fn().mockResolvedValue(makeDevice()),
+    } as unknown as DeviceRepository;
+
+    const resolver = new PgOperatorContextResolver(pool, identityProvider, deviceRepository);
+    await resolver.resolve("jwt", "att");
+
+    const membershipSql = seenSql.find((s) => s.includes("FROM memberships"));
+    expect(membershipSql).toBeDefined();
+    // Normalize whitespace so the assertion is robust to formatting.
+    const normalized = String(membershipSql).replace(/\s+/g, " ");
+    expect(normalized).toMatch(
+      /ORDER BY m\.revoked_at NULLS FIRST, m\.deleted_at NULLS FIRST/,
+    );
+    // The ORDER BY must precede LIMIT 1 (otherwise it is inert).
+    expect(normalized.indexOf("ORDER BY")).toBeLessThan(normalized.indexOf("LIMIT 1"));
+  });
+});

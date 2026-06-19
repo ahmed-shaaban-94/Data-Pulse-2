@@ -235,6 +235,14 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
     tenantId: string,
     userId: string,
   ): Promise<MembershipLookupRow | null> {
+    // The partial unique index `memberships_tenant_user_active_uidx` is scoped
+    // `WHERE deleted_at IS NULL`, so a user may legitimately have ONE active row
+    // plus one or more soft-deleted rows for the same (tenant_id, user_id). A bare
+    // `LIMIT 1` with no `ORDER BY` lets Postgres return ANY of them in heap order —
+    // a re-added user could intermittently get a stale revoked/deleted row, and the
+    // caller would refuse them with `membership_revoked`. Order so the ACTIVE grant
+    // (revoked_at / deleted_at both NULL) sorts first; the caller still inspects
+    // revoked_at/deleted_at, so a genuinely revoked-only user is unchanged.
     const r = await this.pool.query<MembershipLookupRow>(
       `SELECT m.id, m.store_access_kind, m.revoked_at, m.deleted_at,
               r.code AS role_code
@@ -242,6 +250,7 @@ export class PgOperatorContextResolver implements OperatorContextResolver {
          JOIN roles r ON r.id = m.role_id
         WHERE m.tenant_id = $1
           AND m.user_id = $2
+        ORDER BY m.revoked_at NULLS FIRST, m.deleted_at NULLS FIRST
         LIMIT 1`,
       [tenantId, userId],
     );

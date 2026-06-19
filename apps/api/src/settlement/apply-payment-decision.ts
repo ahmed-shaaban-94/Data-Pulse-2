@@ -15,15 +15,29 @@ import type { ReceivableState } from "./receivable-state-machine";
 
 const SCALE = 4;
 
-/** Parse an exact-decimal money string into integer ten-thousandths (bigint). */
-function toScaledInt(money: string): bigint {
-  const [whole = "0", frac = ""] = money.split(".");
+/**
+ * Parse an exact-decimal money string into integer ten-thousandths (bigint).
+ *
+ * The sign is applied to the WHOLE magnitude, not just the integer part: for
+ * `"-1.5000"` the fractional `5000` must subtract from the magnitude, not add
+ * to it. Splitting `"-1.5000"` yields `whole="-1"`, so `BigInt(whole)*unit +
+ * frac` would give `-10000 + 5000 = -5000` (wrong; correct is `-15000`). We
+ * therefore strip the sign, build the magnitude, then re-apply — mirroring
+ * `fromScaledInt`'s sign handling so the two are exact round-trip inverses.
+ * (Latent today: `decideApplication` rejects `amount > balance` before any
+ * negative reaches here, but the DP-026 reversal/credit-note path will.)
+ */
+export function toScaledInt(money: string): bigint {
+  const negative = money.startsWith("-");
+  const abs = negative ? money.slice(1) : money;
+  const [whole = "0", frac = ""] = abs.split(".");
   const fracPadded = (frac + "0".repeat(SCALE)).slice(0, SCALE);
-  return BigInt(whole) * 10n ** BigInt(SCALE) + BigInt(fracPadded || "0");
+  const magnitude = BigInt(whole) * 10n ** BigInt(SCALE) + BigInt(fracPadded || "0");
+  return negative ? -magnitude : magnitude;
 }
 
 /** Render integer ten-thousandths back to a fixed scale-4 money string. */
-function fromScaledInt(v: bigint): string {
+export function fromScaledInt(v: bigint): string {
   const negative = v < 0n;
   const abs = negative ? -v : v;
   const unit = 10n ** BigInt(SCALE);
