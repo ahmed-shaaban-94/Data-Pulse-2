@@ -39,6 +39,30 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
+  // Trust the first reverse-proxy hop (Caddy / LB) so req.ip reflects the
+  // real client IP. Without this, rate-limit buckets and audit events all
+  // key on the proxy's internal address. The hop count MUST match the
+  // deployment topology; `1` is correct for the single-Caddy template.
+  const trustProxy = process.env["TRUST_PROXY"] ?? "1";
+  const expressApp = app.getHttpAdapter().getInstance() as { set(key: string, value: unknown): void };
+  const parsed = Number(trustProxy);
+  expressApp.set("trust proxy", Number.isFinite(parsed) ? parsed : trustProxy);
+
+  // CORS — explicit allowlist from ALLOWED_ORIGINS (comma-separated).
+  // Defaults to disabled (no cross-origin requests allowed). The dashboard
+  // frontend origin must be added to this list when deployed.
+  const allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  if (allowedOrigins.length > 0) {
+    app.enableCors({
+      origin: allowedOrigins,
+      credentials: true,
+      methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+    });
+  }
+
   // Express middleware
   app.use(cookieParser());
   app.use(helmet());

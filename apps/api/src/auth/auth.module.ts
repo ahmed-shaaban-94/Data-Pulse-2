@@ -84,7 +84,15 @@ export const EMAIL_QUEUE_NAME = "email";
  */
 export function redisClientFactory(): RedisLike {
   const url = process.env["REDIS_URL"];
-  if (!url) return new AlwaysAllowRedis();
+  if (!url) {
+    if (process.env["NODE_ENV"] === "production") {
+      throw new Error(
+        "AuthModule: REDIS_URL is required in production " +
+          "(rate limiting + idempotency disabled without it).",
+      );
+    }
+    return new AlwaysAllowRedis();
+  }
   // Wrap the real ioredis client in IoredisIdempotencyAdapter, which
   // translates the options-object set() and pexpireNx() calls used by
   // IdempotencyModule and RateLimiter into ioredis's variadic-string form.
@@ -152,10 +160,11 @@ export function emailJobEnqueuerFactory(): EmailJobEnqueuer {
  *
  * Rate-limit surface: `incr` always returns 1 so limits never trigger.
  *
- * Idempotency surface: `get` always returns null, `set` always returns null
- * (NX "fails"), `del` is a no-op. This means idempotency storage is disabled
- * in no-Redis environments — every request is treated as fresh. That is the
- * safe behaviour: better to re-execute than to replay stale data from memory.
+ * Idempotency surface: `get` always returns null (no stored replay), `set`
+ * returns "OK" for NX calls (in-progress marker succeeds — the request
+ * proceeds) and "OK" for PX calls (replay store writes succeed silently).
+ * `del` is a no-op. Without Redis no replay is possible, so every request
+ * is executed fresh — better to re-execute than to reject with 425.
  *
  * Production MUST override this with a real ioredis client; the class name is
  * intentionally loud.
@@ -174,7 +183,7 @@ export class AlwaysAllowRedis implements RedisLike {
     return null;
   }
   async set(_key: string, _value: string, _opts: { px: number } | { nx: true; ex: number }): Promise<"OK" | null> {
-    return null;
+    return "OK";
   }
   async del(_key: string): Promise<number> {
     return 0;

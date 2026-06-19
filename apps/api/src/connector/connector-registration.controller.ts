@@ -18,6 +18,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   NotFoundException,
@@ -103,6 +104,7 @@ export class ConnectorRegistrationController {
   /** POST :id/credentials — issue a credential. Raw secret in the body ONCE. */
   @Post("api/v1/connector/instances/:id/credentials")
   @HttpCode(HttpStatus.CREATED)
+  @Header("Cache-Control", "no-store")
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin")
   async issue(
@@ -147,6 +149,7 @@ export class ConnectorRegistrationController {
   /** POST :id/credentials/rotate — atomic immediate-revoke rotation (US2). */
   @Post("api/v1/connector/instances/:id/credentials/rotate")
   @HttpCode(HttpStatus.CREATED)
+  @Header("Cache-Control", "no-store")
   @UseGuards(RolesGuard)
   @Roles("owner", "tenant_admin")
   @Idempotent("required")
