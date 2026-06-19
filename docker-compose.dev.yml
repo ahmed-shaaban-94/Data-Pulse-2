@@ -16,7 +16,7 @@ services:
       POSTGRES_USER: dp2
       POSTGRES_PASSWORD: dp2_dev_password
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - dp2_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +31,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - dp2_redis_data:/data
     healthcheck:

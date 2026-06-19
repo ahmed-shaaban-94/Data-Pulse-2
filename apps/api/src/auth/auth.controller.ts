@@ -195,7 +195,10 @@ export class AuthController {
   async confirmPasswordReset(
     @Body(new ZodValidationPipe(PasswordResetConfirmSchema))
     body: PasswordResetConfirmInput,
+    @Req() req: AuthedRequest,
   ): Promise<void> {
+    const ip = readClientIp(req);
+    await this.guardRateLimit("pwreset_confirm_ip", ip, RATE_LIMIT_BUCKETS.passwordResetConfirmPerIp);
     await this.authService.confirmPasswordReset({
       rawToken: body.token,
       newPassword: body.new_password,
@@ -282,9 +285,10 @@ function setSessionCookie(
   sessionId: string,
   expires: Date,
 ): void {
+  const env = process.env["NODE_ENV"];
   res.cookie(SESSION_COOKIE_NAME, sessionId, {
     httpOnly: true,
-    secure: process.env["NODE_ENV"] === "production",
+    secure: env !== "test" && env !== "development",
     sameSite: "lax",
     expires,
     path: "/",
