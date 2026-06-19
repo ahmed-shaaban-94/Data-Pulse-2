@@ -1,7 +1,8 @@
 # ADR 0010 — Idempotency Store Save-Failure Posture
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-06-19
+**Ratified**: 2026-06-19 (owner)
 **Owner**: Owner (Ahmed Shaaban)
 **Constitution version**: (current)
 **Feature / Ref**: Audit finding **M-5** (super-deep audit, 2026-06-19) · `apps/api/src/idempotency/idempotency.interceptor.ts` · related [ADR 0009](0009-pos-write-endpoint-rate-limiting.md) D3 (same Redis-outage axis) · Orchestrator audit-fix report `docs/status/audit-fix-pass-2026-06-19.md`
