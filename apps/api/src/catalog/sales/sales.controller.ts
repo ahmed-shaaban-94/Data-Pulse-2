@@ -41,6 +41,8 @@ import type { Response } from "express";
 import { Auditable } from "../../audit/auditable.decorator";
 import { PosOperatorAuthGuard } from "../../auth/pos-operator-auth.guard";
 import { PosOperatorEnvelopeSaleGuard } from "../../auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../../auth/pos-write-rate-limit.guard";
+import { PosWriteRateLimitBucket } from "../../auth/pos-write-rate-limit.decorator";
 import { ZodValidationPipe } from "../../common/zod-validation.pipe";
 import { TenantContextGuard } from "../../context/tenant-context.guard";
 import type { TenantContextRequest } from "../../context/types";
@@ -74,7 +76,12 @@ export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
   @Post("api/pos/v1/sales")
-  @UseGuards(PosOperatorEnvelopeSaleGuard)
+  // Guard order matters: the envelope guard runs FIRST (resolves
+  // request.principal + the bound device), THEN the per-device rate limit
+  // (ADR 0009) throttles on the resolved device. The rate limit fails open on a
+  // Redis/lookup error, so it never blocks a write the envelope guard admitted.
+  @UseGuards(PosOperatorEnvelopeSaleGuard, PosWriteRateLimitGuard)
+  @PosWriteRateLimitBucket("posWriteSale")
   @Idempotent("required")
   @Auditable("sale.captured")
   async captureSale(

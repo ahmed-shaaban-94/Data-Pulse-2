@@ -47,6 +47,8 @@ import { z } from "zod";
 import { Auditable } from "../audit/auditable.decorator";
 import { DashboardAuthGuard } from "../auth/dashboard-auth.guard";
 import { PosOperatorEnvelopeSaleGuard } from "../auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../auth/pos-write-rate-limit.guard";
+import { PosWriteRateLimitBucket } from "../auth/pos-write-rate-limit.decorator";
 import { Roles } from "../auth/roles.decorator";
 import { RolesGuard } from "../auth/roles.guard";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -111,7 +113,8 @@ export class SettlementController {
    */
   @Post("api/v1/settlement/settlement-intent")
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(PosOperatorEnvelopeSaleGuard)
+  @UseGuards(PosOperatorEnvelopeSaleGuard, PosWriteRateLimitGuard)
+  @PosWriteRateLimitBucket("posWriteSettlementIntent")
   @Idempotent("required")
   @Auditable("settlement.intent.recorded")
   async recordIntent(

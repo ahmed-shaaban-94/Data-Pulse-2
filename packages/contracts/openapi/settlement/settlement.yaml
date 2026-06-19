@@ -399,6 +399,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/SystemFailure"
 
@@ -852,6 +854,26 @@ components:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: Insufficient role (403) — authenticated but lacks the required role. 028 (G10).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: >
+        too_many_requests (429) — per-device write rate limit exceeded on the POS
+        settlement-intent route (ADR 0009 / audit M-2). Keyed PER DEVICE, not per
+        IP or operator token. Non-disclosing `Error` body; `Retry-After` carries
+        the back-off (seconds, [1, 300]). A POS client MUST treat this as
+        TRANSIENT/retryable, never a permanent dead-letter. The limiter FAILS OPEN
+        on a rate-limiter datastore outage (ADR 0009 D3), so a 429 is always a real
+        budget breach.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retry; clamped [1, 300].
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 300
       content:
         application/json:
           schema:

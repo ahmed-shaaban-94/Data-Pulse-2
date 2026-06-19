@@ -39,6 +39,7 @@ import {
   PgOperatorContextResolver,
 } from "../auth/operator-context-resolver";
 import { PosOperatorEnvelopeSaleGuard } from "../auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../auth/pos-write-rate-limit.guard";
 import { SessionRepository } from "../auth/session.repository";
 import { ContextModule } from "../context/context.module";
 import { IdempotencyModule } from "../idempotency/idempotency.module";
@@ -84,6 +85,10 @@ import { SettlementController } from "./settlement.controller";
         new PosOperatorEnvelopeSaleGuard(sessions, authTokens, reverifier),
       inject: [SessionRepository, AuthTokenRepository, OPERATOR_CONTEXT_RESOLVER],
     },
+    // ADR 0009 (audit M-2): per-device write rate limit on settlement-intent.
+    // Plain reflectable DI (reflection-instantiated enhancer); per-route bucket
+    // (posWriteSettlementIntent) comes from the @PosWriteRateLimitBucket decorator.
+    PosWriteRateLimitGuard,
   ],
   exports: [ReceivableService],
 })
