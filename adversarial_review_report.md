@@ -201,8 +201,8 @@ When the Redis cache is wired (slice 3b), a revoked session will remain "active"
 
 **Remediation:**
 The planned TTL of <=5 minutes is reasonable for most threat models. For high-security deployments, consider:
-1. Cache invalidation on sign-out (write-through invalidation — already partially implemented via `cache.invalidate(id)` in `touchLastSeen` and `updateActiveContext`, but not called from `revoke`).
-2. Add `await this.cache.invalidate(id)` to the `revoke` method in `SessionRepository`.
+1. Cache invalidation on sign-out (write-through invalidation — already implemented via `cache.invalidate(id)` in `touchLastSeen`, `updateActiveContext`, and `revoke`).
+2. When the Redis cache is wired (slice 3b), verify the TTL-based replay window is acceptable for the deployment's threat model. The `revoke` method already invalidates the cache, so the replay window is bounded by cache propagation delay, not by missing invalidation.
 
 ---
 
@@ -250,20 +250,22 @@ ports:
 
 ---
 
-### FINDING-11: Idempotency Key Store Disabled Without Redis (Informational)
+### FINDING-11: `AlwaysAllowRedis` Breaks All `@Idempotent` Endpoints Without Redis (Informational)
 
-**Location:** `apps/api/src/auth/auth.module.ts:155-158`
-**Risk:** Duplicate mutation execution in environments without Redis.
+**Location:** `apps/api/src/auth/auth.module.ts:155-158, 163-182`
+**Risk:** All `@Idempotent("required")` POST endpoints return **425 Too Early** when `REDIS_URL` is absent.
 
 **Description:**
-When `REDIS_URL` is absent, the `AlwaysAllowRedis.set()` always returns `null` (simulating NX failure), and `.get()` returns `null`. This means:
-- `InProgressMarker.trySet()` always returns `false` (never "owns" a slot).
-- `IdempotencyKeyStore` always returns `null` for replay lookups.
+When `REDIS_URL` is absent, `AlwaysAllowRedis.set()` always returns `null`. For `SET NX` semantics, `null` means "key already exists / NX failed." This causes:
+- `InProgressMarker.trySet()` always returns `false` ("another request is in-flight").
+- The `IdempotencyInterceptor` interprets this as a concurrent duplicate and returns **425 Too Early** with `Retry-After: 2`.
 
-In practice, every request is treated as fresh. While the comment says "better to re-execute than to replay stale data," this silently drops the idempotency guarantee in dev/staging, which could mask bugs where non-idempotent handlers produce duplicate side effects.
+There are 20+ `@Idempotent("required")` decorators across the codebase. In practice this likely doesn't manifest because integration tests override `REDIS_CLIENT` with mocks, but if anyone runs the full API locally without `REDIS_URL`, **every idempotent POST endpoint is permanently broken** — a worse failure mode than duplicate execution.
+
+Separately, `IdempotencyKeyStore` lookups (`get`) always return `null`, so replay lookups are disabled — requests that pass the in-progress gate are treated as fresh (no stored-response replay).
 
 **Remediation:**
-Already covered by FINDING-03's production guard. For dev, consider an in-memory Map-based stub with TTL eviction to preserve idempotency semantics locally.
+Already covered by FINDING-03's production guard. For dev, `AlwaysAllowRedis.set()` should return `"OK"` (not `null`) when the `nx` option is set, so that `trySet()` succeeds and the request proceeds. Alternatively, provide an in-memory Map-based stub with TTL eviction that correctly implements both NX and replay semantics.
 
 ---
 
@@ -360,7 +362,7 @@ The following security controls are well-implemented and deserve recognition:
 | F-08 | Low | Auth | Session cache replay window on revocation (when Redis cache is wired) |
 | F-09 | Low | Infrastructure | No `/health` endpoint; metrics port used as liveness probe |
 | F-10 | Low | Infrastructure | Dev compose exposes DB/Redis on all interfaces |
-| F-11 | Info | Idempotency | Idempotency disabled without Redis |
+| F-11 | Info | Idempotency | `AlwaysAllowRedis` breaks all `@Idempotent` endpoints without Redis (425 Too Early) |
 | F-12 | Info | Multi-tenancy | Outbox consumer tenant context obligation is documentation-only |
 | F-13 | Info | Secrets | Connector credential secret in response body (show-once, but no `Cache-Control`) |
 | F-14 | Info | DoS | No pre-hash for large passwords before argon2id |
