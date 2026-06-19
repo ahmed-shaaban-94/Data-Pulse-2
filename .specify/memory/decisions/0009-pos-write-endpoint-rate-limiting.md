@@ -1,7 +1,8 @@
 # ADR 0009 — Per-Device Rate Limiting for POS Write Endpoints
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-06-19
+**Ratified**: 2026-06-19 (owner)
 **Owner**: Owner (Ahmed Shaaban)
 **Constitution version**: (current)
 **Feature / Ref**: Audit finding **M-2** (super-deep audit, 2026-06-19) · `apps/api/src/auth/rate-limit.ts` · Orchestrator audit-fix report `docs/status/audit-fix-pass-2026-06-19.md`
