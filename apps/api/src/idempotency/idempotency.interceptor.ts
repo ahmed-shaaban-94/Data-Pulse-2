@@ -382,7 +382,20 @@ export class IdempotencyInterceptor implements NestInterceptor {
               _fp,
               result,
               expiresAt,
-            ).catch(() => undefined); // best-effort
+            ).catch((err: unknown) => {
+              // ADR 0010 D1 (audit M-5): the replay-record save is best-effort, but
+              // a SILENT failure hides that idempotency is degraded — a later retry
+              // re-executes the handler (for settlement intents, which have no second
+              // dedup layer, that means duplicate receivable rows). Log+swallow so the
+              // degradation is observable; do NOT re-throw (the side effect already
+              // happened — failing the request now would only hide it and is
+              // incoherent with ADR 0009 D3 fail-open). The metric/alert counter is
+              // AD-TOOL-003-phase-gated and lands separately; this is the warn-log half.
+              this.logger?.warn(
+                { err, tuple },
+                "IdempotencyInterceptor: replay-record save failed; idempotency degraded (response returned, retry may re-execute handler)",
+              );
+            });
           },
           finalize: () => {
             // Best-effort marker cleanup on any exit (success or error).
