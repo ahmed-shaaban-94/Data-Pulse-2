@@ -43,6 +43,7 @@ import {
 } from "../../auth/identity-provider.port";
 import { clerkIdentityProviderFactory } from "../../auth/clerk-identity-provider.adapter";
 import { PosOperatorEnvelopeSaleGuard } from "../../auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../../auth/pos-write-rate-limit.guard";
 import { SessionRepository } from "../../auth/session.repository";
 import { AuthTokenRepository } from "../../auth/auth-token.repository";
 
@@ -98,6 +99,13 @@ import { AuthTokenRepository } from "../../auth/auth-token.repository";
         new PosOperatorEnvelopeSaleGuard(sessions, authTokens, reverifier),
       inject: [SessionRepository, AuthTokenRepository, OPERATOR_CONTEXT_RESOLVER],
     },
+    // ADR 0009 (audit M-2): per-device write rate limit, layered AFTER the
+    // envelope guard. A class-referenced @UseGuards enhancer is reflection-
+    // instantiated, so it must use plain reflectable DI (no factory): RateLimiter
+    // resolves by type (exported from AuthModule), OPERATOR_CONTEXT_RESOLVER and
+    // @Optional ROOT_LOGGER by token, Reflector is built-in. Per-route bucket
+    // comes from the @PosWriteRateLimitBucket route decorator, not construction.
+    PosWriteRateLimitGuard,
   ],
   exports: [SalesService],
 })

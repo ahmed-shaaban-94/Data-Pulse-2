@@ -61,6 +61,19 @@ export const RATE_LIMIT_BUCKETS = {
   passwordResetConfirmPerIp: { limit: 10, windowMs: 15 * 60 * 1000 },
 } as const satisfies Record<string, RateLimitBucket>;
 
+/**
+ * POS write-endpoint buckets — ADR 0009 (audit M-2). Keyed per DEVICE (the bucket
+ * identifier is the bound device id), NOT per IP or per operator token (ADR 0009
+ * D1). These are the ADR 0009 D2 TUNABLE STARTING DEFAULTS — set conservatively
+ * above realistic single-terminal throughput; calibrate from the AD-TOOL-003
+ * observability layer's real per-device write rates. Enforced by
+ * `PosWriteRateLimitGuard`.
+ */
+export const POS_WRITE_RATE_LIMIT_BUCKETS = {
+  posWriteSale: { limit: 300, windowMs: 60 * 60 * 1000 },
+  posWriteSettlementIntent: { limit: 120, windowMs: 60 * 60 * 1000 },
+} as const satisfies Record<string, RateLimitBucket>;
+
 export interface RateLimitBucket {
   /** Maximum number of allowed hits in the window. */
   readonly limit: number;

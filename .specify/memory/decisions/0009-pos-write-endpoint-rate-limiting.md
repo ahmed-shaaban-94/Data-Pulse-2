@@ -95,6 +95,30 @@ is likewise observe-and-degrade (metric/alert), not hard-fail. See Open Question
   other write-path defences (idempotency dedup, live operator re-verification) are
   unaffected.
 
+### D4. The over-limit response is **429** — which crosses the OpenAPI gate and requires a paired POS change (owner-ratified 2026-06-19 at wiring time)
+
+The throttle returns **HTTP 429 Too Many Requests** + `Retry-After` (mirroring the
+sign-in / pairing convention). Two consequences were discovered at implementation and
+are recorded here so the gate crossings are durable provenance, not buried in a session
+exchange:
+
+- **OpenAPI gate (ADR 0003):** 429 is a new response code on the `captureSale` and
+  `posRecordSettlementIntent` operations, so it must be authored into
+  `pos-sales/sales.yaml` and `settlement/settlement.yaml` (a `TooManyRequests` response
+  + `Retry-After` header). The owner ratified crossing the no-OpenAPI gate **for this one
+  429 response only** (2026-06-19) at the time the wiring slice was dispatched.
+- **Cross-repo POS change (paired, mandatory):** POS-Pulse `classifyStatus`
+  (`create-sale-sync-client.ts`) classified any 4xx other than 401/403 as `permanent` →
+  `markDeadLetter`. A 429 would therefore **permanently dead-letter a valid sale** — the
+  same failure mode audit H-3 fixed for 401. POS MUST map **429 → transient** (retryable,
+  honour `Retry-After`) and this MUST land with or before DP-2 begins emitting 429 on the
+  route. (Both are latent until the sale-sync POST gate opens, but the dependency is hard.)
+
+- **Tradeoff**: this widens the ratified scope of 0009 from "throttle mechanism" to "429
+  contract surface + a POS engine change." The owner accepted that scope at dispatch; the
+  alternative (collapsing 429 into the existing generic 401) was rejected because it would
+  hide a distinct, observable, retryable condition behind the auth-refusal path.
+
 ---
 
 ## Hard out-of-scope

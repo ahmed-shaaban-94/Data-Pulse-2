@@ -133,6 +133,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "500":
           $ref: "#/components/responses/SystemFailure"
   /api/pos/v1/sales/{saleRef}:
@@ -350,6 +352,15 @@ components:
         `posCaptureItem` convention). Absent on a fresh 201 create.
       schema:
         type: boolean
+    RetryAfter:
+      description: >
+        Seconds the caller should wait before retrying, on a 429 (ADR 0009).
+        Clamped to [1, 300]. A POS client treats a 429 as TRANSIENT (retry after
+        this delay), NOT a permanent dead-letter (POS `classifyStatus`).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 300
 
   schemas:
     # -----------------------------------------------------------------------
@@ -745,6 +756,23 @@ components:
       description: >
         FR-101 `system-failure` — an unexpected server error. The cause is
         recorded server-side keyed by `request_id` and is never returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: >
+        Per-device write rate limit exceeded (ADR 0009 / audit M-2). The bound
+        device has exceeded its hourly write budget; the limit is keyed PER DEVICE
+        (not per IP or per operator token). Non-disclosing `Error` body. The
+        `Retry-After` header carries the back-off in seconds. A POS client MUST
+        treat this as a TRANSIENT, retryable outcome (retry after `Retry-After`),
+        NOT a permanent dead-letter. The limiter FAILS OPEN on a rate-limiter
+        datastore outage (ADR 0009 D3), so a 429 means a real budget breach, never
+        a Redis outage.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:

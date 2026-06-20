@@ -272,6 +272,11 @@ export class AlwaysAllowRedis implements RedisLike {
     // client (real ioredis when REDIS_URL is set, AlwaysAllowRedis stub otherwise)
     // rather than creating a second connection.
     REDIS_CLIENT,
+    // RateLimiter is exported (ADR 0009) so downstream modules (SalesModule,
+    // SettlementModule) can wire PosWriteRateLimitGuard over the SAME single
+    // Redis-backed limiter rather than re-provisioning a second client — keeps
+    // the rate-limit policy in one place (rate-limit.ts).
+    RateLimiter,
   ],
 })
 export class AuthModule {}
