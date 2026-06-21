@@ -43,6 +43,7 @@ import {
 import { PG_POOL } from "../../../../src/auth/auth.module";
 import { PosOperatorAuthGuard } from "../../../../src/auth/pos-operator-auth.guard";
 import { PosOperatorEnvelopeSaleGuard } from "../../../../src/auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../../../../src/auth/pos-write-rate-limit.guard";
 import { OPERATOR_CONTEXT_RESOLVER } from "../../../../src/auth/operator-context-resolver";
 import { TenantContextGuard } from "../../../../src/context/tenant-context.guard";
 import type { ResolvedContext } from "../../../../src/context/types";
@@ -259,6 +260,16 @@ export async function startCaptureHarness(
       .overrideGuard(PosOperatorAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TenantContextGuard)
+      .useValue({ canActivate: () => true })
+      // ADR-0009 (PR #600) added @UseGuards(…, PosWriteRateLimitGuard) to the
+      // capture/void/refund routes. Nest constructs the real guard unless it is
+      // overridden, and the real guard's `RateLimiter` dependency is not in this
+      // hand-rolled provider graph — so without this override the whole module
+      // fails to build (`Nest can't resolve … PosWriteRateLimitGuard`), which is
+      // what broke every POS-write integration suite on main. These specs
+      // exercise the sale data path, not rate-limiting (covered by the guard's
+      // own unit spec), so a no-op override is correct.
+      .overrideGuard(PosWriteRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
