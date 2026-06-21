@@ -40,6 +40,7 @@ import { IdempotencyKeyStore } from "@data-pulse-2/shared";
 import { PG_POOL } from "../../../src/auth/auth.module";
 import { DashboardAuthGuard } from "../../../src/auth/dashboard-auth.guard";
 import { PosOperatorEnvelopeSaleGuard } from "../../../src/auth/pos-operator-envelope-sale.guard";
+import { PosWriteRateLimitGuard } from "../../../src/auth/pos-write-rate-limit.guard";
 import { RolesGuard } from "../../../src/auth/roles.guard";
 import { GlobalExceptionFilter } from "../../../src/common/exception.filter";
 import { TenantContextGuard } from "../../../src/context/tenant-context.guard";
@@ -194,6 +195,11 @@ beforeAll(async () => {
     .overrideGuard(TenantContextGuard)
     .useValue({ canActivate: () => true })
     .overrideGuard(RolesGuard)
+    .useValue({ canActivate: () => true })
+    // ADR-0009 (PR #600): the settlement write route carries
+    // @UseGuards(…, PosWriteRateLimitGuard); override it or Nest fails to resolve
+    // the real guard's RateLimiter dep in this hand-rolled module. Data-path spec.
+    .overrideGuard(PosWriteRateLimitGuard)
     .useValue({ canActivate: () => true })
     .compile();
 
