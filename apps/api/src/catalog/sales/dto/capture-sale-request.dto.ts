@@ -13,13 +13,26 @@
  * Money + quantity are exact-decimal STRINGS (gate A.6 — no float ever): the
  * service round-trips them to Postgres `numeric` and never parses them into a
  * JS number.
+ *
+ * Money is NON-NEGATIVE (B1-3): every sale-capture money column carries a
+ * `>= 0` CHECK in `0012_sales.sql` (`sales_pos_total_non_negative`,
+ * `sale_lines_unit_price_non_negative`, `sale_lines_line_amount_non_negative`,
+ * `sale_lines_tax_amount_non_negative`). The DTO rejects a leading `-` at the
+ * boundary so a negative amount fails as a deterministic 400 instead of 500'ing
+ * on the DB CHECK — the same posture `RecordRefundRequestSchema` takes for
+ * `posRefundAmount`. Signed money lives only on flows the domain explicitly
+ * allows it (none in capture); the OpenAPI `CaptureSale*` schemas mirror this
+ * via `NonNegativeDecimalAmount`.
  */
 import { z } from "zod";
 
-/** Exact-decimal money string: up to 15 integer + 4 fractional digits. */
+/**
+ * Exact-decimal NON-NEGATIVE money string: up to 15 integer + 4 fractional
+ * digits, no leading `-`. (B1-3 — mirrors the DB `>= 0` CHECKs.)
+ */
 const decimalAmount = z
   .string()
-  .regex(/^-?[0-9]{1,15}(\.[0-9]{1,4})?$/, "must be an exact-decimal string");
+  .regex(/^[0-9]{1,15}(\.[0-9]{1,4})?$/, "must be a non-negative exact-decimal string");
 
 /** Line quantity: up to 6 fractional digits (sub-unit quantities allowed). */
 const quantityAmount = z
